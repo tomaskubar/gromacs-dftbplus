@@ -85,6 +85,7 @@
 #include "gromacs/mdlib/boxdeformation.h"
 #include "gromacs/mdlib/broadcaststructs.h"
 #include "gromacs/mdlib/calc_verletbuf.h"
+#include "gromacs/mdlib/dispersioncorrection.h"
 #include "gromacs/mdlib/enerdata_utils.h"
 #include "gromacs/mdlib/force.h"
 #include "gromacs/mdlib/forcerec.h"
@@ -1500,12 +1501,10 @@ int Mdrunner::mdrunner()
                                                    cr, ms, nrnb, wcycle, fr->bMolPBC);
 
         /* Energy terms and groups */
-        gmx_enerdata_t *enerd;
-        snew(enerd, 1);
-        init_enerdata(mtop.groups.groups[SimulationAtomGroupType::EnergyOutput].nr, inputrec->fepvals->n_lambda, enerd);
+        gmx_enerdata_t enerd(mtop.groups.groups[SimulationAtomGroupType::EnergyOutput].size(), inputrec->fepvals->n_lambda);
 
         /* Set up interactive MD (IMD) */
-        auto imdSession = makeImdSession(inputrec, cr, wcycle, enerd, ms, &mtop, mdlog,
+        auto imdSession = makeImdSession(inputrec, cr, wcycle, &enerd, ms, &mtop, mdlog,
                                          MASTER(cr) ? globalState->x.rvec_array() : nullptr,
                                          filenames.size(), filenames.data(), oenv, mdrunOptions);
 
@@ -1542,7 +1541,7 @@ int Mdrunner::mdrunner()
             globalState.get(),
             &observablesHistory,
             mdAtoms.get(), nrnb, wcycle, fr,
-            enerd,
+            &enerd,
             &ppForceWorkload,
             replExParams,
             membed,
@@ -1555,8 +1554,6 @@ int Mdrunner::mdrunner()
         {
             finish_pull(pull_work);
         }
-        destroy_enerdata(enerd);
-        sfree(enerd);
         finish_swapcoords(swap);
     }
     else

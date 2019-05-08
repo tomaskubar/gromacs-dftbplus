@@ -47,6 +47,7 @@ as a gmxapi.exceptions.Error, please report the bug.
 
 __all__ = ['ApiError',
            'Error',
+           'ProtocolError',
            'UsageError',
            'ValueError',
            'Warning'
@@ -63,6 +64,14 @@ class Warning(Warning):
 
 class ApiError(Error):
     """An API operation was attempted with an incompatible object."""
+
+
+class ProtocolError(Error):
+    """Unexpected API behavior or protocol violation.
+
+    This exception generally indicates a gmxapi bug, since it should only
+    occur through incorrect assumptions or misuse of API implementation internals.
+    """
 
 
 class UsageError(Error):

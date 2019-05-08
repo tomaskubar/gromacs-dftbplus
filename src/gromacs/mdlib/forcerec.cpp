@@ -202,8 +202,8 @@ check_solvent_cg(const gmx_moltype_t    *molt,
                  int                     cg0,
                  int                     nmol,
                  const unsigned char    *qm_grpnr,
-                 const t_grps           *qm_grps,
-                 t_forcerec   *          fr,
+                 const AtomGroupIndices *qm_grps,
+                 t_forcerec             *fr,
                  int                    *n_solvent_parameters,
                  solvent_parameters_t  **solvent_parameters_p,
                  int                     cginfo,
@@ -276,7 +276,7 @@ check_solvent_cg(const gmx_moltype_t    *molt,
     {
         for (j = j0; j < j1 && !qm; j++)
         {
-            qm = (qm_grpnr[j] < qm_grps->nr - 1);
+            qm = (qm_grpnr[j] < qm_grps->size() - 1);
         }
     }
     /* Cannot use solvent optimization with QM */
@@ -1025,12 +1025,11 @@ static void make_nbf_tables(FILE *fp,
      * to improve cache performance.
      */
     /* For performance reasons we want
-     * the table data to be aligned to 16-byte. The pointers could be freed
-     * but currently aren't.
+     * the table data to be aligned to 16-byte.
      */
-    snew(nbl->table_elec, 1);
-    nbl->table_elec->interaction   = GMX_TABLE_INTERACTION_ELEC;
-    nbl->table_elec->format        = nbl->table_elec_vdw->format;
+    nbl->table_elec                =
+        new t_forcetable(GMX_TABLE_INTERACTION_ELEC,
+                         nbl->table_elec_vdw->format);
     nbl->table_elec->r             = nbl->table_elec_vdw->r;
     nbl->table_elec->n             = nbl->table_elec_vdw->n;
     nbl->table_elec->scale         = nbl->table_elec_vdw->scale;
@@ -1039,9 +1038,9 @@ static void make_nbf_tables(FILE *fp,
     nbl->table_elec->stride        = nbl->table_elec->formatsize * nbl->table_elec->ninteractions;
     snew_aligned(nbl->table_elec->data, nbl->table_elec->stride*(nbl->table_elec->n+1), 32);
 
-    snew(nbl->table_vdw, 1);
-    nbl->table_vdw->interaction   = GMX_TABLE_INTERACTION_VDWREP_VDWDISP;
-    nbl->table_vdw->format        = nbl->table_elec_vdw->format;
+    nbl->table_vdw                =
+        new t_forcetable(GMX_TABLE_INTERACTION_VDWREP_VDWDISP,
+                         nbl->table_elec_vdw->format);
     nbl->table_vdw->r             = nbl->table_elec_vdw->r;
     nbl->table_vdw->n             = nbl->table_elec_vdw->n;
     nbl->table_vdw->scale         = nbl->table_elec_vdw->scale;
@@ -1626,7 +1625,7 @@ void init_forcerec(FILE                             *fp,
     gmx_bool       bGenericKernelOnly;
     gmx_bool       needGroupSchemeTables, bSomeNormalNbListsAreInUse;
     gmx_bool       bFEP_NonBonded;
-    int           *nm_ind, egp_flags;
+    int            egp_flags;
 
 
     /* By default we turn SIMD kernels on, but it might be turned off further down... */
@@ -2113,13 +2112,6 @@ void init_forcerec(FILE                             *fp,
                 fr->rlist, ic->rcoulomb, fr->bBHAM ? "BHAM" : "LJ", ic->rvdw);
     }
 
-    fr->eDispCorr = ir->eDispCorr;
-    fr->numAtomsForDispersionCorrection = mtop->natoms;
-    if (ir->eDispCorr != edispcNO)
-    {
-        set_avcsixtwelve(fp, fr, mtop);
-    }
-
     if (ir->implicit_solvent)
     {
         gmx_fatal(FARGS, "Implict solvation is no longer supported.");
@@ -2182,7 +2174,7 @@ void init_forcerec(FILE                             *fp,
         if (negptable > 0)
         {
             /* Read the special tables for certain energy group pairs */
-            nm_ind = mtop->groups.groups[SimulationAtomGroupType::EnergyOutput].nm_ind;
+            gmx::ArrayRef<const int> nm_ind = mtop->groups.groups[SimulationAtomGroupType::EnergyOutput];
             for (egi = 0; egi < negp_pp; egi++)
             {
                 for (egj = egi; egj < negp_pp; egj++)
@@ -2200,14 +2192,6 @@ void init_forcerec(FILE                             *fp,
                 }
             }
         }
-    }
-
-    /* Tables might not be used for the potential modifier
-     * interactions per se, but we still need them to evaluate
-     * switch/shift dispersion corrections in this case. */
-    if (fr->eDispCorr != edispcNO)
-    {
-        fr->dispersionCorrectionTable = makeDispersionCorrectionTable(fp, ic, rtab, tabfn);
     }
 
     /* We want to use unmodified tables for 1-4 coulombic
@@ -2293,8 +2277,8 @@ void init_forcerec(FILE                             *fp,
     fr->print_force = print_force;
 
     /* Initialize the thread working data for bonded interactions */
-    init_bonded_threading(fp, mtop->groups.groups[SimulationAtomGroupType::EnergyOutput].nr,
-                          &fr->bondedThreading);
+    fr->bondedThreading =
+        init_bonded_threading(fp, mtop->groups.groups[SimulationAtomGroupType::EnergyOutput].size());
 
     fr->nthread_ewc = gmx_omp_nthreads_get(emntBonded);
     snew(fr->ewc_t, fr->nthread_ewc);
@@ -2328,6 +2312,16 @@ void init_forcerec(FILE                             *fp,
         }
     }
 
+    if (ir->eDispCorr != edispcNO)
+    {
+        fr->dispersionCorrection =
+            std::make_unique<DispersionCorrection>(*mtop, *ir, fr->bBHAM,
+                                                   fr->ntype,
+                                                   gmx::arrayRefFromArray(fr->nbfp, fr->ntype*fr->ntype*2),
+                                                   *fr->ic, tabfn);
+        fr->dispersionCorrection->print(mdlog);
+    }
+
     if (fp != nullptr)
     {
         /* Here we switch from using mdlog, which prints the newline before
@@ -2335,11 +2329,6 @@ void init_forcerec(FILE                             *fp,
          * after the paragraph, so we should add a newline here.
          */
         fprintf(fp, "\n");
-    }
-
-    if (ir->eDispCorr != edispcNO)
-    {
-        calc_enervirdiff(fp, ir->eDispCorr, fr);
     }
 }
 

@@ -450,7 +450,7 @@ t_mdebin *init_mdebin(ener_file_t       fp_ene,
             md->nEc++;
         }
     }
-    n       = groups->groups[SimulationAtomGroupType::EnergyOutput].nr;
+    n       = groups->groups[SimulationAtomGroupType::EnergyOutput].size();
     md->nEg = n;
     md->nE  = (n*(n+1))/2;
 
@@ -463,12 +463,12 @@ t_mdebin *init_mdebin(ener_file_t       fp_ene,
         {
             snew(gnm[k], STRLEN);
         }
-        for (i = 0; (i < groups->groups[SimulationAtomGroupType::EnergyOutput].nr); i++)
+        for (i = 0; (i < gmx::ssize(groups->groups[SimulationAtomGroupType::EnergyOutput])); i++)
         {
-            ni = groups->groups[SimulationAtomGroupType::EnergyOutput].nm_ind[i];
-            for (j = i; (j < groups->groups[SimulationAtomGroupType::EnergyOutput].nr); j++)
+            ni = groups->groups[SimulationAtomGroupType::EnergyOutput][i];
+            for (j = i; (j < gmx::ssize(groups->groups[SimulationAtomGroupType::EnergyOutput])); j++)
             {
-                nj = groups->groups[SimulationAtomGroupType::EnergyOutput].nm_ind[j];
+                nj = groups->groups[SimulationAtomGroupType::EnergyOutput][j];
                 for (k = kk = 0; (k < egNR); k++)
                 {
                     if (md->bEInd[k])
@@ -495,7 +495,7 @@ t_mdebin *init_mdebin(ener_file_t       fp_ene,
         }
     }
 
-    md->nTC  = isRerun ? 0 : groups->groups[SimulationAtomGroupType::TemperatureCoupling].nr;
+    md->nTC  = isRerun ? 0 : groups->groups[SimulationAtomGroupType::TemperatureCoupling].size();
     md->nNHC = ir->opts.nhchainlength; /* shorthand for number of NH chains */
     if (md->bMTTK)
     {
@@ -528,19 +528,25 @@ t_mdebin *init_mdebin(ener_file_t       fp_ene,
     }
 
     snew(md->tmp_r, md->mde_n);
-    snew(md->tmp_v, md->mde_n);
+
+    // TODO redo the group name memory management to make it more clear
     char **grpnms;
-    snew(grpnms, md->mde_n);
+    snew(grpnms, std::max(md->mde_n, md->mdeb_n)); // Just in case md->mdeb_n > md->mde_n
 
     for (i = 0; (i < md->nTC); i++)
     {
-        ni = groups->groups[SimulationAtomGroupType::TemperatureCoupling].nm_ind[i];
+        ni = groups->groups[SimulationAtomGroupType::TemperatureCoupling][i];
         sprintf(buf, "T-%s", *(groups->groupNames[ni]));
         grpnms[i] = gmx_strdup(buf);
     }
     md->itemp = get_ebin_space(md->ebin, md->nTC, grpnms,
                                unit_temp_K);
+    for (i = 0; i < md->nTC; i++)
+    {
+        sfree(grpnms[i]);
+    }
 
+    int allocated = 0;
     if (md->etc == etcNOSEHOOVER)
     {
         if (md->bPrintNHChains)
@@ -549,7 +555,7 @@ t_mdebin *init_mdebin(ener_file_t       fp_ene,
             {
                 for (i = 0; (i < md->nTC); i++)
                 {
-                    ni   = groups->groups[SimulationAtomGroupType::TemperatureCoupling].nm_ind[i];
+                    ni   = groups->groups[SimulationAtomGroupType::TemperatureCoupling][i];
                     bufi = *(groups->groupNames[ni]);
                     for (j = 0; (j < md->nNHC); j++)
                     {
@@ -561,6 +567,7 @@ t_mdebin *init_mdebin(ener_file_t       fp_ene,
                 }
                 md->itc = get_ebin_space(md->ebin, md->mde_n,
                                          grpnms, unit_invtime);
+                allocated = md->mde_n;
                 if (md->bMTTK)
                 {
                     for (i = 0; (i < md->nTCP); i++)
@@ -576,13 +583,14 @@ t_mdebin *init_mdebin(ener_file_t       fp_ene,
                     }
                     md->itcb = get_ebin_space(md->ebin, md->mdeb_n,
                                               grpnms, unit_invtime);
+                    allocated = md->mdeb_n;
                 }
             }
             else
             {
                 for (i = 0; (i < md->nTC); i++)
                 {
-                    ni   = groups->groups[SimulationAtomGroupType::TemperatureCoupling].nm_ind[i];
+                    ni   = groups->groups[SimulationAtomGroupType::TemperatureCoupling][i];
                     bufi = *(groups->groupNames[ni]);
                     sprintf(buf, "Xi-%s", bufi);
                     grpnms[2*i] = gmx_strdup(buf);
@@ -591,6 +599,7 @@ t_mdebin *init_mdebin(ener_file_t       fp_ene,
                 }
                 md->itc = get_ebin_space(md->ebin, md->mde_n,
                                          grpnms, unit_invtime);
+                allocated = md->mde_n;
             }
         }
     }
@@ -599,26 +608,28 @@ t_mdebin *init_mdebin(ener_file_t       fp_ene,
     {
         for (i = 0; (i < md->nTC); i++)
         {
-            ni = groups->groups[SimulationAtomGroupType::TemperatureCoupling].nm_ind[i];
+            ni = groups->groups[SimulationAtomGroupType::TemperatureCoupling][i];
             sprintf(buf, "Lamb-%s", *(groups->groupNames[ni]));
             grpnms[i] = gmx_strdup(buf);
         }
-        md->itc = get_ebin_space(md->ebin, md->mde_n, grpnms, "");
+        md->itc   = get_ebin_space(md->ebin, md->mde_n, grpnms, "");
+        allocated = md->mde_n;
     }
 
-    for (i = 0; i < md->mde_n; i++)
+    for (i = 0; i < allocated; i++)
     {
         sfree(grpnms[i]);
     }
     sfree(grpnms);
 
-    md->nU = groups->groups[SimulationAtomGroupType::Acceleration].nr;
+    md->nU = groups->groups[SimulationAtomGroupType::Acceleration].size();
+    snew(md->tmp_v, md->nU);
     if (md->nU > 1)
     {
         snew(grpnms, 3*md->nU);
         for (i = 0; (i < md->nU); i++)
         {
-            ni = groups->groups[SimulationAtomGroupType::Acceleration].nm_ind[i];
+            ni = groups->groups[SimulationAtomGroupType::Acceleration][i];
             sprintf(buf, "Ux-%s", *(groups->groupNames[ni]));
             grpnms[3*i+XX] = gmx_strdup(buf);
             sprintf(buf, "Uy-%s", *(groups->groupNames[ni]));
@@ -627,6 +638,10 @@ t_mdebin *init_mdebin(ener_file_t       fp_ene,
             grpnms[3*i+ZZ] = gmx_strdup(buf);
         }
         md->iu = get_ebin_space(md->ebin, 3*md->nU, grpnms, unit_vel);
+        for (i = 0; i < 3*md->nU; i++)
+        {
+            sfree(grpnms[i]);
+        }
         sfree(grpnms);
     }
 
@@ -678,6 +693,14 @@ void done_mdebin(t_mdebin *mdebin)
     done_mde_delta_h_coll(mdebin->dhc);
     sfree(mdebin->dE);
     sfree(mdebin->temperatures);
+    if (mdebin->nE > 1 && mdebin->print_grpnms != nullptr)
+    {
+        for (int n = 0; n < mdebin->nE; n++)
+        {
+            sfree(mdebin->print_grpnms[n]);
+        }
+        sfree(mdebin->print_grpnms);
+    }
     sfree(mdebin);
 }
 
@@ -973,7 +996,7 @@ void upd_mdebin(t_mdebin               *md,
                 rvec                    mu_tot,
                 const gmx::Constraints *constr)
 {
-    int    i, j, k, kk, n, gid;
+    int    j, k, kk, n, gid;
     real   crmsd[2], tmp6[6];
     real   bs[NTRICLBOXS], vol, dens, pv, enthalpy;
     real   eee[egNR];
@@ -1067,7 +1090,7 @@ void upd_mdebin(t_mdebin               *md,
     if (md->nE > 1)
     {
         n = 0;
-        for (i = 0; (i < md->nEg); i++)
+        for (int i = 0; (i < md->nEg); i++)
         {
             for (j = i; (j < md->nEg); j++)
             {
@@ -1087,7 +1110,7 @@ void upd_mdebin(t_mdebin               *md,
 
     if (ekind)
     {
-        for (i = 0; (i < md->nTC); i++)
+        for (int i = 0; (i < md->nTC); i++)
         {
             md->tmp_r[i] = ekind->tcstat[i].T;
         }
@@ -1100,7 +1123,7 @@ void upd_mdebin(t_mdebin               *md,
             {
                 if (md->bNHC_trotter)
                 {
-                    for (i = 0; (i < md->nTC); i++)
+                    for (int i = 0; (i < md->nTC); i++)
                     {
                         for (j = 0; j < md->nNHC; j++)
                         {
@@ -1113,7 +1136,7 @@ void upd_mdebin(t_mdebin               *md,
 
                     if (md->bMTTK)
                     {
-                        for (i = 0; (i < md->nTCP); i++)
+                        for (int i = 0; (i < md->nTCP); i++)
                         {
                             for (j = 0; j < md->nNHC; j++)
                             {
@@ -1127,7 +1150,7 @@ void upd_mdebin(t_mdebin               *md,
                 }
                 else
                 {
-                    for (i = 0; (i < md->nTC); i++)
+                    for (int i = 0; (i < md->nTC); i++)
                     {
                         md->tmp_r[2*i]   = state->nosehoover_xi[i];
                         md->tmp_r[2*i+1] = state->nosehoover_vxi[i];
@@ -1139,7 +1162,7 @@ void upd_mdebin(t_mdebin               *md,
         else if (md->etc == etcBERENDSEN || md->etc == etcYES ||
                  md->etc == etcVRESCALE)
         {
-            for (i = 0; (i < md->nTC); i++)
+            for (int i = 0; (i < md->nTC); i++)
             {
                 md->tmp_r[i] = ekind->tcstat[i].lambda;
             }
@@ -1149,7 +1172,7 @@ void upd_mdebin(t_mdebin               *md,
 
     if (ekind && md->nU > 1)
     {
-        for (i = 0; (i < md->nU); i++)
+        for (int i = 0; (i < md->nU); i++)
         {
             copy_rvec(ekind->grpstat[i].u, md->tmp_v[i]);
         }
@@ -1161,7 +1184,7 @@ void upd_mdebin(t_mdebin               *md,
     /* BAR + thermodynamic integration values */
     if ((md->fp_dhdl || md->dhc) && bDoDHDL)
     {
-        for (i = 0; i < enerd->n_lambda-1; i++)
+        for (gmx::index i = 0; i < static_cast<gmx::index>(enerd->enerpart_lambda.size()) - 1; i++)
         {
             /* zero for simulated tempering */
             md->dE[i] = enerd->enerpart_lambda[i+1]-enerd->enerpart_lambda[0];
@@ -1204,7 +1227,7 @@ void upd_mdebin(t_mdebin               *md,
 
             if (fep->dhdl_derivatives == edhdlderivativesYES)
             {
-                for (i = 0; i < efptNR; i++)
+                for (int i = 0; i < efptNR; i++)
                 {
                     if (fep->separate_dvdl[i])
                     {
@@ -1213,14 +1236,14 @@ void upd_mdebin(t_mdebin               *md,
                     }
                 }
             }
-            for (i = fep->lambda_start_n; i < fep->lambda_stop_n; i++)
+            for (int i = fep->lambda_start_n; i < fep->lambda_stop_n; i++)
             {
                 fprintf(md->fp_dhdl, " %#.8g", md->dE[i]);
             }
             if (md->bDynBox &&
                 md->bDiagPres &&
                 (md->epc != epcNO) &&
-                (enerd->n_lambda > 0) &&
+                !enerd->enerpart_lambda.empty() &&
                 (fep->init_lambda < 0))
             {
                 fprintf(md->fp_dhdl, " %#.8g", pv);  /* PV term only needed when
@@ -1234,7 +1257,7 @@ void upd_mdebin(t_mdebin               *md,
         if (md->dhc && bDoDHDL)
         {
             int idhdl = 0;
-            for (i = 0; i < efptNR; i++)
+            for (int i = 0; i < efptNR; i++)
             {
                 if (fep->separate_dvdl[i])
                 {
@@ -1482,7 +1505,7 @@ void print_ebin(ener_file_t fp_ene, gmx_bool bEne, gmx_bool bDR, gmx_bool bOR,
                 if (opts->annealing[i] != eannNO)
                 {
                     fprintf(log, "Current ref_t for group %s: %8.1f\n",
-                            *(groups->groupNames[groups->groups[SimulationAtomGroupType::TemperatureCoupling].nm_ind[i]]),
+                            *(groups->groupNames[groups->groups[SimulationAtomGroupType::TemperatureCoupling][i]]),
                             opts->ref_t[i]);
                 }
             }
@@ -1536,10 +1559,10 @@ void print_ebin(ener_file_t fp_ene, gmx_bool bEne, gmx_bool bDR, gmx_bool bOR,
                     n = 0;
                     for (i = 0; (i < md->nEg); i++)
                     {
-                        ni = groups->groups[SimulationAtomGroupType::EnergyOutput].nm_ind[i];
+                        ni = groups->groups[SimulationAtomGroupType::EnergyOutput][i];
                         for (j = i; (j < md->nEg); j++)
                         {
-                            nj = groups->groups[SimulationAtomGroupType::EnergyOutput].nm_ind[j];
+                            nj = groups->groups[SimulationAtomGroupType::EnergyOutput][j];
                             sprintf(buf, "%s-%s", *(groups->groupNames[ni]),
                                     *(groups->groupNames[nj]));
                             md->print_grpnms[n++] = gmx_strdup(buf);
@@ -1575,7 +1598,7 @@ void print_ebin(ener_file_t fp_ene, gmx_bool bEne, gmx_bool bDR, gmx_bool bOR,
                         "Group", "Ux", "Uy", "Uz");
                 for (i = 0; (i < md->nU); i++)
                 {
-                    ni = groups->groups[SimulationAtomGroupType::Acceleration].nm_ind[i];
+                    ni = groups->groups[SimulationAtomGroupType::Acceleration][i];
                     fprintf(log, "%15s", *groups->groupNames[ni]);
                     pr_ebin(log, md->ebin, md->iu+3*i, 3, 3, mode, FALSE);
                 }

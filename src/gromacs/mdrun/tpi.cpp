@@ -160,7 +160,6 @@ Integrator::do_tpi()
     real                   *mass_cavity = nullptr, mass_tot;
     int                     nbin;
     double                  invbinw, *bin, refvolshift, logV, bUlogV;
-    real                    prescorr, enercorr, dvdlcorr;
     gmx_bool                bEnergyOutOfBounds;
     const char             *tpid_leg[2] = {"direct", "reweighted"};
     auto                    mdatoms     = mdAtoms->mdatoms();
@@ -349,7 +348,7 @@ Integrator::do_tpi()
         }
     }
 
-    ngid   = groups->groups[SimulationAtomGroupType::EnergyOutput].nr;
+    ngid   = groups->groups[SimulationAtomGroupType::EnergyOutput].size();
     // TODO: Figure out which energy group to use
 #if 0
     gid_tp = GET_CGINFO_GID(fr->cginfo[cg_tp]);
@@ -401,7 +400,7 @@ Integrator::do_tpi()
         for (i = 0; i < ngid; i++)
         {
             sprintf(str, "f. <U\\sVdW %s\\Ne\\S-\\betaU\\N>",
-                    *(groups->groupNames[groups->groups[SimulationAtomGroupType::EnergyOutput].nm_ind[i]]));
+                    *(groups->groupNames[groups->groups[SimulationAtomGroupType::EnergyOutput][i]]));
             leg[e++] = gmx_strdup(str);
         }
         if (bDispCorr)
@@ -414,7 +413,7 @@ Integrator::do_tpi()
             for (i = 0; i < ngid; i++)
             {
                 sprintf(str, "f. <U\\sCoul %s\\Ne\\S-\\betaU\\N>",
-                        *(groups->groupNames[groups->groups[SimulationAtomGroupType::EnergyOutput].nm_ind[i]]));
+                        *(groups->groupNames[groups->groups[SimulationAtomGroupType::EnergyOutput][i]]));
                 leg[e++] = gmx_strdup(str);
             }
             if (bRFExcl)
@@ -670,14 +669,21 @@ Integrator::do_tpi()
             bStateChanged = FALSE;
             bNS           = FALSE;
 
-            /* Calculate long range corrections to pressure and energy */
-            calc_dispcorr(inputrec, fr, state_global->box,
-                          lambda, pres, vir, &prescorr, &enercorr, &dvdlcorr);
-            /* figure out how to rearrange the next 4 lines MRS 8/4/2009 */
-            enerd->term[F_DISPCORR]  = enercorr;
-            enerd->term[F_EPOT]     += enercorr;
-            enerd->term[F_PRES]     += prescorr;
-            enerd->term[F_DVDL_VDW] += dvdlcorr;
+            if (fr->dispersionCorrection)
+            {
+                /* Calculate long range corrections to pressure and energy */
+                const DispersionCorrection::Correction correction =
+                    fr->dispersionCorrection->calculate(state_global->box, lambda);
+                /* figure out how to rearrange the next 4 lines MRS 8/4/2009 */
+                enerd->term[F_DISPCORR] = correction.energy;
+                enerd->term[F_EPOT]    += correction.energy;
+                enerd->term[F_PRES]    += correction.pressure;
+                enerd->term[F_DVDL]    += correction.dvdl;
+            }
+            else
+            {
+                enerd->term[F_DISPCORR]  = 0;
+            }
 
             epot               = enerd->term[F_EPOT];
             bEnergyOutOfBounds = FALSE;

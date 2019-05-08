@@ -683,7 +683,8 @@ static void alternatePmeNbGpuWaitReduce(nonbonded_verlet_t                  *nbv
                                                      flags,
                                                      Nbnxm::AtomLocality::Local,
                                                      haveOtherWork,
-                                                     enerd->grpp.ener[egLJSR], enerd->grpp.ener[egCOULSR],
+                                                     enerd->grpp.ener[egLJSR].data(),
+                                                     enerd->grpp.ener[egCOULSR].data(),
                                                      fshift, completionType);
             wallcycle_stop(wcycle, ewcWAIT_GPU_NB_L);
             // To get the call count right, when the task finished we
@@ -1296,7 +1297,7 @@ void do_force(FILE                                     *fplog,
     do_force_lowlevel(fr, inputrec, &(top->idef),
                       cr, ms, nrnb, wcycle, mdatoms,
                       as_rvec_array(x.unpaddedArrayRef().data()), hist, forceOut.f, &forceOut.forceWithVirial, enerd, fcd,
-                      box, lambda.data(), graph, &(top->excls), fr->mu_tot,
+                      box, lambda.data(), graph, fr->mu_tot,
                       flags,
                       ddBalanceRegionHandler);
 
@@ -1322,7 +1323,8 @@ void do_force(FILE                                     *fplog,
                 Nbnxm::gpu_wait_finish_task(nbv->gpu_nbv,
                                             flags, Nbnxm::AtomLocality::NonLocal,
                                             ppForceWorkload->haveGpuBondedWork,
-                                            enerd->grpp.ener[egLJSR], enerd->grpp.ener[egCOULSR],
+                                            enerd->grpp.ener[egLJSR].data(),
+                                            enerd->grpp.ener[egCOULSR].data(),
                                             fr->fshift);
                 cycles_wait_gpu += wallcycle_stop(wcycle, ewcWAIT_GPU_NB_NL);
             }
@@ -1381,7 +1383,8 @@ void do_force(FILE                                     *fplog,
         wallcycle_start(wcycle, ewcWAIT_GPU_NB_L);
         Nbnxm::gpu_wait_finish_task(nbv->gpu_nbv,
                                     flags, Nbnxm::AtomLocality::Local, ppForceWorkload->haveGpuBondedWork,
-                                    enerd->grpp.ener[egLJSR], enerd->grpp.ener[egCOULSR],
+                                    enerd->grpp.ener[egLJSR].data(),
+                                    enerd->grpp.ener[egCOULSR].data(),
                                     fr->fshift);
         float cycles_tmp = wallcycle_stop(wcycle, ewcWAIT_GPU_NB_L);
 
