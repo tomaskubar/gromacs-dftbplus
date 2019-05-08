@@ -59,7 +59,7 @@ enum {
     ewcWAIT_GPU_NB_NL, ewcWAIT_GPU_NB_L, ewcNB_XF_BUF_OPS,
     ewcVSITESPREAD, ewcPULLPOT, ewcAWH,
     ewcTRAJ, ewcUPDATE, ewcCONSTR, ewcMoveE, ewcROT, ewcROTadd, ewcSWAP, ewcIMD,
-    ewcTEST, ewcNR
+    ewcTEST, ewcQM, ewcNR
 };
 
 enum {

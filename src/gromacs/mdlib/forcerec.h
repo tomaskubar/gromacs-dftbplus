@@ -130,7 +130,8 @@ void init_forcerec(FILE                             *fplog,
                    const gmx_device_info_t          *deviceInfo,
                    bool                              useGpuForBonded,
                    gmx_bool                          bNoSolvOpt,
-                   real                              print_force);
+                   real                              print_force,
+                   const gmx_wallcycle_t             wcycle);
 
 /*! \brief Divide exclusions over threads
  *

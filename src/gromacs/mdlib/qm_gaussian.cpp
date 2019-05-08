@@ -408,7 +408,7 @@ static void write_gaussian_SH_input(int step, gmx_bool swap,
                 qm->xQM[i][ZZ]/BOHR2NM);
     }
     /* MM point charge data */
-    if (QMMMrec->QMMMscheme != eQMMMschemeoniom && mm->nrMMatoms)
+    if (mm->nrMMatoms)
     {
         fprintf(out, "\n");
         for (i = 0; i < mm->nrMMatoms; i++)
@@ -500,7 +500,7 @@ static void write_gaussian_input(int step, const t_forcerec *fr, t_QMrec *qm, t_
                     eQMbasis_names[qm->QMbasis]);
         }
     }
-    if (QMMMrec->QMMMscheme == eQMMMschemenormal && mm->nrMMatoms)
+    if (mm->nrMMatoms)
     {
         fprintf(out, " %s",
                 "Charge ");
@@ -560,7 +560,7 @@ static void write_gaussian_input(int step, const t_forcerec *fr, t_QMrec *qm, t_
 
 
     /* MM point charge data */
-    if (QMMMrec->QMMMscheme != eQMMMschemeoniom && mm->nrMMatoms)
+    if (mm->nrMMatoms)
     {
         fprintf(stderr, "nr mm atoms in gaussian.c = %d\n", mm->nrMMatoms);
         fprintf(out, "\n");

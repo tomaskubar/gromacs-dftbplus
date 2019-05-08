@@ -640,7 +640,8 @@ int gmx_pmeonly(struct gmx_pme_t *pme,
                        output.coulombVirial_, output.lennardJonesVirial_,
                        &output.coulombEnergy_, &output.lennardJonesEnergy_,
                        lambda_q, lambda_lj, &dvdlambda_q, &dvdlambda_lj,
-                       pmeFlags);
+                       pmeFlags,
+                       FALSE, FALSE, 0, nullptr);
             output.forces_ = pme_pp->f;
         }
 

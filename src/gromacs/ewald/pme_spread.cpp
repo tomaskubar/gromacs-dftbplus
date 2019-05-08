@@ -858,7 +858,8 @@ static void sum_fftgrid_dd(const gmx_pme_t *pme, real *fftgrid, int grid_index)
 void spread_on_grid(const gmx_pme_t *pme,
                     const pme_atomcomm_t *atc, const pmegrids_t *grids,
                     gmx_bool bCalcSplines, gmx_bool bSpread,
-                    real *fftgrid, gmx_bool bDoSplines, int grid_index)
+                    real *fftgrid, gmx_bool bDoSplines, int grid_index,
+                    bool bForQMMM)
 {
     int nthread, thread;
 #ifdef PME_TIME_THREADS
@@ -874,7 +875,7 @@ void spread_on_grid(const gmx_pme_t *pme,
 #ifdef PME_TIME_THREADS
     c1 = omp_cyc_start();
 #endif
-    if (bCalcSplines)
+    if (bCalcSplines || bForQMMM)
     {
 #pragma omp parallel for num_threads(nthread) schedule(static)
         for (thread = 0; thread < nthread; thread++)
@@ -932,13 +933,14 @@ void spread_on_grid(const gmx_pme_t *pme,
                 }
             }
 
-            if (bCalcSplines)
+            if (bCalcSplines || bForQMMM)
             {
                 make_bsplines(spline->theta, spline->dtheta, pme->pme_order,
-                              atc->fractx, spline->n, spline->ind, atc->coefficient, bDoSplines);
+                              atc->fractx, spline->n, spline->ind, atc->coefficient, bDoSplines || bForQMMM);
+                /* With QM/MM, create splines also on QM atoms - which carry no charge. */
             }
 
-            if (bSpread)
+            if (bSpread || bForQMMM)
             {
                 /* put local atoms on grid. */
                 const pmegrid_t *grid = pme->bUseThreads ? &grids->grid_th[thread] : &grids->grid;
@@ -965,7 +967,7 @@ void spread_on_grid(const gmx_pme_t *pme,
     cs2 += (double)c2;
 #endif
 
-    if (bSpread && pme->bUseThreads)
+    if ((bSpread || bForQMMM) && pme->bUseThreads)
     {
 #ifdef PME_TIME_THREADS
         c3 = omp_cyc_start();
@@ -1014,3 +1016,4 @@ void spread_on_grid(const gmx_pme_t *pme,
     }
 #endif
 }
+

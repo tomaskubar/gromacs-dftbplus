@@ -243,7 +243,7 @@ gmx_option_multichoice(
     GMX_QMMM_PROGRAM
     "QM package for QM/MM"
     None
-    none gaussian mopac gamess orca)
+    none gaussian mopac gamess orca dftbplus)
 
 gmx_dependent_cache_variable(GMX_SIMD_REF_FLOAT_WIDTH  "Reference SIMD single precision width" STRING "4" "GMX_SIMD STREQUAL REFERENCE")
 gmx_dependent_cache_variable(GMX_SIMD_REF_DOUBLE_WIDTH "Reference SIMD double precision width" STRING "2" "GMX_SIMD STREQUAL REFERENCE")
@@ -693,6 +693,8 @@ elseif(${GMX_QMMM_PROGRAM} STREQUAL "GAMESS")
     set(GMX_QMMM_GAMESS 1)
 elseif(${GMX_QMMM_PROGRAM} STREQUAL "ORCA")
     set(GMX_QMMM_ORCA 1)
+elseif(${GMX_QMMM_PROGRAM} STREQUAL "DFTBPLUS")
+    set(GMX_QMMM_DFTBPLUS 1)
 elseif(${GMX_QMMM_PROGRAM} STREQUAL "NONE")
     # nothing to do
 else()

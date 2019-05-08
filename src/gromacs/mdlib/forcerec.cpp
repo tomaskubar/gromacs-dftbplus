@@ -1615,7 +1615,8 @@ void init_forcerec(FILE                             *fp,
                    const gmx_device_info_t          *deviceInfo,
                    const bool                        useGpuForBonded,
                    gmx_bool                          bNoSolvOpt,
-                   real                              print_force)
+                   real                              print_force,
+                   gmx_wallcycle_t                   wcycle)
 {
     int            m, negp_pp, negptable, egi, egj;
     real           rtab;
@@ -2265,7 +2266,7 @@ void init_forcerec(FILE                             *fp,
                            "version. Please get in touch with the developers if you find the support useful, "
                            "as help is needed if the functionality is to continue to be available.");
             fr->qr = mk_QMMMrec();
-            init_QMMMrec(cr, mtop, ir, fr);
+            init_QMMMrec(cr, mtop, ir, fr, wcycle);
         }
         else
         {

@@ -299,7 +299,8 @@ struct do_fspline
 void gather_f_bsplines(const gmx_pme_t *pme, const real *grid,
                        gmx_bool bClearF, const pme_atomcomm_t *atc,
                        const splinedata_t *spline,
-                       real scale)
+                       real scale,
+                       bool bForQMMM, int nrQMatoms, bool bMMforcesOnly)
 {
     /* sum forces for local particles */
 
@@ -321,7 +322,7 @@ void gather_f_bsplines(const gmx_pme_t *pme, const real *grid,
     /* Note that unrolling this loop by templating this function on order
      * deteriorates performance significantly with gcc5/6/7.
      */
-    for (int nn = 0; nn < spline->n; nn++)
+    for (int nn = 0; nn < spline->n && (!bForQMMM || nn < nrQMatoms || bMMforcesOnly); nn++)
     {
         const int  n           = spline->ind[nn];
         const real coefficient = scale*atc->coefficient[n];
@@ -332,7 +333,7 @@ void gather_f_bsplines(const gmx_pme_t *pme, const real *grid,
             force[n][YY] = 0;
             force[n][ZZ] = 0;
         }
-        if (coefficient != 0)
+        if (coefficient != 0 || bForQMMM)
         {
             RVec       f;
             const auto spline_func = do_fspline(pme, grid, atc, spline, nn);
@@ -350,9 +351,10 @@ void gather_f_bsplines(const gmx_pme_t *pme, const real *grid,
                     break;
             }
 
-            force[n][XX] += -coefficient*( f[XX]*nx*rxx );
-            force[n][YY] += -coefficient*( f[XX]*nx*ryx + f[YY]*ny*ryy );
-            force[n][ZZ] += -coefficient*( f[XX]*nx*rzx + f[YY]*ny*rzy + f[ZZ]*nz*rzz );
+            /* For MM forces, calculate force divided by charge, so do not multiply by charge. */
+            force[n][XX] += -(bForQMMM && bMMforcesOnly ? 1. : coefficient) * ( f[XX]*nx*rxx );
+            force[n][YY] += -(bForQMMM && bMMforcesOnly ? 1. : coefficient) * ( f[XX]*nx*ryx + f[YY]*ny*ryy );
+            force[n][ZZ] += -(bForQMMM && bMMforcesOnly ? 1. : coefficient) * ( f[XX]*nx*rzx + f[YY]*ny*rzy + f[ZZ]*nz*rzz );
         }
     }
     /* Since the energy and not forces are interpolated
@@ -366,9 +368,9 @@ void gather_f_bsplines(const gmx_pme_t *pme, const real *grid,
      */
 }
 
-
 real gather_energy_bsplines(gmx_pme_t *pme, const real *grid,
-                            pme_atomcomm_t *atc)
+                            pme_atomcomm_t *atc,
+                            int nrQMatoms, real *potential) /* nrQMatoms == 0 means no QM/MM */
 {
     splinedata_t *spline;
     int           n, ithx, ithy, ithz, i0, j0, k0;
@@ -384,11 +386,14 @@ real gather_energy_bsplines(gmx_pme_t *pme, const real *grid,
     order = pme->pme_order;
 
     energy = 0;
-    for (n = 0; (n < atc->n); n++)
+    /* For QM/MM, do it only for QM atoms because
+     * we are not interested in the potential on MM atoms at this point.
+     */
+    for (n = 0; (n < atc->n && (nrQMatoms == 0 || n < nrQMatoms) ); n++)
     {
         coefficient      = atc->coefficient[n];
 
-        if (coefficient != 0)
+        if (coefficient != 0 || nrQMatoms > 0) /* For QM/MM, do not check the (MM) charge which is set to 0. */
         {
             idxptr = atc->idx[n];
             norder = n*order;
@@ -423,8 +428,13 @@ real gather_energy_bsplines(gmx_pme_t *pme, const real *grid,
             }
 
             energy += pot*coefficient;
+            if (nrQMatoms > 0)
+            {
+                potential[n] = pot;
+            }
         }
     }
 
     return energy;
 }
+

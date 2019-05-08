@@ -189,6 +189,9 @@
 /* Use ORCA for QM-MM calculations */
 #cmakedefine01 GMX_QMMM_ORCA
 
+/* Use DFTB+ for QM-MM calculations */
+#cmakedefine01 GMX_QMMM_DFTBPLUS
+
 /* Use cycle counters */
 #cmakedefine01 GMX_CYCLECOUNTERS
 

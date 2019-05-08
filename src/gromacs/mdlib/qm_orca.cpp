@@ -173,7 +173,7 @@ static void write_orca_input(const t_forcerec *fr, t_QMrec *qm, t_MMrec *mm)
     fprintf(out, "*\n");
 
     /* write the MM point charge data */
-    if (QMMMrec->QMMMscheme != eQMMMschemeoniom && mm->nrMMatoms)
+    if (mm->nrMMatoms)
     {
         /* name of the point charge file */
         snew(pcFilename, 200);
@@ -292,7 +292,7 @@ static real read_orca_output(rvec QMgrad[], rvec MMgrad[], const t_forcerec *fr,
     fclose(engrad);
     /* write the MM point charge data
      */
-    if (QMMMrec->QMMMscheme != eQMMMschemeoniom && mm->nrMMatoms)
+    if (mm->nrMMatoms)
     {
         sprintf(orca_pcgradFilename, "%s.pcgrad", qm->orca_basename);
         pcgrad = fopen(orca_pcgradFilename, "r");

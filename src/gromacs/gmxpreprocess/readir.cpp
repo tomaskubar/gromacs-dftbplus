@@ -1335,6 +1335,7 @@ void check_ir(const char *mdparin, t_inputrec *ir, t_gromppopts *opts,
         warning_error(wi, warn_buf);
     }
 
+    /* Neither of the following things should be problematic.
     if (ir->bQMMM)
     {
         if (ir->cutoff_scheme != ecutsGROUP)
@@ -1348,6 +1349,7 @@ void check_ir(const char *mdparin, t_inputrec *ir, t_gromppopts *opts,
             warning_error(wi, buf);
         }
     }
+    */
 
     if (ir->bAdress)
     {

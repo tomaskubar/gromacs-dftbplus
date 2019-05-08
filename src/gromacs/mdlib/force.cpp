@@ -123,7 +123,7 @@ void do_force_lowlevel(t_forcerec                   *fr,
     /* do QMMM first if requested */
     if (fr->bQMMM)
     {
-        enerd->term[F_EQM] = calculate_QMMM(cr, forceForUseWithShiftForces, fr);
+        enerd->term[F_EQM] = calculate_QMMM(cr, fr, forceForUseWithShiftForces, wcycle);
     }
 
     /* Call the short range functions all in one go. */
@@ -322,7 +322,8 @@ void do_force_lowlevel(t_forcerec                   *fr,
                                         lambda[efptCOUL], lambda[efptVDW],
                                         &ewaldOutput.dvdl[efptCOUL],
                                         &ewaldOutput.dvdl[efptVDW],
-                                        pme_flags);
+                                        pme_flags,
+                                        FALSE, FALSE, 0, nullptr);
                     wallcycle_stop(wcycle, ewcPMEMESH);
                     if (status != 0)
                     {

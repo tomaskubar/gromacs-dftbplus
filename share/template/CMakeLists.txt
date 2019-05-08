@@ -35,6 +35,19 @@
 add_executable(template template.cpp)
 target_link_libraries(template libgromacs ${GMX_EXE_LINKER_FLAGS})
 
+if (GMX_QMMM_DFTBPLUS)
+    LINK_DIRECTORIES(GMX_QMMM_DFTBPLUS_LIB)
+    add_library(libdftbplus STATIC IMPORTED)
+    set_target_properties(libdftbplus PROPERTIES IMPORTED_LOCATION ${GMX_QMMM_DFTBPLUS_LIB}/libdftb+.a)
+    add_library(libxmlf90 STATIC IMPORTED)
+    set_target_properties(libxmlf90 PROPERTIES IMPORTED_LOCATION ${GMX_QMMM_DFTBPLUS_LIB}/libxmlf90.a)
+    add_library(libdftd3 STATIC IMPORTED)
+    set_target_properties(libdftd3 PROPERTIES IMPORTED_LOCATION ${GMX_QMMM_DFTBPLUS_LIB}/libdftd3.a)
+#   add_library(gfortran-7.2 SHARED IMPORTED)
+#   set_target_properties(gfortran-7.2 PROPERTIES IMPORTED_LOCATION /usr/local/src/gcc-7.2.0-release/lib64/libgfortran.so.4)
+    target_link_libraries(template libdftbplus libxmlf90 libdftd3)
+endif()
+
 set(DOCUMENTATION_HTTP_URL_BASE
     http://jenkins.gromacs.org/job/Documentation_Nightly_master/javadoc)
 if (SOURCE_IS_SOURCE_DISTRIBUTION)

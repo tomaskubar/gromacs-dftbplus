@@ -1277,7 +1277,19 @@ void do_force(FILE                                     *fplog,
     /* update QMMMrec, if necessary */
     if (fr->bQMMM)
     {
-        update_QMMMrec(cr, fr, as_rvec_array(x.unpaddedArrayRef().data()), mdatoms, box);
+        /* In case the neighborlist has been updated,
+         * perform a new search for MM neighbors of QM atoms.
+         */
+        if (bNS)
+	    {
+	        update_QMMMrec_verlet_ns(cr, fr, as_rvec_array(x.unpaddedArrayRef().data()), mdatoms, box);
+            if (GMX_QMMM_DFTBPLUS)
+            {
+	            update_QMMMrec_dftb(cr, fr, as_rvec_array(x.unpaddedArrayRef().data()), mdatoms, box);
+            }
+	    }
+        /* Update the coordinates in any case. */
+	    update_QMMM_coord(cr, fr, as_rvec_array(x.unpaddedArrayRef().data()), mdatoms, box);
     }
 
     /* Compute the bonded and non-bonded energies and optionally forces */

@@ -643,6 +643,7 @@ gmx_pme_t *gmx_pme_init(const t_commrec         *cr,
                         const gmx_device_info_t *gpuInfo,
                         PmeGpuProgramHandle      pmeGpuProgram,
                         const gmx::MDLogger      & /*mdlog*/)
+                     /* const bool               bForQMMM) - extra QM/MM version not needed */
 {
     int               use_threads, sum_use_threads, i;
     ivec              ndata;
@@ -773,10 +774,10 @@ gmx_pme_t *gmx_pme_init(const t_commrec         *cr,
      * configures with free-energy, but that has never been tested.
      */
     pme->doCoulomb     = EEL_PME(ir->coulombtype);
-    pme->doLJ          = EVDW_PME(ir->vdwtype);
-    pme->bFEP_q        = ((ir->efep != efepNO) && bFreeEnergy_q);
-    pme->bFEP_lj       = ((ir->efep != efepNO) && bFreeEnergy_lj);
-    pme->bFEP          = (pme->bFEP_q || pme->bFEP_lj);
+    pme->doLJ          = /* !bForQMMM && */ EVDW_PME(ir->vdwtype);
+    pme->bFEP_q        = /* !bForQMMM && */ ((ir->efep != efepNO) && bFreeEnergy_q);
+    pme->bFEP_lj       = /* !bForQMMM && */ ((ir->efep != efepNO) && bFreeEnergy_lj);
+    pme->bFEP          = /* !bForQMMM && */ (pme->bFEP_q || pme->bFEP_lj);
     pme->nkx           = ir->nkx;
     pme->nky           = ir->nky;
     pme->nkz           = ir->nkz;
@@ -915,7 +916,7 @@ gmx_pme_t *gmx_pme_init(const t_commrec         *cr,
     }
     else
     {
-        pme->ngrids = DO_Q;
+        pme->ngrids = /* bForQMMM ? 1 : */ DO_Q;
     }
     snew(pme->fftgrid, pme->ngrids);
     snew(pme->cfftgrid, pme->ngrids);
@@ -1042,6 +1043,7 @@ void gmx_pme_reinit(struct gmx_pme_t **pmedata,
         *pmedata = gmx_pme_init(cr, numPmeDomains,
                                 &irc, homenr, pme_src->bFEP_q, pme_src->bFEP_lj, FALSE, ewaldcoeff_q, ewaldcoeff_lj,
                                 pme_src->nthread, pme_src->runMode, pme_src->gpu, nullptr, nullptr, dummyLogger);
+                                /* FALSE); -- no additional QM/MM version needed */
         //TODO this is mostly passing around current values
     }
     GMX_CATCH_ALL_AND_EXIT_WITH_FATAL_ERROR;
@@ -1083,9 +1085,9 @@ void gmx_pme_calc_energy(struct gmx_pme_t *pme, int n, rvec *x, real *q, real *V
     grid = &pme->pmegrid[PME_GRID_QA];
 
     /* Only calculate the spline coefficients, don't actually spread */
-    spread_on_grid(pme, atc, nullptr, TRUE, FALSE, pme->fftgrid[PME_GRID_QA], FALSE, PME_GRID_QA);
+    spread_on_grid(pme, atc, nullptr, TRUE, FALSE, pme->fftgrid[PME_GRID_QA], FALSE, PME_GRID_QA, FALSE);
 
-    *V = gather_energy_bsplines(pme, grid->grid.grid, atc);
+    *V = gather_energy_bsplines(pme, grid->grid.grid, atc, 0, nullptr);
 }
 
 /*! \brief Calculate initial Lorentz-Berthelot coefficients for LJ-PME */
@@ -1128,7 +1130,9 @@ int gmx_pme_do(struct gmx_pme_t *pme,
                real *energy_q,  real *energy_lj,
                real lambda_q,   real lambda_lj,
                real *dvdlambda_q, real *dvdlambda_lj,
-               int flags)
+               int flags,
+               bool bForQMMM,   bool bMMforcesOnly,
+               int nrQMatoms,   double pot[])
 {
     GMX_ASSERT(pme->runMode == PmeRunMode::CPU, "gmx_pme_do should not be called on the GPU PME run.");
 
@@ -1151,6 +1155,7 @@ int gmx_pme_do(struct gmx_pme_t *pme,
     int                  fep_states_lj           = pme->bFEP_lj ? 2 : 1;
     const gmx_bool       bCalcEnerVir            = (flags & GMX_PME_CALC_ENER_VIR) != 0;
     const gmx_bool       bBackFFT                = (flags & (GMX_PME_CALC_F | GMX_PME_CALC_POT)) != 0;
+    const gmx_bool       bCalcPot                = bForQMMM && ((flags & GMX_PME_CALC_POT) != 0);
     const gmx_bool       bCalcF                  = (flags & GMX_PME_CALC_F) != 0;
 
     /* We could be passing lambda!=1 while no q or LJ is actually perturbed */
@@ -1207,7 +1212,10 @@ int gmx_pme_do(struct gmx_pme_t *pme,
      * that don't yet have them.
      */
 
-    bDoSplines = pme->bFEP || (pme->doCoulomb && pme->doLJ);
+    bDoSplines = bForQMMM ? TRUE : pme->bFEP || (pme->doCoulomb && pme->doLJ);
+    /* For QM/MM, construct the splines for all particles.
+     * The reason is that QM atoms do not carry charges, but still we want them.
+     */
 
     /* We need a maximum of four separate PME calculations:
      * grid_index=0: Coulomb PME with charges from state A
@@ -1219,7 +1227,7 @@ int gmx_pme_do(struct gmx_pme_t *pme,
      */
 
     /* If we are doing LJ-PME with LB, we only do Q here */
-    max_grid_index = (pme->ljpme_combination_rule == eljpmeLB) ? DO_Q : DO_Q_AND_LJ;
+    max_grid_index = bForQMMM ? 1 : ((pme->ljpme_combination_rule == eljpmeLB) ? DO_Q : DO_Q_AND_LJ);
 
     for (grid_index = 0; grid_index < max_grid_index; ++grid_index)
     {
@@ -1284,7 +1292,17 @@ int gmx_pme_do(struct gmx_pme_t *pme,
             wallcycle_start(wcycle, ewcPME_SPREAD);
 
             /* Spread the coefficients on a grid */
-            spread_on_grid(pme, &pme->atc[0], pmegrid, bFirst, TRUE, fftgrid, bDoSplines, grid_index);
+            if (!bForQMMM || bMMforcesOnly)
+            {
+                spread_on_grid(pme, &pme->atc[0], pmegrid, bFirst, TRUE, fftgrid, bDoSplines, grid_index, FALSE);
+            }
+            else
+            {
+                /* last parameter: bForQMMM == TRUE (the above case does not require it)
+                 * TO MODIFY (REALLY?)
+                 */
+                spread_on_grid(pme, &pme->atc[0], pmegrid, bFirst, TRUE, fftgrid, bDoSplines, grid_index, TRUE);
+            }
 
             if (bFirst)
             {
@@ -1416,6 +1434,28 @@ int gmx_pme_do(struct gmx_pme_t *pme,
             unwrap_periodic_pmegrid(pme, grid);
         }
 
+        if (bCalcPot)
+        {
+            /* Interpolate the elstat. potential induced on the QM atoms. */
+
+#pragma omp parallel for num_threads(pme->nthread) schedule(static)
+            for (thread = 0; thread < pme->nthread; thread++)
+            {
+                try
+                {
+                    gather_energy_bsplines(pme, grid, atc,
+                                           nrQMatoms, pot);
+                }
+                GMX_CATCH_ALL_AND_EXIT_WITH_FATAL_ERROR;
+            }
+
+            inc_nrnb(nrnb, eNR_GATHERFBSP, /* TODO */
+                     pme->pme_order*pme->pme_order*pme->pme_order*pme->atc[0].n);
+            /* Note: this wallcycle region is opened above inside an OpenMP
+               region, so take care if refactoring code here. */
+            wallcycle_stop(wcycle, ewcPME_GATHER); /* TODO */
+        }
+
         if (bCalcF)
         {
             /* interpolate forces for our local atoms */
@@ -1432,9 +1472,21 @@ int gmx_pme_do(struct gmx_pme_t *pme,
             {
                 try
                 {
-                    gather_f_bsplines(pme, grid, bClearF, atc,
-                                      &atc->spline[thread],
-                                      pme->bFEP ? (grid_index % 2 == 0 ? 1.0-lambda : lambda) : 1.0);
+                    if (!bForQMMM)
+                    {
+                        gather_f_bsplines(pme, grid, bClearF, atc,
+                                          &atc->spline[thread],
+                                          pme->bFEP ? (grid_index % 2 == 0 ? 1.0-lambda : lambda) : 1.0,
+                                          FALSE, 0, FALSE);
+                    }
+                    else
+                    {
+                        /* Do clear the force array for QM/MM. */
+                        gather_f_bsplines(pme, grid, TRUE, atc,
+                                          &atc->spline[thread],
+                                          1.0,
+                                          TRUE, nrQMatoms, bMMforcesOnly);
+                    }
                 }
                 GMX_CATCH_ALL_AND_EXIT_WITH_FATAL_ERROR;
             }
@@ -1551,7 +1603,7 @@ int gmx_pme_do(struct gmx_pme_t *pme,
                 {
                     wallcycle_start(wcycle, ewcPME_SPREAD);
                     /* Spread the c6 on a grid */
-                    spread_on_grid(pme, &pme->atc[0], pmegrid, bFirst, TRUE, fftgrid, bDoSplines, grid_index);
+                    spread_on_grid(pme, &pme->atc[0], pmegrid, bFirst, TRUE, fftgrid, bDoSplines, grid_index, FALSE);
 
                     if (bFirst)
                     {
@@ -1705,7 +1757,8 @@ int gmx_pme_do(struct gmx_pme_t *pme,
                             {
                                 gather_f_bsplines(pme, grid, bClearF, &pme->atc[0],
                                                   &pme->atc[0].spline[thread],
-                                                  scale);
+                                                  scale,
+                                                  FALSE, 0, FALSE);
                             }
                             GMX_CATCH_ALL_AND_EXIT_WITH_FATAL_ERROR;
                         }

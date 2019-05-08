@@ -148,6 +148,11 @@ gmx_pme_t *gmx_pme_init(const t_commrec *cr,
                         const gmx_device_info_t *gpuInfo,
                         PmeGpuProgramHandle pmeGpuProgram,
                         const gmx::MDLogger &mdlog);
+                        /* In the end, we do not need to call this function
+                         * additionaly for QM/MM, so remove this.
+                         *
+                        const bool bForQMMM);
+                         */
 
 /*! \brief Destroys the PME data structure.*/
 void gmx_pme_destroy(gmx_pme_t *pme);
@@ -187,7 +192,9 @@ int gmx_pme_do(struct gmx_pme_t *pme,
                real *energy_q,  real *energy_lj,
                real lambda_q,   real lambda_lj,
                real *dvdlambda_q, real *dvdlambda_lj,
-               int flags);
+               int flags,
+               bool bForQMMM,   bool bMMforcesOnly,
+               int nrQMatoms,   double pot[]);
 
 /*! \brief Called on the nodes that do PME exclusively */
 int gmx_pmeonly(struct gmx_pme_t *pme,
