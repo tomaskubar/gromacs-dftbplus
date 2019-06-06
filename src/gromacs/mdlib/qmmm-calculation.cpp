@@ -455,9 +455,12 @@ void gradient_QM_MM(t_QMMMrec *qr, const t_commrec *cr, gmx_wallcycle_t wcycle, 
   {
       clear_rvec(MMgrad[j]);
   }
-  for (int j=0; j<ne_full; j++)
+  if (variant == eqmmmPME)
   {
+    for (int j=0; j<ne_full; j++)
+    {
       clear_rvec(MMgrad_full[j]);
+    }
   }
 
   switch (variant)
