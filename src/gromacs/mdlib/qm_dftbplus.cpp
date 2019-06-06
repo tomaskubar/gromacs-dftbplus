@@ -138,7 +138,7 @@ void calcQMextPotPME(Context *cont, double *q, double *extpot)
   {
       /* PERFORM THE REAL CALCULATION */
       real *extpot_real;
-      extpot_real = new real [n];
+      snew(extpot_real, n);
       for (int i=0; i<n; i++)
       {
           cont->fr->qr->qm[0]->QMcharges[i] = (real) -q[i]; // check sign TODO
@@ -148,7 +148,7 @@ void calcQMextPotPME(Context *cont, double *q, double *extpot)
       {
           extpot[i] = (double) - extpot_real[i]; // sign OK
       }
-      delete[] extpot_real;
+      sfree(extpot_real);
   }
   else
   {
@@ -420,13 +420,13 @@ real call_dftbplus(const t_forcerec *fr, const t_commrec *cr,
         sfree(MMgrad_full);
     }
 
-    delete[] x;
-    delete[] grad;
-    delete[] potgrad;
-    delete[] q;
-    delete[] pot;
-    delete[] pot_sr;
-    delete[] pot_lr;
+    sfree(x);
+    sfree(grad);
+    sfree(potgrad);
+    sfree(q);
+    sfree(pot);
+    sfree(pot_sr);
+    sfree(pot_lr);
 
     fprintf(f_q, "%8d", step);
     for (int i=0; i<n; i++)
@@ -448,3 +448,4 @@ int
 #endif
 
 #pragma GCC diagnostic pop
+
