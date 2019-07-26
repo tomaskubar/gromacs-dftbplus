@@ -167,7 +167,7 @@ void write_sto_conf(const char *outfile, const char *title, const t_atoms *atoms
 }
 
 void write_sto_conf_mtop(const char *outfile, const char *title,
-                         gmx_mtop_t *mtop,
+                         const gmx_mtop_t *mtop,
                          const rvec x[], const rvec *v, int ePBC, const matrix box)
 {
     int     ftp;
@@ -462,8 +462,7 @@ void readConfAndTopology(const char *infile,
     *haveTopology = fn2bTPX(infile);
     if (*haveTopology)
     {
-        t_tpxheader header;
-        read_tpxheader(infile, &header, TRUE);
+        TpxFileHeader header = readTpxHeader(infile, true);
         if (x)
         {
             snew(*x, header.natoms);

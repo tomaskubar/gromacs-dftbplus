@@ -87,15 +87,18 @@ GridSet::GridSet(const int                 ePBC,
                  const gmx_domdec_zones_t *ddZones,
                  const PairlistType        pairlistType,
                  const bool                haveFep,
-                 const int                 numThreads) :
+                 const int                 numThreads,
+                 gmx::PinningPolicy        pinningPolicy) :
     domainSetup_(ePBC, numDDCells, ddZones),
-    grids_(numDDZones(domainSetup_.haveMultipleDomainsPerDim), pairlistType),
+    grids_(numDDZones(domainSetup_.haveMultipleDomainsPerDim), Grid(pairlistType, haveFep_)),
     haveFep_(haveFep),
     numRealAtomsLocal_(0),
     numRealAtomsTotal_(0),
     gridWork_(numThreads)
 {
     clear_mat(box_);
+    changePinningPolicy(&gridSetData_.cells, pinningPolicy);
+    changePinningPolicy(&gridSetData_.atomIndices, pinningPolicy);
 }
 
 void GridSet::setLocalAtomOrder()
@@ -110,8 +113,8 @@ void GridSet::setLocalAtomOrder()
         int       cellIndex = grid.firstCellInColumn(cxy)*grid.geometry().numAtomsPerCell;
         for (int i = 0; i < numAtoms; i++)
         {
-            atomIndices_[cellIndex] = atomIndex;
-            cells_[atomIndex]       = cellIndex;
+            gridSetData_.atomIndices[cellIndex] = atomIndex;
+            gridSetData_.cells[atomIndex]       = cellIndex;
             atomIndex++;
             cellIndex++;
         }
@@ -179,11 +182,14 @@ void GridSet::putOnGrid(const matrix                    box,
     /* We always use the home zone (grid[0]) for setting the cell size,
      * since determining densities for non-local zones is difficult.
      */
+    // grid data used in GPU transfers inherits the gridset pinnin policy
+    auto pinPolicy = gridSetData_.cells.get_allocator().pinningPolicy();
     grid.setDimensions(ddZone, n - numAtomsMoved,
                        lowerCorner, upperCorner,
                        atomDensity,
                        maxAtomGroupRadius,
-                       haveFep_);
+                       haveFep_,
+                       pinPolicy);
 
     for (GridWork &work : gridWork_)
     {
@@ -191,7 +197,7 @@ void GridSet::putOnGrid(const matrix                    box,
     }
 
     /* Make space for the new cell indices */
-    cells_.resize(atomEnd);
+    gridSetData_.cells.resize(atomEnd);
 
     const int nthread = gmx_omp_nthreads_get(emntPairsearch);
 
@@ -204,15 +210,14 @@ void GridSet::putOnGrid(const matrix                    box,
                                     updateGroupsCog,
                                     atomStart, atomEnd, x,
                                     ddZone, move, thread, nthread,
-                                    cells_, gridWork_[thread].numAtomsPerColumn);
+                                    gridSetData_.cells,
+                                    gridWork_[thread].numAtomsPerColumn);
         }
         GMX_CATCH_ALL_AND_EXIT_WITH_FATAL_ERROR;
     }
 
-    GridSetData gridSetData = getGridSetData();
-
     /* Copy the already computed cell indices to the grid and sort, when needed */
-    grid.setCellIndices(ddZone, cellOffset, &gridSetData, gridWork_,
+    grid.setCellIndices(ddZone, cellOffset, &gridSetData_, gridWork_,
                         atomStart, atomEnd, atomInfo.data(), x, numAtomsMoved, nbat);
 
     if (ddZone == 0)
@@ -224,6 +229,14 @@ void GridSet::putOnGrid(const matrix                    box,
         /* We are done setting up all grids, we can resize the force buffers */
         nbat->resizeForceBuffers();
     }
+
+    int maxNumColumns = 0;
+    for (const auto &grid : grids())
+    {
+        maxNumColumns = std::max(maxNumColumns, grid.numColumns());
+    }
+    setNumColumnsMax(maxNumColumns);
+
 }
 
 } // namespace Nbnxm

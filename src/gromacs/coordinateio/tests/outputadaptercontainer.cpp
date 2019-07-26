@@ -32,8 +32,8 @@
  * To help us fund GROMACS development, we humbly ask that you cite
  * the research papers on the package. Check out http://www.gromacs.org.
  */
-/*!\file
- * \internal
+/*!\internal
+ * \file
  * \brief
  * Tests for outputadaptercontainer.
  *
@@ -72,7 +72,7 @@ TEST(OutputAdapterContainer, AddAdapter)
     OutputAdapterContainer container(CoordinateFileFlags::Base);
     container.addAdapter(
             std::make_unique<DummyOutputModule>(CoordinateFileFlags::Base),
-            CoordinateFileFlags::RequireNewFrameTime);
+            CoordinateFileFlags::RequireNewFrameStartTime);
     EXPECT_FALSE(container.isEmpty());
 }
 
@@ -91,11 +91,11 @@ TEST(OutputAdapterContainer, RejectDuplicateAdapter)
     OutputAdapterContainer container(CoordinateFileFlags::Base);
     EXPECT_NO_THROW(container.addAdapter(
                             std::make_unique<DummyOutputModule>(CoordinateFileFlags::Base),
-                            CoordinateFileFlags::RequireNewFrameTime));
+                            CoordinateFileFlags::RequireNewFrameStartTime));
     EXPECT_FALSE(container.isEmpty());
     EXPECT_THROW(container.addAdapter(
                          std::make_unique<DummyOutputModule>(CoordinateFileFlags::Base),
-                         CoordinateFileFlags::RequireNewFrameTime),
+                         CoordinateFileFlags::RequireNewFrameStartTime),
                  InternalError);
 }
 

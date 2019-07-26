@@ -98,12 +98,12 @@ void list_tpr(const char *fn,
     FILE         *gp;
     int           indent, atot;
     t_state       state;
-    t_tpxheader   tpx;
     gmx_mtop_t    mtop;
     t_topology    top;
 
-    read_tpxheader(fn, &tpx, TRUE);
-    t_inputrec     ir;
+    TpxFileHeader tpx = readTpxHeader(fn, true);
+    t_inputrec    ir;
+
     read_tpx_state(fn,
                    tpx.bIr ? &ir : nullptr,
                    &state,
@@ -739,7 +739,8 @@ int Dump::run()
     if (!inputTprFilename_.empty())
     {
         list_tpr(inputTprFilename_.c_str(), bShowNumbers_, bShowParams_,
-                 outputMdpFilename_.c_str(), bSysTop_, bOriginalInputrec_);
+                 outputMdpFilename_.empty() ? nullptr : outputMdpFilename_.c_str(),
+                 bSysTop_, bOriginalInputrec_);
     }
     else if (!inputTrajectoryFilename_.empty())
     {

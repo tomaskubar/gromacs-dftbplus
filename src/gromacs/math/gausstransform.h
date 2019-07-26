@@ -134,11 +134,11 @@ struct GaussianSpreadKernelParameters
     struct Shape
     {
         //! The width of the Gaussian function in lattice spacings
-        real sigma_;
+        DVec                sigma_;
         //! The range of the spreading function in multiples of sigma
-        real spreadWidthMultiplesOfSigma_;
+        double              spreadWidthMultiplesOfSigma_;
         //! The spread range in lattice coordinates
-        int  latticeSpreadRange() const;
+        IVec                latticeSpreadRange() const;
     };
     /*! \libinternal \brief Parameters that describe the kernel position and amplitude.
      */
@@ -152,16 +152,13 @@ struct GaussianSpreadKernelParameters
 };
 
 /*! \libinternal \brief Sums Gaussian values at three dimensional lattice coordinates.
- * The Gaussian is defined as
- * \f[
- *      A * \frac{1}{\sigma^3 \sqrt(2^3*\pi^3)} * \exp(-\frac{(x-x0)^2}{2 \sigma^2})
- * \f]
- * \verbatim
- *  x0:              X           x
- *                 /   \        / \
- *               --     --    --   --
- *  lattice: |    |    |    |    |    |    |
- * \endverbatim
+ * The Gaussian is defined as \f$A \frac{1}{\sigma^3 \sqrt(2^3\pi^3)} * \exp(-\frac{(x-x0)^2}{2 \sigma^2})\f$
+   \verbatim
+   x0:              X           x
+               /   \        / \
+             --     --    --   --
+   lattice: |    |    |    |    |    |    |
+   \endverbatim
  * The lattice has spacing 1, all coordinates are given with respect to the lattice
  * coordinates.
  */
@@ -178,6 +175,14 @@ class GaussTransform3D
         GaussTransform3D(const dynamicExtents3D &extent, const GaussianSpreadKernelParameters::Shape &globalParameters);
 
         ~GaussTransform3D();
+        //! Copy constructor
+        GaussTransform3D(const GaussTransform3D &other);
+        //! Copy assignment
+        GaussTransform3D &operator=(const GaussTransform3D &other);
+        //! Move constructor
+        GaussTransform3D(GaussTransform3D &&other) noexcept;
+        //! Move assignment
+        GaussTransform3D &operator=(GaussTransform3D &&other) noexcept;
         /*! \brief Add a three dimensional Gaussian with given amplitude at a coordinate.
          * \param[in] localParameters of the spreading kernel
          */
@@ -218,7 +223,7 @@ class IntegerBox
  * \param[in] range the distance from the center
  * \returns box describing the range of indices
  */
-IntegerBox spreadRangeWithinLattice(const IVec &center, dynamicExtents3D extent, int range);
+IntegerBox spreadRangeWithinLattice(const IVec &center, dynamicExtents3D extent, IVec range);
 
 /*! \internal \brief Evaluate the outer product of two number ranges.
  * Keeps the memory for the outer product allocated.

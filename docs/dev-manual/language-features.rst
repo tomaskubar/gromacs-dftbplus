@@ -56,7 +56,7 @@ a release.
   prototype.
 * Use ``not_null<T>`` pointers wherever possible to convey the
   semantics that a pointer to a valid is required, and a reference
-  is inappropriate. See also |linkrefnotnull|.
+  is inappropriate. See also |linkrefnotnull1| and |linkrefnotnull2|.
 * Use ``string_view`` in cases where you want to only use a read-only-sequence
   of characters instead of using ``const std::string &``. See also |linkrefstringview|.
   Because null termination expected by some C APIs (e.g. fopen, fputs, fprintf)
@@ -99,7 +99,11 @@ a release.
   "inherit to be reused, not to reuse." Also, you should not
   mix implementation and interface inheritance. For explanation please
   see |linkref7|.
-* Don't include unnecessary headers.
+* Don't include unnecessary headers. In header files, prefer to
+  forward declare the names of types used only "in name" in the header
+  file. This reduces compilation coupling and thus time. If a source
+  file also only uses the type by name (e.g. passing a pointer received
+  from the caller to a callee), then no include statements are needed!
 * Make liberal use of assertions to help document your intentions (but
   prefer to write the code such that no assertion is necessary).
 * Prefer ``GMX_ASSERT()`` and ``GMX_RELEASE_ASSERT()`` to naked
@@ -158,7 +162,8 @@ a release.
 .. |linkref7| replace:: `here <http://isocpp.github.io/CppCoreGuidelines/CppCoreGuidelines#c129-when-designing-a-class-hierarchy-distinguish-between-implementation-inheritance-and-interface-inheritance>`__
 .. |linkref8| replace:: `here <http://isocpp.github.io/CppCoreGuidelines/CppCoreGuidelines#Renum-class>`__
 .. |linkref9| replace:: `here <http://isocpp.github.io/CppCoreGuidelines/CppCoreGuidelines#Rc-explicit>`__
-.. |linkrefnotnull| replace:: `here <http://isocpp.github.io/CppCoreGuidelines/CppCoreGuidelines#Ri-nullptr> and here <http://isocpp.github.io/CppCoreGuidelines/CppCoreGuidelines#Rf-nullptr>`__
+.. |linkrefnotnull1| replace:: `here <http://isocpp.github.io/CppCoreGuidelines/CppCoreGuidelines#Ri-nullptr>`__
+.. |linkrefnotnull2| replace:: `here <http://isocpp.github.io/CppCoreGuidelines/CppCoreGuidelines#Rf-nullptr>`__
 .. |linkrefstringview| replace:: `here <https://isocpp.github.io/CppCoreGuidelines/CppCoreGuidelines.html#Rstr-view>`__
 
 
@@ -203,7 +208,7 @@ Preprocessor considerations
   test what value it has. This is much more robust under maintance,
   because a compiler can tell you that the variable is undefined.
 * Avoid code with lengthy segments whose compilation depends on #if
-  (or worse, #ifdef).
+  (or worse, #ifdef of symbols provided from outside |Gromacs|).
 * Prefer to organize the definition of a const variable at the top of
   the source code file, and use that in the code.  This helps keep all
   compilation paths built in all configurations, which reduces the

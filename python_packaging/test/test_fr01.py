@@ -34,13 +34,13 @@
 
 """Test gmxapi functionality described in roadmap.rst."""
 
-import pytest
-
 import gmxapi as gmx
+import pytest
 from gmxapi.version import has_feature
 
+
 @pytest.mark.skipif(not has_feature('fr1'),
-                   reason="Feature level not met.")
+                    reason="Feature level not met.")
 def test_fr1():
     """FR1: Wrap importable Python code.
 
@@ -54,9 +54,8 @@ def test_fr1():
     # named in `executable`.
     operation = gmx.commandline_operation(executable='true')
     operation.run()
-    # assert operation.output.returncode.result() == 0
-    assert operation.output.returncode == 0
+    assert operation.output.returncode.result() == 0
 
     operation = gmx.commandline_operation(executable='false')
     operation.run()
-    assert operation.output.returncode == 1
+    assert operation.output.returncode.result() == 1

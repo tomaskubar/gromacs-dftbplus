@@ -79,7 +79,7 @@ struct do_fspline
     do_fspline (
             const gmx_pme_t *                   pme,
             const real * gmx_restrict           grid,
-            const pme_atomcomm_t * gmx_restrict atc,
+            const PmeAtomComm * gmx_restrict    atc,
             const splinedata_t * gmx_restrict   spline,
             int                                 nn)
         : pme(pme), grid(grid), atc(atc), spline(spline), nn(nn) {}
@@ -93,12 +93,12 @@ struct do_fspline
         const int  norder = nn*order;
 
         /* Pointer arithmetic alert, next six statements */
-        const real *const gmx_restrict thx  = spline->theta[XX] + norder;
-        const real *const gmx_restrict thy  = spline->theta[YY] + norder;
-        const real *const gmx_restrict thz  = spline->theta[ZZ] + norder;
-        const real *const gmx_restrict dthx = spline->dtheta[XX] + norder;
-        const real *const gmx_restrict dthy = spline->dtheta[YY] + norder;
-        const real *const gmx_restrict dthz = spline->dtheta[ZZ] + norder;
+        const real *const gmx_restrict thx  = spline->theta.coefficients[XX] + norder;
+        const real *const gmx_restrict thy  = spline->theta.coefficients[YY] + norder;
+        const real *const gmx_restrict thz  = spline->theta.coefficients[ZZ] + norder;
+        const real *const gmx_restrict dthx = spline->dtheta.coefficients[XX] + norder;
+        const real *const gmx_restrict dthy = spline->dtheta.coefficients[YY] + norder;
+        const real *const gmx_restrict dthz = spline->dtheta.coefficients[ZZ] + norder;
 
         RVec                           f(0, 0, 0);
 
@@ -141,12 +141,12 @@ struct do_fspline
     {
         const int                      norder = nn*4;
         /* Pointer arithmetic alert, next six statements */
-        const real *const gmx_restrict thx  = spline->theta[XX] + norder;
-        const real *const gmx_restrict thy  = spline->theta[YY] + norder;
-        const real *const gmx_restrict thz  = spline->theta[ZZ] + norder;
-        const real *const gmx_restrict dthx = spline->dtheta[XX] + norder;
-        const real *const gmx_restrict dthy = spline->dtheta[YY] + norder;
-        const real *const gmx_restrict dthz = spline->dtheta[ZZ] + norder;
+        const real *const gmx_restrict thx  = spline->theta.coefficients[XX] + norder;
+        const real *const gmx_restrict thy  = spline->theta.coefficients[YY] + norder;
+        const real *const gmx_restrict thz  = spline->theta.coefficients[ZZ] + norder;
+        const real *const gmx_restrict dthx = spline->dtheta.coefficients[XX] + norder;
+        const real *const gmx_restrict dthy = spline->dtheta.coefficients[YY] + norder;
+        const real *const gmx_restrict dthz = spline->dtheta.coefficients[ZZ] + norder;
 
         Simd4NReal                     fx_S = setZero();
         Simd4NReal                     fy_S = setZero();
@@ -215,18 +215,18 @@ struct do_fspline
  * This code supports pme_order <= 5.
  */
     template <int Order>
-    typename std::enable_if<Order == 4 || Order == 5, RVec>::type
+    std::enable_if_t<Order == 4 || Order == 5, RVec>
     operator()(std::integral_constant<int, Order>  order) const
     {
         const int                     norder = nn*order;
         GMX_ASSERT(gridNZ % 4 == 0, "For aligned SIMD4 operations the grid size has to be padded up to a multiple of 4");
         /* Pointer arithmetic alert, next six statements */
-        const real *const gmx_restrict thx  = spline->theta[XX] + norder;
-        const real *const gmx_restrict thy  = spline->theta[YY] + norder;
-        const real *const gmx_restrict thz  = spline->theta[ZZ] + norder;
-        const real *const gmx_restrict dthx = spline->dtheta[XX] + norder;
-        const real *const gmx_restrict dthy = spline->dtheta[YY] + norder;
-        const real *const gmx_restrict dthz = spline->dtheta[ZZ] + norder;
+        const real *const gmx_restrict thx  = spline->theta.coefficients[XX] + norder;
+        const real *const gmx_restrict thy  = spline->theta.coefficients[YY] + norder;
+        const real *const gmx_restrict thz  = spline->theta.coefficients[ZZ] + norder;
+        const real *const gmx_restrict dthx = spline->dtheta.coefficients[XX] + norder;
+        const real *const gmx_restrict dthy = spline->dtheta.coefficients[YY] + norder;
+        const real *const gmx_restrict dthz = spline->dtheta.coefficients[ZZ] + norder;
 
         struct pme_spline_work *const  work = pme->spline_work;
 
@@ -282,7 +282,7 @@ struct do_fspline
     private:
         const gmx_pme_t *const                   pme;
         const real *const gmx_restrict           grid;
-        const pme_atomcomm_t *const gmx_restrict atc;
+        const PmeAtomComm *const gmx_restrict    atc;
         const splinedata_t *const gmx_restrict   spline;
         const int                                nn;
 
@@ -297,7 +297,7 @@ struct do_fspline
 
 
 void gather_f_bsplines(const gmx_pme_t *pme, const real *grid,
-                       gmx_bool bClearF, const pme_atomcomm_t *atc,
+                       gmx_bool bClearF, const PmeAtomComm *atc,
                        const splinedata_t *spline,
                        real scale,
                        bool bForQMMM, int nrQMatoms, bool bMMforcesOnly)
@@ -317,7 +317,7 @@ void gather_f_bsplines(const gmx_pme_t *pme, const real *grid,
     const real rzz   = pme->recipbox[ZZ][ZZ];
 
     /* Extract the buffer for force output */
-    rvec * gmx_restrict force = atc->f;
+    rvec * gmx_restrict force = as_rvec_array(atc->f.data());
 
     /* Note that unrolling this loop by templating this function on order
      * deteriorates performance significantly with gcc5/6/7.
@@ -369,11 +369,11 @@ void gather_f_bsplines(const gmx_pme_t *pme, const real *grid,
 }
 
 real gather_energy_bsplines(gmx_pme_t *pme, const real *grid,
-                            pme_atomcomm_t *atc,
+                            PmeAtomComm *atc,
                             int nrQMatoms, real *potential) /* nrQMatoms == 0 means no QM/MM */
 {
     splinedata_t *spline;
-    int           n, ithx, ithy, ithz, i0, j0, k0;
+    int           ithx, ithy, ithz, i0, j0, k0;
     int           index_x, index_xy;
     int          *idxptr;
     real          energy, pot, tx, ty, coefficient, gval;
@@ -389,7 +389,7 @@ real gather_energy_bsplines(gmx_pme_t *pme, const real *grid,
     /* For QM/MM, do it only for QM atoms because
      * we are not interested in the potential on MM atoms at this point.
      */
-    for (n = 0; (n < atc->n && (nrQMatoms == 0 || n < nrQMatoms) ); n++)
+    for (int n = 0; (n < atc->numAtoms() && (nrQMatoms == 0 || n < nrQMatoms) ); n++)
     {
         coefficient      = atc->coefficient[n];
 
@@ -403,9 +403,9 @@ real gather_energy_bsplines(gmx_pme_t *pme, const real *grid,
             k0   = idxptr[ZZ];
 
             /* Pointer arithmetic alert, next three statements */
-            thx  = spline->theta[XX] + norder;
-            thy  = spline->theta[YY] + norder;
-            thz  = spline->theta[ZZ] + norder;
+            thx  = spline->theta.coefficients[XX] + norder;
+            thy  = spline->theta.coefficients[YY] + norder;
+            thz  = spline->theta.coefficients[ZZ] + norder;
 
             pot = 0;
             for (ithx = 0; (ithx < order); ithx++)

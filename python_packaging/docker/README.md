@@ -47,7 +47,20 @@ The image should be tagged according to the functionality it is intended to demo
 
 ## Running
 
+**Warning:** The `--rm` flag tells Docker to remove the container after the
+process completes. This prevents unnamed containers from consuming more disk
+space on the host with each `run`.
+
+Alternatively, replace `--rm` with `--name containername` to save a named copy
+of the container and consider using `commit`ing snapshots of the container.
+
+Refer to Docker documentation for details.
+
 ### ci.dockerfile
+
+The default user for this image is `testing`. The gmxapi and sample_restraint
+Python packages are installed into a Python 3 `venv` (virtual environment) owned
+by the `testing` user.
 
 The `entrypoint.sh` script activates the python venv and wraps commands in a `bash` `exec`.
 The default command is a script sourced from `../scripts/run_pytest.sh`. You can use this,
@@ -56,6 +69,22 @@ other scripts, `bash`, etc.
     docker run --rm -t gmxapi/ci-mpich:${TAG}
     docker run --rm -t gmxapi/ci-mpich:${TAG} run_pytest_mpi
     docker run --rm -ti gmxapi/ci-mpich:${TAG} bash
+
+### Why venv?
+
+`venv` is the suggested and primary installation mode for the gmxapi Python package,
+so it is the most important installation mode to test.
+
+These scripts will ultimately be ported to as-yet-undefined GROMACS testing
+infrastructure.
+It seems equally plausible to have a single image with multiple Python installations
+as to have multiple Docker images, or that single-Python docker images would use
+some sort of Python virtualenv system to manage non-default Python interpreters.
+
+Since the installation, tests, and shell environment for post-mortem all use the
+"testing" user instead of "root", the venv provides a tidy place to work, avoids
+the need for the `--user` flag to `pip`, and gives us a convenient place to do
+`pip freeze` to get a known baseline of a working Python environment.
 
 #### Entry points
 
@@ -73,6 +102,32 @@ To be able to step through with gdb, run with something like the following, repl
 'imagename' with the name of the docker image built with this recipe.
 
     docker run --rm -ti --security-opt seccomp=unconfined imagename bash
+
+### notebook.dockerfile
+
+Built on `gmxapi/ci-mpich:latest`, this image adds a `notebook` entry point to
+be used as the new default command. Run with port mapping for http port 8888 for
+easy access to a Jupyter notebook server running in the docker container's
+`testing` user home directory.
+
+    docker run --rm -ti -p 8888:8888 gmxapi/notebook
+
+Note that, when run with `--rm`, changes made to files in the container will be
+lost when `docker run` completes.
+To preserve work in a notebook run this way,
+download the `ipynb` through theJupyter web interface
+(such as when updating the examples in the repository).
+
+### docs.dockerfile
+
+For very quick and isolated documentation builds on top of the gmxapi/ci-mpich 
+image, build the image from docs .dockerfile.
+The resulting image is a small web server image (without GROMACS or gmxapi installed) 
+with html content built in and copied from a temporary container.
+
+    docker run --rm -ti -p 8080:80 gmxapi/docs
+
+Then browse to http://localhost:8080/
 
 ## Automation
 

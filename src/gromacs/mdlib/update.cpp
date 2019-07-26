@@ -1218,16 +1218,18 @@ static void calc_ke_part_visc(const matrix box, const rvec x[], const rvec v[],
     inc_nrnb(nrnb, eNR_EKIN, homenr);
 }
 
-void calc_ke_part(const t_state *state, const t_grpopts *opts, const t_mdatoms *md,
-                  gmx_ekindata_t *ekind, t_nrnb *nrnb, gmx_bool bEkinAveVel)
+void calc_ke_part(
+        rvec *x, rvec *v, matrix box,
+        const t_grpopts *opts, const t_mdatoms *md,
+        gmx_ekindata_t *ekind, t_nrnb *nrnb, gmx_bool bEkinAveVel)
 {
     if (ekind->cosacc.cos_accel == 0)
     {
-        calc_ke_part_normal(state->v.rvec_array(), opts, md, ekind, nrnb, bEkinAveVel);
+        calc_ke_part_normal(v, opts, md, ekind, nrnb, bEkinAveVel);
     }
     else
     {
-        calc_ke_part_visc(state->box, state->x.rvec_array(), state->v.rvec_array(), opts, md, ekind, nrnb, bEkinAveVel);
+        calc_ke_part_visc(box, x, v, opts, md, ekind, nrnb, bEkinAveVel);
     }
 }
 
@@ -1240,8 +1242,9 @@ extern void init_ekinstate(ekinstate_t *ekinstate, const t_inputrec *ir)
     ekinstate->ekinscalef_nhc.resize(ekinstate->ekin_n);
     ekinstate->ekinscaleh_nhc.resize(ekinstate->ekin_n);
     ekinstate->vscale_nhc.resize(ekinstate->ekin_n);
-    ekinstate->dekindl = 0;
-    ekinstate->mvcos   = 0;
+    ekinstate->dekindl          = 0;
+    ekinstate->mvcos            = 0;
+    ekinstate->hasReadEkinState = false;
 }
 
 void update_ekinstate(ekinstate_t *ekinstate, const gmx_ekindata_t *ekind)
@@ -1767,18 +1770,18 @@ void update_pcouple_after_coordinates(FILE             *fplog,
     }
 }
 
-void update_coords(int64_t                             step,
-                   const t_inputrec                   *inputrec, /* input record and box stuff	*/
-                   const t_mdatoms                    *md,
-                   t_state                            *state,
-                   gmx::ArrayRefWithPadding<gmx::RVec> f,
-                   const t_fcdata                     *fcd,
-                   const gmx_ekindata_t               *ekind,
-                   const matrix                        M,
-                   Update                             *upd,
-                   int                                 UpdatePart,
-                   const t_commrec                    *cr, /* these shouldn't be here -- need to think about it */
-                   const gmx::Constraints             *constr)
+void update_coords(int64_t                                   step,
+                   const t_inputrec                         *inputrec, /* input record and box stuff	*/
+                   const t_mdatoms                          *md,
+                   t_state                                  *state,
+                   gmx::ArrayRefWithPadding<const gmx::RVec> f,
+                   const t_fcdata                           *fcd,
+                   const gmx_ekindata_t                     *ekind,
+                   const matrix                              M,
+                   Update                                   *upd,
+                   int                                       UpdatePart,
+                   const t_commrec                          *cr, /* these shouldn't be here -- need to think about it */
+                   const gmx::Constraints                   *constr)
 {
     gmx_bool bDoConstr = (nullptr != constr);
 

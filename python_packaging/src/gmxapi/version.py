@@ -1,3 +1,4 @@
+#
 # This file is part of the GROMACS molecular simulation package.
 #
 # Copyright (c) 2019, by the GROMACS development team, led by
@@ -30,6 +31,7 @@
 #
 # To help us fund GROMACS development, we humbly ask that you cite
 # the research papers on the package. Check out http://www.gromacs.org.
+
 """
 Provide version and release information.
 
@@ -41,6 +43,8 @@ Attributes:
 
 """
 
+__version__ = "0.1.0-dev3"
+
 # TODO: (pending infrastructure and further discussion) Configure with CMake.
 # __version__ = "@PROJECT_VERSION@"
 # major = @PROJECT_VERSION_MAJOR@
@@ -49,7 +53,6 @@ Attributes:
 
 from gmxapi.exceptions import Error as GmxapiError
 
-__version__ = "0.1.0-dev0"
 major = 0
 minor = 1
 patch = 0
@@ -57,7 +60,7 @@ patch = 0
 # Note: this is not automatically updated. See RELEASE.txt and https://github.com/kassonlab/gmxapi/issues/152
 release = False
 
-_named_features = []
+_named_features = ['fr1', 'fr2', 'fr3']
 
 
 class FeatureError(GmxapiError):

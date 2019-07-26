@@ -85,6 +85,7 @@
 #include "gromacs/mdlib/trajectory_writing.h"
 #include "gromacs/mdlib/update.h"
 #include "gromacs/mdlib/vsite.h"
+#include "gromacs/mdrunutility/handlerestart.h"
 #include "gromacs/mdrunutility/printtime.h"
 #include "gromacs/mdtypes/commrec.h"
 #include "gromacs/mdtypes/inputrec.h"
@@ -103,8 +104,8 @@
 #include "gromacs/utility/logger.h"
 #include "gromacs/utility/smalloc.h"
 
-#include "integrator.h"
 #include "shellfc.h"
+#include "simulator.h"
 
 //! Utility structure for manipulating states during EM
 typedef struct {
@@ -529,7 +530,7 @@ static void write_em_traj(FILE *fplog, const t_commrec *cr,
     }
 
     mdoutf_write_to_trajectory_files(fplog, cr, outf, mdof_flags,
-                                     top_global, step, static_cast<double>(step),
+                                     top_global->natoms, step, static_cast<double>(step),
                                      &state->s, state_global, observablesHistory,
                                      state->f);
 
@@ -1058,7 +1059,7 @@ namespace gmx
 {
 
 void
-Integrator::do_cg()
+Simulator::do_cg()
 {
     const char        *CG = "Polak-Ribiere Conjugate Gradients";
 
@@ -1114,9 +1115,9 @@ Integrator::do_cg()
             state_global, top_global, s_min, &top,
             nrnb, fr, &graph, mdAtoms, &gstat,
             vsite, constr, nullptr);
-    gmx_mdoutf       *outf = init_mdoutf(fplog, nfile, fnm, mdrunOptions, cr, outputProvider, inputrec, top_global, nullptr, wcycle);
-    gmx::EnergyOutput energyOutput;
-    energyOutput.prepare(mdoutf_get_fp_ene(outf), top_global, inputrec, pull_work, nullptr);
+    gmx_mdoutf       *outf = init_mdoutf(fplog, nfile, fnm, mdrunOptions, cr, outputProvider, inputrec, top_global, nullptr, wcycle,
+                                         StartingBehavior::NewSimulation);
+    gmx::EnergyOutput energyOutput(mdoutf_get_fp_ene(outf), top_global, inputrec, pull_work, nullptr, false);
 
     /* Print to log file */
     print_em_start(fplog, cr, walltime_accounting, wcycle, CG);
@@ -1154,10 +1155,10 @@ Integrator::do_cg()
                                          mdatoms->tmass, enerd, nullptr, nullptr, nullptr, nullBox,
                                          nullptr, nullptr, vir, pres, nullptr, mu_tot, constr);
 
-        print_ebin_header(fplog, step, step);
+        energyOutput.printHeader(fplog, step, step);
         energyOutput.printStepToEnergyFile(mdoutf_get_fp_ene(outf), TRUE, FALSE, FALSE,
-                                           fplog, step, step, eprNORMAL,
-                                           fcd, &(top_global->groups), &(inputrec->opts), nullptr);
+                                           fplog, step, step,
+                                           fcd, nullptr);
     }
 
     /* Estimate/guess the initial stepsize */
@@ -1588,11 +1589,11 @@ Integrator::do_cg()
 
             if (do_log)
             {
-                print_ebin_header(fplog, step, step);
+                energyOutput.printHeader(fplog, step, step);
             }
             energyOutput.printStepToEnergyFile(mdoutf_get_fp_ene(outf), do_ene, FALSE, FALSE,
-                                               do_log ? fplog : nullptr, step, step, eprNORMAL,
-                                               fcd, &(top_global->groups), &(inputrec->opts), nullptr);
+                                               do_log ? fplog : nullptr, step, step,
+                                               fcd, nullptr);
         }
 
         /* Send energies and positions to the IMD client if bIMD is TRUE. */
@@ -1631,14 +1632,14 @@ Integrator::do_cg()
         if (!do_log)
         {
             /* Write final value to log since we didn't do anything the last step */
-            print_ebin_header(fplog, step, step);
+            energyOutput.printHeader(fplog, step, step);
         }
         if (!do_ene || !do_log)
         {
             /* Write final energy file entries */
             energyOutput.printStepToEnergyFile(mdoutf_get_fp_ene(outf), !do_ene, FALSE, FALSE,
-                                               !do_log ? fplog : nullptr, step, step, eprNORMAL,
-                                               fcd, &(top_global->groups), &(inputrec->opts), nullptr);
+                                               !do_log ? fplog : nullptr, step, step,
+                                               fcd, nullptr);
         }
     }
 
@@ -1685,7 +1686,7 @@ Integrator::do_cg()
 
 
 void
-Integrator::do_lbfgs()
+Simulator::do_lbfgs()
 {
     static const char *LBFGS = "Low-Memory BFGS Minimizer";
     em_state_t         ems;
@@ -1753,9 +1754,9 @@ Integrator::do_lbfgs()
             state_global, top_global, &ems, &top,
             nrnb, fr, &graph, mdAtoms, &gstat,
             vsite, constr, nullptr);
-    gmx_mdoutf       *outf = init_mdoutf(fplog, nfile, fnm, mdrunOptions, cr, outputProvider, inputrec, top_global, nullptr, wcycle);
-    gmx::EnergyOutput energyOutput;
-    energyOutput.prepare(mdoutf_get_fp_ene(outf), top_global, inputrec, pull_work, nullptr);
+    gmx_mdoutf       *outf = init_mdoutf(fplog, nfile, fnm, mdrunOptions, cr, outputProvider, inputrec, top_global, nullptr, wcycle,
+                                         StartingBehavior::NewSimulation);
+    gmx::EnergyOutput energyOutput(mdoutf_get_fp_ene(outf), top_global, inputrec, pull_work, nullptr, false);
 
     start = 0;
     end   = mdatoms->homenr;
@@ -1830,10 +1831,10 @@ Integrator::do_lbfgs()
                                          mdatoms->tmass, enerd, nullptr, nullptr, nullptr, nullBox,
                                          nullptr, nullptr, vir, pres, nullptr, mu_tot, constr);
 
-        print_ebin_header(fplog, step, step);
+        energyOutput.printHeader(fplog, step, step);
         energyOutput.printStepToEnergyFile(mdoutf_get_fp_ene(outf), TRUE, FALSE, FALSE,
-                                           fplog, step, step, eprNORMAL,
-                                           fcd, &(top_global->groups), &(inputrec->opts), nullptr);
+                                           fplog, step, step,
+                                           fcd, nullptr);
     }
 
     /* Set the initial step.
@@ -1912,7 +1913,8 @@ Integrator::do_lbfgs()
         }
 
         mdoutf_write_to_trajectory_files(fplog, cr, outf, mdof_flags,
-                                         top_global, step, static_cast<real>(step), &ems.s, state_global, observablesHistory, ems.f);
+                                         top_global->natoms, step, static_cast<real>(step), &ems.s,
+                                         state_global, observablesHistory, ems.f);
 
         /* Do the linesearching in the direction dx[point][0..(n-1)] */
 
@@ -2325,11 +2327,11 @@ Integrator::do_lbfgs()
 
             if (do_log)
             {
-                print_ebin_header(fplog, step, step);
+                energyOutput.printHeader(fplog, step, step);
             }
             energyOutput.printStepToEnergyFile(mdoutf_get_fp_ene(outf), do_ene, FALSE, FALSE,
-                                               do_log ? fplog : nullptr, step, step, eprNORMAL,
-                                               fcd, &(top_global->groups), &(inputrec->opts), nullptr);
+                                               do_log ? fplog : nullptr, step, step,
+                                               fcd, nullptr);
         }
 
         /* Send x and E to IMD client, if bIMD is TRUE. */
@@ -2368,13 +2370,13 @@ Integrator::do_lbfgs()
      */
     if (!do_log) /* Write final value to log since we didn't do anythin last step */
     {
-        print_ebin_header(fplog, step, step);
+        energyOutput.printHeader(fplog, step, step);
     }
     if (!do_ene || !do_log) /* Write final energy file entries */
     {
         energyOutput.printStepToEnergyFile(mdoutf_get_fp_ene(outf), !do_ene, FALSE, FALSE,
-                                           !do_log ? fplog : nullptr, step, step, eprNORMAL,
-                                           fcd, &(top_global->groups), &(inputrec->opts), nullptr);
+                                           !do_log ? fplog : nullptr, step, step,
+                                           fcd, nullptr);
     }
 
     /* Print some stuff... */
@@ -2414,7 +2416,7 @@ Integrator::do_lbfgs()
 }
 
 void
-Integrator::do_steep()
+Simulator::do_steep()
 {
     const char       *SD  = "Steepest Descents";
     gmx_localtop_t    top;
@@ -2447,9 +2449,9 @@ Integrator::do_steep()
             state_global, top_global, s_try, &top,
             nrnb, fr, &graph, mdAtoms, &gstat,
             vsite, constr, nullptr);
-    gmx_mdoutf       *outf = init_mdoutf(fplog, nfile, fnm, mdrunOptions, cr, outputProvider, inputrec, top_global, nullptr, wcycle);
-    gmx::EnergyOutput energyOutput;
-    energyOutput.prepare(mdoutf_get_fp_ene(outf), top_global, inputrec, pull_work, nullptr);
+    gmx_mdoutf       *outf = init_mdoutf(fplog, nfile, fnm, mdrunOptions, cr, outputProvider, inputrec, top_global, nullptr, wcycle,
+                                         StartingBehavior::NewSimulation);
+    gmx::EnergyOutput energyOutput(mdoutf_get_fp_ene(outf), top_global, inputrec, pull_work, nullptr, false);
 
     /* Print to log file  */
     print_em_start(fplog, cr, walltime_accounting, wcycle, SD);
@@ -2515,7 +2517,7 @@ Integrator::do_steep()
 
         if (MASTER(cr))
         {
-            print_ebin_header(fplog, count, count);
+            energyOutput.printHeader(fplog, count, count);
         }
 
         if (count == 0)
@@ -2548,9 +2550,8 @@ Integrator::do_steep()
                 const bool do_or = do_per_step(steps_accepted, inputrec->nstorireout);
                 energyOutput.printStepToEnergyFile(mdoutf_get_fp_ene(outf), TRUE,
                                                    do_dr, do_or,
-                                                   fplog, count, count, eprNORMAL,
-                                                   fcd, &(top_global->groups),
-                                                   &(inputrec->opts), nullptr);
+                                                   fplog, count, count,
+                                                   fcd, nullptr);
                 fflush(fplog);
             }
         }
@@ -2656,7 +2657,7 @@ Integrator::do_steep()
 }
 
 void
-Integrator::do_nm()
+Simulator::do_nm()
 {
     const char          *NM = "Normal Mode Analysis";
     int                  nnodes, node;
@@ -2699,7 +2700,8 @@ Integrator::do_nm()
             state_global, top_global, &state_work, &top,
             nrnb, fr, &graph, mdAtoms, &gstat,
             vsite, constr, &shellfc);
-    gmx_mdoutf            *outf = init_mdoutf(fplog, nfile, fnm, mdrunOptions, cr, outputProvider, inputrec, top_global, nullptr, wcycle);
+    gmx_mdoutf            *outf = init_mdoutf(fplog, nfile, fnm, mdrunOptions, cr, outputProvider, inputrec, top_global, nullptr, wcycle,
+                                              StartingBehavior::NewSimulation);
 
     std::vector<int>       atom_index = get_atom_index(top_global);
     std::vector<gmx::RVec> fneg(atom_index.size(), {0, 0, 0});
@@ -2851,7 +2853,12 @@ Integrator::do_nm()
                                         constr,
                                         enerd,
                                         fcd,
-                                        &state_work.s,
+                                        state_work.s.natoms,
+                                        state_work.s.x.arrayRefWithPadding(),
+                                        state_work.s.v.arrayRefWithPadding(),
+                                        state_work.s.box,
+                                        state_work.s.lambda,
+                                        &state_work.s.hist,
                                         state_work.f.arrayRefWithPadding(),
                                         vir,
                                         mdatoms,

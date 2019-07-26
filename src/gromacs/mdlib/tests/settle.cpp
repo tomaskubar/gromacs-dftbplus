@@ -287,21 +287,25 @@ TEST_P(SettleTest, SatisfiesConstraints)
     // 1. The code was compiled with cuda
     // 2. There is a CUDA-capable GPU in a system
 #if GMX_GPU == GMX_GPU_CUDA
-    std::string errorMessage;
-    if (canDetectGpus(&errorMessage))
+    // TODO: Here we should check that at least 1 suitable GPU is available
+    if (canPerformGpuDetection())
     {
         // Run the CUDA code and check if it gives identical results to CPU code
         t_idef                        idef;
         idef.il[F_SETTLE] = ilist;
-        std::unique_ptr<SettleCuda>   settleCuda = std::make_unique<SettleCuda>(mdatoms.homenr, mtop);
-        settleCuda->copyCoordinatesToGpu(as_rvec_array(startingPositions.data()),
-                                         as_rvec_array(updatedPositionsGpu.data()));
-        settleCuda->copyVelocitiesToGpu(as_rvec_array(velocitiesGpu.data()));
+
+        std::unique_ptr<SettleCuda>   settleCuda = std::make_unique<SettleCuda>(mtop);
         settleCuda->setPbc(usePbc ? &pbcXyz_ : &pbcNone_);
         settleCuda->set(idef, mdatoms);
-        settleCuda->apply(useVelocities, reciprocalTimeStep, calcVirial, virialGpu);
-        settleCuda->copyCoordinatesFromGpu(as_rvec_array(updatedPositionsGpu.data()));
-        settleCuda->copyVelocitiesFromGpu(as_rvec_array(velocitiesGpu.data()));
+
+        settleCuda->copyApplyCopy(mdatoms.homenr,
+                                  as_rvec_array(startingPositions.data()),
+                                  as_rvec_array(updatedPositionsGpu.data()),
+                                  useVelocities,
+                                  as_rvec_array(velocitiesGpu.data()),
+                                  reciprocalTimeStep,
+                                  calcVirial,
+                                  virialGpu);
 
         FloatingPointTolerance toleranceGpuCpu = absoluteTolerance(0.0001);
 

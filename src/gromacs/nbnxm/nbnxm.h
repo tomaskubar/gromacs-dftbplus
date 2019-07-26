@@ -128,6 +128,22 @@ struct t_nrnb;
 struct t_forcerec;
 struct t_inputrec;
 
+/*! \brief Switch for whether to use GPU for buffer ops*/
+enum class BufferOpsUseGpu
+{
+    True,
+    False
+};
+
+/*! \brief Switch for whether forces should accumulate in GPU buffer ops */
+enum class GpuBufferOpsAccumulateForce
+{
+    True,  // Force should be accumulated and format converted
+    False, // Force should be not accumulated, just format converted
+    Null   // GPU buffer ops are not in use, so this object is not applicable
+};
+
+
 namespace gmx
 {
 class MDLogger;
@@ -244,7 +260,15 @@ struct nonbonded_verlet_t
         void setCoordinates(Nbnxm::AtomLocality             locality,
                             bool                            fillLocal,
                             gmx::ArrayRef<const gmx::RVec>  x,
+                            BufferOpsUseGpu                 useGpu,
+                            void                           *xPmeDevicePtr,
                             gmx_wallcycle                  *wcycle);
+
+        //! Init for GPU version of setup coordinates in Nbnxm
+        void atomdata_init_copy_x_to_nbat_x_gpu();
+
+        //! Sync the nonlocal GPU stream with dependent tasks in the local queue.
+        void insertNonlocalGpuDependency(Nbnxm::InteractionLocality interactionLocality);
 
         //! Returns a reference to the pairlist sets
         const PairlistSets &pairlistSets() const
@@ -270,9 +294,10 @@ struct nonbonded_verlet_t
                                      const interaction_const_t  &ic,
                                      int                         forceFlags,
                                      int                         clearF,
-                                     t_forcerec                 *fr,
+                                     const t_forcerec           &fr,
                                      gmx_enerdata_t             *enerd,
-                                     t_nrnb                     *nrnb);
+                                     t_nrnb                     *nrnb,
+                                     gmx_wallcycle              *wcycle);
 
         //! Executes the non-bonded free-energy kernel, always runs on the CPU
         void dispatchFreeEnergyKernel(Nbnxm::InteractionLocality  iLocality,
@@ -284,12 +309,27 @@ struct nonbonded_verlet_t
                                       real                       *lambda,
                                       gmx_enerdata_t             *enerd,
                                       int                         forceFlags,
-                                      t_nrnb                     *nrnb);
+                                      t_nrnb                     *nrnb,
+                                      gmx_wallcycle              *wcycle);
 
         //! Add the forces stored in nbat to f, zeros the forces in nbat */
-        void atomdata_add_nbat_f_to_f(Nbnxm::AtomLocality  locality,
-                                      rvec                *f,
-                                      gmx_wallcycle       *wcycle);
+        void atomdata_add_nbat_f_to_f(Nbnxm::AtomLocality                 locality,
+                                      rvec                               *f,
+                                      BufferOpsUseGpu                     useGpu,
+                                      GpuBufferOpsAccumulateForce         accumulateForce,
+                                      gmx_wallcycle                      *wcycle);
+
+        /*! \brief Outer body of function to perform initialization for F buffer operations on GPU. */
+        void atomdata_init_add_nbat_f_to_f_gpu(gmx_wallcycle *wcycle);
+
+        /*! \brief H2D transfer of force buffer*/
+        void launch_copy_f_to_gpu(rvec *f, Nbnxm::AtomLocality locality);
+
+        /*! \brief D2H transfer of force buffer*/
+        void launch_copy_f_from_gpu(rvec *f, Nbnxm::AtomLocality locality);
+
+        /*! \brief Host sync on device stream given by locality */
+        void wait_stream_gpu(Nbnxm::AtomLocality locality);
 
         //! Return the kernel setup
         const Nbnxm::KernelSetup &kernelSetup() const
@@ -306,6 +346,23 @@ struct nonbonded_verlet_t
         //! Changes the pair-list outer and inner radius
         void changePairlistRadii(real rlistOuter,
                                  real rlistInner);
+
+        //! Set up internal flags that indicate what type of short-range work there is.
+        void setupGpuShortRangeWork(const gmx::GpuBonded             *gpuBonded,
+                                    const Nbnxm::InteractionLocality  iLocality)
+        {
+            if (useGpu() && !emulateGpu())
+            {
+                Nbnxm::setupGpuShortRangeWork(gpu_nbv, gpuBonded, iLocality);
+            }
+        }
+
+        //! Returns true if there is GPU short-range work for the given atom locality.
+        bool haveGpuShortRangeWork(const Nbnxm::AtomLocality aLocality)
+        {
+            return ((useGpu() && !emulateGpu()) &&
+                    Nbnxm::haveGpuShortRangeWork(gpu_nbv, aLocality));
+        }
 
         // TODO: Make all data members private
     public:

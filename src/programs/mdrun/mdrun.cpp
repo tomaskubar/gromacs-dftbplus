@@ -60,9 +60,10 @@
 #include "gromacs/fileio/gmxfio.h"
 #include "gromacs/gmxlib/network.h"
 #include "gromacs/mdrun/legacymdrunoptions.h"
-#include "gromacs/mdrun/logging.h"
 #include "gromacs/mdrun/runner.h"
 #include "gromacs/mdrun/simulationcontext.h"
+#include "gromacs/mdrunutility/handlerestart.h"
+#include "gromacs/mdrunutility/logging.h"
 #include "gromacs/mdtypes/commrec.h"
 #include "gromacs/utility/arrayref.h"
 #include "gromacs/utility/smalloc.h"
@@ -215,13 +216,14 @@ int gmx_mdrun(int argc, char *argv[])
         return 0;
     }
 
-    if (MASTER(options.cr))
-    {
-        options.logFileGuard = openLogFile(ftp2fn(efLOG,
-                                                  options.filenames.size(),
-                                                  options.filenames.data()),
-                                           options.mdrunOptions.continuationOptions.appendFiles);
-    }
+    StartingBehavior startingBehavior = StartingBehavior::NewSimulation;
+    LogFilePtr       logFileGuard     = nullptr;
+    std::tie(startingBehavior,
+             logFileGuard) = handleRestart(options.cr,
+                                           options.ms,
+                                           options.mdrunOptions.appendingBehavior,
+                                           ssize(options.filenames),
+                                           options.filenames.data());
 
     /* The SimulationContext is a resource owned by the client code.
      * A more complete design should address handles to resources with appropriate
@@ -247,7 +249,7 @@ int gmx_mdrun(int argc, char *argv[])
      */
     auto builder = MdrunnerBuilder(std::move(mdModules),
                                    compat::not_null<decltype( &simulationContext)>(&simulationContext));
-    builder.addSimulationMethod(options.mdrunOptions, options.pforce);
+    builder.addSimulationMethod(options.mdrunOptions, options.pforce, startingBehavior);
     builder.addDomainDecomposition(options.domdecOptions);
     // \todo pass by value
     builder.addNonBonded(options.nbpu_opt_choices[0]);
@@ -267,7 +269,7 @@ int gmx_mdrun(int argc, char *argv[])
     // \todo Implement lifetime management for gmx_output_env_t.
     // \todo Output environment should be configured outside of Mdrunner and provided as a resource.
     builder.addOutputEnvironment(options.oenv);
-    builder.addLogFile(options.logFileGuard.get());
+    builder.addLogFile(logFileGuard.get());
 
     auto runner = builder.build();
 
