@@ -96,6 +96,8 @@
 #include "gromacs/mdlib/update.h"
 #include "gromacs/mdlib/vcm.h"
 #include "gromacs/mdlib/vsite.h"
+#include "gromacs/mdrunutility/handlerestart.h"
+#include "gromacs/mdrunutility/multisim.h"
 #include "gromacs/mdrunutility/printtime.h"
 #include "gromacs/mdtypes/awh_history.h"
 #include "gromacs/mdtypes/awh_params.h"
@@ -131,9 +133,9 @@
 #include "gromacs/utility/real.h"
 #include "gromacs/utility/smalloc.h"
 
-#include "integrator.h"
 #include "replicaexchange.h"
 #include "shellfc.h"
+#include "simulator.h"
 
 using gmx::SimulationSignaller;
 
@@ -184,7 +186,7 @@ static void prepareRerunState(const t_trxframe  &rerunFrame,
     }
 }
 
-void gmx::Integrator::do_rerun()
+void gmx::Simulator::do_rerun()
 {
     // TODO Historically, the EM and MD "integrators" used different
     // names for the t_inputrec *parameter, but these must have the
@@ -197,7 +199,7 @@ void gmx::Integrator::do_rerun()
     double                  t, lam0[efptNR];
     bool                    isLastStep               = false;
     bool                    doFreeEnergyPerturbation = false;
-    int                     force_flags;
+    unsigned int            force_flags;
     tensor                  force_vir, shake_vir, total_vir, pres;
     t_trxstatus            *status;
     rvec                    mu_tot;
@@ -297,9 +299,9 @@ void gmx::Integrator::do_rerun()
 
     initialize_lambdas(fplog, *ir, MASTER(cr), &state_global->fep_state, state_global->lambda, lam0);
     init_nrnb(nrnb);
-    gmx_mdoutf       *outf = init_mdoutf(fplog, nfile, fnm, mdrunOptions, cr, outputProvider, ir, top_global, oenv, wcycle);
-    gmx::EnergyOutput energyOutput;
-    energyOutput.prepare(mdoutf_get_fp_ene(outf), top_global, ir, pull_work, mdoutf_get_fp_dhdl(outf), true);
+    gmx_mdoutf       *outf = init_mdoutf(fplog, nfile, fnm, mdrunOptions, cr, outputProvider, ir, top_global, oenv, wcycle,
+                                         StartingBehavior::NewSimulation);
+    gmx::EnergyOutput energyOutput(mdoutf_get_fp_ene(outf), top_global, ir, pull_work, mdoutf_get_fp_dhdl(outf), true);
 
     /* Kinetic energy data */
     std::unique_ptr<gmx_ekindata_t> eKinData = std::make_unique<gmx_ekindata_t>();
@@ -379,13 +381,15 @@ void gmx::Integrator::do_rerun()
                              (shouldCheckNumberOfBondedInteractions ? CGLO_CHECK_NUMBER_OF_BONDED_INTERACTIONS : 0));
         bool   bSumEkinhOld = false;
         t_vcm *vcm          = nullptr;
-        compute_globals(fplog, gstat, cr, ir, fr, ekind, state, mdatoms, nrnb, vcm,
+        compute_globals(fplog, gstat, cr, ir, fr, ekind,
+                        state->x.rvec_array(), state->v.rvec_array(), state->box, state->lambda[efptVDW],
+                        mdatoms, nrnb, vcm,
                         nullptr, enerd, force_vir, shake_vir, total_vir, pres, mu_tot,
                         constr, &nullSignaller, state->box,
                         &totalNumberOfBondedInteractions, &bSumEkinhOld, cglo_flags);
     }
     checkNumberOfBondedInteractions(mdlog, cr, totalNumberOfBondedInteractions,
-                                    top_global, &top, state,
+                                    top_global, &top, state->x.rvec_array(), state->box,
                                     &shouldCheckNumberOfBondedInteractions);
 
     if (MASTER(cr))
@@ -532,7 +536,7 @@ void gmx::Integrator::do_rerun()
 
         if (MASTER(cr))
         {
-            print_ebin_header(fplog, step, t); /* can we improve the information printed here? */
+            energyOutput.printHeader(fplog, step, t); /* can we improve the information printed here? */
         }
 
         if (ir->efep != efepNO)
@@ -554,7 +558,13 @@ void gmx::Integrator::do_rerun()
                                 enforcedRotation, step,
                                 ir, imdSession, pull_work, bNS, force_flags, &top,
                                 constr, enerd, fcd,
-                                state, f.arrayRefWithPadding(), force_vir, mdatoms,
+                                state->natoms,
+                                state->x.arrayRefWithPadding(),
+                                state->v.arrayRefWithPadding(),
+                                state->box,
+                                state->lambda,
+                                &state->hist,
+                                f.arrayRefWithPadding(), force_vir, mdatoms,
                                 nrnb, wcycle, graph,
                                 shellfc, fr, ppForceWorkload, t, mu_tot,
                                 vsite,
@@ -629,7 +639,9 @@ void gmx::Integrator::do_rerun()
             t_vcm              *vcm              = nullptr;
             SimulationSignaller signaller(&signals, cr, ms, doInterSimSignal, doIntraSimSignal);
 
-            compute_globals(fplog, gstat, cr, ir, fr, ekind, state, mdatoms, nrnb, vcm,
+            compute_globals(fplog, gstat, cr, ir, fr, ekind,
+                            state->x.rvec_array(), state->v.rvec_array(), state->box, state->lambda[efptVDW],
+                            mdatoms, nrnb, vcm,
                             wcycle, enerd, force_vir, shake_vir, total_vir, pres, mu_tot,
                             constr, &signaller,
                             state->box,
@@ -638,7 +650,7 @@ void gmx::Integrator::do_rerun()
                             | (shouldCheckNumberOfBondedInteractions ? CGLO_CHECK_NUMBER_OF_BONDED_INTERACTIONS : 0)
                             );
             checkNumberOfBondedInteractions(mdlog, cr, totalNumberOfBondedInteractions,
-                                            top_global, &top, state,
+                                            top_global, &top, state->x.rvec_array(), state->box,
                                             &shouldCheckNumberOfBondedInteractions);
         }
 
@@ -662,7 +674,8 @@ void gmx::Integrator::do_rerun()
                                              t, mdatoms->tmass, enerd, state,
                                              ir->fepvals, ir->expandedvals, state->box,
                                              shake_vir, force_vir, total_vir, pres,
-                                             ekind, mu_tot, constr);
+                                             ekind, mu_tot,
+                                             constr);
 
             const bool do_ene = true;
             const bool do_log = true;
@@ -670,10 +683,11 @@ void gmx::Integrator::do_rerun()
             const bool do_dr  = ir->nstdisreout != 0;
             const bool do_or  = ir->nstorireout != 0;
 
+            energyOutput.printAnnealingTemperatures(do_log ? fplog : nullptr, groups, &(ir->opts));
             energyOutput.printStepToEnergyFile(mdoutf_get_fp_ene(outf), do_ene, do_dr, do_or,
                                                do_log ? fplog : nullptr,
                                                step, t,
-                                               eprNORMAL, fcd, groups, &(ir->opts), awh);
+                                               fcd, awh);
 
             if (do_per_step(step, ir->nstlog))
             {
@@ -685,7 +699,7 @@ void gmx::Integrator::do_rerun()
         }
 
         /* Print the remaining wall clock time for the run */
-        if (isMasterSimMasterRank(ms, cr) &&
+        if (isMasterSimMasterRank(ms, MASTER(cr)) &&
             (mdrunOptions.verbose || gmx_got_usr_signal()))
         {
             if (shellfc)

@@ -32,8 +32,8 @@
  * To help us fund GROMACS development, we humbly ask that you cite
  * the research papers on the package. Check out http://www.gromacs.org.
  */
-/*!\file
- * \internal
+/*!\internal
+ * \file
  * \brief
  * Implements methods from coordinatefile.h
  *
@@ -161,7 +161,9 @@ addOutputAdapters(const OutputRequirements  &requirements,
     }
     if (requirements.precision != ChangeFrameInfoType::PreservedIfPresent)
     {
-        // add adapter here
+        output.addAdapter(
+                std::make_unique<SetPrecision>(requirements.prec),
+                CoordinateFileFlags::RequireChangedOutputPrecision);
     }
     if (requirements.atoms != ChangeAtomsType::PreservedIfPresent)
     {
@@ -172,7 +174,25 @@ addOutputAdapters(const OutputRequirements  &requirements,
     }
     if (requirements.frameTime != ChangeFrameTimeType::PreservedIfPresent)
     {
-        // add adapter here
+        switch (requirements.frameTime)
+        {
+            case (ChangeFrameTimeType::StartTime):
+                output.addAdapter(std::make_unique<SetStartTime>(requirements.startTimeValue),
+                                  CoordinateFileFlags::RequireNewFrameStartTime);
+                break;
+            case (ChangeFrameTimeType::TimeStep):
+                output.addAdapter(std::make_unique<SetTimeStep>(requirements.timeStepValue),
+                                  CoordinateFileFlags::RequireNewFrameTimeStep);
+                break;
+            case (ChangeFrameTimeType::Both):
+                output.addAdapter(std::make_unique<SetStartTime>(requirements.startTimeValue),
+                                  CoordinateFileFlags::RequireNewFrameStartTime);
+                output.addAdapter(std::make_unique<SetTimeStep>(requirements.timeStepValue),
+                                  CoordinateFileFlags::RequireNewFrameTimeStep);
+                break;
+            default:
+                break;
+        }
     }
     if (requirements.box != ChangeFrameInfoType::PreservedIfPresent)
     {

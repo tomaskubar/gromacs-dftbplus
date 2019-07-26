@@ -41,14 +41,14 @@
 
 void
 gather_f_bsplines(const struct gmx_pme_t *pme, const real *grid,
-                  gmx_bool bClearF, const pme_atomcomm_t *atc,
+                  gmx_bool bClearF, const PmeAtomComm *atc,
                   const splinedata_t *spline,
                   real scale,
                   bool bForQMMM, int nrQMatoms, bool bMMforcesOnly);
 
 real
 gather_energy_bsplines(struct gmx_pme_t *pme, const real *grid,
-                       pme_atomcomm_t *atc,
+                       PmeAtomComm *atc,
                        int nrQMatoms, real *potential);
 
 #endif

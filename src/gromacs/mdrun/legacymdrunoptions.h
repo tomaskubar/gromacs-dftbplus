@@ -53,7 +53,6 @@
 #include "gromacs/commandline/pargs.h"
 #include "gromacs/domdec/options.h"
 #include "gromacs/hardware/hw_info.h"
-#include "gromacs/mdrun/logging.h"
 #include "gromacs/mdtypes/mdrunoptions.h"
 
 #include "replicaexchange.h"
@@ -130,13 +129,13 @@ class LegacyMdrunOptions
         //! Print a warning if any force is larger than this (in kJ/mol nm).
         real                             pforce = -1;
 
+        //! The value of the -append option
+        bool                             appendOption = true;
+
         /*! \brief Output context for writing text files
          *
          * \todo Clarify initialization, ownership, and lifetime. */
         gmx_output_env_t                *oenv = nullptr;
-
-        //! Handle to file used for logging.
-        LogFilePtr logFileGuard = nullptr;
 
         /*! \brief Command line options, defaults, docs and storage for them to fill. */
         /*! \{ */
@@ -145,7 +144,7 @@ class LegacyMdrunOptions
         { nullptr, "interleave", "pp_pme", "cartesian", nullptr };
         const char       *dddlb_opt_choices[static_cast<int>(DlbOption::Count)+1] =
         { nullptr, "auto", "no", "yes", nullptr };
-        const char       *thread_aff_opt_choices[threadaffNR+1] =
+        const char       *thread_aff_opt_choices[static_cast<int>(ThreadAffinity::Count) + 1] =
         { nullptr, "auto", "on", "off", nullptr };
         const char       *nbpu_opt_choices[5] =
         { nullptr, "auto", "cpu", "gpu", nullptr };
@@ -155,7 +154,6 @@ class LegacyMdrunOptions
         { nullptr, "auto", "cpu", "gpu", nullptr };
         const char       *bonded_opt_choices[5] =
         { nullptr, "auto", "cpu", "gpu", nullptr };
-        gmx_bool          bTryToAppendFiles     = TRUE;
         const char       *gpuIdsAvailable       = "";
         const char       *userGpuTaskAssignment = "";
 
@@ -234,7 +232,7 @@ class LegacyMdrunOptions
               "Checkpoint interval (minutes)" },
             { "-cpnum",   FALSE, etBOOL, {&mdrunOptions.checkpointOptions.keepAndNumberCheckpointFiles},
               "Keep and number checkpoint files" },
-            { "-append",  FALSE, etBOOL, {&bTryToAppendFiles},
+            { "-append",  FALSE, etBOOL, {&appendOption},
               "Append to previous output files when continuing from checkpoint instead of adding the simulation part number to all file names" },
             { "-nsteps",  FALSE, etINT64, {&mdrunOptions.numStepsCommandline},
               "Run this number of steps, overrides .mdp file option (-1 means infinite, -2 means use mdp option, smaller is invalid)" },

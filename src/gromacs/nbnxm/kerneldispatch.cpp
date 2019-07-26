@@ -54,6 +54,7 @@
 #include "gromacs/nbnxm/nbnxm_simd.h"
 #include "gromacs/nbnxm/kernels_reference/kernel_gpu_ref.h"
 #include "gromacs/simd/simd.h"
+#include "gromacs/timing/wallcycle.h"
 #include "gromacs/utility/gmxassert.h"
 #include "gromacs/utility/real.h"
 
@@ -145,6 +146,7 @@ reduceGroupEnergySimdBuffers(int                       numGroups,
  * \param[in]     clearF        Enum that tells if to clear the force output buffer
  * \param[out]    vCoulomb      Output buffer for Coulomb energies
  * \param[out]    vVdw          Output buffer for Van der Waals energies
+ * \param[in]     wcycle        Pointer to cycle counting data structure.
  */
 static void
 nbnxn_kernel_cpu(const PairlistSet              &pairlistSet,
@@ -155,7 +157,8 @@ nbnxn_kernel_cpu(const PairlistSet              &pairlistSet,
                  int                             forceFlags,
                  int                             clearF,
                  real                           *vCoulomb,
-                 real                           *vVdw)
+                 real                           *vVdw,
+                 gmx_wallcycle                  *wcycle)
 {
 
     int                      coulkt;
@@ -238,6 +241,7 @@ nbnxn_kernel_cpu(const PairlistSet              &pairlistSet,
     gmx::ArrayRef<const NbnxnPairlistCpu> pairlists = pairlistSet.cpuLists();
 
     int gmx_unused                        nthreads = gmx_omp_nthreads_get(emntNonbonded);
+    wallcycle_sub_start(wcycle, ewcsNONBONDED_CLEAR);
 #pragma omp parallel for schedule(static) num_threads(nthreads)
     for (int nb = 0; nb < pairlists.ssize(); nb++)
     {
@@ -250,6 +254,12 @@ nbnxn_kernel_cpu(const PairlistSet              &pairlistSet,
             clearForceBuffer(nbat, nb);
 
             clear_fshift(out->fshift.data());
+        }
+
+        if (nb == 0)
+        {
+            wallcycle_sub_stop(wcycle, ewcsNONBONDED_CLEAR);
+            wallcycle_sub_start(wcycle, ewcsNONBONDED_KERNEL);
         }
 
         // TODO: Change to reference
@@ -383,6 +393,7 @@ nbnxn_kernel_cpu(const PairlistSet              &pairlistSet,
             }
         }
     }
+    wallcycle_sub_stop(wcycle, ewcsNONBONDED_KERNEL);
 
     if (forceFlags & GMX_FORCE_ENERGY)
     {
@@ -454,9 +465,10 @@ nonbonded_verlet_t::dispatchNonbondedKernel(Nbnxm::InteractionLocality iLocality
                                             const interaction_const_t &ic,
                                             int                        forceFlags,
                                             int                        clearF,
-                                            t_forcerec                *fr,
+                                            const t_forcerec          &fr,
                                             gmx_enerdata_t            *enerd,
-                                            t_nrnb                    *nrnb)
+                                            t_nrnb                    *nrnb,
+                                            gmx_wallcycle             *wcycle)
 {
     const PairlistSet &pairlistSet = pairlistSets().pairlistSet(iLocality);
 
@@ -469,13 +481,14 @@ nonbonded_verlet_t::dispatchNonbondedKernel(Nbnxm::InteractionLocality iLocality
                              kernelSetup(),
                              nbat.get(),
                              ic,
-                             fr->shift_vec,
+                             fr.shift_vec,
                              forceFlags,
                              clearF,
                              enerd->grpp.ener[egCOULSR].data(),
-                             fr->bBHAM ?
+                             fr.bBHAM ?
                              enerd->grpp.ener[egBHAMSR].data() :
-                             enerd->grpp.ener[egLJSR].data());
+                             enerd->grpp.ener[egLJSR].data(),
+                             wcycle);
             break;
 
         case Nbnxm::KernelType::Gpu8x8x8:
@@ -485,13 +498,13 @@ nonbonded_verlet_t::dispatchNonbondedKernel(Nbnxm::InteractionLocality iLocality
         case Nbnxm::KernelType::Cpu8x8x8_PlainC:
             nbnxn_kernel_gpu_ref(pairlistSet.gpuList(),
                                  nbat.get(), &ic,
-                                 fr->shift_vec,
+                                 fr.shift_vec,
                                  forceFlags,
                                  clearF,
                                  nbat->out[0].f,
-                                 fr->fshift[0],
+                                 nbat->out[0].fshift.data(),
                                  enerd->grpp.ener[egCOULSR].data(),
-                                 fr->bBHAM ?
+                                 fr.bBHAM ?
                                  enerd->grpp.ener[egBHAMSR].data() :
                                  enerd->grpp.ener[egLJSR].data());
             break;
@@ -514,7 +527,8 @@ nonbonded_verlet_t::dispatchFreeEnergyKernel(Nbnxm::InteractionLocality  iLocali
                                              real                       *lambda,
                                              gmx_enerdata_t             *enerd,
                                              const int                   forceFlags,
-                                             t_nrnb                     *nrnb)
+                                             t_nrnb                     *nrnb,
+                                             gmx_wallcycle              *wcycle)
 {
     const auto nbl_fep = pairlistSets().pairlistSet(iLocality).fepLists();
 
@@ -553,6 +567,7 @@ nonbonded_verlet_t::dispatchFreeEnergyKernel(Nbnxm::InteractionLocality  iLocali
 
     GMX_ASSERT(gmx_omp_nthreads_get(emntNonbonded) == nbl_fep.ssize(), "Number of lists should be same as number of NB threads");
 
+    wallcycle_sub_start(wcycle, ewcsNONBONDED_FEP);
 #pragma omp parallel for schedule(static) num_threads(nbl_fep.ssize())
     for (int th = 0; th < nbl_fep.ssize(); th++)
     {
@@ -609,4 +624,5 @@ nonbonded_verlet_t::dispatchFreeEnergyKernel(Nbnxm::InteractionLocality  iLocali
             enerd->enerpart_lambda[i] += enerd->foreign_term[F_EPOT];
         }
     }
+    wallcycle_sub_stop(wcycle, ewcsNONBONDED_FEP);
 }

@@ -121,7 +121,7 @@ class basic_mdspan
         //! Exposes the type of stored element.
         using element_type     = typename accessor_type::element_type;
         //! Expose the underlying type of the stored elements.
-        using value_type       = typename std::remove_cv<element_type>::type;
+        using value_type       = std::remove_cv_t<element_type>;
         //! Expose the type used for indexing.
         using index_type       = ptrdiff_t;
         //! Expose type for index differences.
@@ -196,14 +196,43 @@ class basic_mdspan
          */
         constexpr basic_mdspan( pointer ptr, const mapping_type &m, const accessor_type &a ) noexcept
             : acc_(a), map_( m ), ptr_(ptr) {}
-
-        /*! \brief Brace operator to access multidimenisonal array element.
+        /*! \brief Construct mdspan from multidimensional arrays implemented with mdspan
+         *
+         * Requires the container to have a view_type describing the mdspan, which is
+         * accessible through an asView() call
+         *
+         *  This allows functions to declare mdspans as arguments, but take e.g. multidimensional
+         *  arrays implicitly during the function call
+         * \tparam U container type
+         * \param[in] other mdspan-implementing container
+         */
+        template<typename U,
+                 typename = std::enable_if_t<
+                         std::is_same<typename std::remove_reference_t<U>::view_type::element_type,
+                                      ElementType>::value> >
+        constexpr basic_mdspan(U &&other) : basic_mdspan(other.asView()) {}
+        /*! \brief Construct mdspan of const Elements from multidimensional arrays implemented with mdspan
+         *
+         * Requires the container to have a const_view_type describing the mdspan, which is
+         * accessible through an asConstView() call
+         *
+         *  This allows functions to declare mdspans as arguments, but take e.g. multidimensional
+         *  arrays implicitly during the function call
+         * \tparam U container type
+         * \param[in] other mdspan-implementing container
+         */
+        template<typename U,
+                 typename = std::enable_if_t<
+                         std::is_same<typename std::remove_reference_t<U>::const_view_type::element_type,
+                                      ElementType>::value> >
+        constexpr basic_mdspan(const U &other) : basic_mdspan(other.asConstView()) {}
+        /*! \brief Brace operator to access multidimensional array element.
          * \param[in] indices The multidimensional indices of the object.
          * Requires rank() == sizeof...(IndexType). Slicing is implemented via sub_span.
          * \returns reference to element at indices.
          */
         template<class... IndexType >
-        constexpr typename std::enable_if<sizeof ... (IndexType) == extents_type::rank(), reference>::type
+        constexpr std::enable_if_t<sizeof ... (IndexType) == extents_type::rank(), reference>
         operator()( IndexType... indices) const noexcept
         { return acc_.access( ptr_, map_( indices ... ) ); }
         /*! \brief Canonical bracket operator for one-dimensional arrays.
@@ -213,8 +242,8 @@ class basic_mdspan
          * \returns reference to element stored at position i
          */
         template<class IndexType>
-        constexpr typename std::enable_if<std::is_integral<IndexType>::value &&
-                                          extents_type::rank() == 1, reference>::type
+        constexpr std::enable_if_t<std::is_integral<IndexType>::value &&
+                                   extents_type::rank() == 1, reference>
         operator[]( const IndexType &i ) const noexcept
         { return acc_.access( ptr_, map_(i) ); }
         /*! \brief Bracket operator for multi-dimensional arrays.
