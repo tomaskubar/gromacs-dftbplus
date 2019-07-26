@@ -1085,7 +1085,7 @@ void gmx_pme_calc_energy(struct gmx_pme_t *pme, int n, rvec *x, real *q, real *V
     grid = &pme->pmegrid[PME_GRID_QA];
 
     /* Only calculate the spline coefficients, don't actually spread */
-    spread_on_grid(pme, atc, nullptr, TRUE, FALSE, pme->fftgrid[PME_GRID_QA], FALSE, PME_GRID_QA, FALSE);
+    spread_on_grid(pme, atc, nullptr, TRUE, FALSE, pme->fftgrid[PME_GRID_QA], FALSE, PME_GRID_QA);
 
     *V = gather_energy_bsplines(pme, grid->grid.grid, atc, 0, nullptr);
 }
@@ -1292,17 +1292,12 @@ int gmx_pme_do(struct gmx_pme_t *pme,
             wallcycle_start(wcycle, ewcPME_SPREAD);
 
             /* Spread the coefficients on a grid */
-            if (!bForQMMM || bMMforcesOnly)
-            {
-                spread_on_grid(pme, &pme->atc[0], pmegrid, bFirst, TRUE, fftgrid, bDoSplines, grid_index, FALSE);
-            }
-            else
-            {
-                /* last parameter: bForQMMM == TRUE (the above case does not require it)
-                 * TO MODIFY (REALLY?)
-                 */
-                spread_on_grid(pme, &pme->atc[0], pmegrid, bFirst, TRUE, fftgrid, bDoSplines, grid_index, TRUE);
-            }
+            spread_on_grid(pme, &pme->atc[0], pmegrid, bFirst || (bForQMMM && !bMMforcesOnly), TRUE,
+                           fftgrid, bDoSplines || (bForQMMM && !bMMforcesOnly), grid_index);
+            /* There was an additional boolean parameter (!bForQMMM || bMMforcesOnly),
+             *   which determined the case for which some parts of spread_on_grid may not be needed,
+             *   while they are needed if (bForQMMM && !bMMforcesOnly).
+             */
 
             if (bFirst)
             {
@@ -1519,7 +1514,7 @@ int gmx_pme_do(struct gmx_pme_t *pme,
     /* For Lorentz-Berthelot combination rules in LJ-PME, we need to calculate
      * seven terms. */
 
-    if (pme->doLJ && pme->ljpme_combination_rule == eljpmeLB)
+    if (!bForQMMM && pme->doLJ && pme->ljpme_combination_rule == eljpmeLB)
     {
         /* Loop over A- and B-state if we are doing FEP */
         for (fep_state = 0; fep_state < fep_states_lj; ++fep_state)
@@ -1603,7 +1598,7 @@ int gmx_pme_do(struct gmx_pme_t *pme,
                 {
                     wallcycle_start(wcycle, ewcPME_SPREAD);
                     /* Spread the c6 on a grid */
-                    spread_on_grid(pme, &pme->atc[0], pmegrid, bFirst, TRUE, fftgrid, bDoSplines, grid_index, FALSE);
+                    spread_on_grid(pme, &pme->atc[0], pmegrid, bFirst, TRUE, fftgrid, bDoSplines, grid_index);
 
                     if (bFirst)
                     {
