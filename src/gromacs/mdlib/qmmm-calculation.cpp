@@ -16,6 +16,7 @@
 
 #include "gromacs/domdec/domdec_struct.h"
 #include "gromacs/ewald/pme.h"
+#include "gromacs/ewald/pme_internal.h"
 #include "gromacs/fileio/confio.h"
 #include "gromacs/gmxlib/network.h"
 #include "gromacs/gmxlib/nrnb.h"
@@ -56,6 +57,25 @@
 
 #define gmx_erfc(x) (std::erfc(x))
 #define gmx_erf(x)  (std::erf(x))
+
+#include<time.h>
+
+void print_time_difference(const char s[],
+                           struct timespec start,
+                           struct timespec end);
+
+void print_time_difference(const char s[],
+                           struct timespec start,
+                           struct timespec end)
+{
+  //int sec, nsec;
+  long long value = 1000000000ll * ((long long) end.tv_sec
+                                  - (long long) start.tv_sec)
+                    + (long long) (end.tv_nsec - start.tv_nsec);
+  printf("%s %12lld\n", s, value);
+
+  return;
+}  
 
 /****************************************
  ******   AUXILIARY ROUTINES   **********
@@ -275,10 +295,14 @@ void calculate_LR_QM_MM(t_QMMMrec *qr,
    // printf("MM %5d %8.5f %8.5f %8.5f %8.5f\n", j+1, pme->x[n+j][XX], pme->x[n+j][YY], pme->x[n+j][ZZ], pme->q[n + j]);
   }
   
+  static struct timespec time1, time2;
+  clock_gettime(CLOCK_MONOTONIC, &time1);
   init_nrnb(pme->nrnb);
   gmx_pme_do(pmedata, 0, ntot, pme->x, nullptr, pme->q, pme->q, nullptr, nullptr, nullptr, nullptr, qm->box, cr, 0, 0,
              pme->nrnb, wcycle, pme->vir, pme->vir, nullptr, nullptr, 0., 0., nullptr, nullptr,
              GMX_PME_SPREAD | GMX_PME_SOLVE | GMX_PME_CALC_POT, TRUE, FALSE, n, pme->pot);
+  clock_gettime(CLOCK_MONOTONIC, &time2);
+  print_time_difference("PMETIME 1 ", time1, time2);
 
   /* Save the potential */
   for (int j=0; j<qm->nrQMatoms; j++)
@@ -339,6 +363,138 @@ void calculate_LR_QM_MM(t_QMMMrec *qr,
 /* Calculate the potential induced by the periodic images of QM charges.
  * This needs to be performed in every SCC iteration.
  */
+/*
+void calculate_complete_QM_QM_ewald(t_QMMMrec *qr,
+                              const t_commrec *cr,
+                              gmx_wallcycle_t wcycle,
+                              struct gmx_pme_t *pmedata,
+                              real *pot)
+{
+  // as the last arguments are expected: fr->ewaldcoeff_q and fr->pmedata
+  t_QMrec    *qm           = qr->qm[0];
+  t_QMMM_PME *pme          = qr->pme;
+  int         n            = qm->nrQMatoms;
+//real        rcoul        = qm->rcoulomb;
+  real        ewaldcoeff_q = qm->ewaldcoeff_q;
+
+  // copy the data into PME structures
+  for (int j=0; j<n; j++)
+  {
+      // QM atoms with charges
+      pme->x[j][XX] = qm->xQM[j][XX];
+      pme->x[j][YY] = qm->xQM[j][YY];
+      pme->x[j][ZZ] = qm->xQM[j][ZZ];
+      // Attenuate the periodic images of the QM zone
+      // with the same scaling factor
+      // that is applied for the MM atoms.
+      pme->q[j]     = qm->QMcharges[j] * qr->mm->scalefactor;
+  }
+  
+  static struct timespec time1, time2;
+  clock_gettime(CLOCK_MONOTONIC, &time1);
+  init_nrnb(pme->nrnb);
+
+  for (int j=0; j<n; j++) {
+    pme->pot[j] = 0.;
+  }
+
+  rvec kvec;
+  for (int kxi=-pmedata->nkx; kxi<=pmedata->nkx; kxi++) {
+    kvec[XX] = (real) kxi * 2. * M_PI / qm->box[XX][XX];
+    for (int kyi=-pmedata->nky; kyi<=pmedata->nky; kyi++) {
+      kvec[YY] = (real) kyi * 2. * M_PI / qm->box[YY][YY];
+      for (int kzi=-pmedata->nkz; kzi<=pmedata->nkz; kzi++) {
+        kvec[ZZ] = (real) kzi * 2. * M_PI / qm->box[ZZ][ZZ];
+
+        if (kxi != 0 || kyi != 0 || kzi != 0) {
+          real factor = exp(-norm2(kvec) / 4. / SQR(pmedata->ewaldcoeff_q)) / norm2(kvec);
+        //printf("KX %2d KY %2d KZ %2d FACTOR %12.7f\n", kxi, kyi, kzi, factor);
+          for (int j=0; j<n; j++) {
+            for (int k=0; k<n; k++) {
+              rvec bond;
+              rvec_sub(pme->x[k], pme->x[j], bond);
+              real addend = factor * pme->q[k] * cos((double) iprod(kvec, bond));
+              pme->pot[j] += addend;
+            //printf("J %2d K %2d X %8.5f Y %8.5f Z %8.5f ADDEND %12.7f\n",
+            //  j, k, bond[XX], bond[YY], bond[ZZ], addend);
+            }
+          }
+        }
+
+      }
+    }
+  }
+
+  for (int j=0; j<n; j++) {
+    real factor = 4. * M_PI / (qm->box[XX][XX] * qm->box[YY][YY] * qm->box[ZZ][ZZ])
+                * ONE_4PI_EPS0 / pmedata->epsilon_r;
+  //printf("final factor = %12.7f\n", factor);
+    pme->pot[j] *= factor;
+  }
+
+  printf("NKX %d NKY %d NKZ %d\n", pmedata->nkx, pmedata->nky, pmedata->nkz);
+  for (int j=0; j<n; j++) {
+    printf("POT QM QM [%3d] = %12.7f\n", j, pme->pot[j]);
+  }
+
+  clock_gettime(CLOCK_MONOTONIC, &time2);
+  print_time_difference("EWATIME 2 ", time1, time2);
+  
+  // short-range corrections
+  real pot_corr[n];
+  for (int j=0; j<n; j++)
+  {
+      // exclude the interaction of atom j with its own charge density
+      pot_corr[j] = - 2. * ewaldcoeff_q * pme->q[j] / sqrt(M_PI);
+      // exclude the interactions with the other QM atoms
+      for (int k=0; k<n; k++)
+      {
+          if (j != k)
+          {
+              real r = pbc_dist_qmmm(nullptr, pme->x[j], pme->x[k]);
+              pot_corr[j] -= pme->q[k] * gmx_erf(ewaldcoeff_q * r) / r;
+          }
+      }
+  }
+      
+  real pot_surf[n];
+  if (pme->surf_corr_pme)
+  {
+      // optionally evaluate the PME surface correction term.
+      // ATTENTION: modified update_QMMM_coord() (qmmm.c) is needed here!
+       // sum_j q_j vec(x_j)
+       rvec qx, sum_qx;
+       clear_rvec(sum_qx);
+	   for (int j=0; j<qm->nrQMatoms; j++) {
+           svmul(pme->q[j], pme->x[j], qx);
+           rvec_inc(sum_qx, qx);
+	   }
+	   // contribution to the potential
+	   real vol = qm->box[XX][XX] * qm->box[YY][YY] * qm->box[ZZ][ZZ];
+	   for (int j=0; j<n; j++) {
+	       pot_surf[j] = 4. * M_PI / 3. / vol / pme->epsilon_r * diprod(qm->xQM[j], sum_qx);
+       }
+  }
+  else
+  {
+	   for (int j=0; j<n; j++) {
+           pot_surf[j] = 0.;
+	   }
+  }
+
+  // return the potential on QM atoms
+  for (int j=0; j<n; j++)
+  {
+      pot[j] = pme->pot[j] * KJMOL2HARTREE + pot_corr[j] * BOHR2NM + pot_surf[j] * BOHR2NM;
+   // printf("pot_qm_in_scc[%d] = %12.8f\n", j+1, pot[j]);
+   // printf("Ewald atom %d charge %6.3f potential %8.5f (correction %8.5f surfterm %8.5f)\n",
+   //         j+1, pme->q[j],      pot[j],                 pot_corr[j] * BOHR2NM, pot_surf[j] * BOHR2NM);
+  }
+
+  return;
+} // calculate_complete_QM_QM_ewald
+*/
+
 void calculate_complete_QM_QM(t_QMMMrec *qr,
                               const t_commrec *cr,
                               gmx_wallcycle_t wcycle,
@@ -370,10 +526,18 @@ void calculate_complete_QM_QM(t_QMMMrec *qr,
       pme->q[j]     = qm->QMcharges[j] * qr->mm->scalefactor;
   }
   
+  static struct timespec time1, time2;
+  clock_gettime(CLOCK_MONOTONIC, &time1);
   init_nrnb(pme->nrnb);
   gmx_pme_do(pmedata, 0, n, pme->x, nullptr, pme->q, pme->q, nullptr, nullptr, nullptr, nullptr, qm->box, cr, 0, 0,
              pme->nrnb, wcycle, pme->vir, pme->vir, nullptr, nullptr, 0., 0., nullptr, nullptr,
              GMX_PME_SPREAD | GMX_PME_SOLVE | GMX_PME_CALC_POT, TRUE, FALSE, n, pme->pot);
+  clock_gettime(CLOCK_MONOTONIC, &time2);
+  print_time_difference("PMETIME 2 ", time1, time2);
+
+//for (int j=0; j<n; j++) {
+//  printf("POT QM QM [%3d] = %12.7f\n", j, pme->pot[j]);
+//}
   
   /* short-range corrections */
   real pot_corr[n];
@@ -422,7 +586,7 @@ void calculate_complete_QM_QM(t_QMMMrec *qr,
   for (int j=0; j<n; j++)
   {
       pot[j] = pme->pot[j] * KJMOL2HARTREE + pot_corr[j] * BOHR2NM + pot_surf[j] * BOHR2NM;
-      printf("pot_qm_in_scc[%d] = %9.5f\n", j+1, pot[j]);
+   // printf("pot_qm_in_scc[%d] = %12.8f\n", j+1, pot[j]);
    // printf("Ewald atom %d charge %6.3f potential %8.5f (correction %8.5f surfterm %8.5f)\n",
    //         j+1, pme->q[j],      pot[j],                 pot_corr[j] * BOHR2NM, pot_surf[j] * BOHR2NM);
   }
@@ -591,10 +755,14 @@ void gradient_QM_MM(t_QMMMrec *qr, const t_commrec *cr, gmx_wallcycle_t wcycle, 
           pme->q[n + j]     = mm->MMcharges_full[j];
       }
       // PME -- long-range component
+      static struct timespec time1, time2;
+      clock_gettime(CLOCK_MONOTONIC, &time1);
       init_nrnb(pme->nrnb);
       gmx_pme_do(pmedata, 0, n + ne_full, pme->x, pme->f, pme->q, pme->q, nullptr, nullptr, nullptr, nullptr, qm->box, cr, 0, 0,
                  pme->nrnb, wcycle, pme->vir, pme->vir, nullptr, nullptr, 0., 0., nullptr, nullptr,
                  GMX_PME_SPREAD | GMX_PME_SOLVE | GMX_PME_CALC_F, TRUE, FALSE, n, nullptr);
+      clock_gettime(CLOCK_MONOTONIC, &time2);
+      print_time_difference("PMETIME 3 ", time1, time2);
       for (int j=0; j<n; j++)
       {
         for (int m=0; m<DIM; m++)
@@ -655,10 +823,13 @@ void gradient_QM_MM(t_QMMMrec *qr, const t_commrec *cr, gmx_wallcycle_t wcycle, 
           pme->q[j]     = qm->QMcharges[j];
       }
       // PME -- long-range component
+      clock_gettime(CLOCK_MONOTONIC, &time1);
       init_nrnb(pme->nrnb);
       gmx_pme_do(pmedata, 0, n, pme->x, pme->f, pme->q, pme->q, nullptr, nullptr, nullptr, nullptr, qm->box, cr, 0, 0,
                  pme->nrnb, wcycle, pme->vir, pme->vir, nullptr, nullptr, 0., 0., nullptr, nullptr,
                  GMX_PME_SPREAD | GMX_PME_SOLVE | GMX_PME_CALC_F, TRUE, FALSE, n, nullptr);
+      clock_gettime(CLOCK_MONOTONIC, &time2);
+      print_time_difference("PMETIME 4 ", time1, time2);
       for (int j=0; j<n; j++)
       {
         for (int m=0; m<DIM; m++)
@@ -725,10 +896,13 @@ void gradient_QM_MM(t_QMMMrec *qr, const t_commrec *cr, gmx_wallcycle_t wcycle, 
           pme->q[n + k]     = 0.;
       }
       // PME -- long-range component
+      clock_gettime(CLOCK_MONOTONIC, &time1);
       init_nrnb(pme->nrnb);
       gmx_pme_do(pmedata, 0, n + ne_full, pme->x, pme->f, pme->q, pme->q, nullptr, nullptr, nullptr, nullptr, qm->box, cr, 0, 0,
                  pme->nrnb, wcycle, pme->vir, pme->vir, nullptr, nullptr, 0., 0., nullptr, nullptr,
                  GMX_PME_SPREAD | GMX_PME_SOLVE | GMX_PME_CALC_F, TRUE, TRUE, n, nullptr);
+      clock_gettime(CLOCK_MONOTONIC, &time2);
+      print_time_difference("PMETIME 5 ", time1, time2);
       for (int j=0; j<ne_full; j++)
       {
           MMgrad_full[j][XX] = - mm->MMcharges_full[j] * pme->f[n + j][XX] / HARTREE_BOHR2MD;
