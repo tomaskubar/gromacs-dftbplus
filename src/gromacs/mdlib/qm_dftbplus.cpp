@@ -87,6 +87,7 @@ typedef struct Context {
 /* Fill up the context (status structure) with all the relevant data
  */
 void initialize_context(Context *cont,
+                     int nrQMatoms,
                      int qmmm_variant,
                      const t_forcerec *fr_in,
                      const t_inputrec *ir_in,
@@ -99,6 +100,10 @@ void initialize_context(Context *cont,
    *   at the start of every MD step,
    *   and will be remembered for all of the SCC iterations.
    * That way, these data need not pass through the DFTB+ program.
+   *
+   * NOTE: In the new "C++" implementation,
+   *       this is called from the constructor QMMM_rec::QMMM_rec(),
+   *       so the object qr is not available yet!
    */
 
   if (qmmm_variant == eqmmmPME) {
@@ -108,7 +113,8 @@ void initialize_context(Context *cont,
   }
   printf("qmmm_variant = %d\n", qmmm_variant);
   printf("cont->pme = %s\n", cont->pme ? "true" : "false");
-  cont->n = fr_in->qr->qm[0]->nrQMatoms;
+//cont->n = fr_in->qr->qm[0].nrQMatoms; // object qr not available yet!
+  cont->n = nrQMatoms;
   printf("cont->n = %d\n", cont->n);
   if (cont->pme)
   {
@@ -141,9 +147,9 @@ void calcQMextPotPME(Context *cont, double *q, double *extpot)
       snew(extpot_real, n);
       for (int i=0; i<n; i++)
       {
-          cont->fr->qr->qm[0]->QMcharges[i] = (real) -q[i]; // check sign TODO
+          cont->fr->qr->qm[0].QMcharges[i] = (real) -q[i]; // check sign TODO
       }
-      calculate_complete_QM_QM(cont->fr->qr, cont->cr, cont->wcycle, cont->fr->pmedata, extpot_real);
+      cont->fr->qr->calculate_complete_QM_QM(cont->cr, cont->wcycle, cont->fr->pmedata, extpot_real);
       for (int i=0; i<n; i++)
       {
           extpot[i] = (double) - extpot_real[i]; // sign OK
@@ -186,7 +192,7 @@ extern "C" void calcqmextpotgrad(void *refptr, gmx_unused double *q, double *ext
 
 /* DFTBPLUS interface routines */
 
-void init_dftbplus(t_QMrec *qm,
+void init_dftbplus(QMMM_QMrec& qm,
                    const t_forcerec *fr,
                    const t_inputrec *ir,
                    const t_commrec *cr,
@@ -205,9 +211,9 @@ void init_dftbplus(t_QMrec *qm,
     
     snew(cont, 1);
   //Context cont;
-    initialize_context(cont, qm->qmmm_variant, fr, ir, cr, wcycle);
+    initialize_context(cont, qm.nrQMatoms, qm.qmmm_variant, fr, ir, cr, wcycle);
 
-    snew(qm->dpcalc, 1);
+    snew(qm.dpcalc, 1);
 
     /* Fill up the context with all the relevant data! */
 
@@ -223,12 +229,12 @@ void init_dftbplus(t_QMrec *qm,
     dftbp_process_input(&calculator, &input);
     printf("DFTB+ input has been processed!\n");
 
-    qm->dpcalc = &calculator;
+    qm.dpcalc = &calculator;
 
     /* Register the callback functions which calculate
      * the external potential and its gradient
      */
-    dftbp_register_ext_pot_generator(qm->dpcalc,
+    dftbp_register_ext_pot_generator(qm.dpcalc,
                                      cont,
                                      calcqmextpot,
                                      calcqmextpotgrad);
@@ -241,7 +247,7 @@ void init_dftbplus(t_QMrec *qm,
 } /* init_dftbplus */
 
 real call_dftbplus(const t_forcerec *fr, const t_commrec *cr,
-                   t_QMrec *qm,          t_MMrec *mm,
+                   QMMM_QMrec& qm,       QMMM_MMrec& mm,
                    rvec f[],             rvec fshift[],
 		           gmx_wallcycle_t wcycle)
 {
@@ -250,7 +256,7 @@ real call_dftbplus(const t_forcerec *fr, const t_commrec *cr,
     double QMener;
  // bool lPme = (qm->qmmm_variant == eqmmmPME);
 
-    int n = qm->nrQMatoms;
+    int n = qm.nrQMatoms;
 
     double *x, *grad, *pot, *potgrad, *q; // real instead of rvec, to help pass data to fortran
     real *pot_sr = nullptr, *pot_lr = nullptr;
@@ -270,7 +276,7 @@ real call_dftbplus(const t_forcerec *fr, const t_commrec *cr,
     snew(pot_sr, n);
     snew(pot_lr, n);
 
-    snew(QMgrad, qm->nrQMatoms);
+    snew(QMgrad, qm.nrQMatoms);
 
     if (f_q == nullptr)
     {
@@ -281,7 +287,7 @@ real call_dftbplus(const t_forcerec *fr, const t_commrec *cr,
     {
         for (int j=0; j<DIM; j++)
         {
-            x[3*i+j] = qm->xQM[i][j] / BOHR2NM; // to bohr units for DFTB+
+            x[3*i+j] = qm.xQM[i][j] / BOHR2NM; // to bohr units for DFTB+
         }
     }
 
@@ -290,11 +296,11 @@ real call_dftbplus(const t_forcerec *fr, const t_commrec *cr,
      * with PME, this will only include MM atoms,
      *    and the contribution from QM atoms will be added in every SCC iteration
      */
-    calculate_SR_QM_MM(fr->qr, qm->qmmm_variant, pot_sr);
-    if (qm->qmmm_variant == eqmmmPME)
+    fr->qr->calculate_SR_QM_MM(qm.qmmm_variant, pot_sr);
+    if (qm.qmmm_variant == eqmmmPME)
     {
      // gmx_pme_init_qmmm(&(fr->qr->pme->pmedata), true, fr->pmedata);
-        calculate_LR_QM_MM(fr->qr, cr, wcycle, fr->pmedata, pot_lr);
+        fr->qr->calculate_LR_QM_MM(cr, wcycle, fr->pmedata, pot_lr);
         for (int i=0; i<n; i++)
         {
             pot[i] = (double) - (pot_sr[i] + pot_lr[i]);
@@ -327,13 +333,13 @@ real call_dftbplus(const t_forcerec *fr, const t_commrec *cr,
 
     /* DFTB+ calculation itself */
     wallcycle_start(wcycle, ewcQM);
-    dftbp_set_coords(qm->dpcalc, x); // unit OK
-    dftbp_set_external_potential(qm->dpcalc, pot, potgrad); // unit and sign OK
-    dftbp_get_energy(qm->dpcalc, &QMener); // unit OK
-    dftbp_get_gross_charges(qm->dpcalc, q);
+    dftbp_set_coords(qm.dpcalc, x); // unit OK
+    dftbp_set_external_potential(qm.dpcalc, pot, potgrad); // unit and sign OK
+    dftbp_get_energy(qm.dpcalc, &QMener); // unit OK
+    dftbp_get_gross_charges(qm.dpcalc, q);
     for (int i=0; i<n; i++)
         printf("%d %6.3f\n", i+1, q[i]);
-    dftbp_get_gradients(qm->dpcalc, grad);
+    dftbp_get_gradients(qm.dpcalc, grad);
     wallcycle_stop(wcycle, ewcQM);
 
     /* Save the gradient on the QM atoms */
@@ -355,7 +361,7 @@ real call_dftbplus(const t_forcerec *fr, const t_commrec *cr,
     /* Save the QM charges */
     for (int i=0; i<n; i++)
     {
-        qm->QMcharges[i] = q[i]; // sign OK
+        qm.QMcharges[i] = q[i]; // sign OK
      // printf("CHECK CHARGE QM[%d] = %6.3f\n", i+1, qm->QMcharges[i]);
     }
 
@@ -364,16 +370,16 @@ real call_dftbplus(const t_forcerec *fr, const t_commrec *cr,
      *    because it does not know the position and charges of individual atoms,
      *    and instead, it only obtains the external potentials induced at QM atoms.
      */
-    snew(MMgrad, mm->nrMMatoms);
-    if (qm->qmmm_variant == eqmmmPME)
+    snew(MMgrad, mm.nrMMatoms);
+    if (qm.qmmm_variant == eqmmmPME)
     {
-        snew(MMgrad_full, mm->nrMMatoms_full);
+        snew(MMgrad_full, mm.nrMMatoms_full);
     }
 
     rvec *partgrad;
-    snew(partgrad, qm->nrQMatoms);
-    gradient_QM_MM(fr->qr, cr, wcycle, (qm->qmmm_variant == eqmmmPME ? fr->pmedata : nullptr),
-                   qm->qmmm_variant, partgrad, MMgrad, MMgrad_full);
+    snew(partgrad, qm.nrQMatoms);
+    fr->qr->gradient_QM_MM(cr, wcycle, (qm.qmmm_variant == eqmmmPME ? fr->pmedata : nullptr),
+                   qm.qmmm_variant, partgrad, MMgrad, MMgrad_full);
     for (int i=0; i<n; i++)
     {
         rvec_inc(QMgrad[i], partgrad[i]); // sign OK
@@ -385,7 +391,7 @@ real call_dftbplus(const t_forcerec *fr, const t_commrec *cr,
     /* Put the QMMM forces in the force array and to the fshift.
      * Convert to MD units.
      */
-    for (int i = 0; i < qm->nrQMatoms; i++)
+    for (int i = 0; i < qm.nrQMatoms; i++)
     {
         for (int j = 0; j < DIM; j++)
         {
@@ -393,29 +399,29 @@ real call_dftbplus(const t_forcerec *fr, const t_commrec *cr,
             fshift[i][j] = HARTREE_BOHR2MD*QMgrad[i][j];
         }
     }
-    for (int i = 0; i < mm->nrMMatoms; i++)
+    for (int i = 0; i < mm.nrMMatoms; i++)
     {
         for (int j = 0; j < DIM; j++)
         {
-            f[i+qm->nrQMatoms][j]      = HARTREE_BOHR2MD*MMgrad[i][j];
-            fshift[i+qm->nrQMatoms][j] = HARTREE_BOHR2MD*MMgrad[i][j];
+            f[i+qm.nrQMatoms][j]      = HARTREE_BOHR2MD*MMgrad[i][j];
+            fshift[i+qm.nrQMatoms][j] = HARTREE_BOHR2MD*MMgrad[i][j];
         }
     }
-    if (qm->qmmm_variant == eqmmmPME)
+    if (qm.qmmm_variant == eqmmmPME)
     {
-        for (int i = 0; i < mm->nrMMatoms_full; i++)
+        for (int i = 0; i < mm.nrMMatoms_full; i++)
         {
             for (int j = 0; j < DIM; j++)
             {
-                f[i+qm->nrQMatoms+mm->nrMMatoms][j]      = HARTREE_BOHR2MD*MMgrad_full[i][j];
-                fshift[i+qm->nrQMatoms+mm->nrMMatoms][j] = HARTREE_BOHR2MD*MMgrad_full[i][j];
+                f[i+qm.nrQMatoms+mm.nrMMatoms][j]      = HARTREE_BOHR2MD*MMgrad_full[i][j];
+                fshift[i+qm.nrQMatoms+mm.nrMMatoms][j] = HARTREE_BOHR2MD*MMgrad_full[i][j];
             }
         }
     }
 
     sfree(QMgrad);
     sfree(MMgrad);
-    if (qm->qmmm_variant == eqmmmPME)
+    if (qm.qmmm_variant == eqmmmPME)
     {
         sfree(MMgrad_full);
     }
@@ -431,7 +437,7 @@ real call_dftbplus(const t_forcerec *fr, const t_commrec *cr,
     fprintf(f_q, "%8d", step);
     for (int i=0; i<n; i++)
     {
-        fprintf(f_q, " %8.5f", qm->QMcharges[i]);
+        fprintf(f_q, " %8.5f", qm.QMcharges[i]);
     }
     fprintf(f_q, "\n");
 

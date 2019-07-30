@@ -92,7 +92,8 @@ void F77_FUNC(grads, GRADS) (const int *, real *, const int *,
 };
 #endif
 
-void init_gamess(const t_commrec *cr, t_QMrec *qm, t_MMrec *mm)
+//void init_gamess(const t_commrec *cr, t_QMrec *qm, t_MMrec *mm)
+void init_gamess(const t_commrec *cr, QMMM_QMrec& qm, QMMM_MMrec& mm)
 {
     /* it works hopelessly complicated :-)
      * first a file is written. Then the standard gamess input/output
@@ -130,26 +131,26 @@ void init_gamess(const t_commrec *cr, t_QMrec *qm, t_MMrec *mm)
              */
             fprintf(out, "memory 48000000\nPARALLEL IOMODE SCREENED\n");
             fprintf(out, "ELEC %d\nMULT %d\nSUPER ON\nNOSYM\nGEOMETRY ANGSTROM\n",
-                    qm->nelectrons, qm->multiplicity);
-            for (i = 0; i < qm->nrQMatoms; i++)
+                    qm.nelectrons, qm.multiplicity);
+            for (i = 0; i < qm.nrQMatoms; i++)
             {
 #ifdef DOUBLE
                 fprintf(out, "%10.7lf  %10.7lf  %10.7lf  %5.3lf  %2s\n",
                         i/2.,
                         i/3.,
                         i/4.,
-                        qm->atomicnumberQM[i]*1.0,
-                        periodic_system[qm->atomicnumberQM[i]]);
+                        qm.atomicnumberQM[i]*1.0,
+                        periodic_system[qm.atomicnumberQM[i]]);
 #else
                 fprintf(out, "%10.7f  %10.7f  %10.7f  %5.3f  %2s\n",
                         i/2.,
                         i/3.,
                         i/4.,
-                        qm->atomicnumberQM[i]*1.0,
-                        periodic_system[qm->atomicnumberQM[i]]);
+                        qm.atomicnumberQM[i]*1.0,
+                        periodic_system[qm.atomicnumberQM[i]]);
 #endif
             }
-            if (mm->nrMMatoms)
+            if (mm.nrMMatoms)
             {
                 for (j = i; j < i+2; j++)
                 {
@@ -169,8 +170,8 @@ void init_gamess(const t_commrec *cr, t_QMrec *qm, t_MMrec *mm)
                 }
             }
             fprintf(out, "END\nBASIS %s\nRUNTYPE GRADIENT\nSCFTYPE %s\n",
-                    eQMbasis_names[qm->QMbasis],
-                    eQMmethod_names[qm->QMmethod]); /* see enum.h */
+                    eQMbasis_names[qm.QMbasis],
+                    eQMmethod_names[qm.QMmethod]); /* see enum.h */
             fclose(out);
         }
         gmx_barrier(cr);
@@ -184,26 +185,26 @@ void init_gamess(const t_commrec *cr, t_QMrec *qm, t_MMrec *mm)
          * preformance on more than 4 cpu's is rather poor at the moment.
          */
         fprintf(out, "ELEC %d\nMULT %d\nSUPER ON\nNOSYM\nGEOMETRY ANGSTROM\n",
-                qm->nelectrons, qm->multiplicity);
-        for (i = 0; i < qm->nrQMatoms; i++)
+                qm.nelectrons, qm.multiplicity);
+        for (i = 0; i < qm.nrQMatoms; i++)
         {
 #ifdef DOUBLE
             fprintf(out, "%10.7lf  %10.7lf  %10.7lf  %5.3lf  %2s\n",
                     i/2.,
                     i/3.,
                     i/4.,
-                    qm->atomicnumberQM[i]*1.0,
-                    periodic_system[qm->atomicnumberQM[i]]);
+                    qm.atomicnumberQM[i]*1.0,
+                    periodic_system[qm.atomicnumberQM[i]]);
 #else
             fprintf(out, "%10.7f  %10.7f  %10.7f  %5.3f  %2s\n",
                     i/2.,
                     i/3.,
                     i/4.,
-                    qm->atomicnumberQM[i]*1.0,
-                    periodic_system[qm->atomicnumberQM[i]]);
+                    qm.atomicnumberQM[i]*1.0,
+                    periodic_system[qm.atomicnumberQM[i]]);
 #endif
         }
-        if (mm->nrMMatoms)
+        if (mm.nrMMatoms)
         {
             for (j = i; j < i+2; j++)
             {
@@ -223,13 +224,13 @@ void init_gamess(const t_commrec *cr, t_QMrec *qm, t_MMrec *mm)
             }
         }
         fprintf(out, "END\nBASIS %s\nRUNTYPE GRADIENT\nSCFTYPE %s\n",
-                eQMbasis_names[qm->QMbasis],
-                eQMmethod_names[qm->QMmethod]); /* see enum.h */
+                eQMbasis_names[qm.QMbasis],
+                eQMmethod_names[qm.QMmethod]); /* see enum.h */
         F77_FUNC(inigms, IMIGMS) ();
     }
 }
 
-real call_gamess(const t_QMrec *qm, const t_MMrec *mm,
+real call_gamess(const QMMM_QMrec& qm, const QMMM_MMrec& mm,
                  rvec f[], rvec fshift[])
 {
     /* do the actual QMMM calculation using GAMESS-UK. In this
@@ -242,29 +243,29 @@ real call_gamess(const t_QMrec *qm, const t_MMrec *mm,
     real
         QMener = 0.0, *qmgrad, *mmgrad, *mmcrd, *qmcrd, energy = 0;
 
-    snew(qmcrd, 3*(qm->nrQMatoms));
-    snew(mmcrd, 3*(mm->nrMMatoms));
-    snew(qmgrad, 3*(qm->nrQMatoms));
-    snew(mmgrad, 3*(mm->nrMMatoms));
+    snew(qmcrd, 3*(qm.nrQMatoms));
+    snew(mmcrd, 3*(mm.nrMMatoms));
+    snew(qmgrad, 3*(qm.nrQMatoms));
+    snew(mmgrad, 3*(mm.nrMMatoms));
 
     /* copy the data from qr into the arrays that are going to be used
      * in the fortran routines of gamess
      */
-    for (i = 0; i < qm->nrQMatoms; i++)
+    for (i = 0; i < qm.nrQMatoms; i++)
     {
         for (j = 0; j < DIM; j++)
         {
-            qmcrd[DIM*i+j] = 1/BOHR2NM*qm->xQM[i][j];
+            qmcrd[DIM*i+j] = 1/BOHR2NM*qm.xQM[i][j];
         }
     }
-    for (i = 0; i < mm->nrMMatoms; i++)
+    for (i = 0; i < mm.nrMMatoms; i++)
     {
         for (j = 0; j < DIM; j++)
         {
-            mmcrd[DIM*i+j] = 1/BOHR2NM*mm->xMM[i][j];
+            mmcrd[DIM*i+j] = 1/BOHR2NM*mm.xMM[i][j];
         }
     }
-    for (i = 0; i < 3*qm->nrQMatoms; i += 3)
+    for (i = 0; i < 3*qm.nrQMatoms; i += 3)
     {
         fprintf(stderr, "%8.5f, %8.5f, %8.5f\n",
                 qmcrd[i],
@@ -272,10 +273,10 @@ real call_gamess(const t_QMrec *qm, const t_MMrec *mm,
                 qmcrd[i+2]);
     }
 
-    F77_FUNC(grads, GRADS) (&qm->nrQMatoms, qmcrd, &mm->nrMMatoms, mm->MMcharges,
+    F77_FUNC(grads, GRADS) (&qm.nrQMatoms, qmcrd, &mm.nrMMatoms, mm.MMcharges.data(),
                             mmcrd, qmgrad, mmgrad, &energy);
 
-    for (i = 0; i < qm->nrQMatoms; i++)
+    for (i = 0; i < qm.nrQMatoms; i++)
     {
         for (j = 0; j < DIM; j++)
         {
@@ -283,7 +284,7 @@ real call_gamess(const t_QMrec *qm, const t_MMrec *mm,
             fshift[i][j] = HARTREE_BOHR2MD*qmgrad[3*i+j];
         }
     }
-    for (i = 0; i < mm->nrMMatoms; i++)
+    for (i = 0; i < mm.nrMMatoms; i++)
     {
         for (j = 0; j < DIM; j++)
         {

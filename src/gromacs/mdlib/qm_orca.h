@@ -38,10 +38,10 @@
 #define GMX_MDLIB_QM_ORCA_H
 
 void
-init_orca(t_QMrec *qm);
+init_orca(QMMM_QMrec& qm);
 
 real
-call_orca(const t_forcerec *fr, t_QMrec *qm,
-          t_MMrec *mm, rvec f[], rvec fshift[]);
+call_orca(const t_forcerec *fr, QMMM_QMrec& qm,
+          QMMM_MMrec& mm, rvec f[], rvec fshift[]);
 
 #endif

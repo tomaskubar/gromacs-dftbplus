@@ -68,7 +68,7 @@
 
 /* Gaussian interface routines */
 
-void init_gaussian(t_QMrec *qm)
+void init_gaussian(QMMM_QMrec& qm)
 {
     ivec
         basissets[eQMbasisNR] = {{0, 3, 0},
@@ -103,63 +103,63 @@ void init_gaussian(t_QMrec *qm)
      */
 
 
-    if (!qm->nQMcpus) /* this we do only once per layer
+    if (!qm.nQMcpus) /* this we do only once per layer
                        * as we call g01 externally
                        */
 
     {
         for (i = 0; i < DIM; i++)
         {
-            qm->SHbasis[i] = basissets[qm->QMbasis][i];
+            qm.SHbasis[i] = basissets[qm.QMbasis][i];
         }
 
         /* init gradually switching on of the SA */
-        qm->SAstep = 0;
+        qm.SAstep = 0;
         /* we read the number of cpus and environment from the environment
          * if set.
          */
         buf = getenv("GMX_QM_GAUSSIAN_NCPUS");
         if (buf)
         {
-            sscanf(buf, "%d", &qm->nQMcpus);
+            sscanf(buf, "%d", &qm.nQMcpus);
         }
         else
         {
-            qm->nQMcpus = 1;
+            qm.nQMcpus = 1;
         }
-        fprintf(stderr, "number of CPUs for gaussian = %d\n", qm->nQMcpus);
+        fprintf(stderr, "number of CPUs for gaussian = %d\n", qm.nQMcpus);
         buf = getenv("GMX_QM_GAUSSIAN_MEMORY");
         if (buf)
         {
-            sscanf(buf, "%d", &qm->QMmem);
+            sscanf(buf, "%d", &qm.QMmem);
         }
         else
         {
-            qm->QMmem = 50000000;
+            qm.QMmem = 50000000;
         }
-        fprintf(stderr, "memory for gaussian = %d\n", qm->QMmem);
+        fprintf(stderr, "memory for gaussian = %d\n", qm.QMmem);
         buf = getenv("GMX_QM_ACCURACY");
         if (buf)
         {
-            sscanf(buf, "%d", &qm->accuracy);
+            sscanf(buf, "%d", &qm.accuracy);
         }
         else
         {
-            qm->accuracy = 8;
+            qm.accuracy = 8;
         }
-        fprintf(stderr, "accuracy in l510 = %d\n", qm->accuracy);
+        fprintf(stderr, "accuracy in l510 = %d\n", qm.accuracy);
 
         buf = getenv("GMX_QM_CPMCSCF");
         if (buf)
         {
             sscanf(buf, "%d", &i);
-            qm->cpmcscf = (i != 0);
+            qm.cpmcscf = (i != 0);
         }
         else
         {
-            qm->cpmcscf = FALSE;
+            qm.cpmcscf = FALSE;
         }
-        if (qm->cpmcscf)
+        if (qm.cpmcscf)
         {
             fprintf(stderr, "using cp-mcscf in l1003\n");
         }
@@ -170,23 +170,23 @@ void init_gaussian(t_QMrec *qm)
         buf = getenv("GMX_QM_SA_STEP");
         if (buf)
         {
-            sscanf(buf, "%d", &qm->SAstep);
+            sscanf(buf, "%d", &qm.SAstep);
         }
         else
         {
             /* init gradually switching on of the SA */
-            qm->SAstep = 0;
+            qm.SAstep = 0;
         }
         /* we read the number of cpus and environment from the environment
          * if set.
          */
-        fprintf(stderr, "Level of SA at start = %d\n", qm->SAstep);
+        fprintf(stderr, "Level of SA at start = %d\n", qm.SAstep);
         /* gaussian settings on the system */
         buf = getenv("GMX_QM_GAUSS_DIR");
 
         if (buf)
         {
-            qm->gauss_dir = gmx_strdup(buf);
+            qm.gauss_dir = gmx_strdup(buf);
         }
         else
         {
@@ -196,7 +196,7 @@ void init_gaussian(t_QMrec *qm)
         buf = getenv("GMX_QM_GAUSS_EXE");
         if (buf)
         {
-            qm->gauss_exe = gmx_strdup(buf);
+            qm.gauss_exe = gmx_strdup(buf);
         }
         else
         {
@@ -205,7 +205,7 @@ void init_gaussian(t_QMrec *qm)
         buf = getenv("GMX_QM_MODIFIED_LINKS_DIR");
         if (buf)
         {
-            qm->devel_dir = gmx_strdup (buf);
+            qm.devel_dir = gmx_strdup (buf);
         }
         else
         {
@@ -224,7 +224,7 @@ void init_gaussian(t_QMrec *qm)
 
 
 static void write_gaussian_SH_input(int step, gmx_bool swap,
-                                    const t_forcerec *fr, t_QMrec *qm, t_MMrec *mm)
+                                    gmx_unused const t_forcerec *fr, QMMM_QMrec& qm, QMMM_MMrec& mm)
 {
     int
         i;
@@ -232,10 +232,10 @@ static void write_gaussian_SH_input(int step, gmx_bool swap,
         bSA;
     FILE
        *out;
-    t_QMMMrec
-       *QMMMrec;
-    QMMMrec = fr->qr;
-    bSA     = (qm->SAstep > 0);
+ // t_QMMMrec
+ //    *QMMMrec;
+ // QMMMrec = fr->qr;
+    bSA     = (qm.SAstep > 0);
 
     out = fopen("input.com", "w");
     /* write the route */
@@ -247,8 +247,8 @@ static void write_gaussian_SH_input(int step, gmx_bool swap,
  *   fprintf(out,"%s","%nosave\n");
  */
     fprintf(out, "%s", "%chk=input\n");
-    fprintf(out, "%s%d\n", "%mem=", qm->QMmem);
-    fprintf(out, "%s%3d\n", "%nprocshare=", qm->nQMcpus);
+    fprintf(out, "%s%d\n", "%mem=", qm.QMmem);
+    fprintf(out, "%s%3d\n", "%nprocshare=", qm.nQMcpus);
 
     /* use the versions of
      * l301 that computes the interaction between MM and QM atoms.
@@ -259,24 +259,24 @@ static void write_gaussian_SH_input(int step, gmx_bool swap,
     /* local version */
     fprintf(out, "%s%s%s",
             "%subst l510 ",
-            qm->devel_dir,
+            qm.devel_dir,
             "/l510\n");
     fprintf(out, "%s%s%s",
             "%subst l301 ",
-            qm->devel_dir,
+            qm.devel_dir,
             "/l301\n");
     fprintf(out, "%s%s%s",
             "%subst l701 ",
-            qm->devel_dir,
+            qm.devel_dir,
             "/l701\n");
 
     fprintf(out, "%s%s%s",
             "%subst l1003 ",
-            qm->devel_dir,
+            qm.devel_dir,
             "/l1003\n");
     fprintf(out, "%s%s%s",
             "%subst l9999 ",
-            qm->devel_dir,
+            qm.devel_dir,
             "/l9999\n");
     /* print the nonstandard route
      */
@@ -284,50 +284,50 @@ static void write_gaussian_SH_input(int step, gmx_bool swap,
             "#P nonstd\n 1/18=10,20=1,38=1/1;\n");
     fprintf(out, "%s",
             " 2/9=110,15=1,17=6,18=5,40=1/2;\n");
-    if (mm->nrMMatoms)
+    if (mm.nrMMatoms)
     {
         fprintf(out,
                 " 3/5=%d,6=%d,7=%d,25=1,32=1,43=1,94=-2/1,2,3;\n",
-                qm->SHbasis[0],
-                qm->SHbasis[1],
-                qm->SHbasis[2]); /*basisset stuff */
+                qm.SHbasis[0],
+                qm.SHbasis[1],
+                qm.SHbasis[2]); /*basisset stuff */
     }
     else
     {
         fprintf(out,
                 " 3/5=%d,6=%d,7=%d,25=1,32=1,43=0,94=-2/1,2,3;\n",
-                qm->SHbasis[0],
-                qm->SHbasis[1],
-                qm->SHbasis[2]); /*basisset stuff */
+                qm.SHbasis[0],
+                qm.SHbasis[1],
+                qm.SHbasis[2]); /*basisset stuff */
     }
     /* development */
     if (step+1) /* fetch initial guess from check point file */
     {           /* hack, to alyays read from chk file!!!!! */
         fprintf(out, "%s%d,%s%d%s", " 4/5=1,7=6,17=",
-                qm->CASelectrons,
-                "18=", qm->CASorbitals, "/1,5;\n");
+                qm.CASelectrons,
+                "18=", qm.CASorbitals, "/1,5;\n");
     }
     else /* generate the first checkpoint file */
     {
         fprintf(out, "%s%d,%s%d%s", " 4/5=0,7=6,17=",
-                qm->CASelectrons,
-                "18=", qm->CASorbitals, "/1,5;\n");
+                qm.CASelectrons,
+                "18=", qm.CASorbitals, "/1,5;\n");
     }
     /* the rest of the input depends on where the system is on the PES
      */
     if (swap && bSA)             /* make a slide to the other surface */
     {
-        if (qm->CASorbitals > 6) /* use direct and no full diag */
+        if (qm.CASorbitals > 6) /* use direct and no full diag */
         {
             fprintf(out, " 5/5=2,16=-2,17=10000000,28=2,32=2,38=6,97=100/10;\n");
         }
         else
         {
-            if (qm->cpmcscf)
+            if (qm.cpmcscf)
             {
                 fprintf(out, " 5/5=2,6=%d,17=31000200,28=2,32=2,38=6,97=100/10;\n",
-                        qm->accuracy);
-                if (mm->nrMMatoms > 0)
+                        qm.accuracy);
+                if (mm.nrMMatoms > 0)
                 {
                     fprintf(out, " 7/7=1,16=-2,30=1/1;\n");
                 }
@@ -338,24 +338,24 @@ static void write_gaussian_SH_input(int step, gmx_bool swap,
             else
             {
                 fprintf(out, " 5/5=2,6=%d,17=11000000,28=2,32=2,38=6,97=100/10;\n",
-                        qm->accuracy);
+                        qm.accuracy);
                 fprintf(out, " 7/7=1,16=-2,30=1/1,2,3,16;\n 99/10=4/99;\n");
             }
         }
     }
     else if (bSA)                /* do a "state-averaged" CAS calculation */
     {
-        if (qm->CASorbitals > 6) /* no full diag */
+        if (qm.CASorbitals > 6) /* no full diag */
         {
             fprintf(out, " 5/5=2,16=-2,17=10000000,28=2,32=2,38=6/10;\n");
         }
         else
         {
-            if (qm->cpmcscf)
+            if (qm.cpmcscf)
             {
                 fprintf(out, " 5/5=2,6=%d,17=31000200,28=2,32=2,38=6/10;\n",
-                        qm->accuracy);
-                if (mm->nrMMatoms > 0)
+                        qm.accuracy);
+                if (mm.nrMMatoms > 0)
                 {
                     fprintf(out, " 7/7=1,16=-2,30=1/1;\n");
                 }
@@ -366,85 +366,85 @@ static void write_gaussian_SH_input(int step, gmx_bool swap,
             else
             {
                 fprintf(out, " 5/5=2,6=%d,17=11000000,28=2,32=2,38=6/10;\n",
-                        qm->accuracy);
+                        qm.accuracy);
                 fprintf(out, " 7/7=1,16=-2,30=1/1,2,3,16;\n 99/10=4/99;\n");
             }
         }
     }
     else if (swap) /* do a "swapped" CAS calculation */
     {
-        if (qm->CASorbitals > 6)
+        if (qm.CASorbitals > 6)
         {
             fprintf(out, " 5/5=2,16=-2,17=0,28=2,32=2,38=6,97=100/10;\n");
         }
         else
         {
             fprintf(out, " 5/5=2,6=%d,17=1000000,28=2,32=2,38=6,97=100/10;\n",
-                    qm->accuracy);
+                    qm.accuracy);
         }
         fprintf(out, " 7/7=1,16=-2,30=1/1,2,3,16;\n 99/10=4/99;\n");
     }
     else /* do a "normal" CAS calculation */
     {
-        if (qm->CASorbitals > 6)
+        if (qm.CASorbitals > 6)
         {
             fprintf(out, " 5/5=2,16=-2,17=0,28=2,32=2,38=6/10;\n");
         }
         else
         {
             fprintf(out, " 5/5=2,6=%d,17=1000000,28=2,32=2,38=6/10;\n",
-                    qm->accuracy);
+                    qm.accuracy);
         }
         fprintf(out, " 7/7=1,16=-2,30=1/1,2,3,16;\n 99/10=4/99;\n");
     }
     fprintf(out, "\ninput-file generated by gromacs\n\n");
-    fprintf(out, "%2d%2d\n", qm->QMcharge, qm->multiplicity);
-    for (i = 0; i < qm->nrQMatoms; i++)
+    fprintf(out, "%2d%2d\n", qm.QMcharge, qm.multiplicity);
+    for (i = 0; i < qm.nrQMatoms; i++)
     {
         fprintf(out, "%3d %10.7f  %10.7f  %10.7f\n",
-                qm->atomicnumberQM[i],
-                qm->xQM[i][XX]/BOHR2NM,
-                qm->xQM[i][YY]/BOHR2NM,
-                qm->xQM[i][ZZ]/BOHR2NM);
+                qm.atomicnumberQM[i],
+                qm.xQM[i][XX]/BOHR2NM,
+                qm.xQM[i][YY]/BOHR2NM,
+                qm.xQM[i][ZZ]/BOHR2NM);
     }
     /* MM point charge data */
-    if (mm->nrMMatoms)
+    if (mm.nrMMatoms)
     {
         fprintf(out, "\n");
-        for (i = 0; i < mm->nrMMatoms; i++)
+        for (i = 0; i < mm.nrMMatoms; i++)
         {
             fprintf(out, "%10.7f  %10.7f  %10.7f %8.4f\n",
-                    mm->xMM[i][XX]/BOHR2NM,
-                    mm->xMM[i][YY]/BOHR2NM,
-                    mm->xMM[i][ZZ]/BOHR2NM,
-                    mm->MMcharges[i]);
+                    mm.xMM[i][XX]/BOHR2NM,
+                    mm.xMM[i][YY]/BOHR2NM,
+                    mm.xMM[i][ZZ]/BOHR2NM,
+                    mm.MMcharges[i]);
         }
     }
     if (bSA) /* put the SA coefficients at the end of the file */
     {
         fprintf(out, "\n%10.8f %10.8f\n",
-                qm->SAstep*0.5/qm->SAsteps,
-                1-qm->SAstep*0.5/qm->SAsteps);
-        fprintf(stderr, "State Averaging level = %d/%d\n", qm->SAstep, qm->SAsteps);
+                qm.SAstep*0.5/qm.SAsteps,
+                1-qm.SAstep*0.5/qm.SAsteps);
+        fprintf(stderr, "State Averaging level = %d/%d\n", qm.SAstep, qm.SAsteps);
     }
     fprintf(out, "\n");
     fclose(out);
 }  /* write_gaussian_SH_input */
 
-static void write_gaussian_input(int step, const t_forcerec *fr, t_QMrec *qm, t_MMrec *mm)
+static void write_gaussian_input(int step, gmx_unused const t_forcerec *fr, QMMM_QMrec& qm, QMMM_MMrec& mm)
 {
     int
         i;
-    t_QMMMrec
-       *QMMMrec;
+ // t_QMMMrec
+ //    *QMMMrec;
+ // QMMMrec = fr->qr;
     FILE
        *out;
 
-    QMMMrec = fr->qr;
     out     = fopen("input.com", "w");
     /* write the route */
 
-    if (qm->QMmethod >= eQMmethodRHF)
+    if (qm.QMmethod >= eQMmethodRHF)
     {
         fprintf(out, "%s",
                 "%chk=input\n");
@@ -454,19 +454,19 @@ static void write_gaussian_input(int step, const t_forcerec *fr, t_QMrec *qm, t_
         fprintf(out, "%s",
                 "%chk=se\n");
     }
-    if (qm->nQMcpus > 1)
+    if (qm.nQMcpus > 1)
     {
         fprintf(out, "%s%3d\n",
-                "%nprocshare=", qm->nQMcpus);
+                "%nprocshare=", qm.nQMcpus);
     }
     fprintf(out, "%s%d\n",
-            "%mem=", qm->QMmem);
+            "%mem=", qm.QMmem);
     fprintf(out, "%s%s%s",
-            "%subst l701 ", qm->devel_dir, "/l701\n");
+            "%subst l701 ", qm.devel_dir, "/l701\n");
     fprintf(out, "%s%s%s",
-            "%subst l301 ", qm->devel_dir, "/l301\n");
+            "%subst l301 ", qm.devel_dir, "/l301\n");
     fprintf(out, "%s%s%s",
-            "%subst l9999 ", qm->devel_dir, "/l9999\n");
+            "%subst l9999 ", qm.devel_dir, "/l9999\n");
     if (step)
     {
         fprintf(out, "%s",
@@ -477,7 +477,7 @@ static void write_gaussian_input(int step, const t_forcerec *fr, t_QMrec *qm, t_
         fprintf(out, "%s",
                 "#P ");
     }
-    if (qm->QMmethod == eQMmethodB3LYPLAN)
+    if (qm.QMmethod == eQMmethodB3LYPLAN)
     {
         fprintf(out, " %s",
                 "B3LYP/GEN Pseudo=Read");
@@ -485,27 +485,27 @@ static void write_gaussian_input(int step, const t_forcerec *fr, t_QMrec *qm, t_
     else
     {
         fprintf(out, " %s",
-                eQMmethod_names[qm->QMmethod]);
+                eQMmethod_names[qm.QMmethod]);
 
-        if (qm->QMmethod >= eQMmethodRHF)
+        if (qm.QMmethod >= eQMmethodRHF)
         {
-            if (qm->QMmethod == eQMmethodCASSCF)
+            if (qm.QMmethod == eQMmethodCASSCF)
             {
                 /* in case of cas, how many electrons and orbitals do we need?
                  */
                 fprintf(out, "(%d,%d)",
-                        qm->CASelectrons, qm->CASorbitals);
+                        qm.CASelectrons, qm.CASorbitals);
             }
             fprintf(out, "/%s",
-                    eQMbasis_names[qm->QMbasis]);
+                    eQMbasis_names[qm.QMbasis]);
         }
     }
-    if (mm->nrMMatoms)
+    if (mm.nrMMatoms)
     {
         fprintf(out, " %s",
                 "Charge ");
     }
-    if (step || qm->QMmethod == eQMmethodCASSCF)
+    if (step || qm.QMmethod == eQMmethodCASSCF)
     {
         /* fetch guess from checkpoint file, always for CASSCF */
         fprintf(out, "%s", " guess=read");
@@ -515,41 +515,41 @@ static void write_gaussian_input(int step, const t_forcerec *fr, t_QMrec *qm, t_
     fprintf(out, "FORCE Punch=(Derivatives) ");
     fprintf(out, "iop(3/33=1)\n\n");
     fprintf(out, "input-file generated by gromacs\n\n");
-    fprintf(out, "%2d%2d\n", qm->QMcharge, qm->multiplicity);
-    for (i = 0; i < qm->nrQMatoms; i++)
+    fprintf(out, "%2d%2d\n", qm.QMcharge, qm.multiplicity);
+    for (i = 0; i < qm.nrQMatoms; i++)
     {
         fprintf(out, "%3d %10.7f  %10.7f  %10.7f\n",
-                qm->atomicnumberQM[i],
-                qm->xQM[i][XX]/BOHR2NM,
-                qm->xQM[i][YY]/BOHR2NM,
-                qm->xQM[i][ZZ]/BOHR2NM);
+                qm.atomicnumberQM[i],
+                qm.xQM[i][XX]/BOHR2NM,
+                qm.xQM[i][YY]/BOHR2NM,
+                qm.xQM[i][ZZ]/BOHR2NM);
     }
 
     /* Pseudo Potential and ECP are included here if selected (MEthod suffix LAN) */
-    if (qm->QMmethod == eQMmethodB3LYPLAN)
+    if (qm.QMmethod == eQMmethodB3LYPLAN)
     {
         fprintf(out, "\n");
-        for (i = 0; i < qm->nrQMatoms; i++)
+        for (i = 0; i < qm.nrQMatoms; i++)
         {
-            if (qm->atomicnumberQM[i] < 21)
+            if (qm.atomicnumberQM[i] < 21)
             {
                 fprintf(out, "%d ", i+1);
             }
         }
-        fprintf(out, "\n%s\n****\n", eQMbasis_names[qm->QMbasis]);
+        fprintf(out, "\n%s\n****\n", eQMbasis_names[qm.QMbasis]);
 
-        for (i = 0; i < qm->nrQMatoms; i++)
+        for (i = 0; i < qm.nrQMatoms; i++)
         {
-            if (qm->atomicnumberQM[i] > 21)
+            if (qm.atomicnumberQM[i] > 21)
             {
                 fprintf(out, "%d ", i+1);
             }
         }
         fprintf(out, "\n%s\n****\n\n", "lanl2dz");
 
-        for (i = 0; i < qm->nrQMatoms; i++)
+        for (i = 0; i < qm.nrQMatoms; i++)
         {
-            if (qm->atomicnumberQM[i] > 21)
+            if (qm.atomicnumberQM[i] > 21)
             {
                 fprintf(out, "%d ", i+1);
             }
@@ -560,17 +560,17 @@ static void write_gaussian_input(int step, const t_forcerec *fr, t_QMrec *qm, t_
 
 
     /* MM point charge data */
-    if (mm->nrMMatoms)
+    if (mm.nrMMatoms)
     {
-        fprintf(stderr, "nr mm atoms in gaussian.c = %d\n", mm->nrMMatoms);
+        fprintf(stderr, "nr mm atoms in gaussian.c = %d\n", mm.nrMMatoms);
         fprintf(out, "\n");
-        for (i = 0; i < mm->nrMMatoms; i++)
+        for (i = 0; i < mm.nrMMatoms; i++)
         {
             fprintf(out, "%10.7f  %10.7f  %10.7f %8.4f\n",
-                    mm->xMM[i][XX]/BOHR2NM,
-                    mm->xMM[i][YY]/BOHR2NM,
-                    mm->xMM[i][ZZ]/BOHR2NM,
-                    mm->MMcharges[i]);
+                    mm.xMM[i][XX]/BOHR2NM,
+                    mm.xMM[i][YY]/BOHR2NM,
+                    mm.xMM[i][ZZ]/BOHR2NM,
+                    mm.MMcharges[i]);
         }
     }
     fprintf(out, "\n");
@@ -580,7 +580,7 @@ static void write_gaussian_input(int step, const t_forcerec *fr, t_QMrec *qm, t_
 
 }  /* write_gaussian_input */
 
-static real read_gaussian_output(rvec QMgrad[], rvec MMgrad[], t_QMrec *qm, t_MMrec *mm)
+static real read_gaussian_output(rvec QMgrad[], rvec MMgrad[], QMMM_QMrec& qm, QMMM_MMrec& mm)
 {
     int
         i;
@@ -611,7 +611,7 @@ static real read_gaussian_output(rvec QMgrad[], rvec MMgrad[], t_QMrec *qm, t_MM
     sscanf(buf, "%f\n", &QMener);
 #endif
     /* next lines contain the gradients of the QM atoms */
-    for (i = 0; i < qm->nrQMatoms; i++)
+    for (i = 0; i < qm.nrQMatoms; i++)
     {
         if (nullptr == fgets(buf, 300, in))
         {
@@ -630,9 +630,9 @@ static real read_gaussian_output(rvec QMgrad[], rvec MMgrad[], t_QMrec *qm, t_MM
 #endif
     }
     /* the next lines are the gradients of the MM atoms */
-    if (qm->QMmethod >= eQMmethodRHF)
+    if (qm.QMmethod >= eQMmethodRHF)
     {
-        for (i = 0; i < mm->nrMMatoms; i++)
+        for (i = 0; i < mm.nrMMatoms; i++)
         {
             if (nullptr == fgets(buf, 300, in))
             {
@@ -655,7 +655,7 @@ static real read_gaussian_output(rvec QMgrad[], rvec MMgrad[], t_QMrec *qm, t_MM
     return(QMener);
 }
 
-static real read_gaussian_SH_output(rvec QMgrad[], rvec MMgrad[], int step, t_QMrec *qm, t_MMrec *mm)
+static real read_gaussian_SH_output(rvec QMgrad[], rvec MMgrad[], int step, QMMM_QMrec& qm, QMMM_MMrec& mm)
 {
     int
         i;
@@ -683,25 +683,25 @@ static real read_gaussian_SH_output(rvec QMgrad[], rvec MMgrad[], int step, t_QM
 
     /* switch on/off the State Averaging */
 
-    if (DeltaE > qm->SAoff)
+    if (DeltaE > qm.SAoff)
     {
-        if (qm->SAstep > 0)
+        if (qm.SAstep > 0)
         {
-            qm->SAstep--;
+            qm.SAstep--;
         }
     }
-    else if (DeltaE < qm->SAon || (qm->SAstep > 0))
+    else if (DeltaE < qm.SAon || (qm.SAstep > 0))
     {
-        if (qm->SAstep < qm->SAsteps)
+        if (qm.SAstep < qm.SAsteps)
         {
-            qm->SAstep++;
+            qm.SAstep++;
         }
     }
 
     /* for debugging: */
-    fprintf(stderr, "Gap = %5f,SA = %3d\n", DeltaE, static_cast<int>(qm->SAstep > 0));
+    fprintf(stderr, "Gap = %5f,SA = %3d\n", DeltaE, static_cast<int>(qm.SAstep > 0));
     /* next lines contain the gradients of the QM atoms */
-    for (i = 0; i < qm->nrQMatoms; i++)
+    for (i = 0; i < qm.nrQMatoms; i++)
     {
         if (nullptr == fgets(buf, 300, in))
         {
@@ -722,7 +722,7 @@ static real read_gaussian_SH_output(rvec QMgrad[], rvec MMgrad[], int step, t_QM
     }
     /* the next lines, are the gradients of the MM atoms */
 
-    for (i = 0; i < mm->nrMMatoms; i++)
+    for (i = 0; i < mm.nrMMatoms; i++)
     {
         if (nullptr == fgets(buf, 300, in))
         {
@@ -748,47 +748,47 @@ static real read_gaussian_SH_output(rvec QMgrad[], rvec MMgrad[], int step, t_QM
     }
     if (!step)
     {
-        sscanf(buf, "%d", &qm->CIdim);
-        snew(qm->CIvec1, qm->CIdim);
-        snew(qm->CIvec1old, qm->CIdim);
-        snew(qm->CIvec2, qm->CIdim);
-        snew(qm->CIvec2old, qm->CIdim);
+        sscanf(buf, "%d", &qm.CIdim);
+        snew(qm.CIvec1, qm.CIdim);
+        snew(qm.CIvec1old, qm.CIdim);
+        snew(qm.CIvec2, qm.CIdim);
+        snew(qm.CIvec2old, qm.CIdim);
     }
     else
     {
         /* before reading in the new current CI vectors, copy the current
          * CI vector into the old one.
          */
-        for (i = 0; i < qm->CIdim; i++)
+        for (i = 0; i < qm.CIdim; i++)
         {
-            qm->CIvec1old[i] = qm->CIvec1[i];
-            qm->CIvec2old[i] = qm->CIvec2[i];
+            qm.CIvec1old[i] = qm.CIvec1[i];
+            qm.CIvec2old[i] = qm.CIvec2[i];
         }
     }
     /* first vector */
-    for (i = 0; i < qm->CIdim; i++)
+    for (i = 0; i < qm.CIdim; i++)
     {
         if (nullptr == fgets(buf, 300, in))
         {
             gmx_fatal(FARGS, "Error reading Gaussian output");
         }
 #if GMX_DOUBLE
-        sscanf(buf, "%lf\n", &qm->CIvec1[i]);
+        sscanf(buf, "%lf\n", &qm.CIvec1[i]);
 #else
-        sscanf(buf, "%f\n", &qm->CIvec1[i]);
+        sscanf(buf, "%f\n", &qm.CIvec1[i]);
 #endif
     }
     /* second vector */
-    for (i = 0; i < qm->CIdim; i++)
+    for (i = 0; i < qm.CIdim; i++)
     {
         if (nullptr == fgets(buf, 300, in))
         {
             gmx_fatal(FARGS, "Error reading Gaussian output");
         }
 #if GMX_DOUBLE
-        sscanf(buf, "%lf\n", &qm->CIvec2[i]);
+        sscanf(buf, "%lf\n", &qm.CIvec2[i]);
 #else
-        sscanf(buf, "%f\n", &qm->CIvec2[i]);
+        sscanf(buf, "%f\n", &qm.CIvec2[i]);
 #endif
     }
     fclose(in);
@@ -812,7 +812,7 @@ static real inproduct(const real *a, const real *b, int n)
     return(dot);
 }
 
-static int hop(int step, t_QMrec *qm)
+static int hop(int step, QMMM_QMrec& qm)
 {
     int
         swap = 0;
@@ -826,10 +826,10 @@ static int hop(int step, t_QMrec *qm)
      */
     if (step) /* only go on if more than one step has been done */
     {
-        d11 = inproduct(qm->CIvec1, qm->CIvec1old, qm->CIdim);
-        d12 = inproduct(qm->CIvec1, qm->CIvec2old, qm->CIdim);
-        d21 = inproduct(qm->CIvec2, qm->CIvec1old, qm->CIdim);
-        d22 = inproduct(qm->CIvec2, qm->CIvec2old, qm->CIdim);
+        d11 = inproduct(qm.CIvec1, qm.CIvec1old, qm.CIdim);
+        d12 = inproduct(qm.CIvec1, qm.CIvec2old, qm.CIdim);
+        d21 = inproduct(qm.CIvec2, qm.CIvec1old, qm.CIdim);
+        d22 = inproduct(qm.CIvec2, qm.CIvec2old, qm.CIdim);
     }
     fprintf(stderr, "-------------------\n");
     fprintf(stderr, "d11 = %13.8f\n", d11);
@@ -876,7 +876,7 @@ static void do_gaussian(int step, char *exe)
     }
 }
 
-real call_gaussian(const t_forcerec *fr, t_QMrec *qm, t_MMrec *mm, rvec f[], rvec fshift[])
+real call_gaussian(const t_forcerec *fr, QMMM_QMrec& qm, QMMM_MMrec& mm, rvec f[], rvec fshift[])
 {
     /* normal gaussian jobs */
     static int
@@ -891,16 +891,16 @@ real call_gaussian(const t_forcerec *fr, t_QMrec *qm, t_MMrec *mm, rvec f[], rve
        *exe;
 
     snew(exe, 30);
-    sprintf(exe, "%s/%s", qm->gauss_dir, qm->gauss_exe);
-    snew(QMgrad, qm->nrQMatoms);
-    snew(MMgrad, mm->nrMMatoms);
+    sprintf(exe, "%s/%s", qm.gauss_dir, qm.gauss_exe);
+    snew(QMgrad, qm.nrQMatoms);
+    snew(MMgrad, mm.nrMMatoms);
 
     write_gaussian_input(step, fr, qm, mm);
     do_gaussian(step, exe);
     QMener = read_gaussian_output(QMgrad, MMgrad, qm, mm);
     /* put the QMMM forces in the force array and to the fshift
      */
-    for (i = 0; i < qm->nrQMatoms; i++)
+    for (i = 0; i < qm.nrQMatoms; i++)
     {
         for (j = 0; j < DIM; j++)
         {
@@ -908,12 +908,12 @@ real call_gaussian(const t_forcerec *fr, t_QMrec *qm, t_MMrec *mm, rvec f[], rve
             fshift[i][j] = HARTREE_BOHR2MD*QMgrad[i][j];
         }
     }
-    for (i = 0; i < mm->nrMMatoms; i++)
+    for (i = 0; i < mm.nrMMatoms; i++)
     {
         for (j = 0; j < DIM; j++)
         {
-            f[i+qm->nrQMatoms][j]      = HARTREE_BOHR2MD*MMgrad[i][j];
-            fshift[i+qm->nrQMatoms][j] = HARTREE_BOHR2MD*MMgrad[i][j];
+            f[i+qm.nrQMatoms][j]      = HARTREE_BOHR2MD*MMgrad[i][j];
+            fshift[i+qm.nrQMatoms][j] = HARTREE_BOHR2MD*MMgrad[i][j];
         }
     }
     QMener = QMener*HARTREE2KJ*AVOGADRO;
@@ -923,7 +923,7 @@ real call_gaussian(const t_forcerec *fr, t_QMrec *qm, t_MMrec *mm, rvec f[], rve
 
 } /* call_gaussian */
 
-real call_gaussian_SH(const t_forcerec *fr, t_QMrec *qm, t_MMrec *mm, rvec f[], rvec fshift[])
+real call_gaussian_SH(const t_forcerec *fr, QMMM_QMrec &qm, QMMM_MMrec &mm, rvec f[], rvec fshift[])
 {
     /* a gaussian call routine intended for doing diabatic surface
      * "sliding". See the manual for the theoretical background of this
@@ -947,7 +947,7 @@ real call_gaussian_SH(const t_forcerec *fr, t_QMrec *qm, t_MMrec *mm, rvec f[], 
        *exe;
 
     snew(exe, 30);
-    sprintf(exe, "%s/%s", qm->gauss_dir, qm->gauss_exe);
+    sprintf(exe, "%s/%s", qm.gauss_dir, qm.gauss_exe);
     /* hack to do ground state simulations */
     if (!step)
     {
@@ -970,8 +970,8 @@ real call_gaussian_SH(const t_forcerec *fr, t_QMrec *qm, t_MMrec *mm, rvec f[], 
 
 
     /* copy the QMMMrec pointer */
-    snew(QMgrad, qm->nrQMatoms);
-    snew(MMgrad, mm->nrMMatoms);
+    snew(QMgrad, qm.nrQMatoms);
+    snew(MMgrad, mm.nrMMatoms);
     /* at step 0 there should be no SA */
     /*  if(!step)
      * qr->bSA=FALSE;*/
@@ -984,7 +984,7 @@ real call_gaussian_SH(const t_forcerec *fr, t_QMrec *qm, t_MMrec *mm, rvec f[], 
     /* check for a surface hop. Only possible if we were already state
      * averaging.
      */
-    if (qm->SAstep > 0)
+    if (qm.SAstep > 0)
     {
         if (!swapped)
         {
@@ -1005,7 +1005,7 @@ real call_gaussian_SH(const t_forcerec *fr, t_QMrec *qm, t_MMrec *mm, rvec f[], 
     }
     /* add the QMMM forces to the gmx force array and fshift
      */
-    for (i = 0; i < qm->nrQMatoms; i++)
+    for (i = 0; i < qm.nrQMatoms; i++)
     {
         for (j = 0; j < DIM; j++)
         {
@@ -1013,17 +1013,17 @@ real call_gaussian_SH(const t_forcerec *fr, t_QMrec *qm, t_MMrec *mm, rvec f[], 
             fshift[i][j] = HARTREE_BOHR2MD*QMgrad[i][j];
         }
     }
-    for (i = 0; i < mm->nrMMatoms; i++)
+    for (i = 0; i < mm.nrMMatoms; i++)
     {
         for (j = 0; j < DIM; j++)
         {
-            f[i+qm->nrQMatoms][j]      = HARTREE_BOHR2MD*MMgrad[i][j];
-            fshift[i+qm->nrQMatoms][j] = HARTREE_BOHR2MD*MMgrad[i][j];
+            f[i+qm.nrQMatoms][j]      = HARTREE_BOHR2MD*MMgrad[i][j];
+            fshift[i+qm.nrQMatoms][j] = HARTREE_BOHR2MD*MMgrad[i][j];
         }
     }
     QMener = QMener*HARTREE2KJ*AVOGADRO;
     fprintf(stderr, "step %5d, SA = %5d, swap = %5d\n",
-            step, static_cast<int>(qm->SAstep > 0), static_cast<int>(swapped));
+            step, static_cast<int>(qm.SAstep > 0), static_cast<int>(swapped));
     step++;
     free(exe);
     return(QMener);

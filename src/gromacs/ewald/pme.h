@@ -198,7 +198,8 @@ int gmx_pme_do(struct gmx_pme_t *pme,
                real *dvdlambda_q, real *dvdlambda_lj,
                int flags,
                bool bForQMMM,   bool bMMforcesOnly,
-               int nrQMatoms,   double pot[]);
+//             int nrQMatoms,   std::vector<double> pot);
+               int nrQMatoms,   real *pot);
 
 /*! \brief Called on the nodes that do PME exclusively */
 int gmx_pmeonly(struct gmx_pme_t *pme,

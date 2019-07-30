@@ -38,7 +38,7 @@
 #define GMX_MDLIB_QM_DFTBPLUS_H
 
 void
-init_dftbplus(t_QMrec *qm,
+init_dftbplus(QMMM_QMrec& qm,
               const t_forcerec *fr,
               const t_inputrec *ir,
               const t_commrec *cr,
@@ -46,13 +46,14 @@ init_dftbplus(t_QMrec *qm,
 
 real
 call_dftbplus(const t_forcerec *fr, const t_commrec *cr,
-              t_QMrec *qm,          t_MMrec *mm,
+              QMMM_QMrec& qm,       QMMM_MMrec& mm,
               rvec f[],             rvec fshift[],
               gmx_wallcycle_t wcycle);
 
 struct Context;
 
 void initialize_context(Context *cont,
+                     int nrQMatoms,
                      int qmmm_variant,
                      const t_forcerec *fr_in,
                      const t_inputrec *ir_in,

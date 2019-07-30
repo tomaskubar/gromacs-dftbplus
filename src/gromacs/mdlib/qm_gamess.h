@@ -44,7 +44,8 @@
  * \param[in] qm QM forcerec.
  * \param[in] mm MM part of forcerec.
  */
-void init_gamess(const t_commrec *cr, t_QMrec *qm, t_MMrec *mm);
+//void init_gamess(const t_commrec *cr, t_QMrec *qm, t_MMrec *mm);
+void init_gamess(const t_commrec *cr, QMMM_QMrec& qm, QMMM_MMrec& mm);
 
 /*! \brief
  * Run calculation with Gamess.
@@ -54,7 +55,8 @@ void init_gamess(const t_commrec *cr, t_QMrec *qm, t_MMrec *mm);
  * \param[in] f  Force vector.
  * \param[in] fshift Force shift vector.
  */
-real call_gamess(const t_QMrec *qm, const t_MMrec *mm,
+//real call_gamess(const t_QMrec *qm, const t_MMrec *mm,
+real call_gamess(const QMMM_QMrec& qm, const QMMM_MMrec& mm,
                  rvec f[], rvec fshift[]);
 
 

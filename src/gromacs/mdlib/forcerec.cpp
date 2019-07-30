@@ -1987,8 +1987,7 @@ void init_forcerec(FILE                             *fp,
                 appendText("Large parts of the QM/MM support is deprecated, and may be removed in a future "
                            "version. Please get in touch with the developers if you find the support useful, "
                            "as help is needed if the functionality is to continue to be available.");
-            fr->qr = mk_QMMMrec();
-            init_QMMMrec(cr, mtop, ir, fr, wcycle);
+            fr->qr = std::make_unique<QMMM_rec>(cr, mtop, ir, fr, wcycle);
         }
         else
         {

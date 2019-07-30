@@ -1053,7 +1053,8 @@ int gmx_pme_do(struct gmx_pme_t *pme,
                real *dvdlambda_q, real *dvdlambda_lj,
                int flags,
                bool bForQMMM,   bool bMMforcesOnly,
-               int nrQMatoms,   double pot[])
+//             int nrQMatoms,   std::vector<double> pot)
+               int nrQMatoms,   real *pot)
 {
     GMX_ASSERT(pme->runMode == PmeRunMode::CPU, "gmx_pme_do should not be called on the GPU PME run.");
 
@@ -1101,8 +1102,8 @@ int gmx_pme_do(struct gmx_pme_t *pme,
     }
     else
     {
-        GMX_ASSERT(coordinates.ssize() == atc.numAtoms(), "We expect atc.numAtoms() coordinates");
-        GMX_ASSERT(forces.ssize() >= atc.numAtoms(), "We need a force buffer with at least atc.numAtoms() elements");
+        GMX_ASSERT(bForQMMM || coordinates.ssize() == atc.numAtoms(), "We expect atc.numAtoms() coordinates");
+        GMX_ASSERT(bForQMMM || forces.ssize() >= atc.numAtoms(), "We need a force buffer with at least atc.numAtoms() elements");
 
         atc.x = coordinates;
         atc.f = forces;
@@ -1343,14 +1344,14 @@ int gmx_pme_do(struct gmx_pme_t *pme,
             {
                 try
                 {
-                    gather_energy_bsplines(pme, grid, atc,
+                    gather_energy_bsplines(pme, grid, &atc,
                                            nrQMatoms, pot);
                 }
                 GMX_CATCH_ALL_AND_EXIT_WITH_FATAL_ERROR;
             }
 
             inc_nrnb(nrnb, eNR_GATHERFBSP, /* TODO */
-                     pme->pme_order*pme->pme_order*pme->pme_order*pme->atc[0].n);
+                     pme->pme_order*pme->pme_order*pme->pme_order*atc.numAtoms());
             /* Note: this wallcycle region is opened above inside an OpenMP
                region, so take care if refactoring code here. */
             wallcycle_stop(wcycle, ewcPME_GATHER); /* TODO */

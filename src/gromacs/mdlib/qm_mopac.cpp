@@ -92,7 +92,7 @@ static void F77_FUNC(domop, DOMOP) (int * /*unused*/, double  /*unused*/[], int 
 #endif
 
 
-void init_mopac(t_QMrec *qm)
+void init_mopac(QMMM_QMrec& qm)
 {
     /* initializes the mopac routines ans sets up the semiempirical
      * computation by calling moldat(). The inline mopac routines can
@@ -110,26 +110,26 @@ void init_mopac(t_QMrec *qm)
 
     snew(keywords, 240);
 
-    if (!qm->bSH)  /* if rerun then grad should not be done! */
+    if (!qm.bSH)  /* if rerun then grad should not be done! */
     {
         sprintf(keywords, "PRECISE GEO-OK CHARGE=%d GRAD MMOK ANALYT %s\n",
-                qm->QMcharge,
-                eQMmethod_names[qm->QMmethod]);
+                qm.QMcharge,
+                eQMmethod_names[qm.QMmethod]);
     }
     else
     {
         sprintf(keywords, "PRECISE GEO-OK CHARGE=%d SINGLET GRAD %s C.I.=(%d,%d) root=2 MECI \n",
-                qm->QMcharge,
-                eQMmethod_names[qm->QMmethod],
-                qm->CASorbitals, qm->CASelectrons/2);
+                qm.QMcharge,
+                eQMmethod_names[qm.QMmethod],
+                qm.CASorbitals, qm.CASelectrons/2);
     }
-    F77_FUNC(domldt, DOMLDT) (&qm->nrQMatoms, qm->atomicnumberQM, keywords);
+    F77_FUNC(domldt, DOMLDT) (&qm.nrQMatoms, qm.atomicnumberQM, keywords);
     fprintf(stderr, "keywords are: %s\n", keywords);
     free(keywords);
 
 } /* init_mopac */
 
-real call_mopac(t_QMrec *qm, t_MMrec *mm, rvec f[], rvec fshift[])
+real call_mopac(QMMM_QMrec& qm, QMMM_MMrec& mm, rvec f[], rvec fshift[])
 {
     /* do the actual QMMM calculation using directly linked mopac subroutines
      */
@@ -141,19 +141,19 @@ real call_mopac(t_QMrec *qm, t_MMrec *mm, rvec f[], rvec fshift[])
         i, j;
     real
         QMener = 0.0;
-    snew(qmcrd, 3*(qm->nrQMatoms));
-    snew(qmgrad, 3*(qm->nrQMatoms));
+    snew(qmcrd, 3*(qm.nrQMatoms));
+    snew(qmgrad, 3*(qm.nrQMatoms));
     /* copy the data from qr into the arrays that are going to be used
      * in the fortran routines of MOPAC
      */
-    for (i = 0; i < qm->nrQMatoms; i++)
+    for (i = 0; i < qm.nrQMatoms; i++)
     {
         for (j = 0; j < DIM; j++)
         {
-            qmcrd[3*i+j] = static_cast<double>(qm->xQM[i][j])*10;
+            qmcrd[3*i+j] = static_cast<double>(qm.xQM[i][j])*10;
         }
     }
-    if (mm->nrMMatoms)
+    if (mm.nrMMatoms)
     {
         /* later we will add the point charges here. There are some
          * conceptual problems with semi-empirical QM in combination with
@@ -167,13 +167,13 @@ real call_mopac(t_QMrec *qm, t_MMrec *mm, rvec f[], rvec fshift[])
         /* now compute the energy and the gradients.
          */
 
-        snew(qmchrg, qm->nrQMatoms);
-        F77_FUNC(domop, DOMOP) (&qm->nrQMatoms, qmcrd, &mm->nrMMatoms,
+        snew(qmchrg, qm.nrQMatoms);
+        F77_FUNC(domop, DOMOP) (&qm.nrQMatoms, qmcrd, &mm.nrMMatoms,
                                 mmchrg, mmcrd, qmgrad, mmgrad, &energy, qmchrg);
         /* add the gradients to the f[] array, and also to the fshift[].
          * the mopac gradients are in kCal/angstrom.
          */
-        for (i = 0; i < qm->nrQMatoms; i++)
+        for (i = 0; i < qm.nrQMatoms; i++)
         {
             for (j = 0; j < DIM; j++)
             {
@@ -191,7 +191,7 @@ real call_mopac(t_QMrec *qm, t_MMrec *mm, rvec f[], rvec fshift[])
     return (QMener);
 }
 
-real call_mopac_SH(t_QMrec *qm, t_MMrec *mm, rvec f[], rvec fshift[])
+real call_mopac_SH(QMMM_QMrec& qm, QMMM_MMrec& mm, rvec f[], rvec fshift[])
 {
     /* do the actual SH QMMM calculation using directly linked mopac
        subroutines */
@@ -205,19 +205,19 @@ real call_mopac_SH(t_QMrec *qm, t_MMrec *mm, rvec f[], rvec fshift[])
     real
         QMener = 0.0;
 
-    snew(qmcrd, 3*(qm->nrQMatoms));
-    snew(qmgrad, 3*(qm->nrQMatoms));
+    snew(qmcrd, 3*(qm.nrQMatoms));
+    snew(qmgrad, 3*(qm.nrQMatoms));
     /* copy the data from qr into the arrays that are going to be used
      * in the fortran routines of MOPAC
      */
-    for (i = 0; i < qm->nrQMatoms; i++)
+    for (i = 0; i < qm.nrQMatoms; i++)
     {
         for (j = 0; j < DIM; j++)
         {
-            qmcrd[3*i+j] = static_cast<double>(qm->xQM[i][j])*10;
+            qmcrd[3*i+j] = static_cast<double>(qm.xQM[i][j])*10;
         }
     }
-    if (mm->nrMMatoms)
+    if (mm.nrMMatoms)
     {
         /* later we will add the point charges here. There are some
          * conceptual problems with semi-empirical QM in combination with
@@ -229,14 +229,14 @@ real call_mopac_SH(t_QMrec *qm, t_MMrec *mm, rvec f[], rvec fshift[])
     {
         /* now compute the energy and the gradients.
          */
-        snew(qmchrg, qm->nrQMatoms);
+        snew(qmchrg, qm.nrQMatoms);
 
-        F77_FUNC(domop, DOMOP) (&qm->nrQMatoms, qmcrd, &mm->nrMMatoms,
+        F77_FUNC(domop, DOMOP) (&qm.nrQMatoms, qmcrd, &mm.nrMMatoms,
                                 mmchrg, mmcrd, qmgrad, mmgrad, &energy, qmchrg);
         /* add the gradients to the f[] array, and also to the fshift[].
          * the mopac gradients are in kCal/angstrom.
          */
-        for (i = 0; i < qm->nrQMatoms; i++)
+        for (i = 0; i < qm.nrQMatoms; i++)
         {
             for (j = 0; j < DIM; j++)
             {

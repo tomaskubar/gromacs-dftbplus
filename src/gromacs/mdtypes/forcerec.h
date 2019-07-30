@@ -56,7 +56,7 @@ struct nonbonded_verlet_t;
 struct bonded_threading_t;
 class DispersionCorrection;
 struct t_forcetable;
-struct t_QMMMrec;
+class QMMM_rec;
 
 namespace gmx
 {
@@ -259,7 +259,7 @@ struct t_forcerec { // NOLINT (clang-analyzer-optin.performance.Padding)
 
     /* QMMM stuff */
     gmx_bool          bQMMM = FALSE;
-    struct t_QMMMrec *qr    = nullptr;
+    std::unique_ptr<QMMM_rec> qr;
 
     /* QM-MM neighborlists */
     struct t_nblist        *QMMMlist = nullptr;

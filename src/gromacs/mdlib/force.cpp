@@ -126,7 +126,7 @@ do_force_lowlevel(t_forcerec                               *fr,
     /* do QMMM first if requested */
     if (fr->bQMMM)
     {
-        enerd->term[F_EQM] = calculate_QMMM(cr, fr, forceForUseWithShiftForces, wcycle);
+        enerd->term[F_EQM] = fr->qr->calculate_QMMM(cr, fr, forceForUseWithShiftForces, wcycle);
     }
 
     /* Call the short range functions all in one go. */

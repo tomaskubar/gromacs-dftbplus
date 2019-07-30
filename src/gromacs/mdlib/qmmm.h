@@ -41,6 +41,7 @@
 
 #include <vector>
 
+#include "gromacs/math/paddedvector.h"
 #include "gromacs/math/vectypes.h"
 #include "gromacs/mdlib/tgroup.h"
 #include "gromacs/utility/arrayref.h"
@@ -60,16 +61,23 @@ struct DftbPlus;
  * TO BE CLEANED UP!
  * Also, it would be cool to rename the structure.
  */
-typedef struct { // TODO CHECK WHERE ALL OF THIS IS ALLOCATED!
-  struct gmx_pme_t **pmedata_qmmm;
-  struct gmx_pme_t **pmedata_qmqm;
+class QMMM_PME {
+private:
+public:
+//struct gmx_pme_t **pmedata_qmmm;
+//struct gmx_pme_t **pmedata_qmqm;
   t_nrnb *nrnb;
-  rvec *x;
-  real *q;
-  rvec *f;
+  PaddedVector<gmx::RVec> x;
+  PaddedVector<gmx::RVec> f;
+  std::vector<real> q;
+//std::vector<rvec> x;
+//std::vector<rvec> f;
+//rvec *x;
+//real *q;
+//rvec *f;
   matrix vir;
-  real *pot, *pot_sr; // electrostatic potential from PME ("external shift" in DFTB),
-                      // total and short-range component
+//std::vector<real> pot;
+  real *pot; // electrostatic potential from PME ("external shift" in DFTB),
   gmx_bool surf_corr_pme;   /* whether the surface correction shall be considered or not (if not = tin-foil boundary cond. */
   real epsilon_r; /* if yes, this is the dielectric constant to be considered */
 
@@ -91,7 +99,8 @@ typedef struct { // TODO CHECK WHERE ALL OF THIS IS ALLOCATED!
   double rcoulomb_pme; // cut-off
   double rlist_pme; // neighborlist cut-off (for PME, equal to rcoulomb_pme; for switched cut-off, larger)
   int nstlist_pme, lastlist_pme; // frequency of neighborsearching; last step when neighborsearching was done
-} t_QMMM_PME;
+
+} ;
 
 #define GMX_QMMM (GMX_QMMM_MOPAC || GMX_QMMM_GAMESS || GMX_QMMM_GAUSSIAN || GMX_QMMM_ORCA || GMX_QMMM_DFTBPLUS)
 
@@ -101,9 +110,10 @@ struct t_commrec;
 struct t_forcerec;
 struct t_inputrec;
 struct t_mdatoms;
-struct t_QMMMrec;
 
-typedef struct {
+class QMMM_QMrec {
+private:
+public:
     int                nrQMatoms;      /* total nr of QM atoms              */
     rvec              *xQM;            /* shifted to center of box          */
     int               *indexQM;        /* atom i = atom indexQM[i] in mdrun */
@@ -146,9 +156,17 @@ typedef struct {
     real               ewaldcoeff_q;
     real               epsilon_r;
     DftbPlus          *dpcalc;        /* DFTB+ calculator */
-} t_QMrec;
 
-typedef struct {
+    void init_QMrec(int               grpnr,
+                    int               nr,
+                    const int        *atomarray,
+                    const gmx_mtop_t *mtop,
+                    const t_inputrec *ir);
+} ;
+
+class QMMM_MMrec {
+private:
+public:
     real           scalefactor;
  // int            nrMMatoms;   /* nr of MM atoms, updated every step*/
  // rvec          *xMM;         /* shifted to center of box          */
@@ -159,10 +177,10 @@ typedef struct {
     /* (1) the short-range list that is updated in every step of MD,
           and is used in the QM calculation: */
     int            nrMMatoms;   /* nr of MM atoms */
-    rvec          *xMM;         /* coordinates shifted to the center of the box */
-    int           *indexMM;     /* atom i = atom indexMM[I] in mdrun */
-    real          *MMcharges;   /* magnitude of MM point charges */
-    int           *shiftMM;
+    PaddedVector<gmx::RVec> xMM;   /* coordinates shifted to the center of the box */
+    std::vector<int>  indexMM;     /* atom i = atom indexMM[I] in mdrun */
+    std::vector<real> MMcharges;   /* magnitude of MM point charges */
+    std::vector<int>  shiftMM;
     /* (2) the short-range list that is produced
           by the (group or Verlet) neighborsearching procedure,
           and is updated in every neighborsearching step.
@@ -170,28 +188,119 @@ typedef struct {
           yields the list under (1).
           This list itself is not used in QM calculation directly: */
     int            nrMMatoms_nbl;
-    int           *indexMM_nbl;
-    int           *shiftMM_nbl;
+    std::vector<int> indexMM_nbl;
+    std::vector<int> shiftMM_nbl;
     /* (3) the list of *all* of the non-QM atoms,
           which is static throughout the simulation and never needs to be updated: */
     int            nrMMatoms_full;
-    rvec          *xMM_full;
-    int           *indexMM_full;
-    real          *MMcharges_full;
-    int           *shiftMM_full;
+    PaddedVector<gmx::RVec> xMM_full;
+    std::vector<int>  indexMM_full;
+    std::vector<real> MMcharges_full;
+    std::vector<int>  shiftMM_full;
 
    /* the following seem to be unused in the new version of the QM/MM interface */
  // int           *MMatomtype;  /* only important for semi-emp.      */
-} t_MMrec;
 
+    void init_MMrec(real scalefactor_in,
+                    int nrMMatoms_full_in,
+                    int natoms,
+                    int nrQMatoms,
+                    int *indexQM,
+                    int& found_mm_atoms);
+} ;
 
-typedef struct t_QMMMrec {
+class QMMM_rec {
+private:
+public:
+
  // int             QMMMscheme; /* ONIOM (multi-layer) or normal          */
  // int             nrQMlayers; /* number of QM layers (total layers +1 (MM)) */
-    t_QMrec       **qm;         /* atoms and run params for each QM group */
-    t_MMrec        *mm;         /* there can only be one MM subsystem !   */
-    t_QMMM_PME     *pme;
-} t_QMMMrec;
+    std::vector<QMMM_QMrec>  qm;         /* atoms and run params for each QM group */
+    std::vector<QMMM_MMrec>  mm;         /* there can only be one MM subsystem !   */
+    std::vector<QMMM_PME>    pme;        /* [0] == pme_full, [1] == pme_qmonly */
+ // gmx_pme_t    *pmedata_full;
+ // gmx_pme_t    *pmedata_qmonly;
+
+    /* From topology->atoms.atomname and topology->atoms.atomtype
+     * the atom names and types are read;
+     * from inputrec->QMcharge resp. inputrec->QMmult the nelecs and multiplicity are determined
+     * and md->cQMMM gives numbers of the MM and QM atoms
+     */
+    QMMM_rec(const t_commrec  *cr,
+             const gmx_mtop_t *mtop,
+             const t_inputrec *ir,
+             const t_forcerec *fr,
+             const gmx_wallcycle_t gmx_unused wcycle);
+
+    /*
+    void update_QMMMrec(const t_commrec  *cr,
+                        const t_forcerec *fr,
+                        const rvec       *x,
+                        const t_mdatoms  *md,
+                        const matrix      box);
+    */
+
+    /* update_QMMMrec fills the MM stuff in QMMMrec. The MM atoms are
+     * taken froom the neighbourlists of the QM atoms. In a QMMM run this
+     * routine should be called at every step, since it updates the MM
+     * elements of the t_QMMMrec struct.
+     * CORRECTION: only call it in every NS step, to process the newly
+     * created neighborlists!
+     */
+
+    void update_QMMMrec_verlet_ns(const t_commrec      *cr,
+                                        t_forcerec     *fr,
+                                  const rvec            x[],
+                                  const t_mdatoms      *md,
+                                  const matrix          box);
+    
+    void update_QMMMrec_dftb(const t_commrec      *cr,
+                                   t_forcerec     *fr,
+                             const rvec            x[],
+                             const t_mdatoms      *md,
+                             const matrix          box);
+    
+    void update_QMMM_coord(const t_commrec  *cr,
+                                 t_forcerec *fr,
+                           const rvec        x[],
+                           const t_mdatoms  *md,
+                           const matrix      box);
+    
+    /* New routines for QM/MM interactions */
+    
+    void calculate_SR_QM_MM(int variant,
+                            real *pot);
+    
+    void calculate_LR_QM_MM(const t_commrec *cr,
+                            gmx_wallcycle_t wcycle,
+                            struct gmx_pme_t *pmedata,
+                            real *pot);
+    
+    void calculate_complete_QM_QM(const t_commrec *cr,
+                                  gmx_wallcycle_t wcycle,
+                                  struct gmx_pme_t *pmedata,
+                                  real *pot);
+    
+    void gradient_QM_MM(const t_commrec *cr,
+                        gmx_wallcycle_t wcycle,
+                        struct gmx_pme_t *pmedata,
+                        int variant,
+                        rvec *partgrad,
+                        rvec *MMgrad,
+                        rvec *MMgrad_full);
+
+    real calculate_QMMM(const t_commrec      *cr,
+                        const t_forcerec     *fr,
+                              rvec            f[],
+                        const gmx_wallcycle_t wcycle);
+
+    /* QMMM computes the QM forces. This routine makes either function
+     * calls to gmx QM routines (derived from MOPAC7 (semi-emp.) and MPQC
+     * (ab initio)) or generates input files for an external QM package
+     * (listed in QMMMrec.QMpackage). The binary of the QM package is
+     * called by system().
+     */
+} ;
 
 // for qmmm_variant
 enum {eqmmmVACUO,
@@ -202,69 +311,6 @@ enum {eqmmmVACUO,
       eqmmmNR};
 
 void atomic_number(int nr, char ***atomtype, int *nucnum);
-
-t_QMMMrec *mk_QMMMrec();
-/* allocates memory for QMMMrec */
-
-void init_QMMMrec(const t_commrec  *cr,
-                  const gmx_mtop_t *mtop,
-                  const t_inputrec *ir,
-                  const t_forcerec *fr,
-                  const gmx_wallcycle_t wcycle);                
-
-/* init_QMMMrec initializes the QMMM record. From
- * topology->atoms.atomname and topology->atoms.atomtype the atom
- * names and types are read; from inputrec->QMcharge
- * resp. inputrec->QMmult the nelecs and multiplicity are determined
- * and md->cQMMM gives numbers of the MM and QM atoms
- */
-
-/*
-void update_QMMMrec(const t_commrec  *cr,
-                    const t_forcerec *fr,
-                    const rvec       *x,
-                    const t_mdatoms  *md,
-                    const matrix      box);
-*/
-
-/* update_QMMMrec fills the MM stuff in QMMMrec. The MM atoms are
- * taken froom the neighbourlists of the QM atoms. In a QMMM run this
- * routine should be called at every step, since it updates the MM
- * elements of the t_QMMMrec struct.
- * CORRECTION: only call it in every NS step, to process the newly
- * created neighborlists!
- * There are two separate routines, for group and Verlet nblists.
- */
-
-void update_QMMMrec_verlet_ns(const t_commrec      *cr,
-                                    t_forcerec     *fr,
-                              const rvec            x[],
-                              const t_mdatoms      *md,
-                              const matrix          box);
-
-void update_QMMMrec_dftb(const t_commrec      *cr,
-                               t_forcerec     *fr,
-                         const rvec            x[],
-                         const t_mdatoms      *md,
-                         const matrix          box);
-
-void update_QMMM_coord(const t_commrec  *cr,
-                             t_forcerec *fr,
-                       const rvec        x[],
-                       const t_mdatoms  *md,
-                       const matrix      box);
-
-real calculate_QMMM(const t_commrec      *cr,
-                    const t_forcerec     *fr,
-                          rvec            f[],
-                    const gmx_wallcycle_t wcycle);
-
-/* QMMM computes the QM forces. This routine makes either function
- * calls to gmx QM routines (derived from MOPAC7 (semi-emp.) and MPQC
- * (ab initio)) or generates input files for an external QM package
- * (listed in QMMMrec.QMpackage). The binary of the QM package is
- * called by system().
- */
 
 /*! \brief
  * Return vector of atom indices for atoms in the QMMM region.
@@ -282,32 +328,5 @@ std::vector<int> qmmmAtomIndices(const t_inputrec &ir, const gmx_mtop_t &mtop);
  * \param[in] qmmmAtoms ArrayRef to vector conatining qmmm atom indices.
  */
 void removeQmmmAtomCharges(gmx_mtop_t *mtop, gmx::ArrayRef<const int> qmmmAtoms);
-
-/* New routines for QM/MM interactions */
-
-void calculate_SR_QM_MM(t_QMMMrec *qr,
-                        int variant,
-                        real *pot);
-
-void calculate_LR_QM_MM(t_QMMMrec *qr,
-                        const t_commrec *cr,
-                        gmx_wallcycle_t wcycle,
-                        struct gmx_pme_t *pmedata,
-                        real *pot);
-
-void calculate_complete_QM_QM(t_QMMMrec *qr,
-                              const t_commrec *cr,
-                              gmx_wallcycle_t wcycle,
-                              struct gmx_pme_t *pmedata,
-                              real *pot);
-
-void gradient_QM_MM(t_QMMMrec *qr,
-                    const t_commrec *cr,
-                    gmx_wallcycle_t wcycle,
-                    struct gmx_pme_t *pmedata,
-                    int variant,
-                    rvec *partgrad,
-                    rvec *MMgrad,
-                    rvec *MMgrad_full);
 
 #endif
