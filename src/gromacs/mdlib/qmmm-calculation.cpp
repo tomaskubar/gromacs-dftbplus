@@ -41,7 +41,7 @@
 #define NM_TO_BOHR        (18.897259886)
 #define BOHR_TO_NM        (1 / NM_TO_BOHR)
 #define HARTREE_TO_EV     (27.211396132)
-#define AU_OF_ESP_TO_VOLT (14.400)
+// #define AU_OF_ESP_TO_VOLT (14.400) -- this is off by an angstrom/bohr factor! use HARTREE_TO_EV instead!
 #define HARTREE2KJMOL     (HARTREE2KJ * AVOGADRO)
 #define KJMOL2HARTREE     (1 / HARTREE2KJMOL)
 
@@ -153,7 +153,7 @@ void QMMM_rec::calculate_SR_QM_MM(int variant,
     real r_1 = rcoul;
     real r_d = QMMM_SWITCH;
     real r_c = r_1 + r_d;
-    printf("r_1 = %f, r_d = %f, r_c = %f\n", r_1, r_d, r_c);
+  //printf("r_1 = %f, r_d = %f, r_c = %f\n", r_1, r_d, r_c);
     real big_a =   (5 * r_c - 2 * r_1) / (CUB(r_c) * SQR(r_d));
     real big_b = - (4 * r_c - 2 * r_1) / (CUB(r_c) * CUB(r_d));
     real big_c = - 1 / r_c - big_a / 3 * CUB(r_d) - big_b / 4 * QRT(r_d);
@@ -178,7 +178,7 @@ void QMMM_rec::calculate_SR_QM_MM(int variant,
           continue;
         }
       } // for k
-      printf("ATOM %d: %8.5f %4d %4d\n", j+1, pot[j], under_r1, under_rc);
+    //printf("ATOM %d: %8.5f %4d %4d\n", j+1, pot[j], under_r1, under_rc);
     } // for j
     break;
   }
@@ -303,16 +303,16 @@ void QMMM_rec::calculate_LR_QM_MM(const t_commrec *cr,
    // printf("MM %5d %8.5f %8.5f %8.5f %8.5f\n", j+1, pme->x[n+j][XX], pme->x[n+j][YY], pme->x[n+j][ZZ], pme->q[n + j]);
   }
   
-  static struct timespec time1, time2;
-  clock_gettime(CLOCK_MONOTONIC, &time1);
+//static struct timespec time1, time2;
+//clock_gettime(CLOCK_MONOTONIC, &time1);
   init_nrnb(pme_full.nrnb);
   PaddedVector<gmx::RVec> emptyVec;
   gmx_pme_do(pmedata, gmx::makeArrayRef(pme_full.x), gmx::makeArrayRef(emptyVec), pme_full.q.data(), pme_full.q.data(),
              nullptr, nullptr, nullptr, nullptr, qm_.box, cr, 0, 0,
              pme_full.nrnb, wcycle, pme_full.vir, pme_full.vir, nullptr, nullptr, 0., 0., nullptr, nullptr,
              GMX_PME_SPREAD | GMX_PME_SOLVE | GMX_PME_CALC_POT, TRUE, FALSE, n, pme_full.pot);
-  clock_gettime(CLOCK_MONOTONIC, &time2);
-  print_time_difference("PMETIME 1 ", time1, time2);
+//clock_gettime(CLOCK_MONOTONIC, &time2);
+//print_time_difference("PMETIME 1 ", time1, time2);
 
   /* Save the potential */
   for (int j=0; j<qm_.nrQMatoms; j++)
@@ -359,9 +359,9 @@ void QMMM_rec::calculate_LR_QM_MM(const t_commrec *cr,
     // }
   }
 
-  for (int j=0; j<n; j++) {
-      printf("POT LR [%d] = %8.5f\n", j+1, pot[j]);
-  }
+//for (int j=0; j<n; j++) {
+//    printf("POT LR [%d] = %8.5f\n", j+1, pot[j]);
+//}
 
   return;
 } // calculate_LR_QM_MM
@@ -538,20 +538,19 @@ void QMMM_rec::calculate_complete_QM_QM(const t_commrec *cr,
       pme_qmonly.q[j]     = qm_.QMcharges[j] * mm_.scalefactor;
   }
   
-  static struct timespec time1, time2;
-  clock_gettime(CLOCK_MONOTONIC, &time1);
+//static struct timespec time1, time2;
+//clock_gettime(CLOCK_MONOTONIC, &time1);
   init_nrnb(pme_qmonly.nrnb);
-//gmx_pme_do(pmedata, 0, n, pme_qmonly.x, nullptr, pme_qmonly.q, pme_qmonly.q, nullptr, nullptr, nullptr, nullptr, qm_.box, cr, 0, 0,
   PaddedVector<gmx::RVec> emptyVec;
-  int oldNumAtoms = pmedata->atc[0].numAtoms();
+  int oldNumAtoms = pmedata->atc[0].numAtoms(); // need to resize PME arrays to the number of QM atoms
   pmedata->atc[0].setNumAtoms(n);
   gmx_pme_do(pmedata, pme_qmonly.x, gmx::makeArrayRef(emptyVec), pme_qmonly.q.data(), pme_qmonly.q.data(),
              nullptr, nullptr, nullptr, nullptr, qm_.box, cr, 0, 0,
              pme_qmonly.nrnb, wcycle, pme_qmonly.vir, pme_qmonly.vir, nullptr, nullptr, 0., 0., nullptr, nullptr,
              GMX_PME_SPREAD | GMX_PME_SOLVE | GMX_PME_CALC_POT, TRUE, FALSE, n, pme_qmonly.pot);
-  pmedata->atc[0].setNumAtoms(oldNumAtoms);
-  clock_gettime(CLOCK_MONOTONIC, &time2);
-  print_time_difference("PMETIME 2 ", time1, time2);
+  pmedata->atc[0].setNumAtoms(oldNumAtoms); // resize back
+//clock_gettime(CLOCK_MONOTONIC, &time2);
+//print_time_difference("PMETIME 2 ", time1, time2);
 
 //for (int j=0; j<n; j++) {
 //  printf("POT QM QM [%3d] = %12.7f\n", j, pme_qmonly.pot[j]);
@@ -607,6 +606,12 @@ void QMMM_rec::calculate_complete_QM_QM(const t_commrec *cr,
    // printf("pot_qm_in_scc[%d] = %12.8f\n", j+1, pot[j]);
    // printf("Ewald atom %d charge %6.3f potential %8.5f (correction %8.5f surfterm %8.5f)\n",
    //         j+1, pme_qmonly.q[j],      pot[j],                 pot_corr[j] * BOHR2NM, pot_surf[j] * BOHR2NM);
+  }
+
+  // also, save the potential in the QMMM_QMrec structure
+  for (int j=0; j<n; j++)
+  {
+      qm_.pot_qmqm[j] = (double) pot[j] * HARTREE_TO_EV; // in volt units
   }
 
   return;
@@ -781,17 +786,16 @@ void QMMM_rec::gradient_QM_MM(const t_commrec *cr,
           pme_full.q[n + j]     = mm_.MMcharges_full[j];
       }
       // PME -- long-range component
-      static struct timespec time1, time2;
-      clock_gettime(CLOCK_MONOTONIC, &time1);
+    //static struct timespec time1, time2;
+    //clock_gettime(CLOCK_MONOTONIC, &time1);
       init_nrnb(pme_full.nrnb);
-    //gmx_pme_do(pmedata, 0, n + ne_full, pme->x, pme->f, pme->q, pme->q, nullptr, nullptr, nullptr, nullptr, qm_.box, cr, 0, 0,
       std::vector<real> emptyVec;
       gmx_pme_do(pmedata, pme_full.x, pme_full.f, pme_full.q.data(), pme_full.q.data(),
                  nullptr, nullptr, nullptr, nullptr, qm_.box, cr, 0, 0,
                  pme_full.nrnb, wcycle, pme_full.vir, pme_full.vir, nullptr, nullptr, 0., 0., nullptr, nullptr,
                  GMX_PME_SPREAD | GMX_PME_SOLVE | GMX_PME_CALC_F, TRUE, FALSE, n, nullptr); // emptyVec);
-      clock_gettime(CLOCK_MONOTONIC, &time2);
-      print_time_difference("PMETIME 3 ", time1, time2);
+    //clock_gettime(CLOCK_MONOTONIC, &time2);
+    //print_time_difference("PMETIME 3 ", time1, time2);
       for (int j=0; j<n; j++)
       {
         for (int m=0; m<DIM; m++)
@@ -852,17 +856,17 @@ void QMMM_rec::gradient_QM_MM(const t_commrec *cr,
           pme_qmonly.q[j]     = qm_.QMcharges[j];
       }
       // PME -- long-range component
-      clock_gettime(CLOCK_MONOTONIC, &time1);
+    //clock_gettime(CLOCK_MONOTONIC, &time1);
       init_nrnb(pme_qmonly.nrnb);
-      int oldNumAtoms = pmedata->atc[0].numAtoms();
+      int oldNumAtoms = pmedata->atc[0].numAtoms(); // need to resize PME arrays to the number of QM atoms
       pmedata->atc[0].setNumAtoms(n);
       gmx_pme_do(pmedata, pme_qmonly.x, pme_qmonly.f, pme_qmonly.q.data(), pme_qmonly.q.data(),
                  nullptr, nullptr, nullptr, nullptr, qm_.box, cr, 0, 0,
                  pme_qmonly.nrnb, wcycle, pme_qmonly.vir, pme_qmonly.vir, nullptr, nullptr, 0., 0., nullptr, nullptr,
                  GMX_PME_SPREAD | GMX_PME_SOLVE | GMX_PME_CALC_F, TRUE, FALSE, n, nullptr); // emptyVec);
-      pmedata->atc[0].setNumAtoms(oldNumAtoms);
-      clock_gettime(CLOCK_MONOTONIC, &time2);
-      print_time_difference("PMETIME 4 ", time1, time2);
+      pmedata->atc[0].setNumAtoms(oldNumAtoms); // resize back
+    //clock_gettime(CLOCK_MONOTONIC, &time2);
+    //print_time_difference("PMETIME 4 ", time1, time2);
       for (int j=0; j<n; j++)
       {
         for (int m=0; m<DIM; m++)
@@ -929,14 +933,14 @@ void QMMM_rec::gradient_QM_MM(const t_commrec *cr,
           pme_full.q[n + k]     = 0.;
       }
       // PME -- long-range component
-      clock_gettime(CLOCK_MONOTONIC, &time1);
+    //clock_gettime(CLOCK_MONOTONIC, &time1);
       init_nrnb(pme_full.nrnb);
       gmx_pme_do(pmedata, pme_full.x, pme_full.f, pme_full.q.data(), pme_full.q.data(),
                  nullptr, nullptr, nullptr, nullptr, qm_.box, cr, 0, 0,
                  pme_full.nrnb, wcycle, pme_full.vir, pme_full.vir, nullptr, nullptr, 0., 0., nullptr, nullptr,
                  GMX_PME_SPREAD | GMX_PME_SOLVE | GMX_PME_CALC_F, TRUE, TRUE, n, nullptr); // emptyVec);
-      clock_gettime(CLOCK_MONOTONIC, &time2);
-      print_time_difference("PMETIME 5 ", time1, time2);
+    //clock_gettime(CLOCK_MONOTONIC, &time2);
+    //print_time_difference("PMETIME 5 ", time1, time2);
       for (int j=0; j<ne_full; j++)
       {
           MMgrad_full[j][XX] = - mm_.MMcharges_full[j] * pme_full.f[n + j][XX] / HARTREE_BOHR2MD;

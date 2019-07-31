@@ -126,6 +126,7 @@ void initialize_context(Context *cont,
       printf("cont->cr = %p\n", cont->cr);
       printf("cont->fr = %p\n", cont->fr);
       printf("cont->rcoul = %f\n", cont->rcoul);
+      printf("cont->ewaldcoeff_q = %f\n", cont->ewaldcoeff_q);
   }
 
   return;
@@ -253,6 +254,7 @@ real call_dftbplus(const t_forcerec *fr, const t_commrec *cr,
 {
     static int step = 0;
     static FILE *f_q = nullptr;
+    static FILE *f_p = nullptr;
     double QMener;
  // bool lPme = (qm->qmmm_variant == eqmmmPME);
 
@@ -266,13 +268,13 @@ real call_dftbplus(const t_forcerec *fr, const t_commrec *cr,
     snew(grad, 3*n);
     for (int i=0; i<3*n; i++)
         grad[i] = 0.;
+    snew(pot, n);
     snew(potgrad, 3*n); // dummy parameter; not used at this moment
     for (int i=0; i<3*n; i++)
         potgrad[i] = 0.;
     snew(q, n);
     for (int i=0; i<n; i++)
         q[i] = 0.;
-    snew(pot, n);
     snew(pot_sr, n);
     snew(pot_lr, n);
 
@@ -281,6 +283,11 @@ real call_dftbplus(const t_forcerec *fr, const t_commrec *cr,
     if (f_q == nullptr)
     {
         f_q = fopen("qm_dftb_charges.xvg", "a");
+    }
+
+    if (f_p == nullptr && qm.qmmm_variant != eqmmmVACUO)
+    {
+        f_p = fopen("qm_dftb_esp.xvg", "a");
     }
 
     for (int i=0; i<n; i++)
@@ -314,9 +321,14 @@ real call_dftbplus(const t_forcerec *fr, const t_commrec *cr,
             pot[i] = (double) - pot_sr[i];
         }
     }
-    // DEBUG
-    for (int i=0; i<n; i++)
-        printf("pot_sr[%d] = %9.5f pot_lr[%d] = %9.5f\n", i+1, pot_sr[i], i+1, pot_lr[i]);
+    // save the potential in the QMMM_QMrec structure
+    for (int j=0; j<n; j++)
+    {
+        qm.pot_qmmm[j] = (double) - pot[j] * HARTREE_TO_EV; // in volt units
+    }
+ // // DEBUG
+ // for (int i=0; i<n; i++)
+ //     printf("pot_sr[%d] = %9.5f pot_lr[%d] = %9.5f\n", i+1, pot_sr[i], i+1, pot_lr[i]);
 
     /* Set up the data structures needed for the PME calculation
 	 *   of QM--imageQM electrostatics.
@@ -337,8 +349,8 @@ real call_dftbplus(const t_forcerec *fr, const t_commrec *cr,
     dftbp_set_external_potential(qm.dpcalc, pot, potgrad); // unit and sign OK
     dftbp_get_energy(qm.dpcalc, &QMener); // unit OK
     dftbp_get_gross_charges(qm.dpcalc, q);
-    for (int i=0; i<n; i++)
-        printf("%d %6.3f\n", i+1, q[i]);
+ // for (int i=0; i<n; i++)
+ //     printf("%d %6.3f\n", i+1, q[i]);
     dftbp_get_gradients(qm.dpcalc, grad);
     wallcycle_stop(wcycle, ewcQM);
 
@@ -351,12 +363,12 @@ real call_dftbplus(const t_forcerec *fr, const t_commrec *cr,
         }
     }
 
-    /* Print the QM pure gradient */
-    for (int i=0; i<n; i++)
-    {
-        printf("GRAD QM %d: %8.2f %8.2f %8.2f\n", i+1,
-            QMgrad[i][XX] * HARTREE_BOHR2MD, QMgrad[i][YY] * HARTREE_BOHR2MD, QMgrad[i][ZZ] * HARTREE_BOHR2MD);
-    }
+ // /* Print the QM pure gradient */
+ // for (int i=0; i<n; i++)
+ // {
+ //     printf("GRAD QM %d: %8.2f %8.2f %8.2f\n", i+1,
+ //         QMgrad[i][XX] * HARTREE_BOHR2MD, QMgrad[i][YY] * HARTREE_BOHR2MD, QMgrad[i][ZZ] * HARTREE_BOHR2MD);
+ // }
 
     /* Save the QM charges */
     for (int i=0; i<n; i++)
@@ -383,8 +395,8 @@ real call_dftbplus(const t_forcerec *fr, const t_commrec *cr,
     for (int i=0; i<n; i++)
     {
         rvec_inc(QMgrad[i], partgrad[i]); // sign OK
-        printf("GRAD QM FULL %d: %8.2f %8.2f %8.2f\n", i+1,
-            QMgrad[i][XX] * HARTREE_BOHR2MD, QMgrad[i][YY] * HARTREE_BOHR2MD, QMgrad[i][ZZ] * HARTREE_BOHR2MD);
+     // printf("GRAD QM FULL %d: %8.2f %8.2f %8.2f\n", i+1,
+     //     QMgrad[i][XX] * HARTREE_BOHR2MD, QMgrad[i][YY] * HARTREE_BOHR2MD, QMgrad[i][ZZ] * HARTREE_BOHR2MD);
     }
     sfree(partgrad);
 
@@ -419,6 +431,31 @@ real call_dftbplus(const t_forcerec *fr, const t_commrec *cr,
         }
     }
 
+    fprintf(f_q, "%8d", step);
+    for (int i=0; i<n; i++)
+    {
+        fprintf(f_q, " %8.5f", qm.QMcharges[i]);
+    }
+    fprintf(f_q, "\n");
+
+    if (qm.qmmm_variant != eqmmmVACUO)
+    {
+        fprintf(f_p, "%8d", step);
+        for (int i=0; i<n; i++)
+        {
+          //fprintf(f_p, " %8.5f %8.5f %8.5f", qm.pot_qmmm[i], qm.pot_qmqm[i], qm.pot_qmmm[i] + qm.pot_qmqm[i]);
+            if (qm.qmmm_variant == eqmmmPME)
+            {
+                fprintf(f_p, " %8.5f %8.5f %8.5f", qm.pot_qmmm[i], qm.pot_qmqm[i], qm.pot_qmmm[i] + qm.pot_qmqm[i]);
+            }
+            else
+            {
+                fprintf(f_p, " %8.5f", qm.pot_qmmm[i]);
+            }
+        }
+        fprintf(f_p, "\n");
+    }
+
     sfree(QMgrad);
     sfree(MMgrad);
     if (qm.qmmm_variant == eqmmmPME)
@@ -428,18 +465,11 @@ real call_dftbplus(const t_forcerec *fr, const t_commrec *cr,
 
     sfree(x);
     sfree(grad);
+    sfree(pot);
     sfree(potgrad);
     sfree(q);
-    sfree(pot);
     sfree(pot_sr);
     sfree(pot_lr);
-
-    fprintf(f_q, "%8d", step);
-    for (int i=0; i<n; i++)
-    {
-        fprintf(f_q, " %8.5f", qm.QMcharges[i]);
-    }
-    fprintf(f_q, "\n");
 
     step++;
 

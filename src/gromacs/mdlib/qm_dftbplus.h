@@ -37,6 +37,8 @@
 #ifndef GMX_MDLIB_QM_DFTBPLUS_H
 #define GMX_MDLIB_QM_DFTBPLUS_H
 
+#define HARTREE_TO_EV     (27.211396132)
+
 void
 init_dftbplus(QMMM_QMrec& qm,
               const t_forcerec *fr,

@@ -406,6 +406,9 @@ void QMMM_QMrec::init_QMrec(int               grpnr,
     ewaldcoeff_q   = calc_ewaldcoeff_q(ir->rcoulomb, ir->ewald_rtol);
     epsilon_r      = ir->epsilon_r;
 
+    snew(pot_qmmm, nr);
+    snew(pot_qmqm, nr);
+
 } /* init_QMrec */
 
     /* MM rec creation */
@@ -1120,7 +1123,7 @@ real QMMM_rec::calculate_QMMM(const t_commrec      *cr,
              // f[qm->indexQM[i]][j]          -= forces_qm[i][j];
              // fr->fshift[qm->shiftQM[i]][j] += fshift_qm[i][j];
             }
-            printf("F[%5d] = %8.2f %8.2f %8.2f\n", qm_.indexQM[i], forces[i][0], forces[i][1], forces[i][2]);
+         // printf("F[%5d] = %8.2f %8.2f %8.2f\n", qm_.indexQM[i], forces[i][0], forces[i][1], forces[i][2]);
         }
         for (int i = 0; i < mm_.nrMMatoms; i++)
         {
@@ -1131,9 +1134,9 @@ real QMMM_rec::calculate_QMMM(const t_commrec      *cr,
              // f[mm->indexMM[i]][j]          -= forces_mm[i][j];
              // fr->fshift[mm->shiftMM[i]][j] += fshift_mm[i][j];
             }
-            if (i<30) if (norm(forces[qm_.nrQMatoms+i]) > 10.)
-              printf("F_MM[%5d] = %8.2f %8.2f %8.2f\n", mm_.indexMM[i],
-                forces[qm_.nrQMatoms+i][0], forces[qm_.nrQMatoms+i][1], forces[qm_.nrQMatoms+i][2]);
+         // if (i<30) if (norm(forces[qm_.nrQMatoms+i]) > 10.)
+         //   printf("F_MM[%5d] = %8.2f %8.2f %8.2f\n", mm_.indexMM[i],
+         //     forces[qm_.nrQMatoms+i][0], forces[qm_.nrQMatoms+i][1], forces[qm_.nrQMatoms+i][2]);
         }
         for (int i = 0; i < mm_.nrMMatoms_full; i++)
         {
@@ -1144,9 +1147,9 @@ real QMMM_rec::calculate_QMMM(const t_commrec      *cr,
              // f[mm->indexMM_full[i]][j]          -= forces_mm_full[i][j];
              // fr->fshift[mm->shiftMM_full[i]][j] += fshift_mm_full[i][j];
             }
-            if (i<100) if (norm(forces[qm_.nrQMatoms+mm_.nrMMatoms+i]) > 10.)
-              printf("F_MM_F[%5d] = %8.2f %8.2f %8.2f\n", mm_.indexMM_full[i],
-              forces[qm_.nrQMatoms+mm_.nrMMatoms+i][0], forces[qm_.nrQMatoms+mm_.nrMMatoms+i][1], forces[qm_.nrQMatoms+mm_.nrMMatoms+i][2]);
+         // if (i<100) if (norm(forces[qm_.nrQMatoms+mm_.nrMMatoms+i]) > 10.)
+         //   printf("F_MM_F[%5d] = %8.2f %8.2f %8.2f\n", mm_.indexMM_full[i],
+         //   forces[qm_.nrQMatoms+mm_.nrMMatoms+i][0], forces[qm_.nrQMatoms+mm_.nrMMatoms+i][1], forces[qm_.nrQMatoms+mm_.nrMMatoms+i][2]);
         }
     }
     else

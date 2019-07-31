@@ -156,6 +156,8 @@ public:
     real               ewaldcoeff_q;
     real               epsilon_r;
     DftbPlus          *dpcalc;        /* DFTB+ calculator */
+    double            *pot_qmmm;      /* electric potential induced by the MM atoms */
+    double            *pot_qmqm;      /* el. pot. induced by the periodic images of the QM atoms */
 
     void init_QMrec(int               grpnr,
                     int               nr,
