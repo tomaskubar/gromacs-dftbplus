@@ -443,15 +443,15 @@ real call_dftbplus(const t_forcerec *fr, const t_commrec *cr,
         fprintf(f_p, "%8d", step);
         for (int i=0; i<n; i++)
         {
-          //fprintf(f_p, " %8.5f %8.5f %8.5f", qm.pot_qmmm[i], qm.pot_qmqm[i], qm.pot_qmmm[i] + qm.pot_qmqm[i]);
-            if (qm.qmmm_variant == eqmmmPME)
-            {
-                fprintf(f_p, " %8.5f %8.5f %8.5f", qm.pot_qmmm[i], qm.pot_qmqm[i], qm.pot_qmmm[i] + qm.pot_qmqm[i]);
-            }
-            else
-            {
-                fprintf(f_p, " %8.5f", qm.pot_qmmm[i]);
-            }
+            fprintf(f_p, " %8.5f", qm.pot_qmmm[i] + qm.pot_qmqm[i]);
+         // if (qm.qmmm_variant == eqmmmPME)
+         // {
+         //     fprintf(f_p, " %8.5f %8.5f %8.5f", qm.pot_qmmm[i], qm.pot_qmqm[i], qm.pot_qmmm[i] + qm.pot_qmqm[i]);
+         // }
+         // else
+         // {
+         //     fprintf(f_p, " %8.5f", qm.pot_qmmm[i]);
+         // }
         }
         fprintf(f_p, "\n");
     }
