@@ -32,21 +32,43 @@
  * To help us fund GROMACS development, we humbly ask that you cite
  * the research papers on the package. Check out http://www.gromacs.org.
  */
-#ifndef GMX_MDLIB_RF_UTIL_H
-#define GMX_MDLIB_RF_UTIL_H
+/*! \internal \file
+ * \brief SHAKE and LINCS tests header.
+ *
+ * Contains description and constructor for the test data accumulating object,
+ * declares CPU- and GPU-based functions used to apply SHAKE or LINCS on the
+ * test data.
+ *
+ * \author Artem Zhmurov <zhmurov@gmail.com>
+ * \ingroup module_mdlib
+ */
 
-#include <cstdio>
+#ifndef GMX_MDLIB_TESTS_CONSTRTESTRUNNERS_H
+#define GMX_MDLIB_TESTS_CONSTRTESTRUNNERS_H
 
-#include "gromacs/math/vectypes.h"
-#include "gromacs/utility/real.h"
+#include "constrtestdata.h"
 
-struct gmx_mtop_t;
-struct t_forcerec;
-struct t_inputrec;
+struct t_pbc;
 
-void calc_rffac(FILE *fplog, real eps_r, real eps_rf,
-                real Rc,
-                real *krf, real *crf);
-/* Determine the reaction-field constants */
+namespace gmx
+{
+namespace test
+{
 
-#endif
+/*! \brief Apply SHAKE constraints to the test data.
+ */
+void applyShake(ConstraintsTestData *testData, t_pbc pbc);
+/*! \brief Apply LINCS constraints to the test data.
+ */
+void applyLincs(ConstraintsTestData *testData, t_pbc pbc);
+/*! \brief Apply CUDA version of LINCS constraints to the test data.
+ *
+ * All the data is copied to the GPU device, then LINCS is applied and
+ * the resulting coordinates are copied back.
+ */
+void applyLincsCuda(ConstraintsTestData *testData, t_pbc pbc);
+
+}      // namespace test
+}      // namespace gmx
+
+#endif // GMX_MDLIB_TESTS_CONSTRTESTRUNNERS_H

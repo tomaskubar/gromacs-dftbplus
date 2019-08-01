@@ -929,16 +929,6 @@ static bool set_chargesum(FILE *log, t_forcerec *fr, const gmx_mtop_t *mtop)
             std::abs(fr->qsum[1]) > 1e-4);
 }
 
-void update_forcerec(t_forcerec *fr, matrix box)
-{
-    if (fr->ic->eeltype == eelGRF)
-    {
-        calc_rffac(nullptr, fr->ic->eeltype, fr->ic->epsilon_r, fr->ic->epsilon_rf,
-                   fr->ic->rcoulomb, fr->temp, fr->zsquare, box,
-                   &fr->ic->k_rf, &fr->ic->c_rf);
-    }
-}
-
 static real calcBuckinghamBMax(FILE *fplog, const gmx_mtop_t *mtop)
 {
     const t_atoms *at1, *at2;
@@ -1244,66 +1234,47 @@ static void initVdwEwaldParameters(FILE *fp, const t_inputrec *ir,
     }
 }
 
-static void init_ewald_f_table(interaction_const_t *ic,
-                               real                 rtab)
+/* Generate Coulomb and/or Van der Waals Ewald long-range correction tables
+ *
+ * Tables are generated for one or both, depending on if the pointers
+ * are non-null. The spacing for both table sets is the same and obeys
+ * both accuracy requirements, when relevant.
+ */
+static void init_ewald_f_table(const interaction_const_t &ic,
+                               EwaldCorrectionTables     *coulombTables,
+                               EwaldCorrectionTables     *vdwTables)
 {
-    real maxr;
+    const bool useCoulombTable = (EEL_PME_EWALD(ic.eeltype) && coulombTables != nullptr);
+    const bool useVdwTable     = (EVDW_PME(ic.vdwtype) && vdwTables != nullptr);
 
     /* Get the Ewald table spacing based on Coulomb and/or LJ
      * Ewald coefficients and rtol.
      */
-    ic->tabq_scale = ewald_spline3_table_scale(ic);
+    const real tableScale = ewald_spline3_table_scale(ic, useCoulombTable, useVdwTable);
 
-    if (ic->cutoff_scheme == ecutsVERLET)
+    const int  tableSize  = static_cast<int>(ic.rcoulomb*tableScale) + 2;
+
+    if (useCoulombTable)
     {
-        maxr = ic->rcoulomb;
-    }
-    else
-    {
-        maxr = std::max(ic->rcoulomb, rtab);
-    }
-    ic->tabq_size  = static_cast<int>(maxr*ic->tabq_scale) + 2;
-
-    sfree_aligned(ic->tabq_coul_FDV0);
-    sfree_aligned(ic->tabq_coul_F);
-    sfree_aligned(ic->tabq_coul_V);
-
-    sfree_aligned(ic->tabq_vdw_FDV0);
-    sfree_aligned(ic->tabq_vdw_F);
-    sfree_aligned(ic->tabq_vdw_V);
-
-    if (EEL_PME_EWALD(ic->eeltype))
-    {
-        /* Create the original table data in FDV0 */
-        snew_aligned(ic->tabq_coul_FDV0, ic->tabq_size*4, 32);
-        snew_aligned(ic->tabq_coul_F, ic->tabq_size, 32);
-        snew_aligned(ic->tabq_coul_V, ic->tabq_size, 32);
-        table_spline3_fill_ewald_lr(ic->tabq_coul_F, ic->tabq_coul_V, ic->tabq_coul_FDV0,
-                                    ic->tabq_size, 1/ic->tabq_scale, ic->ewaldcoeff_q, v_q_ewald_lr);
+        *coulombTables = generateEwaldCorrectionTables(tableSize, tableScale, ic.ewaldcoeff_q, v_q_ewald_lr);
     }
 
-    if (EVDW_PME(ic->vdwtype))
+    if (useVdwTable)
     {
-        snew_aligned(ic->tabq_vdw_FDV0, ic->tabq_size*4, 32);
-        snew_aligned(ic->tabq_vdw_F, ic->tabq_size, 32);
-        snew_aligned(ic->tabq_vdw_V, ic->tabq_size, 32);
-        table_spline3_fill_ewald_lr(ic->tabq_vdw_F, ic->tabq_vdw_V, ic->tabq_vdw_FDV0,
-                                    ic->tabq_size, 1/ic->tabq_scale, ic->ewaldcoeff_lj, v_lj_ewald_lr);
+        *vdwTables = generateEwaldCorrectionTables(tableSize, tableScale, ic.ewaldcoeff_lj, v_lj_ewald_lr);
     }
 }
 
 void init_interaction_const_tables(FILE                *fp,
-                                   interaction_const_t *ic,
-                                   real                 rtab)
+                                   interaction_const_t *ic)
 {
-    if (EEL_PME_EWALD(ic->eeltype) || EVDW_PME(ic->vdwtype))
+    if (EEL_PME_EWALD(ic->eeltype))
     {
-        init_ewald_f_table(ic, rtab);
-
+        init_ewald_f_table(*ic, ic->coulombEwaldTables.get(), nullptr);
         if (fp != nullptr)
         {
-            fprintf(fp, "Initialized non-bonded Ewald correction tables, spacing: %.2e size: %d\n\n",
-                    1/ic->tabq_scale, ic->tabq_size);
+            fprintf(fp, "Initialized non-bonded Coulomb Ewald tables, spacing: %.2e size: %zu\n\n",
+                    1/ic->coulombEwaldTables->scale, ic->coulombEwaldTables->tableF.size());
         }
     }
 }
@@ -1361,16 +1332,11 @@ init_interaction_const(FILE                       *fp,
                        const gmx_mtop_t           *mtop,
                        bool                        systemHasNetCharge)
 {
-    interaction_const_t *ic;
-
-    snew(ic, 1);
+    interaction_const_t *ic = new interaction_const_t;
 
     ic->cutoff_scheme   = ir->cutoff_scheme;
 
-    /* Just allocate something so we can free it */
-    snew_aligned(ic->tabq_coul_FDV0, 16, 32);
-    snew_aligned(ic->tabq_coul_F, 16, 32);
-    snew_aligned(ic->tabq_coul_V, 16, 32);
+    ic->coulombEwaldTables = std::make_unique<EwaldCorrectionTables>();
 
     /* Lennard-Jones */
     ic->vdwtype         = ir->vdwtype;
@@ -1417,8 +1383,6 @@ init_interaction_const(FILE                       *fp,
             gmx_incons("unimplemented potential modifier");
     }
 
-    ic->sh_invrc6 = -ic->dispersion_shift.cpot;
-
     /* Electrostatics */
     ic->eeltype          = ir->coulombtype;
     ic->coulomb_modifier = ir->coulomb_modifier;
@@ -1440,14 +1404,12 @@ init_interaction_const(FILE                       *fp,
     /* Reaction-field */
     if (EEL_RF(ic->eeltype))
     {
+        GMX_RELEASE_ASSERT(ic->eeltype != eelGRF_NOTUSED, "GRF is no longer supported");
         ic->epsilon_rf = ir->epsilon_rf;
-        /* Generalized reaction field parameters are updated every step */
-        if (ic->eeltype != eelGRF)
-        {
-            calc_rffac(fp, ic->eeltype, ic->epsilon_r, ic->epsilon_rf,
-                       ic->rcoulomb, 0, 0, nullptr,
-                       &ic->k_rf, &ic->c_rf);
-        }
+
+        calc_rffac(fp, ic->epsilon_r, ic->epsilon_rf,
+                   ic->rcoulomb,
+                   &ic->k_rf, &ic->c_rf);
     }
     else
     {
@@ -1492,15 +1454,6 @@ init_interaction_const(FILE                       *fp,
     *interaction_const = ic;
 }
 
-static void
-done_interaction_const(interaction_const_t *interaction_const)
-{
-    sfree_aligned(interaction_const->tabq_coul_FDV0);
-    sfree_aligned(interaction_const->tabq_coul_F);
-    sfree_aligned(interaction_const->tabq_coul_V);
-    sfree(interaction_const);
-}
-
 void init_forcerec(FILE                             *fp,
                    const gmx::MDLogger              &mdlog,
                    t_forcerec                       *fr,
@@ -1517,7 +1470,7 @@ void init_forcerec(FILE                             *fp,
                    const bool                        useGpuForBonded,
                    gmx_bool                          bNoSolvOpt,
                    real                              print_force,
-                   gmx_wallcycle_t                   wcycle)
+                   gmx_wallcycle                    *wcycle)
 {
     real           rtab;
     char          *env;
@@ -1554,7 +1507,8 @@ void init_forcerec(FILE                             *fp,
         fr->n_tpi = 0;
     }
 
-    if (ir->coulombtype == eelRF_NEC_UNSUPPORTED)
+    if (ir->coulombtype == eelRF_NEC_UNSUPPORTED ||
+        ir->coulombtype == eelGRF_NOTUSED)
     {
         gmx_fatal(FARGS, "%s electrostatics is no longer supported",
                   eel_names[ir->coulombtype]);
@@ -1737,7 +1691,7 @@ void init_forcerec(FILE                             *fp,
 
     /* fr->ic is used both by verlet and group kernels (to some extent) now */
     init_interaction_const(fp, &fr->ic, ir, mtop, systemHasNetCharge);
-    init_interaction_const_tables(fp, fr->ic, ir->rlist + ir->tabext);
+    init_interaction_const_tables(fp, fr->ic);
 
     const interaction_const_t *ic = fr->ic;
 
@@ -1755,7 +1709,6 @@ void init_forcerec(FILE                             *fp,
             break;
 
         case eelRF:
-        case eelGRF:
             fr->nbkernel_elec_interaction = GMX_NBKERNEL_ELEC_REACTIONFIELD;
             break;
 
@@ -1835,15 +1788,6 @@ void init_forcerec(FILE                             *fp,
 
     /* 1-4 interaction electrostatics */
     fr->fudgeQQ = mtop->ffparams.fudgeQQ;
-
-    /* Parameters for generalized RF */
-    fr->zsquare = 0.0;
-    fr->temp    = 0.0;
-
-    if (ic->eeltype == eelGRF)
-    {
-        init_generalized_rf(fp, mtop, ir, fr);
-    }
 
     fr->haveDirectVirialContributions =
         (EEL_FULL(ic->eeltype) || EVDW_PME(ic->vdwtype) ||
@@ -2035,7 +1979,7 @@ void init_forcerec(FILE                             *fp,
 
         fr->nbv = Nbnxm::init_nb_verlet(mdlog, bFEP_NonBonded, ir, fr,
                                         cr, hardwareInfo, deviceInfo,
-                                        mtop, box);
+                                        mtop, box, wcycle);
 
         if (useGpuForBonded)
         {
@@ -2045,7 +1989,8 @@ void init_forcerec(FILE                             *fp,
             // TODO the heap allocation is only needed while
             // t_forcerec lacks a constructor.
             fr->gpuBonded = new gmx::GpuBonded(mtop->ffparams,
-                                               stream);
+                                               stream,
+                                               wcycle);
         }
     }
 
@@ -2123,7 +2068,7 @@ void done_forcerec(t_forcerec *fr, int numMolBlocks)
     }
     done_cginfo_mb(fr->cginfo_mb, numMolBlocks);
     sfree(fr->nbfp);
-    done_interaction_const(fr->ic);
+    delete fr->ic;
     sfree(fr->shift_vec);
     sfree(fr->fshift);
     sfree(fr->ewc_t);

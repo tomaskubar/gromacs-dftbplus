@@ -43,11 +43,10 @@
 
 #include <gtest/gtest.h>
 
-#include "gromacs/gpu_utils/gpu_utils.h"
+#include "gromacs/gpu_utils/gpu_testutils.h"
 #include "gromacs/math/paddedvector.h"
 #include "gromacs/math/vec.h"
 #include "gromacs/math/vectypes.h"
-#include "gromacs/mdlib/settle_cuda.h"
 #include "gromacs/mdtypes/mdatom.h"
 #include "gromacs/pbcutil/pbc.h"
 #include "gromacs/topology/idef.h"
@@ -59,6 +58,8 @@
 
 #include "gromacs/mdlib/tests/watersystem.h"
 #include "testutils/testasserts.h"
+
+#include "settle_runners.h"
 
 namespace gmx
 {
@@ -86,9 +87,9 @@ class SettleTest : public ::testing::TestWithParam<SettleTestParameters>
 {
     public:
         //! Updated water atom positions to constrain (DIM reals per atom)
-        PaddedVector<gmx::RVec> updatedPositions_;
+        PaddedVector<RVec>      updatedPositions_;
         //! Water atom velocities to constrain (DIM reals per atom)
-        PaddedVector<gmx::RVec> velocities_;
+        PaddedVector<RVec>      velocities_;
         //! No periodic boundary conditions
         t_pbc                   pbcNone_;
         //! Rectangular periodic box
@@ -132,7 +133,17 @@ class SettleTest : public ::testing::TestWithParam<SettleTestParameters>
                 velocities_[i / DIM][i % DIM] = 0.0;
             }
         }
+
+        //! Store whether any compatible GPUs exist.
+        static bool s_hasCompatibleGpus;
+        //! Before any test is run, work out whether any compatible GPUs exist.
+        static void SetUpTestCase()
+        {
+            s_hasCompatibleGpus = canComputeOnGpu();
+        }
 };
+
+bool SettleTest::s_hasCompatibleGpus = false;
 
 TEST_P(SettleTest, SatisfiesConstraints)
 {
@@ -199,7 +210,7 @@ TEST_P(SettleTest, SatisfiesConstraints)
     const t_ilist  ilist   = { mtop.moltype[0].ilist[F_SETTLE].size(), 0, mtop.moltype[0].ilist[F_SETTLE].iatoms.data(), 0 };
 
     // Copy the original positions from the array of doubles to a vector of reals
-    PaddedVector<gmx::RVec> startingPositions;
+    PaddedVector<RVec> startingPositions;
     startingPositions.resizeWithPadding(c_waterPositions.size());
     std::copy(c_waterPositions.begin(), c_waterPositions.end(), startingPositions.begin());
 
@@ -208,10 +219,10 @@ TEST_P(SettleTest, SatisfiesConstraints)
 
 #if GMX_GPU == GMX_GPU_CUDA
     // Make a copy of all data-structures for GPU code testing
-    PaddedVector<gmx::RVec> updatedPositionsGpu   = updatedPositions_;
-    PaddedVector<gmx::RVec> velocitiesGpu         = velocities_;
-    tensor                  virialGpu             = {{0, 0, 0}, {0, 0, 0}, {0, 0, 0}};
-#endif
+    PaddedVector<RVec> updatedPositionsGpu   = updatedPositions_;
+    PaddedVector<RVec> velocitiesGpu         = velocities_;
+    tensor             virialGpu             = {{0, 0, 0}, {0, 0, 0}, {0, 0, 0}};
+#endif      // GMX_GPU == GMX_GPU_CUDA
 
     // Finally make the settle data structures
     settledata    *settled = settle_init(mtop);
@@ -239,9 +250,9 @@ TEST_P(SettleTest, SatisfiesConstraints)
     // Verify the updated coordinates match the requirements
     for (int i = 0; i < numSettles; ++i)
     {
-        const gmx::RVec &positionO  = updatedPositions_[i*3 + 0];
-        const gmx::RVec &positionH1 = updatedPositions_[i*3 + 1];
-        const gmx::RVec &positionH2 = updatedPositions_[i*3 + 2];
+        const RVec &positionO  = updatedPositions_[i*3 + 0];
+        const RVec &positionH1 = updatedPositions_[i*3 + 1];
+        const RVec &positionH2 = updatedPositions_[i*3 + 2];
 
         EXPECT_REAL_EQ_TOL(dOH*dOH, distance2(positionO, positionH1), tolerance) << formatString("for water %d ", i) << testDescription;
         EXPECT_REAL_EQ_TOL(dOH*dOH, distance2(positionO, positionH2), tolerance) << formatString("for water %d ", i) << testDescription;
@@ -283,29 +294,30 @@ TEST_P(SettleTest, SatisfiesConstraints)
         }
     }
 
-    // CUDA version will be tested only if
-    // 1. The code was compiled with cuda
+    // CUDA version will be tested only if:
+    // 1. The code was compiled with CUDA
     // 2. There is a CUDA-capable GPU in a system
+    // 3. This GPU is detectable
+    // 4. GPU detection was not disabled by GMX_DISABLE_GPU_DETECTION environment variable
 #if GMX_GPU == GMX_GPU_CUDA
-    // TODO: Here we should check that at least 1 suitable GPU is available
-    if (canPerformGpuDetection())
+    if (s_hasCompatibleGpus)
     {
         // Run the CUDA code and check if it gives identical results to CPU code
-        t_idef                        idef;
+        t_idef idef;
         idef.il[F_SETTLE] = ilist;
 
-        std::unique_ptr<SettleCuda>   settleCuda = std::make_unique<SettleCuda>(mtop);
-        settleCuda->setPbc(usePbc ? &pbcXyz_ : &pbcNone_);
-        settleCuda->set(idef, mdatoms);
-
-        settleCuda->copyApplyCopy(mdatoms.homenr,
-                                  as_rvec_array(startingPositions.data()),
-                                  as_rvec_array(updatedPositionsGpu.data()),
-                                  useVelocities,
-                                  as_rvec_array(velocitiesGpu.data()),
-                                  reciprocalTimeStep,
-                                  calcVirial,
-                                  virialGpu);
+        applySettleCuda(mdatoms.homenr,
+                        as_rvec_array(startingPositions.data()),
+                        as_rvec_array(updatedPositionsGpu.data()),
+                        useVelocities,
+                        as_rvec_array(velocitiesGpu.data()),
+                        reciprocalTimeStep,
+                        calcVirial,
+                        virialGpu,
+                        usePbc ? &pbcXyz_ : &pbcNone_,
+                        mtop,
+                        idef,
+                        mdatoms);
 
         FloatingPointTolerance toleranceGpuCpu = absoluteTolerance(0.0001);
 
@@ -337,7 +349,7 @@ TEST_P(SettleTest, SatisfiesConstraints)
             }
         }
     }
-#endif
+#endif      // GMX_GPU == GMX_GPU_CUDA
 }
 
 // Scan the full Cartesian product of numbers of SETTLE interactions

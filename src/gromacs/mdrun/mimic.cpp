@@ -133,13 +133,13 @@
 #include "gromacs/utility/real.h"
 #include "gromacs/utility/smalloc.h"
 
+#include "legacysimulator.h"
 #include "replicaexchange.h"
 #include "shellfc.h"
-#include "simulator.h"
 
 using gmx::SimulationSignaller;
 
-void gmx::Simulator::do_mimic()
+void gmx::LegacySimulator::do_mimic()
 {
     t_inputrec              *ir   = inputrec;
     int64_t                  step, step_rel;
@@ -225,7 +225,6 @@ void gmx::Simulator::do_mimic()
     top_global->intermolecularExclusionGroup = genQmmmIndices(*top_global);
 
     initialize_lambdas(fplog, *ir, MASTER(cr), &state_global->fep_state, state_global->lambda, lam0);
-    init_nrnb(nrnb);
 
     gmx_mdoutf        *outf = init_mdoutf(fplog, nfile, fnm, mdrunOptions, cr, outputProvider, ir, top_global, oenv, wcycle,
                                           StartingBehavior::NewSimulation);
@@ -306,12 +305,12 @@ void gmx::Simulator::do_mimic()
     }
 
     {
-        int    cglo_flags = (CGLO_INITIALIZATION | CGLO_GSTAT |
+        int    cglo_flags = (CGLO_GSTAT |
                              (shouldCheckNumberOfBondedInteractions ?
                               CGLO_CHECK_NUMBER_OF_BONDED_INTERACTIONS : 0));
         bool   bSumEkinhOld = false;
         t_vcm *vcm          = nullptr;
-        compute_globals(fplog, gstat, cr, ir, fr, ekind,
+        compute_globals(gstat, cr, ir, fr, ekind,
                         state->x.rvec_array(), state->v.rvec_array(), state->box, state->lambda[efptVDW],
                         mdatoms, nrnb, vcm,
                         nullptr, enerd, force_vir, shake_vir, total_vir, pres, mu_tot,
@@ -517,7 +516,7 @@ void gmx::Simulator::do_mimic()
             t_vcm              *vcm              = nullptr;
             SimulationSignaller signaller(&signals, cr, ms, doInterSimSignal, doIntraSimSignal);
 
-            compute_globals(fplog, gstat, cr, ir, fr, ekind,
+            compute_globals(gstat, cr, ir, fr, ekind,
                             state->x.rvec_array(), state->v.rvec_array(), state->box, state->lambda[efptVDW],
                             mdatoms, nrnb, vcm,
                             wcycle, enerd, nullptr, nullptr, nullptr, nullptr, mu_tot,

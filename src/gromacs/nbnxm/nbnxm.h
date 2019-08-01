@@ -212,7 +212,8 @@ struct nonbonded_verlet_t
                            std::unique_ptr<PairSearch>        pairSearch,
                            std::unique_ptr<nbnxn_atomdata_t>  nbat,
                            const Nbnxm::KernelSetup          &kernelSetup,
-                           gmx_nbnxn_gpu_t                   *gpu_nbv);
+                           gmx_nbnxn_gpu_t                   *gpu_nbv,
+                           gmx_wallcycle                     *wcycle);
 
         ~nonbonded_verlet_t();
 
@@ -261,8 +262,7 @@ struct nonbonded_verlet_t
                             bool                            fillLocal,
                             gmx::ArrayRef<const gmx::RVec>  x,
                             BufferOpsUseGpu                 useGpu,
-                            void                           *xPmeDevicePtr,
-                            gmx_wallcycle                  *wcycle);
+                            void                           *xPmeDevicePtr);
 
         //! Init for GPU version of setup coordinates in Nbnxm
         void atomdata_init_copy_x_to_nbat_x_gpu();
@@ -296,8 +296,7 @@ struct nonbonded_verlet_t
                                      int                         clearF,
                                      const t_forcerec           &fr,
                                      gmx_enerdata_t             *enerd,
-                                     t_nrnb                     *nrnb,
-                                     gmx_wallcycle              *wcycle);
+                                     t_nrnb                     *nrnb);
 
         //! Executes the non-bonded free-energy kernel, always runs on the CPU
         void dispatchFreeEnergyKernel(Nbnxm::InteractionLocality  iLocality,
@@ -309,18 +308,16 @@ struct nonbonded_verlet_t
                                       real                       *lambda,
                                       gmx_enerdata_t             *enerd,
                                       int                         forceFlags,
-                                      t_nrnb                     *nrnb,
-                                      gmx_wallcycle              *wcycle);
+                                      t_nrnb                     *nrnb);
 
         //! Add the forces stored in nbat to f, zeros the forces in nbat */
         void atomdata_add_nbat_f_to_f(Nbnxm::AtomLocality                 locality,
                                       rvec                               *f,
                                       BufferOpsUseGpu                     useGpu,
-                                      GpuBufferOpsAccumulateForce         accumulateForce,
-                                      gmx_wallcycle                      *wcycle);
+                                      GpuBufferOpsAccumulateForce         accumulateForce);
 
         /*! \brief Outer body of function to perform initialization for F buffer operations on GPU. */
-        void atomdata_init_add_nbat_f_to_f_gpu(gmx_wallcycle *wcycle);
+        void atomdata_init_add_nbat_f_to_f_gpu();
 
         /*! \brief H2D transfer of force buffer*/
         void launch_copy_f_to_gpu(rvec *f, Nbnxm::AtomLocality locality);
@@ -328,8 +325,11 @@ struct nonbonded_verlet_t
         /*! \brief D2H transfer of force buffer*/
         void launch_copy_f_from_gpu(rvec *f, Nbnxm::AtomLocality locality);
 
-        /*! \brief Host sync on device stream given by locality */
-        void wait_stream_gpu(Nbnxm::AtomLocality locality);
+        /*! \brief Wait for GPU force reduction task and D2H transfer of its results to complete
+         *
+         * FIXME: need more details: when should be called / after which operation, etc.
+         */
+        void wait_for_gpu_force_reduction(Nbnxm::AtomLocality locality);
 
         //! Return the kernel setup
         const Nbnxm::KernelSetup &kernelSetup() const
@@ -375,6 +375,8 @@ struct nonbonded_verlet_t
     private:
         //! The non-bonded setup, also affects the pairlist construction kernel
         Nbnxm::KernelSetup                kernelSetup_;
+        //! \brief Pointer to wallcycle structure.
+        gmx_wallcycle                    *wcycle_;
     public:
         //! GPU Nbnxm data, only used with a physical GPU (TODO: use unique_ptr)
         gmx_nbnxn_gpu_t                  *gpu_nbv;
@@ -393,7 +395,8 @@ init_nb_verlet(const gmx::MDLogger     &mdlog,
                const gmx_hw_info_t     &hardwareInfo,
                const gmx_device_info_t *deviceInfo,
                const gmx_mtop_t        *mtop,
-               matrix                   box);
+               matrix                   box,
+               gmx_wallcycle           *wcycle);
 
 } // namespace Nbnxm
 

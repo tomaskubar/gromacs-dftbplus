@@ -119,7 +119,7 @@ nbnxn_kernel_gpu_ref(const NbnxnPairlistGpu     *nbl,
     bEwald = EEL_FULL(iconst->eeltype);
     if (bEwald)
     {
-        Ftab = iconst->tabq_coul_F;
+        Ftab = iconst->coulombEwaldTables->tableF.data();
     }
 
     rcut2                = iconst->rcoulomb*iconst->rcoulomb;
@@ -273,7 +273,7 @@ nbnxn_kernel_gpu_ref(const NbnxnPairlistGpu     *nbl,
                                 else
                                 {
                                     r     = rsq*rinv;
-                                    rt    = r*iconst->tabq_scale;
+                                    rt    = r*iconst->coulombEwaldTables->scale;
                                     n0    = static_cast<int>(rt);
                                     eps   = rt - n0;
 
@@ -305,8 +305,8 @@ nbnxn_kernel_gpu_ref(const NbnxnPairlistGpu     *nbl,
                                         vctot   += vcoul;
 
                                         Vvdwtot +=
-                                            (Vvdw_rep - int_bit*c12*iconst->sh_invrc6*iconst->sh_invrc6)/12 -
-                                            (Vvdw_disp - int_bit*c6*iconst->sh_invrc6)/6;
+                                            (Vvdw_rep + int_bit*c12*iconst->repulsion_shift.cpot)/12 -
+                                            (Vvdw_disp + int_bit*c6*iconst->dispersion_shift.cpot)/6;
                                     }
                                 }
 

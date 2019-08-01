@@ -346,7 +346,7 @@ static void do_nb_verlet(t_forcerec                       *fr,
         }
     }
 
-    nbv->dispatchNonbondedKernel(ilocality, *ic, flags, clearF, *fr, enerd, nrnb, wcycle);
+    nbv->dispatchNonbondedKernel(ilocality, *ic, flags, clearF, *fr, enerd, nrnb);
 }
 
 static inline void clear_rvecs_omp(int n, rvec v[])
@@ -693,8 +693,7 @@ static void alternatePmeNbGpuWaitReduce(nonbonded_verlet_t                  *nbv
                 nbv->atomdata_add_nbat_f_to_f(Nbnxm::AtomLocality::Local,
                                               as_rvec_array(force->unpaddedArrayRef().data()),
                                               BufferOpsUseGpu::False,
-                                              GpuBufferOpsAccumulateForce::Null,
-                                              wcycle);
+                                              GpuBufferOpsAccumulateForce::Null);
             }
         }
     }
@@ -805,6 +804,60 @@ setupForceWorkload(gmx::PpForceWorkload *forceWork,
     forceWork->haveCpuListedForceWork = haveCpuListedForces(*fr, idef, *fcd);
 }
 
+
+/* \brief Launch end-of-step GPU tasks: buffer clearing and rolling pruning.
+ *
+ * TODO: eliminate the \p useGpuNonbonded and \p useGpuNonbonded when these are
+ * incorporated in PpForceWorkload.
+ */
+static void
+launchGpuEndOfStepTasks(nonbonded_verlet_t         *nbv,
+                        gmx::GpuBonded             *gpuBonded,
+                        gmx_pme_t                  *pmedata,
+                        gmx_enerdata_t             *enerd,
+                        const gmx::PpForceWorkload &forceWorkload,
+                        bool                        useGpuNonbonded,
+                        bool                        useGpuPme,
+                        int64_t                     step,
+                        int                         flags,
+                        gmx_wallcycle_t             wcycle)
+{
+    if (useGpuNonbonded)
+    {
+        /* Launch pruning before buffer clearing because the API overhead of the
+         * clear kernel launches can leave the GPU idle while it could be running
+         * the prune kernel.
+         */
+        if (nbv->isDynamicPruningStepGpu(step))
+        {
+            nbv->dispatchPruneKernelGpu(step);
+        }
+
+        /* now clear the GPU outputs while we finish the step on the CPU */
+        wallcycle_start_nocount(wcycle, ewcLAUNCH_GPU);
+        wallcycle_sub_start_nocount(wcycle, ewcsLAUNCH_GPU_NONBONDED);
+        Nbnxm::gpu_clear_outputs(nbv->gpu_nbv, flags);
+        wallcycle_sub_stop(wcycle, ewcsLAUNCH_GPU_NONBONDED);
+        wallcycle_stop(wcycle, ewcLAUNCH_GPU);
+    }
+
+    if (useGpuPme)
+    {
+        pme_gpu_reinit_computation(pmedata, wcycle);
+    }
+
+    if (forceWorkload.haveGpuBondedWork && (flags & GMX_FORCE_ENERGY))
+    {
+        // in principle this should be included in the DD balancing region,
+        // but generally it is infrequent so we'll omit it for the sake of
+        // simpler code
+        gpuBonded->waitAccumulateEnergyTerms(enerd);
+
+        gpuBonded->clearEnergies();
+    }
+}
+
+
 void do_force(FILE                                     *fplog,
               const t_commrec                          *cr,
               const gmx_multisim_t                     *ms,
@@ -887,8 +940,6 @@ void do_force(FILE                                     *fplog,
 
     if (bStateChanged)
     {
-        update_forcerec(fr, box);
-
         if (inputrecNeedMutot(inputrec))
         {
             /* Calculate total (local) dipole moment in a temporary common array.
@@ -1052,13 +1103,13 @@ void do_force(FILE                                     *fplog,
         // NS step is also a virial step (on which f buf ops are deactivated).
         if (c_enableGpuBufOps && bUseGPU && (GMX_GPU == GMX_GPU_CUDA))
         {
-            nbv->atomdata_init_add_nbat_f_to_f_gpu(wcycle);
+            nbv->atomdata_init_add_nbat_f_to_f_gpu();
         }
     }
     else
     {
         nbv->setCoordinates(Nbnxm::AtomLocality::Local, false,
-                            x.unpaddedArrayRef(), useGpuXBufOps, pme_gpu_get_device_x(fr->pmedata), wcycle);
+                            x.unpaddedArrayRef(), useGpuXBufOps, pme_gpu_get_device_x(fr->pmedata));
     }
 
     if (bUseGPU)
@@ -1125,7 +1176,7 @@ void do_force(FILE                                     *fplog,
             dd_move_x(cr->dd, box, x.unpaddedArrayRef(), wcycle);
 
             nbv->setCoordinates(Nbnxm::AtomLocality::NonLocal, false,
-                                x.unpaddedArrayRef(), useGpuXBufOps, pme_gpu_get_device_x(fr->pmedata), wcycle);
+                                x.unpaddedArrayRef(), useGpuXBufOps, pme_gpu_get_device_x(fr->pmedata));
 
         }
 
@@ -1178,9 +1229,7 @@ void do_force(FILE                                     *fplog,
 
         if (ppForceWorkload->haveGpuBondedWork && (flags & GMX_FORCE_ENERGY))
         {
-            wallcycle_sub_start_nocount(wcycle, ewcsLAUNCH_GPU_BONDED);
             fr->gpuBonded->launchEnergyTransfer();
-            wallcycle_sub_stop(wcycle, ewcsLAUNCH_GPU_BONDED);
         }
         wallcycle_stop(wcycle, ewcLAUNCH_GPU);
     }
@@ -1264,14 +1313,14 @@ void do_force(FILE                                     *fplog,
         nbv->dispatchFreeEnergyKernel(Nbnxm::InteractionLocality::Local,
                                       fr, as_rvec_array(x.unpaddedArrayRef().data()), forceOut.f, *mdatoms,
                                       inputrec->fepvals, lambda.data(),
-                                      enerd, flags, nrnb, wcycle);
+                                      enerd, flags, nrnb);
 
         if (havePPDomainDecomposition(cr))
         {
             nbv->dispatchFreeEnergyKernel(Nbnxm::InteractionLocality::NonLocal,
                                           fr, as_rvec_array(x.unpaddedArrayRef().data()), forceOut.f, *mdatoms,
                                           inputrec->fepvals, lambda.data(),
-                                          enerd, flags, nrnb, wcycle);
+                                          enerd, flags, nrnb);
         }
     }
 
@@ -1290,8 +1339,7 @@ void do_force(FILE                                     *fplog,
         wallcycle_stop(wcycle, ewcFORCE);
         nbv->atomdata_add_nbat_f_to_f(Nbnxm::AtomLocality::All, forceOut.f,
                                       BufferOpsUseGpu::False,
-                                      GpuBufferOpsAccumulateForce::Null,
-                                      wcycle);
+                                      GpuBufferOpsAccumulateForce::Null);
 
         wallcycle_start_nocount(wcycle, ewcFORCE);
 
@@ -1385,7 +1433,7 @@ void do_force(FILE                                     *fplog,
                 nbv->launch_copy_f_to_gpu(forceOut.f, Nbnxm::AtomLocality::NonLocal);
             }
             nbv->atomdata_add_nbat_f_to_f(Nbnxm::AtomLocality::NonLocal,
-                                          forceOut.f, useGpuFBufOps, accumulateForce, wcycle);
+                                          forceOut.f, useGpuFBufOps, accumulateForce);
             if (useGpuFBufOps == BufferOpsUseGpu::True)
             {
                 nbv->launch_copy_f_from_gpu(forceOut.f, Nbnxm::AtomLocality::NonLocal);
@@ -1412,7 +1460,7 @@ void do_force(FILE                                     *fplog,
         {
             if (useGpuFBufOps == BufferOpsUseGpu::True)
             {
-                nbv->wait_stream_gpu(Nbnxm::AtomLocality::NonLocal);
+                nbv->wait_for_gpu_force_reduction(Nbnxm::AtomLocality::NonLocal);
             }
             dd_move_f(cr->dd, force.unpaddedArrayRef(), fr->fshift, wcycle);
         }
@@ -1479,60 +1527,35 @@ void do_force(FILE                                     *fplog,
         wallcycle_stop(wcycle, ewcFORCE);
     }
 
-    if (useGpuPme)
-    {
-        pme_gpu_reinit_computation(fr->pmedata, wcycle);
-    }
-
     /* Do the nonbonded GPU (or emulation) force buffer reduction
      * on the non-alternating path. */
     if (bUseOrEmulGPU && !alternateGpuWait)
     {
 
+        // TODO: move these steps as early as possible:
+        // - CPU f H2D should be as soon as all CPU-side forces are done
+        // - wait for force reduction does not need to block host (at least not here, it's sufficient to wait
+        //   before the next CPU task that consumes the forces: vsite spread or update)
+        //
         if (useGpuFBufOps == BufferOpsUseGpu::True && haveCpuForces)
         {
             nbv->launch_copy_f_to_gpu(forceOut.f, Nbnxm::AtomLocality::Local);
         }
         nbv->atomdata_add_nbat_f_to_f(Nbnxm::AtomLocality::Local,
-                                      forceOut.f, useGpuFBufOps, accumulateForce, wcycle);
+                                      forceOut.f, useGpuFBufOps, accumulateForce);
         if (useGpuFBufOps == BufferOpsUseGpu::True)
         {
             nbv->launch_copy_f_from_gpu(forceOut.f, Nbnxm::AtomLocality::Local);
-            nbv->wait_stream_gpu(Nbnxm::AtomLocality::Local);
+            nbv->wait_for_gpu_force_reduction(Nbnxm::AtomLocality::Local);
         }
-
     }
 
-    if (bUseGPU)
-    {
-        /* now clear the GPU outputs while we finish the step on the CPU */
-        wallcycle_start_nocount(wcycle, ewcLAUNCH_GPU);
-        wallcycle_sub_start_nocount(wcycle, ewcsLAUNCH_GPU_NONBONDED);
-        Nbnxm::gpu_clear_outputs(nbv->gpu_nbv, flags);
-
-        if (nbv->isDynamicPruningStepGpu(step))
-        {
-            nbv->dispatchPruneKernelGpu(step);
-        }
-        wallcycle_sub_stop(wcycle, ewcsLAUNCH_GPU_NONBONDED);
-        wallcycle_stop(wcycle, ewcLAUNCH_GPU);
-    }
-
-    if (ppForceWorkload->haveGpuBondedWork && (flags & GMX_FORCE_ENERGY))
-    {
-        wallcycle_start(wcycle, ewcWAIT_GPU_BONDED);
-        // in principle this should be included in the DD balancing region,
-        // but generally it is infrequent so we'll omit it for the sake of
-        // simpler code
-        fr->gpuBonded->accumulateEnergyTerms(enerd);
-        wallcycle_stop(wcycle, ewcWAIT_GPU_BONDED);
-
-        wallcycle_start_nocount(wcycle, ewcLAUNCH_GPU);
-        wallcycle_sub_start_nocount(wcycle, ewcsLAUNCH_GPU_BONDED);
-        fr->gpuBonded->clearEnergies();
-        wallcycle_sub_stop(wcycle, ewcsLAUNCH_GPU_BONDED);
-        wallcycle_stop(wcycle, ewcLAUNCH_GPU);
-    }
+    launchGpuEndOfStepTasks(nbv, fr->gpuBonded, fr->pmedata, enerd,
+                            *ppForceWorkload,
+                            bUseGPU, useGpuPme,
+                            step,
+                            flags,
+                            wcycle);
 
     if (DOMAINDECOMP(cr))
     {

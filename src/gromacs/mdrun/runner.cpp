@@ -148,8 +148,8 @@
 #include "gromacs/utility/smalloc.h"
 #include "gromacs/utility/stringutil.h"
 
+#include "legacysimulator.h"
 #include "replicaexchange.h"
-#include "simulator.h"
 
 #if GMX_FAHCORE
 #include "corewrap.h"
@@ -157,6 +157,32 @@
 
 namespace gmx
 {
+
+/*! \brief Log if development feature flags are encountered
+ *
+ * The use of dev features indicated by environment variables is logged
+ * in order to ensure that runs with such featrues enabled can be identified
+ * from their log and standard output.
+ *
+ * \param[in]  mdlog        Logger object.
+ */
+static void reportDevelopmentFeatures(const gmx::MDLogger &mdlog)
+{
+    const bool enableGpuBufOps       = (getenv("GMX_USE_GPU_BUFFER_OPS") != nullptr);
+    const bool useGpuUpdateConstrain = (getenv("GMX_UPDATE_CONSTRAIN_GPU") != nullptr);
+
+    if (enableGpuBufOps)
+    {
+        GMX_LOG(mdlog.warning).asParagraph().appendTextFormatted(
+                "NOTE: This run uses the 'GPU buffer ops' feature, enabled by the GMX_USE_GPU_BUFFER_OPS environment variable.");
+    }
+
+    if (useGpuUpdateConstrain)
+    {
+        GMX_LOG(mdlog.warning).asParagraph().appendTextFormatted(
+                "NOTE: This run uses the 'GPU update/constraints' feature, enabled by the GMX_UPDATE_CONSTRAIN_GPU environment variable.");
+    }
+}
 
 /*! \brief Barrier for safe simultaneous thread access to mdrunner data
  *
@@ -437,7 +463,6 @@ static void finish_run(FILE *fplog,
                        const gmx_pme_t *pme,
                        gmx_bool bWriteStat)
 {
-    t_nrnb *nrnb_tot = nullptr;
     double  delta_t  = 0;
     double  nbfs     = 0, mflop = 0;
     double  elapsed_time,
@@ -465,9 +490,12 @@ static void finish_run(FILE *fplog,
         printReport = false;
     }
 
+    t_nrnb                  *nrnb_tot;
+    std::unique_ptr<t_nrnb>  nrnbTotalStorage;
     if (cr->nnodes > 1)
     {
-        snew(nrnb_tot, 1);
+        nrnbTotalStorage = std::make_unique<t_nrnb>();
+        nrnb_tot         = nrnbTotalStorage.get();
 #if GMX_MPI
         MPI_Allreduce(nrnb->n, nrnb_tot->n, eNRNB, MPI_DOUBLE, MPI_SUM,
                       cr->mpi_comm_mysim);
@@ -506,10 +534,6 @@ static void finish_run(FILE *fplog,
     if (printReport)
     {
         print_flop(fplog, nrnb_tot, &nbfs, &mflop);
-    }
-    if (cr->nnodes > 1)
-    {
-        sfree(nrnb_tot);
     }
 
     if (thisRankHasDuty(cr, DUTY_PP) && DOMAINDECOMP(cr))
@@ -566,7 +590,6 @@ static void finish_run(FILE *fplog,
 int Mdrunner::mdrunner()
 {
     matrix                    box;
-    t_nrnb                   *nrnb;
     t_forcerec               *fr               = nullptr;
     t_fcdata                 *fcd              = nullptr;
     real                      ewaldcoeff_q     = 0;
@@ -616,6 +639,9 @@ int Mdrunner::mdrunner()
     }
     gmx::LoggerOwner logOwner(buildLogger(fplog, cr));
     gmx::MDLogger    mdlog(logOwner.logger());
+
+    // report any development features that may be enabled by environment variables
+    reportDevelopmentFeatures(mdlog);
 
     // With thread-MPI, the communicator changes after threads are
     // launched, so this is rebuilt for the master rank at that
@@ -1237,7 +1263,7 @@ int Mdrunner::mdrunner()
     std::unique_ptr<MDAtoms>     mdAtoms;
     std::unique_ptr<gmx_vsite_t> vsite;
 
-    snew(nrnb, 1);
+    t_nrnb nrnb;
     if (thisRankHasDuty(cr, DUTY_PP))
     {
         /* Initiate forcerecord */
@@ -1423,7 +1449,7 @@ int Mdrunner::mdrunner()
                                     || observablesHistory.edsamHistory);
         auto constr              = makeConstraints(mtop, *inputrec, pull_work, doEssentialDynamics,
                                                    fplog, *mdAtoms->mdatoms(),
-                                                   cr, ms, nrnb, wcycle, fr->bMolPBC);
+                                                   cr, ms, &nrnb, wcycle, fr->bMolPBC);
 
         /* Energy terms and groups */
         gmx_enerdata_t enerd(mtop.groups.groups[SimulationAtomGroupType::EnergyOutput].size(), inputrec->fepvals->n_lambda);
@@ -1454,7 +1480,7 @@ int Mdrunner::mdrunner()
 
         GMX_ASSERT(stopHandlerBuilder_, "Runner must provide StopHandlerBuilder to simulator.");
         /* Now do whatever the user wants us to do (how flexible...) */
-        Simulator simulator {
+        LegacySimulator simulator {
             fplog, cr, ms, mdlog, static_cast<int>(filenames.size()), filenames.data(),
             oenv,
             mdrunOptions,
@@ -1467,7 +1493,7 @@ int Mdrunner::mdrunner()
             fcd,
             globalState.get(),
             &observablesHistory,
-            mdAtoms.get(), nrnb, wcycle, fr,
+            mdAtoms.get(), &nrnb, wcycle, fr,
             &enerd,
             &ppForceWorkload,
             replExParams,
@@ -1488,7 +1514,7 @@ int Mdrunner::mdrunner()
         GMX_RELEASE_ASSERT(pmedata, "pmedata was NULL while cr->duty was not DUTY_PP");
         /* do PME only */
         walltime_accounting = walltime_accounting_init(gmx_omp_nthreads_get(emntPME));
-        gmx_pmeonly(pmedata, cr, nrnb, wcycle, walltime_accounting, inputrec, pmeRunMode);
+        gmx_pmeonly(pmedata, cr, &nrnb, wcycle, walltime_accounting, inputrec, pmeRunMode);
     }
 
     wallcycle_stop(wcycle, ewcRUN);
@@ -1497,7 +1523,7 @@ int Mdrunner::mdrunner()
      * if rerunMD, don't write last frame again
      */
     finish_run(fplog, mdlog, cr,
-               inputrec, nrnb, wcycle, walltime_accounting,
+               inputrec, &nrnb, wcycle, walltime_accounting,
                fr ? fr->nbv.get() : nullptr,
                pmedata,
                EI_DYNAMICS(inputrec->eI) && !isMultiSim(ms));
@@ -1535,7 +1561,6 @@ int Mdrunner::mdrunner()
     /* Does what it says */
     print_date_and_time(fplog, cr->nodeid, "Finished mdrun", gmx_gettime());
     walltime_accounting_destroy(walltime_accounting);
-    sfree(nrnb);
 
     // Ensure log file content is written
     if (logFileHandle)

@@ -133,9 +133,9 @@
 #include "gromacs/utility/real.h"
 #include "gromacs/utility/smalloc.h"
 
+#include "legacysimulator.h"
 #include "replicaexchange.h"
 #include "shellfc.h"
-#include "simulator.h"
 
 using gmx::SimulationSignaller;
 
@@ -186,7 +186,7 @@ static void prepareRerunState(const t_trxframe  &rerunFrame,
     }
 }
 
-void gmx::Simulator::do_rerun()
+void gmx::LegacySimulator::do_rerun()
 {
     // TODO Historically, the EM and MD "integrators" used different
     // names for the t_inputrec *parameter, but these must have the
@@ -298,7 +298,6 @@ void gmx::Simulator::do_rerun()
     }
 
     initialize_lambdas(fplog, *ir, MASTER(cr), &state_global->fep_state, state_global->lambda, lam0);
-    init_nrnb(nrnb);
     gmx_mdoutf       *outf = init_mdoutf(fplog, nfile, fnm, mdrunOptions, cr, outputProvider, ir, top_global, oenv, wcycle,
                                          StartingBehavior::NewSimulation);
     gmx::EnergyOutput energyOutput(mdoutf_get_fp_ene(outf), top_global, ir, pull_work, mdoutf_get_fp_dhdl(outf), true);
@@ -377,11 +376,11 @@ void gmx::Simulator::do_rerun()
     }
 
     {
-        int    cglo_flags = (CGLO_INITIALIZATION | CGLO_GSTAT |
+        int    cglo_flags = (CGLO_GSTAT |
                              (shouldCheckNumberOfBondedInteractions ? CGLO_CHECK_NUMBER_OF_BONDED_INTERACTIONS : 0));
         bool   bSumEkinhOld = false;
         t_vcm *vcm          = nullptr;
-        compute_globals(fplog, gstat, cr, ir, fr, ekind,
+        compute_globals(gstat, cr, ir, fr, ekind,
                         state->x.rvec_array(), state->v.rvec_array(), state->box, state->lambda[efptVDW],
                         mdatoms, nrnb, vcm,
                         nullptr, enerd, force_vir, shake_vir, total_vir, pres, mu_tot,
@@ -639,7 +638,7 @@ void gmx::Simulator::do_rerun()
             t_vcm              *vcm              = nullptr;
             SimulationSignaller signaller(&signals, cr, ms, doInterSimSignal, doIntraSimSignal);
 
-            compute_globals(fplog, gstat, cr, ir, fr, ekind,
+            compute_globals(gstat, cr, ir, fr, ekind,
                             state->x.rvec_array(), state->v.rvec_array(), state->box, state->lambda[efptVDW],
                             mdatoms, nrnb, vcm,
                             wcycle, enerd, force_vir, shake_vir, total_vir, pres, mu_tot,

@@ -1,7 +1,7 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2018,2019, by the GROMACS development team, led by
+ * Copyright (c) 2019, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -32,21 +32,27 @@
  * To help us fund GROMACS development, we humbly ask that you cite
  * the research papers on the package. Check out http://www.gromacs.org.
  */
-#ifndef GMX_MDLIB_RF_UTIL_H
-#define GMX_MDLIB_RF_UTIL_H
+/*! \internal \file
+ *  \brief Function definitions for GPU detection, specific for tests.
+ *
+ *  \author Artem Zhmurov <zhmurov@gmail.com>
+ */
+#include "gmxpre.h"
 
-#include <cstdio>
+#include "gpu_testutils.h"
 
-#include "gromacs/math/vectypes.h"
-#include "gromacs/utility/real.h"
+#include "gromacs/gpu_utils/gpu_utils.h"
+#include "gromacs/hardware/gpu_hw_info.h"
 
-struct gmx_mtop_t;
-struct t_forcerec;
-struct t_inputrec;
-
-void calc_rffac(FILE *fplog, real eps_r, real eps_rf,
-                real Rc,
-                real *krf, real *crf);
-/* Determine the reaction-field constants */
-
-#endif
+bool canComputeOnGpu()
+{
+    bool           canComputeOnGpu = false;
+    gmx_gpu_info_t gpuInfo {};
+    if (canPerformGpuDetection())
+    {
+        findGpus(&gpuInfo);
+        canComputeOnGpu = !getCompatibleGpus(gpuInfo).empty();
+    }
+    free_gpu_info(&gpuInfo);
+    return canComputeOnGpu;
+}

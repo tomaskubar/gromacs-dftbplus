@@ -1,7 +1,7 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2018,2019, by the GROMACS development team, led by
+ * Copyright (c) 2019, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -32,21 +32,30 @@
  * To help us fund GROMACS development, we humbly ask that you cite
  * the research papers on the package. Check out http://www.gromacs.org.
  */
-#ifndef GMX_MDLIB_RF_UTIL_H
-#define GMX_MDLIB_RF_UTIL_H
+/*! \libinternal \file
+ *  \brief Declare functions for detection of GPU devices, specific for tests.
+ *
+ *  \todo This should eventually go to src/testutils
+ *
+ *  \author Artem Zhmurov <zhmurov@gmail.com>
+ *
+ *  \inlibraryapi
+ */
 
-#include <cstdio>
+#ifndef GMX_GPU_UTILS_GPU_TESTUTILS_H
+#define GMX_GPU_UTILS_GPU_TESTUTILS_H
 
-#include "gromacs/math/vectypes.h"
-#include "gromacs/utility/real.h"
+/*! \brief Checks if there is a compatible GPU to run the computations on
+ *
+ * There are several reasons why code can not rune on the GPU:
+ * 1. The GPU can not be detected, because there is none in the system.
+ * 2. GPU detection is disabled by GMX_DISABLE_GPU_DETECTION environmental variable.
+ * 3. GPUs are detected, but none of them is compatible.
+ * This function checks all these conditions and returns true only if there at least
+ * one GPU that can be used for computations.
+ *
+ * \returns True, if there a GPU that can be used for computations
+ */
+bool canComputeOnGpu();
 
-struct gmx_mtop_t;
-struct t_forcerec;
-struct t_inputrec;
-
-void calc_rffac(FILE *fplog, real eps_r, real eps_rf,
-                real Rc,
-                real *krf, real *crf);
-/* Determine the reaction-field constants */
-
-#endif
+#endif // GMX_GPU_UTILS_GPU_TESTUTILS_H

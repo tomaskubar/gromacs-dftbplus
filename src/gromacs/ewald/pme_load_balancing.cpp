@@ -552,7 +552,6 @@ pme_load_balance(pme_load_balancing_t      *pme_lb,
     pme_setup_t *set;
     double       cycles_fast;
     char         buf[STRLEN], sbuf[22];
-    real         rtab;
 
     if (PAR(cr))
     {
@@ -562,8 +561,6 @@ pme_load_balance(pme_load_balancing_t      *pme_lb,
 
     set = &pme_lb->setup[pme_lb->cur];
     set->count++;
-
-    rtab = ir.rlist + ir.tabext;
 
     if (set->count % 2 == 1)
     {
@@ -812,14 +809,13 @@ pme_load_balance(pme_load_balancing_t      *pme_lb,
 
             ic->dispersion_shift.cpot = -1.0/gmx::power6(static_cast<double>(ic->rvdw));
             ic->repulsion_shift.cpot  = -1.0/gmx::power12(static_cast<double>(ic->rvdw));
-            ic->sh_invrc6             = -ic->dispersion_shift.cpot;
             crc2                      = gmx::square(ic->ewaldcoeff_lj*ic->rvdw);
             ic->sh_lj_ewald           = (std::exp(-crc2)*(1 + crc2 + 0.5*crc2*crc2) - 1)/gmx::power6(ic->rvdw);
         }
     }
 
     /* We always re-initialize the tables whether they are used or not */
-    init_interaction_const_tables(nullptr, ic, rtab);
+    init_interaction_const_tables(nullptr, ic);
 
     Nbnxm::gpu_pme_loadbal_update_param(nbv, ic);
 
