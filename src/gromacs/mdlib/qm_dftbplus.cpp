@@ -76,6 +76,7 @@ typedef struct Context {
   int               n;
   const t_commrec  *cr;
   const t_forcerec *fr;
+  t_nrnb           *nrnb;
   gmx_wallcycle_t   wcycle;
   real              rcoul;
   real              ewaldcoeff_q;
@@ -150,7 +151,7 @@ void calcQMextPotPME(Context *cont, double *q, double *extpot)
       {
           cont->fr->qr->qm[0].QMcharges[i] = (real) -q[i]; // check sign TODO
       }
-      cont->fr->qr->calculate_complete_QM_QM(cont->cr, cont->wcycle, cont->fr->pmedata, extpot_real);
+      cont->fr->qr->calculate_complete_QM_QM(cont->cr, cont->nrnb, cont->wcycle, cont->fr->pmedata, extpot_real);
       for (int i=0; i<n; i++)
       {
           extpot[i] = (double) - extpot_real[i]; // sign OK
@@ -208,11 +209,13 @@ void init_dftbplus(QMMM_QMrec& qm,
     /* This structure will be passed through DFTB+
      *   into the Gromacs calculator calcQMextPot
      */
-    static Context *cont;
-    
-    snew(cont, 1);
-  //Context cont;
-    initialize_context(cont, qm.nrQMatoms, qm.qmmm_variant, fr, ir, cr, wcycle);
+  //static Context *cont;
+  //snew(cont, 1);
+
+  //initialize_context(cont, qm.nrQMatoms, qm.qmmm_variant, fr, ir, cr, nrnb, wcycle);
+    snew(qm.dftbContext, 1);
+    initialize_context(qm.dftbContext, qm.nrQMatoms, qm.qmmm_variant, fr, ir, cr, wcycle);
+  //qm.dftbContext = cont;
 
     snew(qm.dpcalc, 1);
 
@@ -236,7 +239,8 @@ void init_dftbplus(QMMM_QMrec& qm,
      * the external potential and its gradient
      */
     dftbp_register_ext_pot_generator(qm.dpcalc,
-                                     cont,
+                                   //cont,
+                                     qm.dftbContext,
                                      calcqmextpot,
                                      calcqmextpotgrad);
 
@@ -250,7 +254,7 @@ void init_dftbplus(QMMM_QMrec& qm,
 real call_dftbplus(const t_forcerec *fr, const t_commrec *cr,
                    QMMM_QMrec& qm,       QMMM_MMrec& mm,
                    rvec f[],             rvec fshift[],
-		           gmx_wallcycle_t wcycle)
+		           t_nrnb *nrnb,         gmx_wallcycle_t wcycle)
 {
     static int step = 0;
     static FILE *f_q = nullptr;
@@ -258,6 +262,7 @@ real call_dftbplus(const t_forcerec *fr, const t_commrec *cr,
     double QMener;
  // bool lPme = (qm->qmmm_variant == eqmmmPME);
 
+    qm.dftbContext->nrnb = nrnb;
     int n = qm.nrQMatoms;
 
     double *x, *grad, *pot, *potgrad, *q; // real instead of rvec, to help pass data to fortran
@@ -307,7 +312,7 @@ real call_dftbplus(const t_forcerec *fr, const t_commrec *cr,
     if (qm.qmmm_variant == eqmmmPME)
     {
      // gmx_pme_init_qmmm(&(fr->qr->pme->pmedata), true, fr->pmedata);
-        fr->qr->calculate_LR_QM_MM(cr, wcycle, fr->pmedata, pot_lr);
+        fr->qr->calculate_LR_QM_MM(cr, nrnb, wcycle, fr->pmedata, pot_lr);
         for (int i=0; i<n; i++)
         {
             pot[i] = (double) - (pot_sr[i] + pot_lr[i]);
@@ -390,7 +395,7 @@ real call_dftbplus(const t_forcerec *fr, const t_commrec *cr,
 
     rvec *partgrad;
     snew(partgrad, qm.nrQMatoms);
-    fr->qr->gradient_QM_MM(cr, wcycle, (qm.qmmm_variant == eqmmmPME ? fr->pmedata : nullptr),
+    fr->qr->gradient_QM_MM(cr, nrnb, wcycle, (qm.qmmm_variant == eqmmmPME ? fr->pmedata : nullptr),
                    qm.qmmm_variant, partgrad, MMgrad, MMgrad_full);
     for (int i=0; i<n; i++)
     {

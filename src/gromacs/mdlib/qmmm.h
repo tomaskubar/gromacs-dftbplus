@@ -54,6 +54,7 @@ struct t_nrnb;
 struct gmx_pme_t;
 
 struct DftbPlus;
+struct Context;
 
 /* THIS STRUCTURE IS TENTATIVE,
  * JUST FOR THE BEGINNING.
@@ -66,7 +67,7 @@ private:
 public:
 //struct gmx_pme_t **pmedata_qmmm;
 //struct gmx_pme_t **pmedata_qmqm;
-  t_nrnb *nrnb;
+//t_nrnb *nrnb;
   PaddedVector<gmx::RVec> x;
   PaddedVector<gmx::RVec> f;
   std::vector<real> q;
@@ -156,6 +157,7 @@ public:
     real               ewaldcoeff_q;
     real               epsilon_r;
     DftbPlus          *dpcalc;        /* DFTB+ calculator */
+    Context           *dftbContext;   /* some data for DFTB+, referenced to by DFTB through *dpcalc */
     double            *pot_qmmm;      /* electric potential induced by the MM atoms */
     double            *pot_qmqm;      /* el. pot. induced by the periodic images of the QM atoms */
 
@@ -274,16 +276,19 @@ public:
                             real *pot);
     
     void calculate_LR_QM_MM(const t_commrec *cr,
+                            t_nrnb *nrnb,
                             gmx_wallcycle_t wcycle,
                             struct gmx_pme_t *pmedata,
                             real *pot);
     
     void calculate_complete_QM_QM(const t_commrec *cr,
+                                  t_nrnb *nrnb,
                                   gmx_wallcycle_t wcycle,
                                   struct gmx_pme_t *pmedata,
                                   real *pot);
     
     void gradient_QM_MM(const t_commrec *cr,
+                        t_nrnb *nrnb,
                         gmx_wallcycle_t wcycle,
                         struct gmx_pme_t *pmedata,
                         int variant,
@@ -294,6 +299,7 @@ public:
     real calculate_QMMM(const t_commrec      *cr,
                         const t_forcerec     *fr,
                               rvec            f[],
+                              t_nrnb         *nrnb,
                         const gmx_wallcycle_t wcycle);
 
     /* QMMM computes the QM forces. This routine makes either function

@@ -50,7 +50,7 @@ real
 call_dftbplus(const t_forcerec *fr, const t_commrec *cr,
               QMMM_QMrec& qm,       QMMM_MMrec& mm,
               rvec f[],             rvec fshift[],
-              gmx_wallcycle_t wcycle);
+              t_nrnb *nrnb,         gmx_wallcycle_t wcycle);
 
 struct Context;
 

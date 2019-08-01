@@ -136,7 +136,8 @@ void init_QMMM_rec(const t_commrec  *cr,
 */
 
 static real call_QMroutine(const t_commrec gmx_unused *cr, const t_forcerec gmx_unused *fr, QMMM_QMrec& gmx_unused qm,
-                           QMMM_MMrec& gmx_unused mm, rvec gmx_unused f[], rvec gmx_unused fshift[], gmx_wallcycle_t gmx_unused wcycle)
+                           QMMM_MMrec& gmx_unused mm, rvec gmx_unused f[], rvec gmx_unused fshift[],
+                           t_nrnb *nrnb, gmx_wallcycle_t gmx_unused wcycle)
 {
     /* makes a call to the requested QM routine (qm->QMmethod)
      * Note that f is actually the gradient, i.e. -f
@@ -191,7 +192,7 @@ static real call_QMroutine(const t_commrec gmx_unused *cr, const t_forcerec gmx_
             }
             else if (GMX_QMMM_DFTBPLUS)
             {
-                return call_dftbplus(fr, cr, qm, mm, f, fshift, wcycle);
+                return call_dftbplus(fr, cr, qm, mm, f, fshift, nrnb, wcycle);
             }
             else
             {
@@ -617,7 +618,7 @@ QMMM_rec::QMMM_rec(
                         // snew(fr->qr->pme_full->f, fr->qr->qm[0]->nrQMatoms + fr->qr->mm->nrMMatoms_full);
                         // pme_full.pot.resize(qm[0].nrQMatoms);
                            snew(pme_full.pot, qm[0].nrQMatoms);
-                           snew(pme_full.nrnb, 1);
+                        // snew(pme_full.nrnb, 1);
                            
                            // PME data structure for the QM-only system
                         // const gmx::MDLogger dummyLogger;
@@ -641,7 +642,7 @@ QMMM_rec::QMMM_rec(
                         // snew(fr->qr->pme_qmonly->f, fr->qr->qm[0]->nrQMatoms + fr->qr->mm->nrMMatoms_full);
                         // pme_qmonly.pot.resize(qm[0].nrQMatoms);
                            snew(pme_qmonly.pot, qm[0].nrQMatoms);
-                           snew(pme_qmonly.nrnb, 1);
+                        // snew(pme_qmonly.nrnb, 1);
                            
                         // if (cr->duty & DUTY_PME) /* Is this condition meaningful? */
                         // {
@@ -1084,6 +1085,7 @@ void QMMM_rec::update_QMMMrec_verlet_ns(const t_commrec      *cr,
 real QMMM_rec::calculate_QMMM(const t_commrec      *cr,
                               const t_forcerec     *fr,
                                     rvec            f[],
+                                    t_nrnb         *nrnb,
                               const gmx_wallcycle_t wcycle)
 {
     real QMener = 0.0;
@@ -1109,7 +1111,7 @@ real QMMM_rec::calculate_QMMM(const t_commrec      *cr,
         snew(fshift, (qm_.nrQMatoms + mm_.nrMMatoms));
     }
 
-    QMener = call_QMroutine(cr, fr, qm_, mm_, forces, fshift, wcycle);
+    QMener = call_QMroutine(cr, fr, qm_, mm_, forces, fshift, nrnb, wcycle);
 
     if (GMX_QMMM_DFTBPLUS)
     {

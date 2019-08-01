@@ -264,6 +264,7 @@ void QMMM_rec::calculate_SR_QM_MM(int variant,
  * That contribution will be added within the SCC cycle.
  */
 void QMMM_rec::calculate_LR_QM_MM(const t_commrec *cr,
+                                  t_nrnb *nrnb,
                                   gmx_wallcycle_t wcycle,
                                   struct gmx_pme_t *pmedata,
                                   real *pot)
@@ -305,11 +306,11 @@ void QMMM_rec::calculate_LR_QM_MM(const t_commrec *cr,
   
 //static struct timespec time1, time2;
 //clock_gettime(CLOCK_MONOTONIC, &time1);
-  init_nrnb(pme_full.nrnb);
+  // init_nrnb(pme_full.nrnb); // TODO change to something?
   PaddedVector<gmx::RVec> emptyVec;
   gmx_pme_do(pmedata, gmx::makeArrayRef(pme_full.x), gmx::makeArrayRef(emptyVec), pme_full.q.data(), pme_full.q.data(),
-             nullptr, nullptr, nullptr, nullptr, qm_.box, cr, 0, 0,
-             pme_full.nrnb, wcycle, pme_full.vir, pme_full.vir, nullptr, nullptr, 0., 0., nullptr, nullptr,
+             nullptr, nullptr, nullptr, nullptr, qm_.box, cr, 0, 0, //pme_full.nrnb->get(),
+             nrnb, wcycle, pme_full.vir, pme_full.vir, nullptr, nullptr, 0., 0., nullptr, nullptr,
              GMX_PME_SPREAD | GMX_PME_SOLVE | GMX_PME_CALC_POT, TRUE, FALSE, n, pme_full.pot);
 //clock_gettime(CLOCK_MONOTONIC, &time2);
 //print_time_difference("PMETIME 1 ", time1, time2);
@@ -506,6 +507,7 @@ void calculate_complete_QM_QM_ewald(t_QMMMrec *qr,
 */
 
 void QMMM_rec::calculate_complete_QM_QM(const t_commrec *cr,
+                                        t_nrnb *nrnb,
                                         gmx_wallcycle_t wcycle,
                                         struct gmx_pme_t *pmedata,
                                         real *pot)
@@ -540,13 +542,13 @@ void QMMM_rec::calculate_complete_QM_QM(const t_commrec *cr,
   
 //static struct timespec time1, time2;
 //clock_gettime(CLOCK_MONOTONIC, &time1);
-  init_nrnb(pme_qmonly.nrnb);
+  // init_nrnb(pme_qmonly.nrnb); // TODO change to something?
   PaddedVector<gmx::RVec> emptyVec;
   int oldNumAtoms = pmedata->atc[0].numAtoms(); // need to resize PME arrays to the number of QM atoms
   pmedata->atc[0].setNumAtoms(n);
   gmx_pme_do(pmedata, pme_qmonly.x, gmx::makeArrayRef(emptyVec), pme_qmonly.q.data(), pme_qmonly.q.data(),
-             nullptr, nullptr, nullptr, nullptr, qm_.box, cr, 0, 0,
-             pme_qmonly.nrnb, wcycle, pme_qmonly.vir, pme_qmonly.vir, nullptr, nullptr, 0., 0., nullptr, nullptr,
+             nullptr, nullptr, nullptr, nullptr, qm_.box, cr, 0, 0, // pme_qmonly.nrnb->get(),
+             nrnb, wcycle, pme_qmonly.vir, pme_qmonly.vir, nullptr, nullptr, 0., 0., nullptr, nullptr,
              GMX_PME_SPREAD | GMX_PME_SOLVE | GMX_PME_CALC_POT, TRUE, FALSE, n, pme_qmonly.pot);
   pmedata->atc[0].setNumAtoms(oldNumAtoms); // resize back
 //clock_gettime(CLOCK_MONOTONIC, &time2);
@@ -622,6 +624,7 @@ void QMMM_rec::calculate_complete_QM_QM(const t_commrec *cr,
  **********************************/
 
 void QMMM_rec::gradient_QM_MM(const t_commrec *cr,
+                              t_nrnb *nrnb,
                               gmx_wallcycle_t wcycle,
                               struct gmx_pme_t *pmedata,
                               int variant,
@@ -788,11 +791,11 @@ void QMMM_rec::gradient_QM_MM(const t_commrec *cr,
       // PME -- long-range component
     //static struct timespec time1, time2;
     //clock_gettime(CLOCK_MONOTONIC, &time1);
-      init_nrnb(pme_full.nrnb);
+      // init_nrnb(pme_full.nrnb); // TODO change to something?
       std::vector<real> emptyVec;
       gmx_pme_do(pmedata, pme_full.x, pme_full.f, pme_full.q.data(), pme_full.q.data(),
-                 nullptr, nullptr, nullptr, nullptr, qm_.box, cr, 0, 0,
-                 pme_full.nrnb, wcycle, pme_full.vir, pme_full.vir, nullptr, nullptr, 0., 0., nullptr, nullptr,
+                 nullptr, nullptr, nullptr, nullptr, qm_.box, cr, 0, 0, nrnb, // pme_full.nrnb->get(),
+                 wcycle, pme_full.vir, pme_full.vir, nullptr, nullptr, 0., 0., nullptr, nullptr,
                  GMX_PME_SPREAD | GMX_PME_SOLVE | GMX_PME_CALC_F, TRUE, FALSE, n, nullptr); // emptyVec);
     //clock_gettime(CLOCK_MONOTONIC, &time2);
     //print_time_difference("PMETIME 3 ", time1, time2);
@@ -857,12 +860,12 @@ void QMMM_rec::gradient_QM_MM(const t_commrec *cr,
       }
       // PME -- long-range component
     //clock_gettime(CLOCK_MONOTONIC, &time1);
-      init_nrnb(pme_qmonly.nrnb);
+      // init_nrnb(pme_qmonly.nrnb); // TODO change to something?
       int oldNumAtoms = pmedata->atc[0].numAtoms(); // need to resize PME arrays to the number of QM atoms
       pmedata->atc[0].setNumAtoms(n);
       gmx_pme_do(pmedata, pme_qmonly.x, pme_qmonly.f, pme_qmonly.q.data(), pme_qmonly.q.data(),
-                 nullptr, nullptr, nullptr, nullptr, qm_.box, cr, 0, 0,
-                 pme_qmonly.nrnb, wcycle, pme_qmonly.vir, pme_qmonly.vir, nullptr, nullptr, 0., 0., nullptr, nullptr,
+                 nullptr, nullptr, nullptr, nullptr, qm_.box, cr, 0, 0, // pme_full.nrnb->get(),
+                 nrnb, wcycle, pme_qmonly.vir, pme_qmonly.vir, nullptr, nullptr, 0., 0., nullptr, nullptr,
                  GMX_PME_SPREAD | GMX_PME_SOLVE | GMX_PME_CALC_F, TRUE, FALSE, n, nullptr); // emptyVec);
       pmedata->atc[0].setNumAtoms(oldNumAtoms); // resize back
     //clock_gettime(CLOCK_MONOTONIC, &time2);
@@ -934,10 +937,10 @@ void QMMM_rec::gradient_QM_MM(const t_commrec *cr,
       }
       // PME -- long-range component
     //clock_gettime(CLOCK_MONOTONIC, &time1);
-      init_nrnb(pme_full.nrnb);
+      // init_nrnb(pme_full.nrnb); // TODO change to something?
       gmx_pme_do(pmedata, pme_full.x, pme_full.f, pme_full.q.data(), pme_full.q.data(),
-                 nullptr, nullptr, nullptr, nullptr, qm_.box, cr, 0, 0,
-                 pme_full.nrnb, wcycle, pme_full.vir, pme_full.vir, nullptr, nullptr, 0., 0., nullptr, nullptr,
+                 nullptr, nullptr, nullptr, nullptr, qm_.box, cr, 0, 0, // pme_full.nrnb->get(),
+                 nrnb, wcycle, pme_full.vir, pme_full.vir, nullptr, nullptr, 0., 0., nullptr, nullptr,
                  GMX_PME_SPREAD | GMX_PME_SOLVE | GMX_PME_CALC_F, TRUE, TRUE, n, nullptr); // emptyVec);
     //clock_gettime(CLOCK_MONOTONIC, &time2);
     //print_time_difference("PMETIME 5 ", time1, time2);
