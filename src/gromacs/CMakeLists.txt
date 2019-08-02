@@ -32,6 +32,10 @@
 # To help us fund GROMACS development, we humbly ask that you cite
 # the research papers on the package. Check out http://www.gromacs.org.
 
+if (GMX_PLUMED)
+    include(${CMAKE_SOURCE_DIR}/Plumed.cmake)
+endif()
+
 set(LIBGROMACS_SOURCES)
 
 if (GMX_CLANG_CUDA)
@@ -301,6 +305,9 @@ target_link_libraries(libgromacs
                       PUBLIC
                       ${GMX_PUBLIC_LIBRARIES}
                       )
+if (GMX_PLUMED)
+    target_link_libraries(libgromacs PUBLIC ${PLUMED_LOAD})
+endif()
 if (GMX_OPENMP)
     target_link_libraries(libgromacs PUBLIC OpenMP::OpenMP_CXX)
 endif()

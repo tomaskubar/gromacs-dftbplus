@@ -57,6 +57,15 @@
 
 #include "replicaexchange.h"
 
+/* PLUMED */
+#if (GMX_PLUMED)
+#include "../../../Plumed.h"
+extern int    plumedswitch;
+extern plumed plumedmain;
+extern void(*plumedcmd)(plumed,const char*,const void*);
+#endif
+/* END PLUMED */
+
 struct gmx_multisim_t;
 
 namespace gmx
@@ -119,6 +128,9 @@ class LegacyMdrunOptions
           { efLOG, "-rt",       "rottorque", ffOPTWR },
           { efMTX, "-mtx",      "nm",        ffOPTWR },
           { efRND, "-multidir", nullptr,     ffOPTRDMULT},
+#if (GMX_PLUMED)
+          { efDAT, "-plumed",   "plumed",    ffOPTRD },   /* PLUMED */
+#endif
           { efXVG, "-awh",      "awhinit",   ffOPTRD },
           { efDAT, "-membed",   "membed",    ffOPTRD },
           { efTOP, "-mp",       "membed",    ffOPTRD },

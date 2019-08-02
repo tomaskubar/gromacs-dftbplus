@@ -107,6 +107,16 @@
 #include "legacysimulator.h"
 #include "shellfc.h"
 
+/* PLUMED */
+#if (GMX_PLUMED)
+#include "../../../Plumed.h"
+#include "gromacs/mdrunutility/multisim.h"
+extern int    plumedswitch;
+extern plumed plumedmain;
+extern void(*plumedcmd)(plumed,const char*,const void*);
+#endif
+/* END PLUMED */
+
 //! Utility structure for manipulating states during EM
 typedef struct {
     //! Copy of the global state
@@ -361,7 +371,13 @@ static void init_em(FILE *fplog,
                     t_nrnb *nrnb,
                     t_forcerec *fr,
                     t_graph **graph, gmx::MDAtoms *mdAtoms, gmx_global_stat_t *gstat,
-                    gmx_vsite_t *vsite, gmx::Constraints *constr, gmx_shellfc_t **shellfc)
+                    gmx_vsite_t *vsite, gmx::Constraints *constr, gmx_shellfc_t **shellfc
+#if (GMX_PLUMED)
+                    /* PLUMED */
+                    , const gmx_multisim_t *ms
+                    /* END PLUMED */
+#endif
+                    )
 {
     real dvdl_constr;
 
@@ -472,6 +488,50 @@ static void init_em(FILE *fplog,
     }
 
     calc_shifts(ems->s.box, fr->shift_vec);
+
+    /* PLUMED */
+#if (GMX_PLUMED)
+    if(plumedswitch){
+    //if(cr->ms && cr->ms->nsim>1) {
+      if(ms && ms->nsim>1) {
+      //if(MASTER(cr)) (*plumedcmd) (plumedmain,"GREX setMPIIntercomm",&cr->ms->mpi_comm_masters);
+        if(MASTER(cr)) (*plumedcmd) (plumedmain,"GREX setMPIIntercomm",&ms->mpi_comm_masters);
+        if(PAR(cr)){
+          if(DOMAINDECOMP(cr)) {
+            (*plumedcmd) (plumedmain,"GREX setMPIIntracomm",&cr->dd->mpi_comm_all);
+          }else{
+            (*plumedcmd) (plumedmain,"GREX setMPIIntracomm",&cr->mpi_comm_mysim);
+          }
+        }
+        (*plumedcmd) (plumedmain,"GREX init",NULL);
+      }
+      if(PAR(cr)){
+        if(DOMAINDECOMP(cr)) {
+          (*plumedcmd) (plumedmain,"setMPIComm",&cr->dd->mpi_comm_all);
+        }else{
+          (*plumedcmd) (plumedmain,"setMPIComm",&cr->mpi_comm_mysim);
+        }
+      }
+      (*plumedcmd) (plumedmain,"setNatoms",&top_global->natoms);
+      (*plumedcmd) (plumedmain,"setMDEngine","gromacs");
+      (*plumedcmd) (plumedmain,"setLog",fplog);
+      real real_delta_t;
+      real_delta_t=ir->delta_t;
+      (*plumedcmd) (plumedmain,"setTimestep",&real_delta_t);
+      (*plumedcmd) (plumedmain,"init",NULL);
+
+      if(PAR(cr)){
+        if(DOMAINDECOMP(cr)) {
+        //(*plumedcmd) (plumedmain,"setAtomsNlocal",&cr->dd->nat_home);
+          int nat_home = dd_numHomeAtoms(*cr->dd);
+          (*plumedcmd) (plumedmain,"setAtomsNlocal",&nat_home);
+        //(*plumedcmd) (plumedmain,"setAtomsGatindex",cr->dd->gatindex);
+          (*plumedcmd) (plumedmain,"setAtomsGatindex",cr->dd->globalAtomIndices.data());
+        }
+      }
+    }
+#endif
+    /* END PLUMED */
 }
 
 //! Finalize the minimization
@@ -844,6 +904,26 @@ EnergyEvaluator::run(em_state_t *ems, rvec mu_tot,
     /* do_force always puts the charge groups in the box and shifts again
      * We do not unshift, so molecules are always whole in congrad.c
      */
+
+    /* PLUMED */
+#if (GMX_PLUMED)
+    int plumedNeedsEnergy=0;
+    matrix plumed_vir;
+    if(plumedswitch){
+      long int lstep=count; (*plumedcmd)(plumedmain,"setStepLong",&lstep);
+      (*plumedcmd) (plumedmain,"setPositions",&ems->s.x[0][0]);
+      (*plumedcmd) (plumedmain,"setMasses",&mdAtoms->mdatoms()->massT[0]);
+      (*plumedcmd) (plumedmain,"setCharges",&mdAtoms->mdatoms()->chargeA[0]);
+      (*plumedcmd) (plumedmain,"setBox",&ems->s.box[0][0]);
+      (*plumedcmd) (plumedmain,"prepareCalc",NULL);
+      (*plumedcmd) (plumedmain,"setForces",&ems->f[0][0]);
+      (*plumedcmd) (plumedmain,"isEnergyNeeded",&plumedNeedsEnergy);
+      clear_mat(plumed_vir);
+      (*plumedcmd) (plumedmain,"setVirial",&plumed_vir[0][0]);
+    }
+#endif
+    /* END PLUMED */
+
     do_force(fplog, cr, ms, inputrec, nullptr, nullptr, imdSession,
              pull_work,
              count, nrnb, wcycle, top,
@@ -854,6 +934,22 @@ EnergyEvaluator::run(em_state_t *ems, rvec mu_tot,
              GMX_FORCE_VIRIAL | GMX_FORCE_ENERGY |
              (bNS ? GMX_FORCE_NS : 0),
              DDBalanceRegionHandler(cr));
+
+    /* PLUMED */
+#if (GMX_PLUMED)
+    if(plumedswitch){
+      if(plumedNeedsEnergy) {
+        msmul(force_vir,2.0,plumed_vir);
+        (*plumedcmd) (plumedmain,"setEnergy",&enerd->term[F_EPOT]);
+        (*plumedcmd) (plumedmain,"performCalc",NULL);
+        msmul(plumed_vir,0.5,force_vir);
+      } else {
+        msmul(plumed_vir,0.5,plumed_vir);
+        m_add(force_vir,plumed_vir,force_vir);
+      }
+    }
+#endif
+    /* END PLUMED */
 
     /* Clear the unused shake virial and pressure */
     clear_mat(shake_vir);
@@ -1112,7 +1208,13 @@ LegacySimulator::do_cg()
             pull_work,
             state_global, top_global, s_min, &top,
             nrnb, fr, &graph, mdAtoms, &gstat,
-            vsite, constr, nullptr);
+            vsite, constr, nullptr
+#if (GMX_PLUMED)
+            /* PLUMED */
+            , ms
+            /* END PLUMED */
+#endif
+            );
     gmx_mdoutf       *outf = init_mdoutf(fplog, nfile, fnm, mdrunOptions, cr, outputProvider, inputrec, top_global, nullptr, wcycle,
                                          StartingBehavior::NewSimulation);
     gmx::EnergyOutput energyOutput(mdoutf_get_fp_ene(outf), top_global, inputrec, pull_work, nullptr, false);
@@ -1751,7 +1853,13 @@ LegacySimulator::do_lbfgs()
             pull_work,
             state_global, top_global, &ems, &top,
             nrnb, fr, &graph, mdAtoms, &gstat,
-            vsite, constr, nullptr);
+            vsite, constr, nullptr
+#if (GMX_PLUMED)
+            /* PLUMED */
+            , ms
+            /* END PLUMED */
+#endif
+            );
     gmx_mdoutf       *outf = init_mdoutf(fplog, nfile, fnm, mdrunOptions, cr, outputProvider, inputrec, top_global, nullptr, wcycle,
                                          StartingBehavior::NewSimulation);
     gmx::EnergyOutput energyOutput(mdoutf_get_fp_ene(outf), top_global, inputrec, pull_work, nullptr, false);
@@ -2446,7 +2554,13 @@ LegacySimulator::do_steep()
             pull_work,
             state_global, top_global, s_try, &top,
             nrnb, fr, &graph, mdAtoms, &gstat,
-            vsite, constr, nullptr);
+            vsite, constr, nullptr
+#if (GMX_PLUMED)
+            /* PLUMED */
+            , ms
+            /* END PLUMED */
+#endif
+            );
     gmx_mdoutf       *outf = init_mdoutf(fplog, nfile, fnm, mdrunOptions, cr, outputProvider, inputrec, top_global, nullptr, wcycle,
                                          StartingBehavior::NewSimulation);
     gmx::EnergyOutput energyOutput(mdoutf_get_fp_ene(outf), top_global, inputrec, pull_work, nullptr, false);
@@ -2704,7 +2818,13 @@ LegacySimulator::do_nm()
             pull_work,
             state_global, top_global, &state_work, &top,
             nrnb, fr, &graph, mdAtoms, &gstat,
-            vsite, constr, &shellfc);
+            vsite, constr, &shellfc
+#if (GMX_PLUMED)
+            /* PLUMED */
+            , ms
+            /* END PLUMED */
+#endif
+            );
     gmx_mdoutf            *outf = init_mdoutf(fplog, nfile, fnm, mdrunOptions, cr, outputProvider, inputrec, top_global, nullptr, wcycle,
                                               StartingBehavior::NewSimulation);
 

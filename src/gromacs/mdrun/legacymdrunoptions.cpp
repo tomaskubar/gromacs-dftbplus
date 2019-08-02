@@ -61,6 +61,15 @@
 #include "gromacs/utility/arraysize.h"
 #include "gromacs/utility/fatalerror.h"
 
+/* PLUMED */
+#if (GMX_PLUMED)
+#include "../../../Plumed.h"
+extern int    plumedswitch;
+extern plumed plumedmain; 
+extern void(*plumedcmd)(plumed,const char*,const void*);
+#endif
+/* END PLUMED */
+
 namespace gmx
 {
 
@@ -158,6 +167,33 @@ int LegacyMdrunOptions::updateFromCommandLine(int argc, char **argv, ArrayRef<co
         MPI_Comm_rank(cr->mpi_comm_mygroup, &cr->nodeid);
     }
 #endif
+
+    /* PLUMED */
+#if (GMX_PLUMED)
+    plumedswitch=0;
+    if (opt2bSet("-plumed",ssize(filenames),filenames.data())) plumedswitch=1;
+    if(plumedswitch){
+      plumedcmd=plumed_cmd;
+      int real_precision=sizeof(real);
+      real energyUnits=1.0;
+      real lengthUnits=1.0;
+      real timeUnits=1.0;
+  
+      if(!plumed_installed()){
+        gmx_fatal(FARGS,"Plumed is not available. Check your PLUMED_KERNEL variable.");
+      }
+      plumedmain=plumed_create();
+      plumed_cmd(plumedmain,"setRealPrecision",&real_precision);
+      // this is not necessary for gromacs units:
+      plumed_cmd(plumedmain,"setMDEnergyUnits",&energyUnits);
+      plumed_cmd(plumedmain,"setMDLengthUnits",&lengthUnits);
+      plumed_cmd(plumedmain,"setMDTimeUnits",&timeUnits);
+      //
+      plumed_cmd(plumedmain,"setPlumedDat",ftp2fn(efDAT,ssize(filenames),filenames.data()));
+      plumedswitch=1;
+    }
+#endif
+    /* END PLUMED */
 
     if (!opt2parg_bSet("-append", asize(pa), pa))
     {

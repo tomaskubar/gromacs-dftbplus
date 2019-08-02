@@ -73,6 +73,15 @@
 #include "gromacs/utility/fatalerror.h"
 #include "gromacs/utility/smalloc.h"
 
+/* PLUMED */
+#if (GMX_PLUMED)
+#include "../../../Plumed.h"
+int    plumedswitch=0;
+plumed plumedmain;
+void(*plumedcmd)(plumed,const char*,const void*)=NULL;
+#endif
+/* END PLUMED */
+
 static void clearEwaldThreadOutput(ewald_corr_thread_t *ewc_t)
 {
     ewc_t->Vcorr_q        = 0;
@@ -395,4 +404,13 @@ do_force_lowlevel(t_forcerec                               *fr,
         pr_rvecs(debug, 0, "fshift after bondeds", fr->fshift, SHIFTS);
     }
 
+    /* PLUMED */
+#if (GMX_PLUMED)
+    if(plumedswitch){
+      int plumedNeedsEnergy;
+      (*plumedcmd)(plumedmain,"isEnergyNeeded",&plumedNeedsEnergy);
+      if(!plumedNeedsEnergy) (*plumedcmd)(plumedmain,"performCalc",NULL);
+    }
+#endif
+    /* END PLUMED */
 }

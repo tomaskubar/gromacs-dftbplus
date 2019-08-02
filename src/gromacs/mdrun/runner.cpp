@@ -151,6 +151,14 @@
 #include "legacysimulator.h"
 #include "replicaexchange.h"
 
+/* PLUMED */
+#if (GMX_PLUMED)
+#include "../../../Plumed.h"
+extern int    plumedswitch;
+extern plumed plumedmain;
+#endif
+/* END PLUMED */
+
 #if GMX_FAHCORE
 #include "corewrap.h"
 #endif
@@ -1483,6 +1491,20 @@ int Mdrunner::mdrunner()
                             fr->cginfo_mb);
         }
 
+        /* PLUMED */
+#if (GMX_PLUMED)
+        if(plumedswitch){
+          /* detect plumed API version */
+          int pversion=0;
+          plumed_cmd(plumedmain,"getApiVersion",&pversion);
+          if(pversion>5) {
+             int nth = gmx_omp_nthreads_get(emntDefault);
+             if(pversion>5) plumed_cmd(plumedmain,"setNumOMPthreads",&nth);
+          }
+        }
+#endif
+        /* END PLUMED */
+
         // TODO This is not the right place to manage the lifetime of
         // this data structure, but currently it's the easiest way to
         // make it work. Later, it should probably be made/updated
@@ -1573,6 +1595,14 @@ int Mdrunner::mdrunner()
     /* Does what it says */
     print_date_and_time(fplog, cr->nodeid, "Finished mdrun", gmx_gettime());
     walltime_accounting_destroy(walltime_accounting);
+
+    /* PLUMED */
+#if (GMX_PLUMED)
+    if(plumedswitch){
+      plumed_finalize(plumedmain);
+    }
+#endif
+    /* END PLUMED */
 
     // Ensure log file content is written
     if (logFileHandle)

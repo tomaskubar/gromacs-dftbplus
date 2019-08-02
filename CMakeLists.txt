@@ -245,6 +245,8 @@ gmx_option_multichoice(
     None
     none gaussian mopac gamess orca dftbplus)
 
+option(GMX_PLUMED "Link with Plumed (requires 3 symlinks in Gromacs directory)" OFF)
+
 gmx_dependent_cache_variable(GMX_SIMD_REF_FLOAT_WIDTH  "Reference SIMD single precision width" STRING "4" "GMX_SIMD STREQUAL REFERENCE")
 gmx_dependent_cache_variable(GMX_SIMD_REF_DOUBLE_WIDTH "Reference SIMD double precision width" STRING "2" "GMX_SIMD STREQUAL REFERENCE")
 
@@ -698,6 +700,14 @@ else()
     gmx_invalid_option_value(GMX_QMMM_PROGRAM)
 endif()
 
+# Process the Plumed option
+if(${GMX_PLUMED})
+    set(GMX_PLUMED_VALUE 1)
+else()
+    set(GMX_PLUMED_VALUE 0)
+endif()
+add_definitions(-DGMX_PLUMED=${GMX_PLUMED_VALUE})
+list(APPEND INSTALLED_HEADER_DEFINITIONS "-DGMX_PLUMED=${GMX_PLUMED_VALUE}")
 
 ##################################################
 # Process FFT library settings
