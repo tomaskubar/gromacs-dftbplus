@@ -34,13 +34,17 @@
 
 file(GLOB FILEIO_SOURCES *.cpp)
 
-if(GMX_USE_PLUGINS)
-  target_sources(libgromacs_external PRIVATE ${CMAKE_SOURCE_DIR}/src/external/vmd_molfile/vmddlopen.cpp)
-else()
-  list(REMOVE_ITEM FILEIO_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/vmdio.cpp)
-endif()
+target_sources(libgromacs PRIVATE ${FILEIO_SOURCES})
 
-set(LIBGROMACS_SOURCES ${LIBGROMACS_SOURCES} ${FILEIO_SOURCES} PARENT_SCOPE)
+if(GMX_USE_PLUGINS)
+    add_library(vmddlopen OBJECT ${CMAKE_SOURCE_DIR}/src/external/vmd_molfile/vmddlopen.cpp)
+    gmx_target_compile_options(vmddlopen)
+    if (WIN32)
+        gmx_target_warning_suppression(vmddlopen /wd4996 HAS_NO_MSVC_UNSAFE_FUNCTION)
+    endif()
+    list(APPEND libgromacs_object_library_dependencies vmddlopen)
+    set(libgromacs_object_library_dependencies ${libgromacs_object_library_dependencies} PARENT_SCOPE)
+endif()
 
 gmx_install_headers(
     confio.h
