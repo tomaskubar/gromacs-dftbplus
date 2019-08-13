@@ -344,7 +344,7 @@ void QMMM_rec::calculate_LR_QM_MM(const t_commrec *cr,
        real pot_add[n];
 	   real vol = qm_.box[XX][XX] * qm_.box[YY][YY] * qm_.box[ZZ][ZZ];
 	   for (int j=0; j<n; j++) {
-	       pot_add[j] = 4. * M_PI / 3. / vol / pme_full.epsilon_r * diprod(qm_.xQM[j], sum_qx) / NM2BOHR;
+	       pot_add[j] = 4. * M_PI / 3. / vol / pme_full.epsilon_r * iprod(qm_.xQM[j], sum_qx) / NM2BOHR;
        }
     // printf("VOL = %8.5f, EPS_R = %8.5f, DIP = %9.5f %9.5f %9.5f\n",
     //         vol, pme_full.epsilon_r, sum_qx[XX], sum_qx[YY], sum_qx[ZZ]);
@@ -483,7 +483,7 @@ void calculate_complete_QM_QM_ewald(t_QMMMrec *qr,
 	   // contribution to the potential
 	   real vol = qm->box[XX][XX] * qm->box[YY][YY] * qm->box[ZZ][ZZ];
 	   for (int j=0; j<n; j++) {
-	       pot_surf[j] = 4. * M_PI / 3. / vol / pme->epsilon_r * diprod(qm->xQM[j], sum_qx);
+	       pot_surf[j] = 4. * M_PI / 3. / vol / pme->epsilon_r * iprod(qm->xQM[j], sum_qx);
        }
   }
   else
@@ -591,7 +591,7 @@ void QMMM_rec::calculate_complete_QM_QM(const t_commrec *cr,
 	   // contribution to the potential
 	   real vol = qm_.box[XX][XX] * qm_.box[YY][YY] * qm_.box[ZZ][ZZ];
 	   for (int j=0; j<n; j++) {
-	       pot_surf[j] = 4. * M_PI / 3. / vol / pme_qmonly.epsilon_r * diprod(qm_.xQM[j], sum_qx);
+	       pot_surf[j] = 4. * M_PI / 3. / vol / pme_qmonly.epsilon_r * iprod(qm_.xQM[j], sum_qx);
        }
   }
   else
@@ -693,7 +693,7 @@ void QMMM_rec::gradient_QM_MM(const t_commrec *cr,
           {
               real fscal = - qm_.QMcharges[j] * mm_.MMcharges[k] / r * (1. / SQR(r)
                            - big_a * SQR(r - r_1) - big_b * CUB(r - r_1)) * SQR(BOHR2NM);
-              dsvmul(fscal, bond, dgr);
+              svmul(fscal, bond, dgr);
               rvec_inc(partgrad[j], dgr);
               rvec_dec(MMgrad[k], dgr);
           	continue;
