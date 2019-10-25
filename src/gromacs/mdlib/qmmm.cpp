@@ -144,7 +144,7 @@ static real call_QMroutine(const t_commrec gmx_unused *cr, const t_forcerec gmx_
      */
     /* do a semi-empirical calculation */
 
-    if (qm.QMmethod < eQMmethodRHF && !(mm.nrMMatoms))
+    if (qm.QMmethod_get() < eQMmethodRHF && !(mm.nrMMatoms))
     {
         if (GMX_QMMM_MOPAC)
         {
@@ -165,11 +165,11 @@ static real call_QMroutine(const t_commrec gmx_unused *cr, const t_forcerec gmx_
     else
     {
         /* do an ab-initio calculation */
-        if (qm.bSH && qm.QMmethod == eQMmethodCASSCF)
+        if (qm.bSH && qm.QMmethod_get() == eQMmethodCASSCF)
         {
             if (GMX_QMMM_GAUSSIAN)
             {
-                return call_gaussian_SH(fr, qm, mm, f, fshift);
+                return qm.gaussian.call_gaussian_SH(fr, qm, mm, f, fshift);
             }
             else
             {
@@ -184,7 +184,7 @@ static real call_QMroutine(const t_commrec gmx_unused *cr, const t_forcerec gmx_
             }
             else if (GMX_QMMM_GAUSSIAN)
             {
-                return call_gaussian(fr, qm, mm, f, fshift);
+                return qm.gaussian.call_gaussian(fr, qm, mm, f, fshift);
             }
             else if (GMX_QMMM_ORCA)
             {
@@ -200,6 +200,18 @@ static real call_QMroutine(const t_commrec gmx_unused *cr, const t_forcerec gmx_
             }
         }
     }
+}
+
+void QMMM_QMsurfaceHopping::initParameters(const t_inputrec *ir,
+                                           const int grpnr)
+{
+    CASorbitals  = ir->opts.CASorbitals[grpnr];
+    CASelectrons = ir->opts.CASelectrons[grpnr];
+    SAsteps      = ir->opts.SAsteps[grpnr];
+    SAon         = ir->opts.SAon[grpnr];
+    SAoff        = ir->opts.SAoff[grpnr];
+                       
+    return;
 }
 
 /* Update QM and MM coordinates in the QM/MM data structures.
@@ -391,17 +403,11 @@ void QMMM_QMrec::init_QMrec(int               grpnr,
 
     QMmethod       = ir->opts.QMmethod[grpnr];
     QMbasis        = ir->opts.QMbasis[grpnr];
-    /* trajectory surface hopping setup (Gaussian only) */
-    bSH            = ir->opts.bSH[grpnr];
-    CASorbitals    = ir->opts.CASorbitals[grpnr];
-    CASelectrons   = ir->opts.CASelectrons[grpnr];
-    SAsteps        = ir->opts.SAsteps[grpnr];
-    SAon           = ir->opts.SAon[grpnr];
-    SAoff          = ir->opts.SAoff[grpnr];
+
     /* hack to prevent gaussian from reinitializing all the time */
-    nQMcpus        = 0; /* number of CPU's to be used by g01, is set
-                             * upon initializing gaussian with init_gaussian()
-                             */
+    gaussian.nQMcpus = 0; /* number of CPU's to be used by g01, is set
+                           * upon initializing gaussian with init_gaussian()
+                           */
 
     rcoulomb       = ir->rcoulomb;
     ewaldcoeff_q   = calc_ewaldcoeff_q(ir->rcoulomb, ir->ewald_rtol);
@@ -411,6 +417,84 @@ void QMMM_QMrec::init_QMrec(int               grpnr,
     snew(pot_qmqm, nr);
 
 } /* init_QMrec */
+
+int QMMM_QMrec::nrQMatoms_get() const
+{
+    return nrQMatoms;
+}
+
+int QMMM_QMrec::qmmm_variant_get() const
+{
+    return qmmm_variant;
+}
+
+double QMMM_QMrec::xQM_get(const int atom, const int coordinate) const
+{
+    return xQM[atom][coordinate];
+}
+
+real QMMM_QMrec::QMcharges_get(const int atom) const
+{
+    return QMcharges[atom];
+}
+
+void QMMM_QMrec::QMcharges_set(const int atom, const real value)
+{
+    QMcharges[atom] = value;
+    return;
+}
+
+double QMMM_QMrec::pot_qmmm_get(const int atom) const
+{
+    return pot_qmmm[atom];
+}
+
+double QMMM_QMrec::pot_qmqm_get(const int atom) const
+{
+    return pot_qmqm[atom];
+}
+
+void QMMM_QMrec::pot_qmmm_set(const int atom, const double value)
+{
+    pot_qmmm[atom] = value;
+    return;
+}
+
+void QMMM_QMrec::pot_qmqm_set(const int atom, const double value)
+{
+    pot_qmqm[atom] = value;
+    return;
+}
+
+int QMMM_QMrec::atomicnumberQM_get(const int atom)const
+{
+    return atomicnumberQM[atom];
+}
+
+int QMMM_QMrec::QMcharge_get()const
+{
+    return QMcharge;
+}
+
+int QMMM_QMrec::multiplicity_get()const
+{
+    return multiplicity;
+}
+
+int QMMM_QMrec::QMmethod_get()const
+{
+    return QMmethod;
+}
+
+int QMMM_QMrec::QMbasis_get()const
+{
+    return QMbasis;
+}
+
+int QMMM_QMrec::nelectrons_get()const
+{
+    return nelectrons;
+}
 
     /* MM rec creation */
 void QMMM_MMrec::init_MMrec(real scalefactor_in,
@@ -509,6 +593,8 @@ QMMM_rec::QMMM_rec(
     std::vector<int> qmmmAtoms = qmmmAtomIndices(*ir, *mtop);
 
     qm.resize(numQmmmGroups);
+  //bSH.resize(numQmmmGroups); // bSH is a member of qm now
+  //surfaceHopping.resize(numQmmmGroups); // surfaceHOpping is a member of qm now
 
     /* Standard QMMM (no ONIOM).
      * All layers are merged together, so there is one QM subsystem and one MM subsystem.
@@ -520,6 +606,12 @@ QMMM_rec::QMMM_rec(
     /* store QM atoms in the QMrec and initialise
      */
     qm[0].init_QMrec(0, qmmmAtoms.size(), qmmmAtoms.data(), mtop, ir);
+    /* trajectory surface hopping setup (Gaussian only) */
+    qm[0].bSH = ir->opts.bSH[0]; // [grpnr];
+    if (qm[0].bSH)
+    {
+        qm[0].surfaceHopping.initParameters(ir, 0);
+    }
     /* print the current layer to allow users to check their input */
     fprintf(stderr, "Layer %d\nnr of QM atoms %d\n", 0, qm[0].nrQMatoms);
     fprintf(stderr, "QMlevel: %s/%s\n\n",
@@ -565,7 +657,8 @@ QMMM_rec::QMMM_rec(
         }
         else if (GMX_QMMM_GAUSSIAN)
         {
-            init_gaussian(qm[0]);
+          //qm[0].gaussian.init_gaussian(qm[0]);
+            qm[0].gaussian.init_gaussian(qm[0].surfaceHopping, qm[0].QMbasis_get());
         }
         else if (GMX_QMMM_ORCA)
         {

@@ -40,33 +40,47 @@
 
 struct t_forcerec;
 
-/*! \brief
- * Initialize gaussian datastructures.
- *
- * \param[in] qm QM forcerec.
- */
-void init_gaussian(QMMM_QMrec& qm);
-
-/*! \brief
- * Call gaussian to do qm calculation.
- *
- * \param[in] fr Global forcerec.
- * \param[in] qm QM part of forcerec.
- * \param[in] mm mm part of forcerec.
- * \param[in] f  force vector.
- * \param[in] fshift shift of force vector.
- */
-real call_gaussian(const t_forcerec *fr, QMMM_QMrec& qm, QMMM_MMrec& mm, rvec f[], rvec fshift[]);
-
-/*! \brief
- * Call gaussian SH(?) to do qm calculation.
- *
- * \param[in] fr Global forcerec.
- * \param[in] qm QM part of forcerec.
- * \param[in] mm mm part of forcerec.
- * \param[in] f  force vector.
- * \param[in] fshift shift of force vector.
- */
-real call_gaussian_SH(const t_forcerec *fr, QMMM_QMrec& qm, QMMM_MMrec& mm, rvec f[], rvec fshift[]);
-
+//class QMMM_QMgaussian {
+//private:
+//    /* Gaussian specific stuff */
+//    int                nQMcpus;        /* no. of CPUs used for the QM calc. */
+//    int                QMmem;          /* memory for the gaussian calc.     */
+//    int                accuracy;       /* convergence criterium (E(-x))     */
+//    gmx_bool           cpmcscf;        /* using cpmcscf(l1003)*/
+//    char              *gauss_dir;
+//    char              *gauss_exe;
+//    char              *devel_dir;
+//
+//public:
+//
+///*! \brief
+// * Initialize gaussian datastructures.
+// *
+// * \param[in] qm QM forcerec.
+// */
+//void init_gaussian(QMMM_QMrec& qm);
+//
+///*! \brief
+// * Call gaussian to do qm calculation.
+// *
+// * \param[in] fr Global forcerec.
+// * \param[in] qm QM part of forcerec.
+// * \param[in] mm mm part of forcerec.
+// * \param[in] f  force vector.
+// * \param[in] fshift shift of force vector.
+// */
+//real call_gaussian(const t_forcerec *fr, QMMM_QMrec& qm, QMMM_MMrec& mm, rvec f[], rvec fshift[]);
+//
+///*! \brief
+// * Call gaussian SH(?) to do qm calculation.
+// *
+// * \param[in] fr Global forcerec.
+// * \param[in] qm QM part of forcerec.
+// * \param[in] mm mm part of forcerec.
+// * \param[in] f  force vector.
+// * \param[in] fshift shift of force vector.
+// */
+//real call_gaussian_SH(const t_forcerec *fr, QMMM_QMrec& qm, QMMM_MMrec& mm, rvec f[], rvec fshift[]);
+//
+//}
 #endif

@@ -613,7 +613,7 @@ void QMMM_rec::calculate_complete_QM_QM(const t_commrec *cr,
   // also, save the potential in the QMMM_QMrec structure
   for (int j=0; j<n; j++)
   {
-      qm_.pot_qmqm[j] = (double) pot[j] * HARTREE_TO_EV; // in volt units
+      qm_.pot_qmqm_set(j, (double) pot[j] * HARTREE_TO_EV); // in volt units
   }
 
   return;

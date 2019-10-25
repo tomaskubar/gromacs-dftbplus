@@ -150,25 +150,25 @@ static void write_orca_input(gmx_unused const t_forcerec *fr, QMMM_QMrec& qm, QM
     fclose(addInputFile);
 
     /* write charge and multiplicity */
-    fprintf(out, "*xyz %2d%2d\n", qm.QMcharge, qm.multiplicity);
+    fprintf(out, "*xyz %2d%2d\n", qm.QMcharge_get(), qm.multiplicity_get());
 
     /* write the QM coordinates */
-    for (i = 0; i < qm.nrQMatoms; i++)
+    for (i = 0; i < qm.nrQMatoms_get(); i++)
     {
         int atomNr;
-        if (qm.atomicnumberQM[i] == 0)
+        if (qm.atomicnumberQM_get(i) == 0)
         {
             atomNr = 1;
         }
         else
         {
-            atomNr = qm.atomicnumberQM[i];
+            atomNr = qm.atomicnumberQM_get(i);
         }
         fprintf(out, "%3d %10.7f  %10.7f  %10.7f\n",
                 atomNr,
-                qm.xQM[i][XX]/0.1,
-                qm.xQM[i][YY]/0.1,
-                qm.xQM[i][ZZ]/0.1);
+                qm.xQM_get(i, XX)/0.1,
+                qm.xQM_get(i, YY)/0.1,
+                qm.xQM_get(i, ZZ)/0.1);
     }
     fprintf(out, "*\n");
 
@@ -254,7 +254,7 @@ static real read_orca_output(rvec QMgrad[], rvec MMgrad[], gmx_unused const t_fo
      * (atom1 x \n atom1 y \n atom1 z \n atom2 x ...
      */
 
-    for (i = 0; i < 3*qm.nrQMatoms; i++)
+    for (i = 0; i < 3*qm.nrQMatoms_get(); i++)
     {
         k = i/3;
         if (fgets(buf, 300, engrad) == nullptr)
@@ -366,7 +366,7 @@ real call_orca(const t_forcerec *fr,
 
     snew(exe, 30);
     sprintf(exe, "%s", "orca");
-    snew(QMgrad, qm.nrQMatoms);
+    snew(QMgrad, qm.nrQMatoms_get());
     snew(MMgrad, mm.nrMMatoms);
 
     write_orca_input(fr, qm, mm);
@@ -374,7 +374,7 @@ real call_orca(const t_forcerec *fr,
     QMener = read_orca_output(QMgrad, MMgrad, fr, qm, mm);
     /* put the QMMM forces in the force array and to the fshift
      */
-    for (i = 0; i < qm.nrQMatoms; i++)
+    for (i = 0; i < qm.nrQMatoms_get(); i++)
     {
         for (j = 0; j < DIM; j++)
         {
@@ -386,8 +386,8 @@ real call_orca(const t_forcerec *fr,
     {
         for (j = 0; j < DIM; j++)
         {
-            f[i+qm.nrQMatoms][j]      = HARTREE_BOHR2MD*MMgrad[i][j];
-            fshift[i+qm.nrQMatoms][j] = HARTREE_BOHR2MD*MMgrad[i][j];
+            f[i+qm.nrQMatoms_get()][j]      = HARTREE_BOHR2MD*MMgrad[i][j];
+            fshift[i+qm.nrQMatoms_get()][j] = HARTREE_BOHR2MD*MMgrad[i][j];
         }
     }
     QMener = QMener*HARTREE2KJ*AVOGADRO;

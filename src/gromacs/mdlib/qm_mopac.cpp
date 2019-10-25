@@ -102,6 +102,8 @@ void init_mopac(QMMM_QMrec& qm)
      */
     char
     *keywords;
+    int
+    nrQMatoms, *atomicnumberQM;
 
     if (!GMX_QMMM_MOPAC)
     {
@@ -113,17 +115,24 @@ void init_mopac(QMMM_QMrec& qm)
     if (!qm.bSH)  /* if rerun then grad should not be done! */
     {
         sprintf(keywords, "PRECISE GEO-OK CHARGE=%d GRAD MMOK ANALYT %s\n",
-                qm.QMcharge,
-                eQMmethod_names[qm.QMmethod]);
+                qm.QMcharge_get(),
+                eQMmethod_names[qm.QMmethod_get()]);
     }
     else
     {
         sprintf(keywords, "PRECISE GEO-OK CHARGE=%d SINGLET GRAD %s C.I.=(%d,%d) root=2 MECI \n",
-                qm.QMcharge,
-                eQMmethod_names[qm.QMmethod],
-                qm.CASorbitals, qm.CASelectrons/2);
+                qm.QMcharge_get(),
+                eQMmethod_names[qm.QMmethod_get()],
+                qm.surfaceHopping.CASorbitals, qm.surfaceHopping.CASelectrons/2);
     }
-    F77_FUNC(domldt, DOMLDT) (&qm.nrQMatoms, qm.atomicnumberQM, keywords);
+    nrQMatoms = qm.nrQMatoms_get();
+    snew(atomicnumberQM, nrQMatoms);
+    for (int i=0; i<nrQMatoms; i++)
+    {
+        atomicnumberQM[i] = qm.atomicnumberQM_get(i);
+    }
+    F77_FUNC(domldt, DOMLDT) (&nrQMatoms, atomicnumberQM, keywords);
+    free(atomicnumberQM);
     fprintf(stderr, "keywords are: %s\n", keywords);
     free(keywords);
 
@@ -141,16 +150,16 @@ real call_mopac(QMMM_QMrec& qm, QMMM_MMrec& mm, rvec f[], rvec fshift[])
         i, j;
     real
         QMener = 0.0;
-    snew(qmcrd, 3*(qm.nrQMatoms));
-    snew(qmgrad, 3*(qm.nrQMatoms));
+    snew(qmcrd, 3*(qm.nrQMatoms_get()));
+    snew(qmgrad, 3*(qm.nrQMatoms_get()));
     /* copy the data from qr into the arrays that are going to be used
      * in the fortran routines of MOPAC
      */
-    for (i = 0; i < qm.nrQMatoms; i++)
+    for (i = 0; i < qm.nrQMatoms_get(); i++)
     {
         for (j = 0; j < DIM; j++)
         {
-            qmcrd[3*i+j] = static_cast<double>(qm.xQM[i][j])*10;
+            qmcrd[3*i+j] = static_cast<double>(qm.xQM_get(i, j))*10;
         }
     }
     if (mm.nrMMatoms)
@@ -167,13 +176,14 @@ real call_mopac(QMMM_QMrec& qm, QMMM_MMrec& mm, rvec f[], rvec fshift[])
         /* now compute the energy and the gradients.
          */
 
-        snew(qmchrg, qm.nrQMatoms);
-        F77_FUNC(domop, DOMOP) (&qm.nrQMatoms, qmcrd, &mm.nrMMatoms,
+        int nrQMatoms = qm.nrQMatoms_get();
+        snew(qmchrg, qm.nrQMatoms_get());
+        F77_FUNC(domop, DOMOP) (&nrQMatoms, qmcrd, &mm.nrMMatoms,
                                 mmchrg, mmcrd, qmgrad, mmgrad, &energy, qmchrg);
         /* add the gradients to the f[] array, and also to the fshift[].
          * the mopac gradients are in kCal/angstrom.
          */
-        for (i = 0; i < qm.nrQMatoms; i++)
+        for (i = 0; i < qm.nrQMatoms_get(); i++)
         {
             for (j = 0; j < DIM; j++)
             {
@@ -205,16 +215,16 @@ real call_mopac_SH(QMMM_QMrec& qm, QMMM_MMrec& mm, rvec f[], rvec fshift[])
     real
         QMener = 0.0;
 
-    snew(qmcrd, 3*(qm.nrQMatoms));
-    snew(qmgrad, 3*(qm.nrQMatoms));
+    snew(qmcrd, 3*(qm.nrQMatoms_get()));
+    snew(qmgrad, 3*(qm.nrQMatoms_get()));
     /* copy the data from qr into the arrays that are going to be used
      * in the fortran routines of MOPAC
      */
-    for (i = 0; i < qm.nrQMatoms; i++)
+    for (i = 0; i < qm.nrQMatoms_get(); i++)
     {
         for (j = 0; j < DIM; j++)
         {
-            qmcrd[3*i+j] = static_cast<double>(qm.xQM[i][j])*10;
+            qmcrd[3*i+j] = static_cast<double>(qm.xQM_get(i, j))*10;
         }
     }
     if (mm.nrMMatoms)
@@ -229,14 +239,15 @@ real call_mopac_SH(QMMM_QMrec& qm, QMMM_MMrec& mm, rvec f[], rvec fshift[])
     {
         /* now compute the energy and the gradients.
          */
-        snew(qmchrg, qm.nrQMatoms);
+        int nrQMatoms = qm.nrQMatoms_get();
+        snew(qmchrg, qm.nrQMatoms_get());
 
-        F77_FUNC(domop, DOMOP) (&qm.nrQMatoms, qmcrd, &mm.nrMMatoms,
+        F77_FUNC(domop, DOMOP) (&nrQMatoms, qmcrd, &mm.nrMMatoms,
                                 mmchrg, mmcrd, qmgrad, mmgrad, &energy, qmchrg);
         /* add the gradients to the f[] array, and also to the fshift[].
          * the mopac gradients are in kCal/angstrom.
          */
-        for (i = 0; i < qm.nrQMatoms; i++)
+        for (i = 0; i < qm.nrQMatoms_get(); i++)
         {
             for (j = 0; j < DIM; j++)
             {

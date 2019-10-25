@@ -48,6 +48,12 @@
 #include "gromacs/timing/wallcycle.h"
 
 //#include "gromacs/mdlib/qm_dftbplus.h"
+//#include "gromacs/mdlib/qm_gamess.h"
+//#include "gromacs/mdlib/qm_gaussian.h"
+//#include "gromacs/mdlib/qm_mopac.h"
+//#include "gromacs/mdlib/qm_orca.h"
+
+#define GMX_QMMM (GMX_QMMM_MOPAC || GMX_QMMM_GAMESS || GMX_QMMM_GAUSSIAN || GMX_QMMM_ORCA || GMX_QMMM_DFTBPLUS)
 
 struct t_nrnb;
 
@@ -55,6 +61,8 @@ struct gmx_pme_t;
 
 struct DftbPlus;
 struct Context;
+
+class QMMM_QMsurfaceHopping;
 
 /* THIS STRUCTURE IS TENTATIVE,
  * JUST FOR THE BEGINNING.
@@ -103,8 +111,6 @@ public:
 
 } ;
 
-#define GMX_QMMM (GMX_QMMM_MOPAC || GMX_QMMM_GAMESS || GMX_QMMM_GAUSSIAN || GMX_QMMM_ORCA || GMX_QMMM_DFTBPLUS)
-
 struct gmx_localtop_t;
 struct gmx_mtop_t;
 struct t_commrec;
@@ -112,20 +118,12 @@ struct t_forcerec;
 struct t_inputrec;
 struct t_mdatoms;
 
-class QMMM_QMrec {
+class QMMM_QMrec;
+class QMMM_MMrec;
+
+class QMMM_QMgaussian {
 private:
 public:
-    int                nrQMatoms;      /* total nr of QM atoms              */
-    rvec              *xQM;            /* shifted to center of box          */
-    int               *indexQM;        /* atom i = atom indexQM[i] in mdrun */
-    int               *atomicnumberQM; /* atomic numbers of QM atoms        */
-    real              *QMcharges;      /* atomic charges of QM atoms(ONIOM) */
-    int               *shiftQM;
-    int                QMcharge;       /* charge of the QM system           */
-    int                multiplicity;   /* multipicity (no of unpaired eln)  */
-    int                QMmethod;       /* see enums.h for all methods       */
-    int                QMbasis;        /* see enums.h for all bases         */
-    int                nelectrons;     /* total number of elecs in QM region*/
     /* Gaussian specific stuff */
     int                nQMcpus;        /* no. of CPUs used for the QM calc. */
     int                QMmem;          /* memory for the gaussian calc.     */
@@ -134,10 +132,45 @@ public:
     char              *gauss_dir;
     char              *gauss_exe;
     char              *devel_dir;
-    char              *orca_basename; /* basename for I/O with orca        */
-    char              *orca_dir;      /* directory for ORCA                */
+
+
+/*! \brief
+ * Initialize gaussian datastructures.
+ *
+ * \param[in] qm QM forcerec.
+ */
+//void init_gaussian(QMMM_QMrec& qm);
+void init_gaussian(QMMM_QMsurfaceHopping &surfaceHopping,
+                   int QMbasis);
+
+/*! \brief
+ * Call gaussian to do qm calculation.
+ *
+ * \param[in] fr Global forcerec.
+ * \param[in] qm QM part of forcerec.
+ * \param[in] mm mm part of forcerec.
+ * \param[in] f  force vector.
+ * \param[in] fshift shift of force vector.
+ */
+real call_gaussian(const t_forcerec *fr, QMMM_QMrec& qm, QMMM_MMrec& mm, rvec f[], rvec fshift[]);
+
+/*! \brief
+ * Call gaussian SH(?) to do qm calculation.
+ *
+ * \param[in] fr Global forcerec.
+ * \param[in] qm QM part of forcerec.
+ * \param[in] mm mm part of forcerec.
+ * \param[in] f  force vector.
+ * \param[in] fshift shift of force vector.
+ */
+real call_gaussian_SH(const t_forcerec *fr, QMMM_QMrec& qm, QMMM_MMrec& mm, rvec f[], rvec fshift[]);
+
+} ;
+
+class QMMM_QMsurfaceHopping {
+private:
+public:
     /* Surface hopping stuff */
-    gmx_bool           bSH;           /* surface hopping (diabatic only)   */
     real               SAon;          /* at which energy gap the SA starts */
     real               SAoff;         /* at which energy gap the SA stops  */
     int                SAsteps;       /* stepwise switchinng on the SA     */
@@ -150,6 +183,24 @@ public:
     ivec               SHbasis;
     int                CASelectrons;
     int                CASorbitals;
+
+    void initParameters(const t_inputrec *ir,
+                        const int grpnr);
+} ;
+
+class QMMM_QMrec {
+private:
+    int                nrQMatoms;      /* total nr of QM atoms              */
+    rvec              *xQM;            /* shifted to center of box          */
+    int               *indexQM;        /* atom i = atom indexQM[i] in mdrun */
+    int               *atomicnumberQM; /* atomic numbers of QM atoms        */
+    real              *QMcharges;      /* atomic charges of QM atoms(ONIOM) */
+    int               *shiftQM;
+    int                QMcharge;       /* charge of the QM system           */
+    int                multiplicity;   /* multipicity (no of unpaired eln)  */
+    int                QMmethod;       /* see enums.h for all methods       */
+    int                QMbasis;        /* see enums.h for all bases         */
+    int                nelectrons;     /* total number of elecs in QM region*/
 
     matrix             box;
     int                qmmm_variant;
@@ -166,6 +217,65 @@ public:
                     const int        *atomarray,
                     const gmx_mtop_t *mtop,
                     const t_inputrec *ir);
+
+    friend class QMMM_rec;
+    friend void init_dftbplus(QMMM_QMrec& qm,
+                   const t_forcerec *fr,
+                   const t_inputrec *ir,
+                   const t_commrec *cr,
+                   gmx_wallcycle_t wcycle);
+    friend real call_dftbplus(const t_forcerec *fr, const t_commrec *cr,
+                   QMMM_QMrec& qm,       QMMM_MMrec& mm,
+                   rvec f[],             rvec fshift[],
+		           t_nrnb *nrnb,         gmx_wallcycle_t wcycle);
+
+public:
+//  /* Gaussian specific stuff */
+    QMMM_QMgaussian    gaussian;
+//  int                nQMcpus;        /* no. of CPUs used for the QM calc. */
+//  int                QMmem;          /* memory for the gaussian calc.     */
+//  int                accuracy;       /* convergence criterium (E(-x))     */
+//  gmx_bool           cpmcscf;        /* using cpmcscf(l1003)*/
+//  char              *gauss_dir;
+//  char              *gauss_exe;
+//  char              *devel_dir;
+//  /* Surface hopping stuff */
+    gmx_bool              bSH;
+    QMMM_QMsurfaceHopping surfaceHopping;
+//  gmx_bool           bSH;           /* surface hopping (diabatic only)   */
+//  real               SAon;          /* at which energy gap the SA starts */
+//  real               SAoff;         /* at which energy gap the SA stops  */
+//  int                SAsteps;       /* stepwise switchinng on the SA     */
+//  int                SAstep;        /* current state of SA               */
+//  int                CIdim;
+//  real              *CIvec1;
+//  real              *CIvec2;
+//  real              *CIvec1old;
+//  real              *CIvec2old;
+//  ivec               SHbasis;
+//  int                CASelectrons;
+//  int                CASorbitals;
+
+    char              *orca_basename; /* basename for I/O with orca        */
+    char              *orca_dir;      /* directory for ORCA                */
+
+    // output
+    int    nrQMatoms_get()const;
+    int    qmmm_variant_get()const;
+    double xQM_get(const int atom, const int coordinate)const;
+    real   QMcharges_get(const int atom)const;
+    double pot_qmmm_get(const int atom)const;
+    double pot_qmqm_get(const int atom)const;
+    int    atomicnumberQM_get(const int atom)const;
+    int    QMcharge_get()const;
+    int    multiplicity_get()const;
+    int    QMmethod_get()const;
+    int    QMbasis_get()const;
+    int    nelectrons_get()const;
+    // input
+    void   QMcharges_set(const int atom, const real value);
+    void   pot_qmmm_set(const int atom, const double value);
+    void   pot_qmqm_set(const int atom, const double value);
 } ;
 
 class QMMM_MMrec {
@@ -224,6 +334,9 @@ public:
     std::vector<QMMM_PME>    pme;        /* [0] == pme_full, [1] == pme_qmonly */
  // gmx_pme_t    *pmedata_full;
  // gmx_pme_t    *pmedata_qmonly;
+ // std::vector<QMMM_QMgaussian>       gaussian;
+ // std::vector<gmx_bool>              bSH;
+ // std::vector<QMMM_QMsurfaceHopping> surfaceHopping;
 
     /* From topology->atoms.atomname and topology->atoms.atomtype
      * the atom names and types are read;
