@@ -206,6 +206,8 @@ using cu_plist_t = Nbnxm::gpu_plist;
  */
 typedef struct Nbnxm::gpu_timers_t cu_timers_t;
 
+class GpuEventSynchronizer;
+
 /** \internal
  * \brief Main data structure for CUDA nonbonded force calculations.
  */
@@ -217,18 +219,6 @@ struct gmx_nbnxn_cuda_t
     bool                                                            bUseTwoStreams;
     //! atom data
     cu_atomdata_t                                                  *atdat;
-    //! coordinates in rvec format
-    rvec                                                           *xrvec;
-    //! number of atoms
-    int                                                             natoms;
-    //! number of atoms allocated in device buffer
-    int                                                             natoms_alloc;
-    //! force in rvec format
-    rvec                                                           *frvec;
-    //! number of atoms in force buffer
-    int                                                             nfrvec;
-    //! number of atoms allocated in force buffer
-    int                                                             nfrvec_alloc;
     //! f buf ops cell index mapping
     int                                                            *cell;
     //! number of indices in cell buffer
@@ -277,6 +267,22 @@ struct gmx_nbnxn_cuda_t
     //  local/nonlocal, if there is bonded GPU work, both flags will be true.
     gmx::EnumerationArray<Nbnxm::InteractionLocality, bool> haveWork;
 
+
+    GpuEventSynchronizer *xAvailableOnDevice;   /**< event triggered when
+                                                   coordinate buffer has been
+                                                   copied to device by PP task and
+                                                   any dependent task (e.g. transfer of coordinates
+                                                   to the PME rank's GPU) can proceed. */
+
+    /*! \brief Pointer to event synchronizer triggered when the local GPU buffer ops / reduction is complete
+     *
+     * \note That the synchronizer is managed outside of this module in StatePropagatorDataGpu.
+     */
+    GpuEventSynchronizer *localFReductionDone;
+
+    GpuEventSynchronizer *xNonLocalCopyD2HDone; /**< event triggered when
+                                                   non-local coordinate buffer has been
+                                                   copied from device to host*/
 
     /* NOTE: With current CUDA versions (<=5.0) timing doesn't work with multiple
      * concurrent streams, so we won't time if both l/nl work is done on GPUs.

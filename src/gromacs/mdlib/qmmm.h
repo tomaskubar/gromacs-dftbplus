@@ -118,6 +118,11 @@ struct t_forcerec;
 struct t_inputrec;
 struct t_mdatoms;
 
+namespace gmx
+{
+class ForceWithShiftForces;
+}
+
 class QMMM_QMrec;
 class QMMM_MMrec;
 
@@ -132,7 +137,6 @@ public:
     char              *gauss_dir;
     char              *gauss_exe;
     char              *devel_dir;
-
 
 /*! \brief
  * Initialize gaussian datastructures.
@@ -409,11 +413,11 @@ public:
                         rvec *MMgrad,
                         rvec *MMgrad_full);
 
-    real calculate_QMMM(const t_commrec      *cr,
-                        const t_forcerec     *fr,
-                              rvec            f[],
-                              t_nrnb         *nrnb,
-                        const gmx_wallcycle_t wcycle);
+    real calculate_QMMM(const t_commrec           *cr,
+                        gmx::ForceWithShiftForces *forceWithShiftForces,
+                        const t_forcerec          *fr,
+                              t_nrnb              *nrnb,
+                        const gmx_wallcycle_t      wcycle);
 
     /* QMMM computes the QM forces. This routine makes either function
      * calls to gmx QM routines (derived from MOPAC7 (semi-emp.) and MPQC

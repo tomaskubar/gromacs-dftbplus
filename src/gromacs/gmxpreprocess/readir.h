@@ -45,6 +45,7 @@
 namespace gmx
 {
 class MDModules;
+struct MdModulesNotifier;
 }
 
 struct gmx_mtop_t;
@@ -92,8 +93,8 @@ void init_inputrec_strings();
 /*! \brief Clean up object that holds strings parsed from an .mdp file */
 void done_inputrec_strings();
 
-void check_ir(const char *mdparin, t_inputrec *ir, t_gromppopts *opts,
-              warninp_t wi);
+void check_ir(const char *mdparin, const gmx::MdModulesNotifier &mdModulesNotifier,
+              t_inputrec *ir, t_gromppopts *opts, warninp_t wi);
 /* Validate inputrec data.
  * Fatal errors will be added to nerror.
  */
@@ -110,11 +111,6 @@ void triple_check(const char *mdparin, t_inputrec *ir, gmx_mtop_t *sys,
                   warninp_t wi);
 /* Do even more checks */
 
-void check_chargegroup_radii(const gmx_mtop_t *mtop, const t_inputrec *ir,
-                             rvec *x,
-                             warninp_t wi);
-/* Even more checks, charge group radii vs. cut-off's only. */
-
 void get_ir(const char *mdparin, const char *mdparout,
             gmx::MDModules *mdModules, t_inputrec *ir, t_gromppopts *opts,
             WriteMdpHeader writeMdpHeader, warninp_t wi);
@@ -123,12 +119,13 @@ void get_ir(const char *mdparin, const char *mdparout,
  * function is called. Also prints the input file back to mdparout.
  */
 
-void do_index(const char* mdparin,
-              const char *ndx,
-              gmx_mtop_t *mtop,
-              bool        bVerbose,
-              t_inputrec *ir,
-              warninp_t   wi);
+void do_index(const char                         * mdparin,
+              const char                          *ndx,
+              gmx_mtop_t                          *mtop,
+              bool                                 bVerbose,
+              const gmx::MdModulesNotifier        &notifier,
+              t_inputrec                          *ir,
+              warninp_t                            wi);
 /* Read the index file and assign grp numbers to atoms.
  */
 

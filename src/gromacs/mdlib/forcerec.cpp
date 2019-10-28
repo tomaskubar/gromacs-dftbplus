@@ -53,6 +53,7 @@
 #include "gromacs/domdec/domdec_struct.h"
 #include "gromacs/ewald/ewald.h"
 #include "gromacs/ewald/ewald_utils.h"
+#include "gromacs/ewald/pme_pp_comm_gpu.h"
 #include "gromacs/fileio/filetypes.h"
 #include "gromacs/gmxlib/network.h"
 #include "gromacs/gmxlib/nonbonded/nonbonded.h"
@@ -96,6 +97,10 @@
 #include "gromacs/utility/pleasecite.h"
 #include "gromacs/utility/smalloc.h"
 #include "gromacs/utility/strconvert.h"
+
+/*! \brief environment variable to enable GPU P2P communication */
+static const bool c_enableGpuPmePpComms = (getenv("GMX_GPU_PME_PP_COMMS") != nullptr)
+    && GMX_THREAD_MPI && (GMX_GPU == GMX_GPU_CUDA);
 
 static real *mk_nbfp(const gmx_ffparams_t *idef, gmx_bool bBHAM)
 {
@@ -174,418 +179,26 @@ static real *make_ljpme_c6grid(const gmx_ffparams_t *idef, t_forcerec *fr)
     return grid;
 }
 
-/* This routine sets fr->solvent_opt to the most common solvent in the
- * system, e.g. esolSPC or esolTIP4P. It will also mark each charge group in
- * the fr->solvent_type array with the correct type (or esolNO).
- *
- * Charge groups that fulfill the conditions but are not identical to the
- * most common one will be marked as esolNO in the solvent_type array.
- *
- * TIP3p is identical to SPC for these purposes, so we call it
- * SPC in the arrays (Apologies to Bill Jorgensen ;-)
- *
- * NOTE: QM particle should not
- * become an optimized solvent. Not even if there is only one charge
- * group in the Qm
- */
-
-typedef struct
-{
-    int    model;
-    int    count;
-    int    vdwtype[4];
-    real   charge[4];
-} solvent_parameters_t;
-
-static void
-check_solvent_cg(const gmx_moltype_t    *molt,
-                 int                     cg0,
-                 int                     nmol,
-                 const unsigned char    *qm_grpnr,
-                 const AtomGroupIndices *qm_grps,
-                 t_forcerec             *fr,
-                 int                    *n_solvent_parameters,
-                 solvent_parameters_t  **solvent_parameters_p,
-                 int                     cginfo,
-                 int                    *cg_sp)
-{
-    t_atom               *atom;
-    int                   j, k;
-    int                   j0, j1, nj;
-    gmx_bool              perturbed;
-    gmx_bool              has_vdw[4];
-    gmx_bool              match;
-    real                  tmp_charge[4]  = { 0.0 }; /* init to zero to make gcc 7 happy */
-    int                   tmp_vdwtype[4] = { 0 };   /* init to zero to make gcc 7 happy */
-    int                   tjA;
-    gmx_bool              qm;
-    solvent_parameters_t *solvent_parameters;
-
-    /* We use a list with parameters for each solvent type.
-     * Every time we discover a new molecule that fulfills the basic
-     * conditions for a solvent we compare with the previous entries
-     * in these lists. If the parameters are the same we just increment
-     * the counter for that type, and otherwise we create a new type
-     * based on the current molecule.
-     *
-     * Once we've finished going through all molecules we check which
-     * solvent is most common, and mark all those molecules while we
-     * clear the flag on all others.
-     */
-
-    solvent_parameters = *solvent_parameters_p;
-
-    /* Mark the cg first as non optimized */
-    *cg_sp = -1;
-
-    /* Check if this cg has no exclusions with atoms in other charge groups
-     * and all atoms inside the charge group excluded.
-     * We only have 3 or 4 atom solvent loops.
-     */
-    if (GET_CGINFO_EXCL_INTER(cginfo) ||
-        !GET_CGINFO_EXCL_INTRA(cginfo))
-    {
-        return;
-    }
-
-    /* Get the indices of the first atom in this charge group */
-    j0     = molt->cgs.index[cg0];
-    j1     = molt->cgs.index[cg0+1];
-
-    /* Number of atoms in our molecule */
-    nj     = j1 - j0;
-
-    if (debug)
-    {
-        fprintf(debug,
-                "Moltype '%s': there are %d atoms in this charge group\n",
-                *molt->name, nj);
-    }
-
-    /* Check if it could be an SPC (3 atoms) or TIP4p (4) water,
-     * otherwise skip it.
-     */
-    if (nj < 3 || nj > 4)
-    {
-        return;
-    }
-
-    /* Check if we are doing QM on this group */
-    qm = FALSE;
-    if (qm_grpnr != nullptr)
-    {
-        for (j = j0; j < j1 && !qm; j++)
-        {
-            qm = (qm_grpnr[j] < qm_grps->size() - 1);
-        }
-    }
-    /* Cannot use solvent optimization with QM */
-    if (qm)
-    {
-        return;
-    }
-
-    atom = molt->atoms.atom;
-
-    /* Still looks like a solvent, time to check parameters */
-
-    /* If it is perturbed (free energy) we can't use the solvent loops,
-     * so then we just skip to the next molecule.
-     */
-    perturbed = FALSE;
-
-    for (j = j0; j < j1 && !perturbed; j++)
-    {
-        perturbed = PERTURBED(atom[j]);
-    }
-
-    if (perturbed)
-    {
-        return;
-    }
-
-    /* Now it's only a question if the VdW and charge parameters
-     * are OK. Before doing the check we compare and see if they are
-     * identical to a possible previous solvent type.
-     * First we assign the current types and charges.
-     */
-    for (j = 0; j < nj; j++)
-    {
-        tmp_vdwtype[j] = atom[j0+j].type;
-        tmp_charge[j]  = atom[j0+j].q;
-    }
-
-    /* Does it match any previous solvent type? */
-    for (k = 0; k < *n_solvent_parameters; k++)
-    {
-        match = TRUE;
-
-
-        /* We can only match SPC with 3 atoms and TIP4p with 4 atoms */
-        if ( (solvent_parameters[k].model == esolSPC   && nj != 3)  ||
-             (solvent_parameters[k].model == esolTIP4P && nj != 4) )
-        {
-            match = FALSE;
-        }
-
-        /* Check that types & charges match for all atoms in molecule */
-        for (j = 0; j < nj && match; j++)
-        {
-            if (tmp_vdwtype[j] != solvent_parameters[k].vdwtype[j])
-            {
-                match = FALSE;
-            }
-            if (tmp_charge[j] != solvent_parameters[k].charge[j])
-            {
-                match = FALSE;
-            }
-        }
-        if (match)
-        {
-            /* Congratulations! We have a matched solvent.
-             * Flag it with this type for later processing.
-             */
-            *cg_sp = k;
-            solvent_parameters[k].count += nmol;
-
-            /* We are done with this charge group */
-            return;
-        }
-    }
-
-    /* If we get here, we have a tentative new solvent type.
-     * Before we add it we must check that it fulfills the requirements
-     * of the solvent optimized loops. First determine which atoms have
-     * VdW interactions.
-     */
-    for (j = 0; j < nj; j++)
-    {
-        has_vdw[j] = FALSE;
-        tjA        = tmp_vdwtype[j];
-
-        /* Go through all other tpes and see if any have non-zero
-         * VdW parameters when combined with this one.
-         */
-        for (k = 0; k < fr->ntype && (!has_vdw[j]); k++)
-        {
-            /* We already checked that the atoms weren't perturbed,
-             * so we only need to check state A now.
-             */
-            if (fr->bBHAM)
-            {
-                has_vdw[j] = (has_vdw[j] ||
-                              (BHAMA(fr->nbfp, fr->ntype, tjA, k) != 0.0) ||
-                              (BHAMB(fr->nbfp, fr->ntype, tjA, k) != 0.0) ||
-                              (BHAMC(fr->nbfp, fr->ntype, tjA, k) != 0.0));
-            }
-            else
-            {
-                /* Standard LJ */
-                has_vdw[j] = (has_vdw[j] ||
-                              (C6(fr->nbfp, fr->ntype, tjA, k)  != 0.0) ||
-                              (C12(fr->nbfp, fr->ntype, tjA, k) != 0.0));
-            }
-        }
-    }
-
-    /* Now we know all we need to make the final check and assignment. */
-    if (nj == 3)
-    {
-        /* So, is it an SPC?
-         * For this we require thatn all atoms have charge,
-         * the charges on atom 2 & 3 should be the same, and only
-         * atom 1 might have VdW.
-         */
-        if (!has_vdw[1] &&
-            !has_vdw[2] &&
-            tmp_charge[0]  != 0 &&
-            tmp_charge[1]  != 0 &&
-            tmp_charge[2]  == tmp_charge[1])
-        {
-            srenew(solvent_parameters, *n_solvent_parameters+1);
-            solvent_parameters[*n_solvent_parameters].model = esolSPC;
-            solvent_parameters[*n_solvent_parameters].count = nmol;
-            for (k = 0; k < 3; k++)
-            {
-                solvent_parameters[*n_solvent_parameters].vdwtype[k] = tmp_vdwtype[k];
-                solvent_parameters[*n_solvent_parameters].charge[k]  = tmp_charge[k];
-            }
-
-            *cg_sp = *n_solvent_parameters;
-            (*n_solvent_parameters)++;
-        }
-    }
-    else if (nj == 4)
-    {
-        /* Or could it be a TIP4P?
-         * For this we require thatn atoms 2,3,4 have charge, but not atom 1.
-         * Only atom 1 mght have VdW.
-         */
-        if (!has_vdw[1] &&
-            !has_vdw[2] &&
-            !has_vdw[3] &&
-            tmp_charge[0]  == 0 &&
-            tmp_charge[1]  != 0 &&
-            tmp_charge[2]  == tmp_charge[1] &&
-            tmp_charge[3]  != 0)
-        {
-            srenew(solvent_parameters, *n_solvent_parameters+1);
-            solvent_parameters[*n_solvent_parameters].model = esolTIP4P;
-            solvent_parameters[*n_solvent_parameters].count = nmol;
-            for (k = 0; k < 4; k++)
-            {
-                solvent_parameters[*n_solvent_parameters].vdwtype[k] = tmp_vdwtype[k];
-                solvent_parameters[*n_solvent_parameters].charge[k]  = tmp_charge[k];
-            }
-
-            *cg_sp = *n_solvent_parameters;
-            (*n_solvent_parameters)++;
-        }
-    }
-
-    *solvent_parameters_p = solvent_parameters;
-}
-
-static void
-check_solvent(FILE  *                fp,
-              const gmx_mtop_t  *    mtop,
-              t_forcerec  *          fr,
-              cginfo_mb_t           *cginfo_mb)
-{
-    const t_block     *   cgs;
-    const gmx_moltype_t  *molt;
-    int                   mol, cg_mol, at_offset, am, cgm, i, nmol_ch, nmol;
-    int                   n_solvent_parameters;
-    solvent_parameters_t *solvent_parameters;
-    int                 **cg_sp;
-    int                   bestsp, bestsol;
-
-    if (debug)
-    {
-        fprintf(debug, "Going to determine what solvent types we have.\n");
-    }
-
-    n_solvent_parameters = 0;
-    solvent_parameters   = nullptr;
-    /* Allocate temporary array for solvent type */
-    snew(cg_sp, mtop->molblock.size());
-
-    at_offset = 0;
-    for (size_t mb = 0; mb < mtop->molblock.size(); mb++)
-    {
-        molt = &mtop->moltype[mtop->molblock[mb].type];
-        cgs  = &molt->cgs;
-        /* Here we have to loop over all individual molecules
-         * because we need to check for QMMM particles.
-         */
-        snew(cg_sp[mb], cginfo_mb[mb].cg_mod);
-        nmol_ch = cginfo_mb[mb].cg_mod/cgs->nr;
-        nmol    = mtop->molblock[mb].nmol/nmol_ch;
-        for (mol = 0; mol < nmol_ch; mol++)
-        {
-            cgm = mol*cgs->nr;
-            am  = mol*cgs->index[cgs->nr];
-            for (cg_mol = 0; cg_mol < cgs->nr; cg_mol++)
-            {
-                check_solvent_cg(molt, cg_mol, nmol,
-                                 mtop->groups.groupNumbers[SimulationAtomGroupType::QuantumMechanics].empty() ?
-                                 nullptr : mtop->groups.groupNumbers[SimulationAtomGroupType::QuantumMechanics].data()+at_offset+am,
-                                 &mtop->groups.groups[SimulationAtomGroupType::QuantumMechanics],
-                                 fr,
-                                 &n_solvent_parameters, &solvent_parameters,
-                                 cginfo_mb[mb].cginfo[cgm+cg_mol],
-                                 &cg_sp[mb][cgm+cg_mol]);
-            }
-        }
-        at_offset += cgs->index[cgs->nr];
-    }
-
-    /* Puh! We finished going through all charge groups.
-     * Now find the most common solvent model.
-     */
-
-    /* Most common solvent this far */
-    bestsp = -2;
-    for (i = 0; i < n_solvent_parameters; i++)
-    {
-        if (bestsp == -2 ||
-            solvent_parameters[i].count > solvent_parameters[bestsp].count)
-        {
-            bestsp = i;
-        }
-    }
-
-    if (bestsp >= 0)
-    {
-        bestsol = solvent_parameters[bestsp].model;
-    }
-    else
-    {
-        bestsol = esolNO;
-    }
-
-    fr->nWatMol = 0;
-    for (size_t mb = 0; mb < mtop->molblock.size(); mb++)
-    {
-        cgs  = &mtop->moltype[mtop->molblock[mb].type].cgs;
-        nmol = (mtop->molblock[mb].nmol*cgs->nr)/cginfo_mb[mb].cg_mod;
-        for (i = 0; i < cginfo_mb[mb].cg_mod; i++)
-        {
-            if (cg_sp[mb][i] == bestsp)
-            {
-                SET_CGINFO_SOLOPT(cginfo_mb[mb].cginfo[i], bestsol);
-                fr->nWatMol += nmol;
-            }
-            else
-            {
-                SET_CGINFO_SOLOPT(cginfo_mb[mb].cginfo[i], esolNO);
-            }
-        }
-        sfree(cg_sp[mb]);
-    }
-    sfree(cg_sp);
-
-    if (bestsol != esolNO && fp != nullptr)
-    {
-        fprintf(fp, "\nEnabling %s-like water optimization for %d molecules.\n\n",
-                esol_names[bestsol],
-                solvent_parameters[bestsp].count);
-    }
-
-    sfree(solvent_parameters);
-    fr->solvent_opt = bestsol;
-}
-
 enum {
     acNONE = 0, acCONSTRAINT, acSETTLE
 };
 
-static cginfo_mb_t *init_cginfo_mb(FILE *fplog, const gmx_mtop_t *mtop,
-                                   t_forcerec *fr, gmx_bool bNoSolvOpt,
-                                   gmx_bool *bFEP_NonBonded,
-                                   gmx_bool *bExcl_IntraCGAll_InterCGNone)
+static cginfo_mb_t *init_cginfo_mb(const gmx_mtop_t *mtop,
+                                   const t_forcerec *fr,
+                                   gmx_bool         *bFEP_NonBonded)
 {
-    const t_block        *cgs;
-    const t_blocka       *excl;
-    const gmx_moltype_t  *molt;
-    const gmx_molblock_t *molb;
     cginfo_mb_t          *cginfo_mb;
     gmx_bool             *type_VDW;
     int                  *cginfo;
-    int                   cg_offset, a_offset;
-    int                   m, cg, a0, a1, gid, ai, j, aj, excl_nalloc;
     int                  *a_con;
-    int                   ftype;
-    int                   ia;
-    gmx_bool              bId, *bExcl, bExclIntraAll, bExclInter, bHaveVDW, bHaveQ, bHavePerturbedAtoms;
 
     snew(cginfo_mb, mtop->molblock.size());
 
     snew(type_VDW, fr->ntype);
-    for (ai = 0; ai < fr->ntype; ai++)
+    for (int ai = 0; ai < fr->ntype; ai++)
     {
         type_VDW[ai] = FALSE;
-        for (j = 0; j < fr->ntype; j++)
+        for (int j = 0; j < fr->ntype; j++)
         {
             type_VDW[ai] = type_VDW[ai] ||
                 fr->bBHAM ||
@@ -595,228 +208,131 @@ static cginfo_mb_t *init_cginfo_mb(FILE *fplog, const gmx_mtop_t *mtop,
     }
 
     *bFEP_NonBonded               = FALSE;
-    *bExcl_IntraCGAll_InterCGNone = TRUE;
 
-    excl_nalloc = 10;
-    snew(bExcl, excl_nalloc);
-    cg_offset = 0;
-    a_offset  = 0;
+    int a_offset  = 0;
     for (size_t mb = 0; mb < mtop->molblock.size(); mb++)
     {
-        molb = &mtop->molblock[mb];
-        molt = &mtop->moltype[molb->type];
-        cgs  = &molt->cgs;
-        excl = &molt->excls;
+        const gmx_molblock_t &molb = mtop->molblock[mb];
+        const gmx_moltype_t  &molt = mtop->moltype[molb.type];
+        const t_blocka       &excl = molt.excls;
 
         /* Check if the cginfo is identical for all molecules in this block.
          * If so, we only need an array of the size of one molecule.
          * Otherwise we make an array of #mol times #cgs per molecule.
          */
-        bId = TRUE;
-        for (m = 0; m < molb->nmol; m++)
+        gmx_bool bId = TRUE;
+        for (int m = 0; m < molb.nmol; m++)
         {
-            int am = m*cgs->index[cgs->nr];
-            for (cg = 0; cg < cgs->nr; cg++)
+            const int am = m*molt.atoms.nr;
+            for (int a = 0; a < molt.atoms.nr; a++)
             {
-                a0 = cgs->index[cg];
-                a1 = cgs->index[cg+1];
-                if (getGroupType(mtop->groups, SimulationAtomGroupType::QuantumMechanics, a_offset+am+a0) !=
-                    getGroupType(mtop->groups, SimulationAtomGroupType::QuantumMechanics, a_offset   +a0))
+                if (getGroupType(mtop->groups, SimulationAtomGroupType::QuantumMechanics, a_offset + am + a) !=
+                    getGroupType(mtop->groups, SimulationAtomGroupType::QuantumMechanics, a_offset      + a))
                 {
                     bId = FALSE;
                 }
                 if (!mtop->groups.groupNumbers[SimulationAtomGroupType::QuantumMechanics].empty())
                 {
-                    for (ai = a0; ai < a1; ai++)
+                    if (mtop->groups.groupNumbers[SimulationAtomGroupType::QuantumMechanics][a_offset +am + a] !=
+                        mtop->groups.groupNumbers[SimulationAtomGroupType::QuantumMechanics][a_offset     + a])
                     {
-                        if (mtop->groups.groupNumbers[SimulationAtomGroupType::QuantumMechanics][a_offset+am+ai] !=
-                            mtop->groups.groupNumbers[SimulationAtomGroupType::QuantumMechanics][a_offset   +ai])
-                        {
-                            bId = FALSE;
-                        }
+                        bId = FALSE;
                     }
                 }
             }
         }
 
-        cginfo_mb[mb].cg_start = cg_offset;
-        cginfo_mb[mb].cg_end   = cg_offset + molb->nmol*cgs->nr;
-        cginfo_mb[mb].cg_mod   = (bId ? 1 : molb->nmol)*cgs->nr;
+        cginfo_mb[mb].cg_start = a_offset;
+        cginfo_mb[mb].cg_end   = a_offset + molb.nmol*molt.atoms.nr;
+        cginfo_mb[mb].cg_mod   = (bId ? 1 : molb.nmol)*molt.atoms.nr;
         snew(cginfo_mb[mb].cginfo, cginfo_mb[mb].cg_mod);
         cginfo = cginfo_mb[mb].cginfo;
 
         /* Set constraints flags for constrained atoms */
-        snew(a_con, molt->atoms.nr);
-        for (ftype = 0; ftype < F_NRE; ftype++)
+        snew(a_con, molt.atoms.nr);
+        for (int ftype = 0; ftype < F_NRE; ftype++)
         {
             if (interaction_function[ftype].flags & IF_CONSTRAINT)
             {
-                int nral;
-
-                nral = NRAL(ftype);
-                for (ia = 0; ia < molt->ilist[ftype].size(); ia += 1+nral)
+                const int nral = NRAL(ftype);
+                for (int ia = 0; ia < molt.ilist[ftype].size(); ia += 1 + nral)
                 {
                     int a;
 
                     for (a = 0; a < nral; a++)
                     {
-                        a_con[molt->ilist[ftype].iatoms[ia+1+a]] =
+                        a_con[molt.ilist[ftype].iatoms[ia + 1 + a]] =
                             (ftype == F_SETTLE ? acSETTLE : acCONSTRAINT);
                     }
                 }
             }
         }
 
-        for (m = 0; m < (bId ? 1 : molb->nmol); m++)
+        for (int m = 0; m < (bId ? 1 : molb.nmol); m++)
         {
-            int cgm = m*cgs->nr;
-            int am  = m*cgs->index[cgs->nr];
-            for (cg = 0; cg < cgs->nr; cg++)
+            const int molculeOffsetInBlock = m*molt.atoms.nr;
+            for (int a = 0; a < molt.atoms.nr; a++)
             {
-                a0 = cgs->index[cg];
-                a1 = cgs->index[cg+1];
+                const t_atom &atom     = molt.atoms.atom[a];
+                int          &atomInfo = cginfo[molculeOffsetInBlock + a];
 
                 /* Store the energy group in cginfo */
-                gid = getGroupType(mtop->groups, SimulationAtomGroupType::EnergyOutput, a_offset+am+a0);
-                SET_CGINFO_GID(cginfo[cgm+cg], gid);
+                int gid = getGroupType(mtop->groups, SimulationAtomGroupType::EnergyOutput,
+                                       a_offset + molculeOffsetInBlock + a);
+                SET_CGINFO_GID(atomInfo, gid);
 
-                /* Check the intra/inter charge group exclusions */
-                if (a1-a0 > excl_nalloc)
+                bool bHaveVDW = (type_VDW[atom.type] ||
+                                 type_VDW[atom.typeB]);
+                bool bHaveQ   = (atom.q != 0 ||
+                                 atom.qB != 0);
+
+                bool haveExclusions = false;
+                /* Loop over all the exclusions of atom ai */
+                for (int j = excl.index[a]; j < excl.index[a + 1]; j++)
                 {
-                    excl_nalloc = a1 - a0;
-                    srenew(bExcl, excl_nalloc);
-                }
-                /* bExclIntraAll: all intra cg interactions excluded
-                 * bExclInter:    any inter cg interactions excluded
-                 */
-                bExclIntraAll       = TRUE;
-                bExclInter          = FALSE;
-                bHaveVDW            = FALSE;
-                bHaveQ              = FALSE;
-                bHavePerturbedAtoms = FALSE;
-                for (ai = a0; ai < a1; ai++)
-                {
-                    /* Check VDW and electrostatic interactions */
-                    bHaveVDW = bHaveVDW || (type_VDW[molt->atoms.atom[ai].type] ||
-                                            type_VDW[molt->atoms.atom[ai].typeB]);
-                    bHaveQ  = bHaveQ    || (molt->atoms.atom[ai].q != 0 ||
-                                            molt->atoms.atom[ai].qB != 0);
-
-                    bHavePerturbedAtoms = bHavePerturbedAtoms || (PERTURBED(molt->atoms.atom[ai]) != 0);
-
-                    /* Clear the exclusion list for atom ai */
-                    for (aj = a0; aj < a1; aj++)
+                    if (excl.a[j] != a)
                     {
-                        bExcl[aj-a0] = FALSE;
-                    }
-                    /* Loop over all the exclusions of atom ai */
-                    for (j = excl->index[ai]; j < excl->index[ai+1]; j++)
-                    {
-                        aj = excl->a[j];
-                        if (aj < a0 || aj >= a1)
-                        {
-                            bExclInter = TRUE;
-                        }
-                        else
-                        {
-                            bExcl[aj-a0] = TRUE;
-                        }
-                    }
-                    /* Check if ai excludes a0 to a1 */
-                    for (aj = a0; aj < a1; aj++)
-                    {
-                        if (!bExcl[aj-a0])
-                        {
-                            bExclIntraAll = FALSE;
-                        }
-                    }
-
-                    switch (a_con[ai])
-                    {
-                        case acCONSTRAINT:
-                            SET_CGINFO_CONSTR(cginfo[cgm+cg]);
-                            break;
-                        case acSETTLE:
-                            SET_CGINFO_SETTLE(cginfo[cgm+cg]);
-                            break;
-                        default:
-                            break;
+                        haveExclusions = true;
+                        break;
                     }
                 }
-                if (bExclIntraAll)
+
+                switch (a_con[a])
                 {
-                    SET_CGINFO_EXCL_INTRA(cginfo[cgm+cg]);
+                    case acCONSTRAINT:
+                        SET_CGINFO_CONSTR(atomInfo);
+                        break;
+                    case acSETTLE:
+                        SET_CGINFO_SETTLE(atomInfo);
+                        break;
+                    default:
+                        break;
                 }
-                if (bExclInter)
+                if (haveExclusions)
                 {
-                    SET_CGINFO_EXCL_INTER(cginfo[cgm+cg]);
-                }
-                if (a1 - a0 > MAX_CHARGEGROUP_SIZE)
-                {
-                    /* The size in cginfo is currently only read with DD */
-                    gmx_fatal(FARGS, "A charge group has size %d which is larger than the limit of %d atoms", a1-a0, MAX_CHARGEGROUP_SIZE);
+                    SET_CGINFO_EXCL_INTER(atomInfo);
                 }
                 if (bHaveVDW)
                 {
-                    SET_CGINFO_HAS_VDW(cginfo[cgm+cg]);
+                    SET_CGINFO_HAS_VDW(atomInfo);
                 }
                 if (bHaveQ)
                 {
-                    SET_CGINFO_HAS_Q(cginfo[cgm+cg]);
+                    SET_CGINFO_HAS_Q(atomInfo);
                 }
-                if (bHavePerturbedAtoms && fr->efep != efepNO)
+                if (fr->efep != efepNO && PERTURBED(atom))
                 {
-                    SET_CGINFO_FEP(cginfo[cgm+cg]);
+                    SET_CGINFO_FEP(atomInfo);
                     *bFEP_NonBonded = TRUE;
-                }
-                /* Store the charge group size */
-                SET_CGINFO_NATOMS(cginfo[cgm+cg], a1-a0);
-
-                if (!bExclIntraAll || bExclInter)
-                {
-                    *bExcl_IntraCGAll_InterCGNone = FALSE;
                 }
             }
         }
 
         sfree(a_con);
 
-        cg_offset += molb->nmol*cgs->nr;
-        a_offset  += molb->nmol*cgs->index[cgs->nr];
+        a_offset  += molb.nmol*molt.atoms.nr;
     }
     sfree(type_VDW);
-    sfree(bExcl);
-
-    /* the solvent optimizer is called after the QM is initialized,
-     * because we don't want to have the QM subsystemto become an
-     * optimized solvent
-     */
-
-    check_solvent(fplog, mtop, fr, cginfo_mb);
-
-    if (getenv("GMX_NO_SOLV_OPT"))
-    {
-        if (fplog)
-        {
-            fprintf(fplog, "Found environment variable GMX_NO_SOLV_OPT.\n"
-                    "Disabling all solvent optimization\n");
-        }
-        fr->solvent_opt = esolNO;
-    }
-    if (bNoSolvOpt)
-    {
-        fr->solvent_opt = esolNO;
-    }
-    if (!fr->solvent_opt)
-    {
-        for (size_t mb = 0; mb < mtop->molblock.size(); mb++)
-        {
-            for (cg = 0; cg < cginfo_mb[mb].cg_mod; cg++)
-            {
-                SET_CGINFO_SOLOPT(cginfo_mb[mb].cginfo[cg], esolNO);
-            }
-        }
-    }
 
     return cginfo_mb;
 }
@@ -1110,17 +626,9 @@ static bondedtable_t *make_bonded_tables(FILE *fplog,
 }
 
 void forcerec_set_ranges(t_forcerec *fr,
-                         int ncg_home, int ncg_force,
                          int natoms_force,
                          int natoms_force_constr, int natoms_f_novirsum)
 {
-    fr->cg0 = 0;
-    fr->hcg = ncg_home;
-
-    /* fr->ncg_force is unused in the standard code,
-     * but it can be useful for modified code dealing with charge groups.
-     */
-    fr->ncg_force           = ncg_force;
     fr->natoms_force        = natoms_force;
     fr->natoms_force_constr = natoms_force_constr;
 
@@ -1468,15 +976,13 @@ void init_forcerec(FILE                             *fp,
                    const gmx_hw_info_t              &hardwareInfo,
                    const gmx_device_info_t          *deviceInfo,
                    const bool                        useGpuForBonded,
-                   gmx_bool                          bNoSolvOpt,
+                   const bool                        pmeOnlyRankUsesGpu,
                    real                              print_force,
                    gmx_wallcycle                    *wcycle)
 {
     real           rtab;
     char          *env;
     double         dbl;
-    const t_block *cgs;
-    gmx_bool       bGenericKernelOnly;
     gmx_bool       bFEP_NonBonded;
 
     /* By default we turn SIMD kernels on, but it might be turned off further down... */
@@ -1491,16 +997,8 @@ void init_forcerec(FILE                             *fp,
     if (EI_TPI(ir->eI))
     {
         /* Set to the size of the molecule to be inserted (the last one) */
-        /* Because of old style topologies, we have to use the last cg
-         * instead of the last molecule type.
-         */
-        cgs       = &mtop->moltype[mtop->molblock.back().type].cgs;
-        fr->n_tpi = cgs->index[cgs->nr] - cgs->index[cgs->nr-1];
         gmx::RangePartitioning molecules = gmx_mtop_molecules(*mtop);
-        if (fr->n_tpi != molecules.block(molecules.numBlocks() - 1).size())
-        {
-            gmx_fatal(FARGS, "The molecule to insert can not consist of multiple charge groups.\nMake it a single charge group.");
-        }
+        fr->n_tpi = molecules.block(molecules.numBlocks() - 1).size();
     }
     else
     {
@@ -1574,29 +1072,6 @@ void init_forcerec(FILE                             *fp,
                 "Disabling nonbonded calculations.");
     }
 
-    bGenericKernelOnly = FALSE;
-
-    /* We now check in the NS code whether a particular combination of interactions
-     * can be used with water optimization, and disable it if that is not the case.
-     */
-
-    if (getenv("GMX_NB_GENERIC") != nullptr)
-    {
-        if (fp != nullptr)
-        {
-            fprintf(fp,
-                    "Found environment variable GMX_NB_GENERIC.\n"
-                    "Disabling all interaction-specific nonbonded kernels, will only\n"
-                    "use the slow generic ones in src/gmxlib/nonbonded/nb_generic.c\n\n");
-        }
-        bGenericKernelOnly = TRUE;
-    }
-
-    if (bGenericKernelOnly)
-    {
-        bNoSolvOpt         = TRUE;
-    }
-
     if ( (getenv("GMX_DISABLE_SIMD_KERNELS") != nullptr) || (getenv("GMX_NOOPTIMIZEDKERNELS") != nullptr) )
     {
         fr->use_simd_kernels = FALSE;
@@ -1613,7 +1088,6 @@ void init_forcerec(FILE                             *fp,
 
     /* Neighbour searching stuff */
     fr->cutoff_scheme = ir->cutoff_scheme;
-    fr->bGrid         = (ir->ns_type == ensGRID);
     fr->ePBC          = ir->ePBC;
 
     /* Determine if we will do PBC for distances in bonded interactions */
@@ -1623,6 +1097,8 @@ void init_forcerec(FILE                             *fp,
     }
     else
     {
+        const bool useEwaldSurfaceCorrection =
+            (EEL_PME_EWALD(ir->coulombtype) && ir->epsilon_surface != 0);
         if (!DOMAINDECOMP(cr))
         {
             gmx_bool bSHAKE;
@@ -1648,9 +1124,10 @@ void init_forcerec(FILE                             *fp,
             else
             {
                 /* Not making molecules whole is faster in most cases,
-                 * but With orientation restraints we need whole molecules.
+                 * but with orientation restraints or non-tinfoil boundary
+                 * conditions we need whole molecules.
                  */
-                fr->bMolPBC = (fcd->orires.nr == 0);
+                fr->bMolPBC = (fcd->orires.nr == 0 && !useEwaldSurfaceCorrection);
 
                 if (getenv("GMX_USE_GRAPH") != nullptr)
                 {
@@ -1677,6 +1154,21 @@ void init_forcerec(FILE                             *fp,
         else
         {
             fr->bMolPBC = dd_bonded_molpbc(cr->dd, fr->ePBC);
+
+            if (useEwaldSurfaceCorrection && !dd_moleculesAreAlwaysWhole(*cr->dd))
+            {
+                gmx_fatal(FARGS,
+                          "You requested dipole correction (epsilon_surface > 0), but molecules are broken "
+                          "over periodic boundary conditions by the domain decomposition. "
+                          "Run without domain decomposition instead.");
+            }
+        }
+
+        if (useEwaldSurfaceCorrection)
+        {
+            GMX_RELEASE_ASSERT((!DOMAINDECOMP(cr) && !fr->bMolPBC) ||
+                               (DOMAINDECOMP(cr) && dd_moleculesAreAlwaysWhole(*cr->dd)),
+                               "Molecules can not be broken by PBC with epsilon_surface > 0");
         }
     }
 
@@ -1709,12 +1201,8 @@ void init_forcerec(FILE                             *fp,
             break;
 
         case eelRF:
-            fr->nbkernel_elec_interaction = GMX_NBKERNEL_ELEC_REACTIONFIELD;
-            break;
-
         case eelRF_ZERO:
             fr->nbkernel_elec_interaction = GMX_NBKERNEL_ELEC_REACTIONFIELD;
-            GMX_RELEASE_ASSERT(ic->coulomb_modifier == eintmodEXACTCUTOFF, "With the group scheme RF-zero needs the exact cut-off modifier");
             break;
 
         case eelSWITCH:
@@ -1804,10 +1292,7 @@ void init_forcerec(FILE                             *fp,
         snew(fr->shift_vec, SHIFTS);
     }
 
-    if (fr->fshift == nullptr)
-    {
-        snew(fr->fshift, SHIFTS);
-    }
+    fr->shiftForces.resize(SHIFTS);
 
     if (fr->nbfp == nullptr)
     {
@@ -1936,9 +1421,7 @@ void init_forcerec(FILE                             *fp,
     }
 
     /* Set all the static charge group info */
-    fr->cginfo_mb = init_cginfo_mb(fp, mtop, fr, bNoSolvOpt,
-                                   &bFEP_NonBonded,
-                                   &fr->bExcl_IntraCGAll_InterCGNone);
+    fr->cginfo_mb = init_cginfo_mb(mtop, fr, &bFEP_NonBonded);
     if (!DOMAINDECOMP(cr))
     {
         fr->cginfo = cginfo_expand(mtop->molblock.size(), fr->cginfo_mb);
@@ -1946,7 +1429,7 @@ void init_forcerec(FILE                             *fp,
 
     if (!DOMAINDECOMP(cr))
     {
-        forcerec_set_ranges(fr, ncg_mtop(mtop), ncg_mtop(mtop),
+        forcerec_set_ranges(fr,
                             mtop->natoms, mtop->natoms, mtop->natoms);
     }
 
@@ -1979,8 +1462,8 @@ void init_forcerec(FILE                             *fp,
         if (useGpuForBonded)
         {
             auto stream = DOMAINDECOMP(cr) ?
-                Nbnxm::gpu_get_command_stream(fr->nbv->gpu_nbv, Nbnxm::InteractionLocality::NonLocal) :
-                Nbnxm::gpu_get_command_stream(fr->nbv->gpu_nbv, Nbnxm::InteractionLocality::Local);
+                Nbnxm::gpu_get_command_stream(fr->nbv->gpu_nbv, gmx::InteractionLocality::NonLocal) :
+                Nbnxm::gpu_get_command_stream(fr->nbv->gpu_nbv, gmx::InteractionLocality::Local);
             // TODO the heap allocation is only needed while
             // t_forcerec lacks a constructor.
             fr->gpuBonded = new gmx::GpuBonded(mtop->ffparams,
@@ -2007,7 +1490,19 @@ void init_forcerec(FILE                             *fp,
          */
         fprintf(fp, "\n");
     }
+
+    if (pmeOnlyRankUsesGpu && c_enableGpuPmePpComms)
+    {
+        void *coordinatesOnDeviceEvent = fr->nbv->get_x_on_device_event();
+        fr->pmePpCommGpu = std::make_unique<gmx::PmePpCommGpu>(cr->mpi_comm_mysim,
+                                                               cr->dd->pme_nodeid,
+                                                               coordinatesOnDeviceEvent);
+    }
 }
+
+t_forcerec::t_forcerec() = default;
+
+t_forcerec::~t_forcerec() = default;
 
 /* Frees GPU memory and sets a tMPI node barrier.
  *
@@ -2065,7 +1560,6 @@ void done_forcerec(t_forcerec *fr, int numMolBlocks)
     sfree(fr->nbfp);
     delete fr->ic;
     sfree(fr->shift_vec);
-    sfree(fr->fshift);
     sfree(fr->ewc_t);
     tear_down_bonded_threading(fr->bondedThreading);
     GMX_RELEASE_ASSERT(fr->gpuBonded == nullptr, "Should have been deleted earlier, when used");

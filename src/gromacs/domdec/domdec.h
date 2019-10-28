@@ -85,11 +85,9 @@ class t_state;
 
 namespace gmx
 {
+class ForceWithShiftForces;
 class MDLogger;
-class LocalAtomSetManager;
 class RangePartitioning;
-struct DomdecOptions;
-struct MdrunOptions;
 } // namespace
 
 /*! \brief Returns the global topology atom number belonging to local atom index i.
@@ -99,9 +97,6 @@ struct MdrunOptions;
  * When dd=NULL returns i+1.
  */
 int ddglatnr(const gmx_domdec_t *dd, int i);
-
-/*! \brief Return a block struct for the charge groups of the whole system */
-t_block *dd_charge_groups_global(struct gmx_domdec_t *dd);
 
 /*! \brief Returns a list of update group partitioning for each molecule type or empty when update groups are not used */
 gmx::ArrayRef<const gmx::RangePartitioning> getUpdateGroupingPerMoleculetype(const gmx_domdec_t &dd);
@@ -115,9 +110,8 @@ void dd_store_state(struct gmx_domdec_t *dd, t_state *state);
 /*! \brief Returns a pointer to the gmx_domdec_zones_t struct */
 struct gmx_domdec_zones_t *domdec_zones(struct gmx_domdec_t *dd);
 
-/*! \brief Sets the j-charge-group range for i-charge-group \p icg */
-void dd_get_ns_ranges(const gmx_domdec_t *dd, int icg,
-                      int *jcg0, int *jcg1, ivec shift0, ivec shift1);
+/*! \brief Returns the range for atoms in zones*/
+int dd_numAtomsZones(const gmx_domdec_t &dd);
 
 /*! \brief Returns the number of home atoms */
 int dd_numHomeAtoms(const gmx_domdec_t &dd);
@@ -151,17 +145,15 @@ int dd_pme_maxshift_x(const gmx_domdec_t *dd);
 /*! \brief Returns the maximum shift for coordinate communication in PME, dim y */
 int dd_pme_maxshift_y(const gmx_domdec_t *dd);
 
-/*! \brief Initialized the domain decomposition, chooses the DD grid and PME ranks, return the DD struct */
-gmx_domdec_t *
-init_domain_decomposition(const gmx::MDLogger            &mdlog,
-                          t_commrec                      *cr,
-                          const gmx::DomdecOptions       &options,
-                          const gmx::MdrunOptions        &mdrunOptions,
-                          const gmx_mtop_t               *mtop,
-                          const t_inputrec               *ir,
-                          const matrix                    box,
-                          gmx::ArrayRef<const gmx::RVec>  xGlobal,
-                          gmx::LocalAtomSetManager       *atomSets);
+/*! \brief Return whether constraints, not including settles, cross domain boundaries */
+bool ddHaveSplitConstraints(const gmx_domdec_t &dd);
+
+/*! \brief Return whether the DD has a single dimension with a single pulse
+ *
+ * The GPU halo exchange code requires a 1D single-pulse DD, and its
+ * setup code can use the returned value to understand what it should
+ * do. */
+bool is1DAnd1PulseDD(const gmx_domdec_t &dd);
 
 /*! \brief Initialize data structures for bonded interactions */
 void dd_init_bondeds(FILE              *fplog,
@@ -172,6 +164,9 @@ void dd_init_bondeds(FILE              *fplog,
                      gmx_bool           bBCheck,
                      cginfo_mb_t       *cginfo_mb);
 
+/*! \brief Returns whether molecules are always whole, i.e. not broken by PBC */
+bool dd_moleculesAreAlwaysWhole(const gmx_domdec_t &dd);
+
 /*! \brief Returns if we need to do pbc for calculating bonded interactions */
 gmx_bool dd_bonded_molpbc(const gmx_domdec_t *dd, int ePBC);
 
@@ -181,12 +176,14 @@ gmx_bool dd_bonded_molpbc(const gmx_domdec_t *dd, int ePBC);
  * then FALSE will be returned and the cut-off is not modified.
  *
  * \param[in] cr               Communication recrod
- * \param[in] state            State, used for computing the dimensions of the system
+ * \param[in] box              Box matrix, used for computing the dimensions of the system
+ * \param[in] x                Position vector, used for computing the dimensions of the system
  * \param[in] cutoffRequested  The requested atom to atom cut-off distance, usually the pair-list cutoff distance
  */
-gmx_bool change_dd_cutoff(t_commrec     *cr,
-                          const t_state &state,
-                          real           cutoffRequested);
+gmx_bool change_dd_cutoff(t_commrec                     *cr,
+                          const matrix                   box,
+                          gmx::ArrayRef<const gmx::RVec> x,
+                          real                           cutoffRequested);
 
 /*! \brief Set up communication for averaging GPU wait times over domains
  *
@@ -195,7 +192,7 @@ gmx_bool change_dd_cutoff(t_commrec     *cr,
  * GPU finish. Therefore there wait times need to be averaged over the ranks
  * sharing the same GPU. This function sets up the communication for that.
  */
-void dd_setup_dlb_resource_sharing(t_commrec           *cr,
+void dd_setup_dlb_resource_sharing(const t_commrec     *cr,
                                    int                  gpu_id);
 
 /*! \brief Cycle counter indices used internally in the domain decomposition */
@@ -208,7 +205,7 @@ void dd_cycles_add(const gmx_domdec_t *dd, float cycles, int ddCycl);
 
 /*! \brief Communicate the coordinates to the neighboring cells and do pbc. */
 void dd_move_x(struct gmx_domdec_t      *dd,
-               matrix                    box,
+               const matrix              box,
                gmx::ArrayRef<gmx::RVec>  x,
                gmx_wallcycle            *wcycle);
 
@@ -217,10 +214,9 @@ void dd_move_x(struct gmx_domdec_t      *dd,
  * When fshift!=NULL the shift forces are updated to obtain
  * the correct virial from the single sum including f.
  */
-void dd_move_f(struct gmx_domdec_t      *dd,
-               gmx::ArrayRef<gmx::RVec>  f,
-               rvec                     *fshift,
-               gmx_wallcycle            *wcycle);
+void dd_move_f(struct gmx_domdec_t       *dd,
+               gmx::ForceWithShiftForces *forceWithShiftForces,
+               gmx_wallcycle             *wcycle);
 
 /*! \brief Communicate a real for each atom to the neighboring cells. */
 void dd_atom_spread_real(struct gmx_domdec_t *dd, real v[]);
@@ -240,7 +236,7 @@ void dd_move_f_vsites(struct gmx_domdec_t *dd, rvec *f, rvec *fshift);
 void dd_clear_f_vsites(struct gmx_domdec_t *dd, rvec *f);
 
 /*! \brief Move x0 and also x1 if x1!=NULL. bX1IsCoord tells if to do PBC on x1 */
-void dd_move_x_constraints(struct gmx_domdec_t *dd, matrix box,
+void dd_move_x_constraints(struct gmx_domdec_t *dd, const matrix box,
                            rvec *x0, rvec *x1, gmx_bool bX1IsCoord);
 
 /*! \brief Communicates the coordinates involved in virtual sites */
@@ -302,9 +298,12 @@ void dd_init_local_top(const gmx_mtop_t &top_global,
 void dd_init_local_state(struct gmx_domdec_t *dd,
                          const t_state *state_global, t_state *local_state);
 
-/*! \brief Generate a list of links between charge groups that are linked by bonded interactions */
-t_blocka *make_charge_group_links(const gmx_mtop_t *mtop, gmx_domdec_t *dd,
-                                  cginfo_mb_t *cginfo_mb);
+/*! \brief Generate a list of links between atoms that are linked by bonded interactions
+ *
+ * Also stores whether atoms are linked in \p cginfo_mb.
+ */
+t_blocka *makeBondedLinks(const gmx_mtop_t *mtop,
+                          cginfo_mb_t      *cginfo_mb);
 
 /*! \brief Calculate the maximum distance involved in 2-body and multi-body bonded interactions */
 void dd_bonded_cg_distance(const gmx::MDLogger &mdlog,
@@ -313,26 +312,5 @@ void dd_bonded_cg_distance(const gmx::MDLogger &mdlog,
                            const rvec *x, const matrix box,
                            gmx_bool bBCheck,
                            real *r_2b, real *r_mb);
-
-
-/* In domdec_setup.c */
-
-/*! \brief Returns the volume fraction of the system that is communicated */
-real comm_box_frac(const ivec dd_nc, real cutoff, const gmx_ddbox_t *ddbox);
-
-/*! \brief Determines the optimal DD cell setup dd->nc and possibly npmenodes
- * for the system.
- *
- * On the master node returns the actual cellsize limit used.
- */
-real dd_choose_grid(const gmx::MDLogger &mdlog,
-                    t_commrec *cr, gmx_domdec_t *dd,
-                    const t_inputrec *ir,
-                    const gmx_mtop_t *mtop,
-                    const matrix box, const gmx_ddbox_t *ddbox,
-                    int nPmeRanks,
-                    gmx_bool bDynLoadBal, real dlb_scale,
-                    real cellsize_limit, real cutoff_dd,
-                    gmx_bool bInterCGBondeds);
 
 #endif

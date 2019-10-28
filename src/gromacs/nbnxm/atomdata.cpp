@@ -53,8 +53,6 @@
 #include "gromacs/mdtypes/forcerec.h" // only for GET_CGINFO_*
 #include "gromacs/mdtypes/mdatom.h"
 #include "gromacs/nbnxm/nbnxm.h"
-#include "gromacs/nbnxm/nbnxm_geometry.h"
-#include "gromacs/nbnxm/pairlist.h"
 #include "gromacs/pbcutil/ishift.h"
 #include "gromacs/simd/simd.h"
 #include "gromacs/utility/exceptions.h"
@@ -67,6 +65,8 @@
 
 #include "grid.h"
 #include "gridset.h"
+#include "nbnxm_geometry.h"
+#include "pairlist.h"
 
 using namespace gmx; // TODO: Remove when this file is moved into gmx namespace
 
@@ -998,116 +998,117 @@ void nbnxn_atomdata_copy_shiftvec(gmx_bool          bDynamicBox,
     }
 }
 
-/* Copies (and reorders) the coordinates to nbnxn_atomdata_t */
-template <bool useGpu>
-void nbnxn_atomdata_copy_x_to_nbat_x(const Nbnxm::GridSet     &gridSet,
-                                     const Nbnxm::AtomLocality locality,
-                                     gmx_bool                  FillLocal,
-                                     const rvec               *x,
-                                     nbnxn_atomdata_t         *nbat,
-                                     gmx_nbnxn_gpu_t          *gpu_nbv,
-                                     void                     *xPmeDevicePtr)
+// This is slightly different from nbnxn_get_atom_range(...) at the end of the file
+// TODO: Combine if possible
+static void getAtomRanges(const Nbnxm::GridSet      &gridSet,
+                          const gmx::AtomLocality    locality,
+                          int                       *gridBegin,
+                          int                       *gridEnd)
 {
-    int gridBegin = 0;
-    int gridEnd   = 0;
-
     switch (locality)
     {
-        case Nbnxm::AtomLocality::All:
-            gridBegin = 0;
-            gridEnd   = gridSet.grids().size();
+        case gmx::AtomLocality::All:
+            *gridBegin = 0;
+            *gridEnd   = gridSet.grids().size();
             break;
-        case Nbnxm::AtomLocality::Local:
-            gridBegin = 0;
-            gridEnd   = 1;
+        case gmx::AtomLocality::Local:
+            *gridBegin = 0;
+            *gridEnd   = 1;
             break;
-        case Nbnxm::AtomLocality::NonLocal:
-            gridBegin = 1;
-            gridEnd   = gridSet.grids().size();
+        case gmx::AtomLocality::NonLocal:
+            *gridBegin = 1;
+            *gridEnd   = gridSet.grids().size();
             break;
-        case Nbnxm::AtomLocality::Count:
+        case gmx::AtomLocality::Count:
             GMX_ASSERT(false, "Count is invalid locality specifier");
             break;
     }
+}
 
-    if (FillLocal)
+/* Copies (and reorders) the coordinates to nbnxn_atomdata_t */
+void nbnxn_atomdata_copy_x_to_nbat_x(const Nbnxm::GridSet     &gridSet,
+                                     const gmx::AtomLocality   locality,
+                                     bool                      fillLocal,
+                                     const rvec               *coordinates,
+                                     nbnxn_atomdata_t         *nbat)
+{
+
+    int gridBegin = 0;
+    int gridEnd   = 0;
+    getAtomRanges(gridSet, locality, &gridBegin, &gridEnd);
+
+    if (fillLocal)
     {
         nbat->natoms_local = gridSet.grids()[0].atomIndexEnd();
     }
 
-    if (useGpu)
-    {
-        for (int g = gridBegin; g < gridEnd; g++)
-        {
-            nbnxn_gpu_x_to_nbat_x(gridSet.grids()[g],
-                                  FillLocal && g == 0,
-                                  gpu_nbv,
-                                  xPmeDevicePtr,
-                                  locality,
-                                  x, g, gridSet.numColumnsMax());
-        }
-    }
-    else
-    {
-        const int nth = gmx_omp_nthreads_get(emntPairsearch);
+    const int nth = gmx_omp_nthreads_get(emntPairsearch);
 #pragma omp parallel for num_threads(nth) schedule(static)
-        for (int th = 0; th < nth; th++)
+    for (int th = 0; th < nth; th++)
+    {
+        try
         {
-            try
+            for (int g = gridBegin; g < gridEnd; g++)
             {
-                for (int g = gridBegin; g < gridEnd; g++)
+                const Nbnxm::Grid  &grid       = gridSet.grids()[g];
+                const int           numCellsXY = grid.numColumns();
+
+                const int           cxy0 = (numCellsXY* th      + nth - 1)/nth;
+                const int           cxy1 = (numCellsXY*(th + 1) + nth - 1)/nth;
+
+                for (int cxy = cxy0; cxy < cxy1; cxy++)
                 {
-                    const Nbnxm::Grid  &grid       = gridSet.grids()[g];
-                    const int           numCellsXY = grid.numColumns();
+                    const int na  = grid.numAtomsInColumn(cxy);
+                    const int ash = grid.firstAtomInColumn(cxy);
 
-                    const int           cxy0 = (numCellsXY* th      + nth - 1)/nth;
-                    const int           cxy1 = (numCellsXY*(th + 1) + nth - 1)/nth;
-
-                    for (int cxy = cxy0; cxy < cxy1; cxy++)
+                    int       na_fill;
+                    if (g == 0 && fillLocal)
                     {
-                        const int na  = grid.numAtomsInColumn(cxy);
-                        const int ash = grid.firstAtomInColumn(cxy);
-
-                        int       na_fill;
-                        if (g == 0 && FillLocal)
-                        {
-                            na_fill = grid.paddedNumAtomsInColumn(cxy);
-                        }
-                        else
-                        {
-                            /* We fill only the real particle locations.
-                             * We assume the filling entries at the end have been
-                             * properly set before during pair-list generation.
-                             */
-                            na_fill = na;
-                        }
-                        copy_rvec_to_nbat_real(gridSet.atomIndices().data() + ash,
-                                               na, na_fill, x,
-                                               nbat->XFormat, nbat->x().data(), ash);
+                        na_fill = grid.paddedNumAtomsInColumn(cxy);
                     }
+                    else
+                    {
+                        /* We fill only the real particle locations.
+                         * We assume the filling entries at the end have been
+                         * properly set before during pair-list generation.
+                         */
+                        na_fill = na;
+                    }
+                    copy_rvec_to_nbat_real(gridSet.atomIndices().data() + ash,
+                                           na, na_fill, coordinates,
+                                           nbat->XFormat, nbat->x().data(), ash);
                 }
             }
-            GMX_CATCH_ALL_AND_EXIT_WITH_FATAL_ERROR;
         }
+        GMX_CATCH_ALL_AND_EXIT_WITH_FATAL_ERROR;
     }
 }
 
-template
-void nbnxn_atomdata_copy_x_to_nbat_x<true>(const Nbnxm::GridSet &,
-                                           const Nbnxm::AtomLocality,
-                                           gmx_bool,
-                                           const rvec*,
-                                           nbnxn_atomdata_t *,
-                                           gmx_nbnxn_gpu_t*,
-                                           void *);
-template
-void nbnxn_atomdata_copy_x_to_nbat_x<false>(const Nbnxm::GridSet &,
-                                            const Nbnxm::AtomLocality,
-                                            gmx_bool,
-                                            const rvec*,
-                                            nbnxn_atomdata_t *,
-                                            gmx_nbnxn_gpu_t*,
-                                            void *);
+/* Copies (and reorders) the coordinates to nbnxn_atomdata_t on the GPU*/
+void nbnxn_atomdata_x_to_nbat_x_gpu(const Nbnxm::GridSet       &gridSet,
+                                    const gmx::AtomLocality     locality,
+                                    bool                        fillLocal,
+                                    gmx_nbnxn_gpu_t            *gpu_nbv,
+                                    DeviceBuffer<float>         d_x,
+                                    GpuEventSynchronizer       *xReadyOnDevice)
+{
+
+    int gridBegin = 0;
+    int gridEnd   = 0;
+    getAtomRanges(gridSet, locality, &gridBegin, &gridEnd);
+
+    for (int g = gridBegin; g < gridEnd; g++)
+    {
+        nbnxn_gpu_x_to_nbat_x(gridSet.grids()[g],
+                              fillLocal && g == 0,
+                              gpu_nbv,
+                              d_x,
+                              xReadyOnDevice,
+                              locality,
+                              g,
+                              gridSet.numColumnsMax());
+    }
+}
 
 static void
 nbnxn_atomdata_clear_reals(gmx::ArrayRef<real> dest,
@@ -1408,7 +1409,7 @@ static void nbnxn_atomdata_add_nbat_f_to_f_stdreduce(nbnxn_atomdata_t *nbat,
                 int i1 = (b+1)*NBNXN_BUFFERFLAG_SIZE*nbat->fstride;
 
                 nfptr = 0;
-                for (int out = 1; out < gmx::ssize(nbat->out); out++)
+                for (gmx::index out = 1; out < gmx::ssize(nbat->out); out++)
                 {
                     if (bitmask_is_set(flags->flag[b], out))
                     {
@@ -1440,13 +1441,10 @@ static void nbnxn_atomdata_add_nbat_f_to_f_stdreduce(nbnxn_atomdata_t *nbat,
 
 
 /* Add the force array(s) from nbnxn_atomdata_t to f */
-template <bool  useGpu>
-void reduceForces(nbnxn_atomdata_t                   *nbat,
-                  const Nbnxm::AtomLocality           locality,
-                  const Nbnxm::GridSet               &gridSet,
-                  rvec                               *f,
-                  gmx_nbnxn_gpu_t                    *gpu_nbv,
-                  GpuBufferOpsAccumulateForce         accumulateForce)
+void reduceForces(nbnxn_atomdata_t                *nbat,
+                  const gmx::AtomLocality          locality,
+                  const Nbnxm::GridSet            &gridSet,
+                  rvec                            *f)
 {
     int a0 = 0;
     int na = 0;
@@ -1459,72 +1457,77 @@ void reduceForces(nbnxn_atomdata_t                   *nbat,
         return;
     }
 
-    if (useGpu)
-    {
-        Nbnxm::nbnxn_gpu_add_nbat_f_to_f(locality,
-                                         gpu_nbv,
-                                         a0, na,
-                                         accumulateForce);
+    int nth = gmx_omp_nthreads_get(emntNonbonded);
 
+    if (nbat->out.size() > 1)
+    {
+        if (locality != gmx::AtomLocality::All)
+        {
+            gmx_incons("add_f_to_f called with nout>1 and locality!=eatAll");
+        }
+
+        /* Reduce the force thread output buffers into buffer 0, before adding
+         * them to the, differently ordered, "real" force buffer.
+         */
+        if (nbat->bUseTreeReduce)
+        {
+            nbnxn_atomdata_add_nbat_f_to_f_treereduce(nbat, nth);
+        }
+        else
+        {
+            nbnxn_atomdata_add_nbat_f_to_f_stdreduce(nbat, nth);
+        }
     }
-    else
-    {
-        int nth = gmx_omp_nthreads_get(emntNonbonded);
-
-        if (nbat->out.size() > 1)
-        {
-            if (locality != Nbnxm::AtomLocality::All)
-            {
-                gmx_incons("add_f_to_f called with nout>1 and locality!=eatAll");
-            }
-
-            /* Reduce the force thread output buffers into buffer 0, before adding
-             * them to the, differently ordered, "real" force buffer.
-             */
-            if (nbat->bUseTreeReduce)
-            {
-                nbnxn_atomdata_add_nbat_f_to_f_treereduce(nbat, nth);
-            }
-            else
-            {
-                nbnxn_atomdata_add_nbat_f_to_f_stdreduce(nbat, nth);
-            }
-        }
 #pragma omp parallel for num_threads(nth) schedule(static)
-        for (int th = 0; th < nth; th++)
+    for (int th = 0; th < nth; th++)
+    {
+        try
         {
-            try
-            {
-                nbnxn_atomdata_add_nbat_f_to_f_part(gridSet, *nbat,
-                                                    nbat->out[0],
-                                                    a0 + ((th + 0)*na)/nth,
-                                                    a0 + ((th + 1)*na)/nth,
-                                                    f);
-            }
-            GMX_CATCH_ALL_AND_EXIT_WITH_FATAL_ERROR;
+            nbnxn_atomdata_add_nbat_f_to_f_part(gridSet, *nbat,
+                                                nbat->out[0],
+                                                a0 + ((th + 0)*na)/nth,
+                                                a0 + ((th + 1)*na)/nth,
+                                                f);
         }
+        GMX_CATCH_ALL_AND_EXIT_WITH_FATAL_ERROR;
     }
 }
-template
-void reduceForces<true>(nbnxn_atomdata_t             *nbat,
-                        const Nbnxm::AtomLocality     locality,
-                        const Nbnxm::GridSet         &gridSet,
-                        rvec                         *f,
-                        gmx_nbnxn_gpu_t              *gpu_nbv,
-                        GpuBufferOpsAccumulateForce   accumulateForce);
 
-template
-void reduceForces<false>(nbnxn_atomdata_t             *nbat,
-                         const Nbnxm::AtomLocality     locality,
-                         const Nbnxm::GridSet         &gridSet,
-                         rvec                         *f,
-                         gmx_nbnxn_gpu_t              *gpu_nbv,
-                         GpuBufferOpsAccumulateForce   accumulateForce);
-
-void nbnxn_atomdata_add_nbat_fshift_to_fshift(const nbnxn_atomdata_t *nbat,
-                                              rvec                   *fshift)
+/* Add the force array(s) from nbnxn_atomdata_t to f */
+void reduceForcesGpu(const gmx::AtomLocality                     locality,
+                     DeviceBuffer<float>                         totalForcesDevice,
+                     const Nbnxm::GridSet                       &gridSet,
+                     void                                       *pmeForcesDevice,
+                     gmx::ArrayRef<GpuEventSynchronizer* const>  dependencyList,
+                     gmx_nbnxn_gpu_t                            *gpu_nbv,
+                     bool                                        useGpuFPmeReduction,
+                     bool                                        accumulateForce)
 {
-    gmx::ArrayRef<const nbnxn_atomdata_output_t> outputBuffers = nbat->out;
+    int atomsStart = 0;
+    int numAtoms   = 0;
+
+    nbnxn_get_atom_range(locality, gridSet, &atomsStart, &numAtoms);
+
+    if (numAtoms == 0)
+    {
+        /* The are no atoms for this reduction, avoid some overhead */
+        return;
+    }
+
+    Nbnxm::nbnxn_gpu_add_nbat_f_to_f(locality,
+                                     totalForcesDevice,
+                                     gpu_nbv,
+                                     pmeForcesDevice,
+                                     dependencyList,
+                                     atomsStart, numAtoms,
+                                     useGpuFPmeReduction,
+                                     accumulateForce);
+}
+
+void nbnxn_atomdata_add_nbat_fshift_to_fshift(const nbnxn_atomdata_t   &nbat,
+                                              gmx::ArrayRef<gmx::RVec>  fshift)
+{
+    gmx::ArrayRef<const nbnxn_atomdata_output_t> outputBuffers = nbat.out;
 
     for (int s = 0; s < SHIFTS; s++)
     {
@@ -1536,11 +1539,11 @@ void nbnxn_atomdata_add_nbat_fshift_to_fshift(const nbnxn_atomdata_t *nbat,
             sum[YY] += out.fshift[s*DIM+YY];
             sum[ZZ] += out.fshift[s*DIM+ZZ];
         }
-        rvec_inc(fshift[s], sum);
+        fshift[s] += sum;
     }
 }
 
-void nbnxn_get_atom_range(const Nbnxm::AtomLocality        atomLocality,
+void nbnxn_get_atom_range(const gmx::AtomLocality          atomLocality,
                           const Nbnxm::GridSet            &gridSet,
                           int                             *atomStart,
                           int                             *nAtoms)
@@ -1548,19 +1551,19 @@ void nbnxn_get_atom_range(const Nbnxm::AtomLocality        atomLocality,
 
     switch (atomLocality)
     {
-        case Nbnxm::AtomLocality::All:
+        case gmx::AtomLocality::All:
             *atomStart = 0;
             *nAtoms    = gridSet.numRealAtomsTotal();
             break;
-        case Nbnxm::AtomLocality::Local:
+        case gmx::AtomLocality::Local:
             *atomStart = 0;
             *nAtoms    = gridSet.numRealAtomsLocal();
             break;
-        case Nbnxm::AtomLocality::NonLocal:
+        case gmx::AtomLocality::NonLocal:
             *atomStart = gridSet.numRealAtomsLocal();
             *nAtoms    = gridSet.numRealAtomsTotal() - gridSet.numRealAtomsLocal();
             break;
-        case Nbnxm::AtomLocality::Count:
+        case gmx::AtomLocality::Count:
             GMX_ASSERT(false, "Count is invalid locality specifier");
             break;
     }

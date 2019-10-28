@@ -58,10 +58,9 @@
 
 #include "gromacs/gpu_utils/hostallocator.h"
 #include "gromacs/math/vectypes.h"
-#include "gromacs/simd/simd.h"
 #include "gromacs/utility/alignedallocator.h"
 #include "gromacs/utility/arrayref.h"
-
+#include "gromacs/utility/range.h"
 
 struct gmx_domdec_zones_t;
 struct nbnxn_atomdata_t;
@@ -153,62 +152,7 @@ struct BoundingBox1D
     float upper; //!< upper bound
 };
 
-/*! \brief The number of bounds along one dimension of a bounding box */
-static constexpr int c_numBoundingBoxBounds1D = 2;
-
 } // namespace Nbnxm
-
-#ifndef DOXYGEN
-
-/* Bounding box calculations are (currently) always in single precision, so
- * we only need to check for single precision support here.
- * This uses less (cache-)memory and SIMD is faster, at least on x86.
- */
-#if GMX_SIMD4_HAVE_FLOAT
-#    define NBNXN_SEARCH_BB_SIMD4      1
-#else
-#    define NBNXN_SEARCH_BB_SIMD4      0
-#endif
-
-
-#if NBNXN_SEARCH_BB_SIMD4
-/* Always use 4-wide SIMD for bounding box calculations */
-
-#    if !GMX_DOUBLE
-/* Single precision BBs + coordinates, we can also load coordinates with SIMD */
-#        define NBNXN_SEARCH_SIMD4_FLOAT_X_BB  1
-#    else
-#        define NBNXN_SEARCH_SIMD4_FLOAT_X_BB  0
-#    endif
-
-/* Store bounding boxes corners as quadruplets: xxxxyyyyzzzz
- *
- * The packed bounding box coordinate stride is always set to 4.
- * With AVX we could use 8, but that turns out not to be faster.
- */
-#    define NBNXN_BBXXXX  1
-
-//! The number of bounding boxes in a pack, also the size of a pack along one dimension
-static constexpr int c_packedBoundingBoxesDimSize = GMX_SIMD4_WIDTH;
-
-//! Total number of corners (floats) in a pack of bounding boxes
-static constexpr int c_packedBoundingBoxesSize    =
-    c_packedBoundingBoxesDimSize*DIM*Nbnxm::c_numBoundingBoxBounds1D;
-
-//! Returns the starting index of the bouding box pack that contains the given cluster
-static constexpr inline int packedBoundingBoxesIndex(int clusterIndex)
-{
-    return (clusterIndex/c_packedBoundingBoxesDimSize)*c_packedBoundingBoxesSize;
-}
-
-#else  /* NBNXN_SEARCH_BB_SIMD4 */
-
-#    define NBNXN_SEARCH_SIMD4_FLOAT_X_BB  0
-#    define NBNXN_BBXXXX                   0
-
-#endif /* NBNXN_SEARCH_BB_SIMD4 */
-
-#endif // !DOXYGEN
 
 namespace Nbnxm
 {
@@ -386,14 +330,14 @@ class Grid
         //! Returns whether any atom in the cluster is perturbed
         bool clusterIsPerturbed(int clusterIndex) const
         {
-            return fep_[clusterIndex] != 0u;
+            return fep_[clusterIndex] != 0U;
         }
 
         //! Returns whether the given atom in the cluster is perturbed
         bool atomIsPerturbed(int clusterIndex,
                              int atomIndexInCluster) const
         {
-            return (fep_[clusterIndex] & (1 << atomIndexInCluster)) != 0u;
+            return (fep_[clusterIndex] & (1 << atomIndexInCluster)) != 0U;
         }
 
         //! Returns the free-energy perturbation bits for the cluster
@@ -460,8 +404,8 @@ class Grid
         //! Sets the grid dimensions
         void setDimensions(int                   ddZone,
                            int                   numAtoms,
-                           const rvec            lowerCorner,
-                           const rvec            upperCorner,
+                           gmx::RVec             lowerCorner,
+                           gmx::RVec             upperCorner,
                            real                  atomDensity,
                            real                  maxAtomGroupRadius,
                            bool                  haveFep,
@@ -472,8 +416,7 @@ class Grid
                             int                             cellOffset,
                             GridSetData                    *gridSetData,
                             gmx::ArrayRef<GridWork>         gridWork,
-                            int                             atomStart,
-                            int                             atomEnd,
+                            gmx::Range<int>                 atomRange,
                             const int                      *atinfo,
                             gmx::ArrayRef<const gmx::RVec>  x,
                             int                             numAtomsMoved,
@@ -482,8 +425,7 @@ class Grid
         //! Determine in which grid columns atoms should go, store cells and atom counts in \p cell and \p cxy_na
         static void calcColumnIndices(const Grid::Dimensions         &gridDims,
                                       const gmx::UpdateGroupsCog     *updateGroupsCog,
-                                      int                             atomStart,
-                                      int                             atomEnd,
+                                      gmx::Range<int>                 atomRange,
                                       gmx::ArrayRef<const gmx::RVec>  x,
                                       int                             dd_zone,
                                       const int                      *move,
@@ -505,25 +447,23 @@ class Grid
                       gmx::ArrayRef<const gmx::RVec>  x,
                       BoundingBox gmx_unused         *bb_work_aligned);
 
-        //! Spatially sort the atoms within one grid column
-        void sortColumnsCpuGeometry(GridSetData *gridSetData,
-                                    int dd_zone,
-                                    int atomStart, int atomEnd,
-                                    const int *atinfo,
+        //! Spatially sort the atoms within the given column range, for CPU geometry
+        void sortColumnsCpuGeometry(GridSetData                   *gridSetData,
+                                    int                            dd_zone,
+                                    const int                     *atinfo,
                                     gmx::ArrayRef<const gmx::RVec> x,
-                                    nbnxn_atomdata_t *nbat,
-                                    int cxy_start, int cxy_end,
-                                    gmx::ArrayRef<int> sort_work);
+                                    nbnxn_atomdata_t              *nbat,
+                                    gmx::Range<int>                columnRange,
+                                    gmx::ArrayRef<int>             sort_work);
 
-        //! Spatially sort the atoms within one grid column
-        void sortColumnsGpuGeometry(GridSetData *gridSetData,
-                                    int dd_zone,
-                                    int atomStart, int atomEnd,
-                                    const int *atinfo,
+        //! Spatially sort the atoms within the given column range, for GPU geometry
+        void sortColumnsGpuGeometry(GridSetData                   *gridSetData,
+                                    int                            dd_zone,
+                                    const int                     *atinfo,
                                     gmx::ArrayRef<const gmx::RVec> x,
-                                    nbnxn_atomdata_t *nbat,
-                                    int cxy_start, int cxy_end,
-                                    gmx::ArrayRef<int> sort_work);
+                                    nbnxn_atomdata_t              *nbat,
+                                    gmx::Range<int>                columnRange,
+                                    gmx::ArrayRef<int>             sort_work);
 
         /* Data members */
         //! The geometry of the grid clusters and cells

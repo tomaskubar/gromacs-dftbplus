@@ -40,6 +40,7 @@
 
 #include "gromacs/gpu_utils/hostallocator.h"
 #include "gromacs/math/vectypes.h"
+#include "gromacs/mdtypes/locality.h"
 #include "gromacs/mdtypes/nblist.h"
 #include "gromacs/utility/basedefinitions.h"
 #include "gromacs/utility/defaultinitializationallocator.h"
@@ -48,9 +49,7 @@
 
 // This file with constants is separate from this file to be able
 // to include it during OpenCL jitting without including config.h
-#include "gromacs/nbnxm/constants.h"
-
-#include "locality.h"
+#include "constants.h"
 #include "pairlistparams.h"
 
 struct NbnxnPairlistCpuWork;

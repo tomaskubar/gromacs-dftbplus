@@ -3,7 +3,7 @@
  *
  * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
  * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2016,2017,2018, by the GROMACS development team, led by
+ * Copyright (c) 2013,2014,2015,2016,2017,2018,2019, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -89,7 +89,7 @@ static void find_nearest_neighbours(int ePBC,
     real     cost, cost2, *sgmol, *skmol, rmean, rmean2, r2, box2, *r_nn[4];
     t_pbc    pbc;
     int      sl_index;
-    int     *sl_count;
+    real    *sl_count;
     real     onethird = 1.0/3.0;
     /*  dmat = init_mat(maxidx, FALSE); */
     box2 = box[XX][XX] * box[XX][XX];
@@ -194,7 +194,7 @@ static void find_nearest_neighbours(int ePBC,
                 sgmol[i] += cost2;
 
                 /* determine distribution */
-                ibin = static_cast<int>(nsgbin * cost2);
+                ibin = static_cast<int>(static_cast<real>(nsgbin) * cost2);
                 if (ibin < nsgbin)
                 {
                     sgbin[ibin]++;
@@ -222,14 +222,14 @@ static void find_nearest_neighbours(int ePBC,
         *skmean += skmol[i];
 
         /* Compute sliced stuff */
-        sl_index           = static_cast<int>(std::round((1+x[i][slice_dim]/box[slice_dim][slice_dim])*nslice)) % nslice;
+        sl_index           = static_cast<int>(std::round((1+x[i][slice_dim]/box[slice_dim][slice_dim])*static_cast<real>(nslice))) % nslice;
         sgslice[sl_index] += sgmol[i];
         skslice[sl_index] += skmol[i];
         sl_count[sl_index]++;
     } /* loop over entries in index file */
 
-    *sgmean /= maxidx;
-    *skmean /= maxidx;
+    *sgmean /= static_cast<real>(maxidx);
+    *skmean /= static_cast<real>(maxidx);
 
     for (i = 0; (i < nslice); i++)
     {
@@ -338,9 +338,9 @@ static void calc_tetra_order_parm(const char *fnNDX, const char *fnTPS,
     for (i = 0; (i < nslice); i++)
     {
         fprintf(fpsg, "%10g  %10g\n", (i+0.5)*box[slice_dim][slice_dim]/nslice,
-                sg_slice_tot[i]/nframes);
+                sg_slice_tot[i]/static_cast<real>(nframes));
         fprintf(fpsk, "%10g  %10g\n", (i+0.5)*box[slice_dim][slice_dim]/nslice,
-                sk_slice_tot[i]/nframes);
+                sk_slice_tot[i]/static_cast<real>(nframes));
     }
     xvgrclose(fpsg);
     xvgrclose(fpsk);
@@ -381,9 +381,8 @@ static void calc_order(const char *fn, const int *index, int *a, rvec **order,
 {
     /* if permolecule = TRUE, order parameters will be calculed per molecule
      * and stored in slOrder with #slices = # molecules */
-    rvec *x0,                                    /* coordinates with pbc                           */
-    *x1,                                         /* coordinates without pbc                        */
-          dist;                                  /* vector between two atoms                       */
+    rvec        *x0,                             /* coordinates with pbc                           */
+    *x1;                                         /* coordinates without pbc                        */
     matrix       box;                            /* box (3x3)                                      */
     t_trxstatus *status;
     rvec         cossum,                         /* sum of vector angles for three axes            */
@@ -398,12 +397,12 @@ static void calc_order(const char *fn, const int *index, int *a, rvec **order,
         nr_tails,                                /* nr tails, to check if index file is correct    */
         size = 0,                                /* nr. of atoms in group. same as nr_tails        */
         i, j, m, k, teller = 0,
-        slice,                                   /* current slice number                           */
-        nr_frames = 0;
+        slice;                                   /* current slice number                           */
+    real         nr_frames = 0;
     int         *slCount;                        /* nr. of atoms in one slice                      */
     real         sdbangle               = 0;     /* sum of these angles                            */
     gmx_bool     use_unitvector         = FALSE; /* use a specified unit vector instead of axis to specify unit normal*/
-    rvec         direction, com, dref, dvec;
+    rvec         direction, com;
     int          comsize, distsize;
     int         *comidx  = nullptr, *distidx = nullptr;
     char        *grpname = nullptr;
@@ -474,7 +473,7 @@ static void calc_order(const char *fn, const int *index, int *a, rvec **order,
 
     if (bSliced)
     {
-        *slWidth = box[axis][axis]/nslices;
+        *slWidth = box[axis][axis]/static_cast<real>(nslices);
         fprintf(stderr, "Box divided in %d slices. Initial width of slice: %f\n",
                 nslices, *slWidth);
     }
@@ -495,7 +494,7 @@ static void calc_order(const char *fn, const int *index, int *a, rvec **order,
     {
         if (bSliced)
         {
-            *slWidth = box[axis][axis]/nslices;
+            *slWidth = box[axis][axis]/static_cast<real>(nslices);
         }
         teller++;
 
@@ -521,18 +520,19 @@ static void calc_order(const char *fn, const int *index, int *a, rvec **order,
             }
             svmul(1.0/comsize, com, com);
         }
+        rvec displacementFromReference;
         if (distcalc)
         {
-            dref[XX] = 0.0; dref[YY] = 0.0; dref[ZZ] = 0.0;
+            rvec dref = { 0.0, 0.0, 0.0 };
             for (j = 0; j < distsize; j++)
             {
-                rvec_inc(dist, x1[distidx[j]]);
+                rvec_inc(dref, x1[distidx[j]]);
             }
             svmul(1.0/distsize, dref, dref);
             if (radial)
             {
-                pbc_dx(&pbc, dref, com, dvec);
-                unitv(dvec, dvec);
+                pbc_dx(&pbc, dref, com, displacementFromReference);
+                unitv(displacementFromReference, displacementFromReference);
             }
         }
 
@@ -562,6 +562,7 @@ static void calc_order(const char *fn, const int *index, int *a, rvec **order,
 
                 if (bUnsat)
                 {
+                    rvec dist;
                     /* Using convention for unsaturated carbons */
                     /* first get Sz, the vector from Cn to Cn+1 */
                     rvec_sub(x1[a[index[i+1]+j]], x1[a[index[i]+j]], dist);
@@ -583,6 +584,7 @@ static void calc_order(const char *fn, const int *index, int *a, rvec **order,
                 }
                 else
                 {
+                    rvec dist;
                     /* get vector dist(Cn-1,Cn+1) for tail atoms */
                     rvec_sub(x1[a[index[i+1]+j]], x1[a[index[i-1]+j]], dist);
                     length = norm(dist); /* determine distance between two atoms */
@@ -637,10 +639,10 @@ static void calc_order(const char *fn, const int *index, int *a, rvec **order,
                     z1    = x1[a[index[i-1]+j]][axis];
                     z2    = x1[a[index[i+1]+j]][axis];
                     z_ave = 0.5 * (z1 + z2);
-                    slice = static_cast<int>((nslices*z_ave)/box[axis][axis]);
+                    slice = static_cast<int>((static_cast<real>(nslices)*z_ave)/box[axis][axis]);
                     while (slice < 0)
                     {
-                        slice += nslices;
+                        slice += static_cast<real>(nslices);
                     }
                     slice =  slice % nslices;
 
@@ -660,7 +662,7 @@ static void calc_order(const char *fn, const int *index, int *a, rvec **order,
                     if (radial)
                     {
                         /* bin order parameter by arc distance from reference group*/
-                        arcdist            = gmx_angle(dvec, direction);
+                        arcdist            = gmx_angle(displacementFromReference, direction);
                         (*distvals)[j][i] += arcdist;
                     }
                     else if (i == 1)
@@ -669,10 +671,11 @@ static void calc_order(const char *fn, const int *index, int *a, rvec **order,
                         tmpdist = trace(box);  /* should be max value */
                         for (k = 0; k < distsize; k++)
                         {
-                            pbc_dx(&pbc, x1[distidx[k]], x1[a[index[i]+j]], dvec);
-                            /* at the moment, just remove dvec[axis] */
-                            dvec[axis] = 0;
-                            tmpdist    = std::min(tmpdist, norm2(dvec));
+                            rvec displacement;
+                            pbc_dx(&pbc, x1[distidx[k]], x1[a[index[i]+j]], displacement);
+                            /* at the moment, just remove displacement[axis] */
+                            displacement[axis] = 0;
+                            tmpdist            = std::min(tmpdist, norm2(displacement));
                         }
                         //fprintf(stderr, "Min dist %f; trace %f\n", tmpdist, trace(box));
                         (*distvals)[j][i] += std::sqrt(tmpdist);
@@ -682,7 +685,7 @@ static void calc_order(const char *fn, const int *index, int *a, rvec **order,
 
             for (m = 0; m < DIM; m++)
             {
-                (*order)[i][m] += (frameorder[m]/size);
+                (*order)[i][m] += (frameorder[m]/static_cast<real>(size));
             }
 
             if (!permolecule)
@@ -691,7 +694,7 @@ static void calc_order(const char *fn, const int *index, int *a, rvec **order,
                 {
                     if (slCount[k]) /* if no elements, nothing has to be added */
                     {
-                        (*slOrder)[k][i] += slFrameorder[k]/slCount[k];
+                        (*slOrder)[k][i] += slFrameorder[k]/static_cast<real>(slCount[k]);
                         slFrameorder[k]   = 0; slCount[k] = 0;
                     }
                 }
@@ -731,7 +734,7 @@ static void calc_order(const char *fn, const int *index, int *a, rvec **order,
     if (bUnsat)
     {
         fprintf(stderr, "Average angle between double bond and normal: %f\n",
-                180*sdbangle/(nr_frames * size*M_PI));
+                180*sdbangle/(nr_frames * static_cast<real>(size)*M_PI));
     }
 
     sfree(x0); /* free memory used by coordinate arrays */
@@ -808,7 +811,7 @@ static void order_plot(rvec order[], real *slOrder[], const char *afile, const c
             {
                 S += slOrder[slice][atom];
             }
-            fprintf(slOrd, "%12g     %12g\n", slice*slWidth, S/atom);
+            fprintf(slOrd, "%12g     %12g\n", static_cast<real>(slice)*slWidth, S/static_cast<real>(atom));
         }
 
     }

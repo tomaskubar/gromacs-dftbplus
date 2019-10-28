@@ -1,7 +1,7 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2018, by the GROMACS development team, led by
+ * Copyright (c) 2018,2019, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -45,13 +45,10 @@
  *  \inlibraryapi
  */
 
+#include "gromacs/gpu_utils/devicebuffer_datatype.h"
 #include "gromacs/gpu_utils/gpu_utils.h" //only for GpuApiCallBehavior
 #include "gromacs/gpu_utils/gputraits.cuh"
 #include "gromacs/utility/gmxassert.h"
-
-//! \brief A device-side buffer of ValueTypes
-template<typename ValueType>
-using DeviceBuffer = ValueType *;
 
 /*! \brief
  * Allocates a device-side buffer.
@@ -60,12 +57,12 @@ using DeviceBuffer = ValueType *;
  * \tparam        ValueType            Raw value type of the \p buffer.
  * \param[in,out] buffer               Pointer to the device-side buffer.
  * \param[in]     numValues            Number of values to accomodate.
- * \param[in]     context              The buffer's dummy context - not managed explicitly in CUDA RT.
+ * \param[in]     deviceContext        The buffer's dummy device  context - not managed explicitly in CUDA RT.
  */
 template <typename ValueType>
 void allocateDeviceBuffer(DeviceBuffer<ValueType> *buffer,
                           size_t                   numValues,
-                          Context                  /* context */)
+                          DeviceContext            /* deviceContext */)
 {
     GMX_ASSERT(buffer, "needs a buffer pointer");
     cudaError_t stat = cudaMalloc((void **)buffer, numValues * sizeof(ValueType));

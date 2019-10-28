@@ -77,6 +77,7 @@ using MdpFieldValues = std::map<std::string, std::string>;
  *     - argon12
  *     - argon5832
  *     - tip3p5
+ *     - spc2
  *     - spc216
  *     - alanine_vsite_vacuo
  *     - alanine_vsite_solvated
@@ -102,6 +103,13 @@ using MdpFieldValues = std::map<std::string, std::string>;
  *
  * \throws  std::bad_alloc     if out of memory
  *          std::out_of_range  if \c simulationName is not in the database */
+MdpFieldValues
+prepareMdpFieldValues(const std::string &simulationName,
+                      const std::string &integrator,
+                      const std::string &tcoupl,
+                      const std::string &pcoupl);
+
+//! \copydoc prepareMdpFieldValues()
 MdpFieldValues
 prepareMdpFieldValues(const char *simulationName,
                       const char *integrator,

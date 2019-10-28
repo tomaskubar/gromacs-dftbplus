@@ -122,7 +122,7 @@ class Constraints::Impl
                    rvec                 *x,
                    rvec                 *xprime,
                    rvec                 *min_proj,
-                   matrix                box,
+                   const matrix          box,
                    real                  lambda,
                    real                 *dvdlambda,
                    rvec                 *v,
@@ -136,8 +136,6 @@ class Constraints::Impl
         std::vector<t_blocka> at2con_mt;
         //! A list of atoms to settles for each moleculetype
         std::vector < std::vector < int>> at2settle_mt;
-        //! Whether any SETTLES cross charge-group boundaries.
-        bool                  bInterCGsettles = false;
         //! LINCS data.
         Lincs                *lincsd = nullptr; // TODO this should become a unique_ptr
         //! SHAKE data.
@@ -238,7 +236,7 @@ void too_many_constraint_warnings(int eConstrAlg, int warncount)
 static void write_constr_pdb(const char *fn, const char *title,
                              const gmx_mtop_t &mtop,
                              int start, int homenr, const t_commrec *cr,
-                             const rvec x[], matrix box)
+                             const rvec x[], const matrix box)
 {
     char          fname[STRLEN];
     FILE         *out;
@@ -295,7 +293,7 @@ static void write_constr_pdb(const char *fn, const char *title,
 //! Writes out domain contents to help diagnose crashes.
 static void dump_confs(FILE *log, int64_t step, const gmx_mtop_t &mtop,
                        int start, int homenr, const t_commrec *cr,
-                       const rvec x[], rvec xprime[], matrix box)
+                       const rvec x[], rvec xprime[], const matrix box)
 {
     char  buf[STRLEN], buf2[22];
 
@@ -327,7 +325,7 @@ Constraints::apply(bool                  bLog,
                    rvec                 *x,
                    rvec                 *xprime,
                    rvec                 *min_proj,
-                   matrix                box,
+                   const matrix          box,
                    real                  lambda,
                    real                 *dvdlambda,
                    rvec                 *v,
@@ -359,7 +357,7 @@ Constraints::Impl::apply(bool                  bLog,
                          rvec                 *x,
                          rvec                 *xprime,
                          rvec                 *min_proj,
-                         matrix                box,
+                         const matrix          box,
                          real                  lambda,
                          real                 *dvdlambda,
                          rvec                 *v,
@@ -374,7 +372,7 @@ Constraints::Impl::apply(bool                  bLog,
     int         nsettle;
     t_pbc       pbc, *pbc_null;
     char        buf[22];
-    int         nth, th;
+    int         nth;
 
     wallcycle_start(wcycle, ewcCONSTR);
 
@@ -426,7 +424,7 @@ Constraints::Impl::apply(bool                  bLog,
         nth = 1;
     }
 
-    /* We do not need full pbc when constraints do not cross charge groups,
+    /* We do not need full pbc when constraints do not cross update groups
      * i.e. when dd->constraint_comm==NULL.
      * Note that PBC for constraints is different from PBC for bondeds.
      * For constraints there is both forward and backward communication.
@@ -511,7 +509,7 @@ Constraints::Impl::apply(bool                  bLog,
         {
             case ConstraintVariable::Positions:
 #pragma omp parallel for num_threads(nth) schedule(static)
-                for (th = 0; th < nth; th++)
+                for (int th = 0; th < nth; th++)
                 {
                     try
                     {
@@ -546,7 +544,7 @@ Constraints::Impl::apply(bool                  bLog,
             case ConstraintVariable::Force:
             case ConstraintVariable::ForceDispl:
 #pragma omp parallel for num_threads(nth) schedule(static)
-                for (th = 0; th < nth; th++)
+                for (int th = 0; th < nth; th++)
                 {
                     try
                     {
@@ -745,6 +743,11 @@ real Constraints::rmsd() const
     {
         return 0;
     }
+}
+
+int Constraints::numConstraintsTotal()
+{
+    return impl_->ncon_tot;
 }
 
 FlexibleConstraintTreatment flexibleConstraintTreatment(bool haveDynamicsIntegrator)
@@ -1069,15 +1072,15 @@ Constraints::Impl::Impl(const gmx_mtop_t     &mtop_p,
         {
             lincsd = init_lincs(log, mtop,
                                 nflexcon, at2con_mt,
-                                DOMAINDECOMP(cr) && cr->dd->splitConstraints,
+                                DOMAINDECOMP(cr) && ddHaveSplitConstraints(*cr->dd),
                                 ir.nLincsIter, ir.nProjOrder);
         }
 
         if (ir.eConstrAlg == econtSHAKE)
         {
-            if (DOMAINDECOMP(cr) && cr->dd->splitConstraints)
+            if (DOMAINDECOMP(cr) && ddHaveSplitConstraints(*cr->dd))
             {
-                gmx_fatal(FARGS, "SHAKE is not supported with domain decomposition and constraint that cross charge group boundaries, use LINCS");
+                gmx_fatal(FARGS, "SHAKE is not supported with domain decomposition and constraint that cross domain boundaries, use LINCS");
             }
             if (nflexcon)
             {
@@ -1096,8 +1099,6 @@ Constraints::Impl::Impl(const gmx_mtop_t     &mtop_p,
     if (numSettles > 0)
     {
         please_cite(log, "Miyamoto92a");
-
-        bInterCGsettles = inter_charge_group_settles(mtop);
 
         settled         = settle_init(mtop);
 
@@ -1170,7 +1171,7 @@ void Constraints::saveEdsamPointer(gmx_edsam * ed)
     impl_->ed = ed;
 }
 
-const ArrayRef<const t_blocka>
+ArrayRef<const t_blocka>
 Constraints::atom2constraints_moltype() const
 {
     return impl_->at2con_mt;
@@ -1181,99 +1182,13 @@ ArrayRef < const std::vector < int>> Constraints::atom2settle_moltype() const
     return impl_->at2settle_mt;
 }
 
-
-bool inter_charge_group_constraints(const gmx_mtop_t &mtop)
-{
-    const gmx_moltype_t *molt;
-    const t_block       *cgs;
-    int                 *at2cg, cg, a, ftype, i;
-    bool                 bInterCG;
-
-    bInterCG = FALSE;
-    for (size_t mb = 0; mb < mtop.molblock.size() && !bInterCG; mb++)
-    {
-        molt = &mtop.moltype[mtop.molblock[mb].type];
-
-        if (molt->ilist[F_CONSTR].size()   > 0 ||
-            molt->ilist[F_CONSTRNC].size() > 0 ||
-            molt->ilist[F_SETTLE].size()   > 0)
-        {
-            cgs  = &molt->cgs;
-            snew(at2cg, molt->atoms.nr);
-            for (cg = 0; cg < cgs->nr; cg++)
-            {
-                for (a = cgs->index[cg]; a < cgs->index[cg+1]; a++)
-                {
-                    at2cg[a] = cg;
-                }
-            }
-
-            for (ftype = F_CONSTR; ftype <= F_CONSTRNC; ftype++)
-            {
-                const InteractionList &il = molt->ilist[ftype];
-                for (i = 0; i < il.size() && !bInterCG; i += 1+NRAL(ftype))
-                {
-                    if (at2cg[il.iatoms[i + 1]] != at2cg[il.iatoms[i + 2]])
-                    {
-                        bInterCG = TRUE;
-                    }
-                }
-            }
-
-            sfree(at2cg);
-        }
-    }
-
-    return bInterCG;
-}
-
-bool inter_charge_group_settles(const gmx_mtop_t &mtop)
-{
-    const gmx_moltype_t *molt;
-    const t_block       *cgs;
-    int                 *at2cg, cg, a, ftype, i;
-    bool                 bInterCG;
-
-    bInterCG = FALSE;
-    for (size_t mb = 0; mb < mtop.molblock.size() && !bInterCG; mb++)
-    {
-        molt = &mtop.moltype[mtop.molblock[mb].type];
-
-        if (molt->ilist[F_SETTLE].size() > 0)
-        {
-            cgs  = &molt->cgs;
-            snew(at2cg, molt->atoms.nr);
-            for (cg = 0; cg < cgs->nr; cg++)
-            {
-                for (a = cgs->index[cg]; a < cgs->index[cg+1]; a++)
-                {
-                    at2cg[a] = cg;
-                }
-            }
-
-            for (ftype = F_SETTLE; ftype <= F_SETTLE; ftype++)
-            {
-                const InteractionList &il = molt->ilist[ftype];
-                for (i = 0; i < il.size() && !bInterCG; i += 1+NRAL(F_SETTLE))
-                {
-                    if (at2cg[il.iatoms[i + 1]] != at2cg[il.iatoms[i + 2]] ||
-                        at2cg[il.iatoms[i + 1]] != at2cg[il.iatoms[i + 3]])
-                    {
-                        bInterCG = TRUE;
-                    }
-                }
-            }
-
-            sfree(at2cg);
-        }
-    }
-
-    return bInterCG;
-}
-
 void do_constrain_first(FILE *fplog, gmx::Constraints *constr,
                         const t_inputrec *ir, const t_mdatoms *md,
-                        t_state *state)
+                        int natoms,
+                        ArrayRefWithPadding<RVec> x,
+                        ArrayRefWithPadding<RVec> v,
+                        const matrix box,
+                        real lambda)
 {
     int             i, m, start, end;
     int64_t         step;
@@ -1281,10 +1196,13 @@ void do_constrain_first(FILE *fplog, gmx::Constraints *constr,
     real            dvdl_dum;
     rvec           *savex;
 
+    auto            xRvec = as_rvec_array(x.paddedArrayRef().data());
+    auto            vRvec = as_rvec_array(v.paddedArrayRef().data());
+
     /* We need to allocate one element extra, since we might use
      * (unaligned) 4-wide SIMD loads to access rvec entries.
      */
-    snew(savex, state->natoms + 1);
+    snew(savex, natoms + 1);
 
     start = 0;
     end   = md->homenr;
@@ -1307,9 +1225,9 @@ void do_constrain_first(FILE *fplog, gmx::Constraints *constr,
     /* constrain the current position */
     constr->apply(TRUE, FALSE,
                   step, 0, 1.0,
-                  state->x.rvec_array(), state->x.rvec_array(), nullptr,
-                  state->box,
-                  state->lambda[efptBONDED], &dvdl_dum,
+                  xRvec, xRvec, nullptr,
+                  box,
+                  lambda, &dvdl_dum,
                   nullptr, nullptr, gmx::ConstraintVariable::Positions);
     if (EI_VV(ir->eI))
     {
@@ -1317,24 +1235,24 @@ void do_constrain_first(FILE *fplog, gmx::Constraints *constr,
         /* also may be useful if we need the ekin from the halfstep for velocity verlet */
         constr->apply(TRUE, FALSE,
                       step, 0, 1.0,
-                      state->x.rvec_array(), state->v.rvec_array(), state->v.rvec_array(),
-                      state->box,
-                      state->lambda[efptBONDED], &dvdl_dum,
+                      xRvec, vRvec, vRvec,
+                      box,
+                      lambda, &dvdl_dum,
                       nullptr, nullptr, gmx::ConstraintVariable::Velocities);
     }
     /* constrain the inital velocities at t-dt/2 */
     if (EI_STATE_VELOCITY(ir->eI) && ir->eI != eiVV)
     {
-        auto x = makeArrayRef(state->x).subArray(start, end);
-        auto v = makeArrayRef(state->v).subArray(start, end);
+        auto subX = x.paddedArrayRef().subArray(start, end);
+        auto subV = v.paddedArrayRef().subArray(start, end);
         for (i = start; (i < end); i++)
         {
             for (m = 0; (m < DIM); m++)
             {
                 /* Reverse the velocity */
-                v[i][m] = -v[i][m];
+                subV[i][m] = -subV[i][m];
                 /* Store the position at t-dt in buf */
-                savex[i][m] = x[i][m] + dt*v[i][m];
+                savex[i][m] = subX[i][m] + dt*subV[i][m];
             }
         }
         /* Shake the positions at t=-dt with the positions at t=0
@@ -1349,17 +1267,17 @@ void do_constrain_first(FILE *fplog, gmx::Constraints *constr,
         dvdl_dum = 0;
         constr->apply(TRUE, FALSE,
                       step, -1, 1.0,
-                      state->x.rvec_array(), savex, nullptr,
-                      state->box,
-                      state->lambda[efptBONDED], &dvdl_dum,
-                      state->v.rvec_array(), nullptr, gmx::ConstraintVariable::Positions);
+                      xRvec, savex, nullptr,
+                      box,
+                      lambda, &dvdl_dum,
+                      vRvec, nullptr, gmx::ConstraintVariable::Positions);
 
         for (i = start; i < end; i++)
         {
             for (m = 0; m < DIM; m++)
             {
                 /* Re-reverse the velocities */
-                v[i][m] = -v[i][m];
+                subV[i][m] = -subV[i][m];
             }
         }
     }

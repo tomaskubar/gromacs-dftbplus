@@ -50,9 +50,8 @@
 #include <array>
 
 #include "gromacs/math/functions.h"
+#include "gromacs/math/multidimarray.h"
 #include "gromacs/math/utilities.h"
-
-#include "multidimarray.h"
 
 namespace gmx
 {
@@ -233,7 +232,7 @@ IVec rangeBeginWithinLattice(const IVec &index, const IVec &range)
  */
 IVec rangeEndWithinLattice(const IVec &index, const dynamicExtents3D &extents, const IVec &range)
 {
-    IVec extentAsIvec(static_cast<int>(extents.extent(XX)), static_cast<int>(extents.extent(YY)), static_cast<int>(extents.extent(ZZ)));
+    IVec extentAsIvec(static_cast<int>(extents.extent(ZZ)), static_cast<int>(extents.extent(YY)), static_cast<int>(extents.extent(XX)));
     return elementWiseMin(extentAsIvec, index + range);
 }
 
@@ -248,7 +247,7 @@ mdspan<const float, dynamic_extent, dynamic_extent>
 OuterProductEvaluator::operator()(ArrayRef<const float> x, ArrayRef<const float> y)
 {
     data_.resize(ssize(x), ssize(y));
-    for (int xIndex = 0; xIndex < ssize(x); ++xIndex)
+    for (gmx::index xIndex = 0; xIndex < ssize(x); ++xIndex)
     {
         const auto xValue = x[xIndex];
         std::transform(std::begin(y), std::end(y), begin(data_.asView()[xIndex]),
@@ -275,7 +274,9 @@ IntegerBox spreadRangeWithinLattice(const IVec &center, dynamicExtents3D extent,
 {
     const IVec begin = rangeBeginWithinLattice(center, range);
     const IVec end   = rangeEndWithinLattice(center, extent, range);
-    return {begin, end};
+    return {
+               begin, end
+    };
 }
 /********************************************************************
  * GaussianSpreadKernel
@@ -395,7 +396,12 @@ void GaussTransform3D::setZero()
     std::fill(begin(impl_->data_), end(impl_->data_), 0.);
 }
 
-const basic_mdspan<const float, dynamicExtents3D> GaussTransform3D::view()
+basic_mdspan<float, dynamicExtents3D> GaussTransform3D::view()
+{
+    return impl_->data_.asView();
+}
+
+basic_mdspan<const float, dynamicExtents3D> GaussTransform3D::constView() const
 {
     return impl_->data_.asConstView();
 }

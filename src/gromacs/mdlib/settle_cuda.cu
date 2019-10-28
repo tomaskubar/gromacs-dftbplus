@@ -40,9 +40,8 @@
  * using CUDA, including class initialization, data-structures management
  * and GPU kernel.
  *
- * \note Management of CUDA stream and periodic boundary exists here as a temporary
- *       scaffolding to allow this class to be used as a stand-alone unit. The scaffolding
- *       is intended to be removed once constraints are fully integrated with update module.
+ * \note Management of CUDA stream and periodic boundary should be unified with LINCS
+ *       and removed from here once constraints are fully integrated with update module.
  * \todo Reconsider naming to use "gpu" suffix instead of "cuda".
  *
  * \author Artem Zhmurov <zhmurov@gmail.com>
@@ -432,7 +431,7 @@ void SettleCuda::apply(const float3 *d_x,
     {
         // Fill with zeros so the values can be reduced to it
         // Only 6 values are needed because virial is symmetrical
-        clearDeviceBufferAsync(&d_virialScaled_, 0, 6, stream_);
+        clearDeviceBufferAsync(&d_virialScaled_, 0, 6, commandStream_);
     }
 
     auto               kernelPtr = getSettleKernelPtr(updateVelocities, computeVirial);
@@ -453,24 +452,18 @@ void SettleCuda::apply(const float3 *d_x,
     {
         config.sharedMemorySize = 0;
     }
-    config.stream           = stream_;
-
-    const int3    *gm_atomIds                  = d_atomIds_;
-    const float3  *gm_x                        = d_x;
-    float3        *gm_xp                       = d_xp;
-    float3        *gm_v                        = d_v;
-    float         *gm_virialScaled             = d_virialScaled_;
+    config.stream           = commandStream_;
 
     const auto     kernelArgs = prepareGpuKernelArguments(kernelPtr, config,
                                                           &numSettles_,
-                                                          &gm_atomIds,
+                                                          &d_atomIds_,
                                                           &settleParameters_,
-                                                          &gm_x,
-                                                          &gm_xp,
+                                                          &d_x,
+                                                          &d_xp,
                                                           &pbcAiuc_,
                                                           &invdt,
-                                                          &gm_v,
-                                                          &gm_virialScaled);
+                                                          &d_v,
+                                                          &d_virialScaled_);
 
     launchGpuKernel(kernelPtr, config, nullptr,
                     "settle_kernel<updateVelocities, computeVirial>", kernelArgs);
@@ -479,7 +472,7 @@ void SettleCuda::apply(const float3 *d_x,
     {
         copyFromDeviceBuffer(h_virialScaled_.data(), &d_virialScaled_,
                              0, 6,
-                             stream_, GpuApiCallBehavior::Sync, nullptr);
+                             commandStream_, GpuApiCallBehavior::Sync, nullptr);
 
         // Mapping [XX, XY, XZ, YY, YZ, ZZ] internal format to a tensor object
         virialScaled[XX][XX] += h_virialScaled_[0];
@@ -498,7 +491,9 @@ void SettleCuda::apply(const float3 *d_x,
     return;
 }
 
-SettleCuda::SettleCuda(const gmx_mtop_t &mtop)
+SettleCuda::SettleCuda(const gmx_mtop_t &mtop,
+                       CommandStream     commandStream) :
+    commandStream_(commandStream)
 {
     static_assert(sizeof(real) == sizeof(float),
                   "Real numbers should be in single precision in GPU code.");
@@ -594,26 +589,6 @@ SettleCuda::SettleCuda(const gmx_mtop_t &mtop)
     allocateDeviceBuffer(&d_virialScaled_, 6, nullptr);
     h_virialScaled_.resize(6);
 
-    // Use default stream
-    stream_ = nullptr;
-
-}
-
-SettleCuda::SettleCuda(const real mO,  const real mH,
-                       const real dOH, const real dHH)
-{
-    static_assert(sizeof(real) == sizeof(float), "Real numbers should be in single precision in GPU code.");
-    static_assert(c_threadsPerBlock > 0 && ((c_threadsPerBlock & (c_threadsPerBlock - 1)) == 0),
-                  "Number of threads per block should be a power of two in order for reduction to work.");
-
-    initSettleParameters(&settleParameters_, mO, mH, dOH, dHH);
-
-    allocateDeviceBuffer(&d_virialScaled_, 6, nullptr);
-    h_virialScaled_.resize(6);
-
-    // Use default stream
-    stream_ = nullptr;
-
 }
 
 SettleCuda::~SettleCuda()
@@ -650,7 +625,7 @@ void SettleCuda::set(const t_idef               &idef,
     }
     copyToDeviceBuffer(&d_atomIds_, h_atomIds_.data(),
                        0, numSettles_,
-                       stream_, GpuApiCallBehavior::Sync, nullptr);
+                       commandStream_, GpuApiCallBehavior::Sync, nullptr);
 
 }
 

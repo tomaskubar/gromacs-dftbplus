@@ -56,13 +56,14 @@
 #include "gromacs/mdrunutility/handlerestart.h"
 #include "gromacs/mdtypes/mdrunoptions.h"
 #include "gromacs/utility/basedefinitions.h"
+#include "gromacs/utility/gmxmpi.h"
 #include "gromacs/utility/real.h"
 
 #include "replicaexchange.h"
 
+struct gmx_multisim_t;
 struct gmx_output_env_t;
 struct ReplicaExchangeParameters;
-struct t_commrec;
 struct t_fileio;
 
 namespace gmx
@@ -166,10 +167,16 @@ class Mdrunner
          * rather than offering this public interface.
          */
         void addPotential(std::shared_ptr<IRestraintPotential> restraint,
-                          std::string                          name);
+                          const std::string                   &name);
 
-        //! Called when thread-MPI spawns threads.
-        t_commrec *spawnThreads(int numThreadsToLaunch) const;
+        /*! \brief Prepare the thread-MPI communicator to have \c
+         * numThreadsToLaunch ranks, by spawning new thread-MPI
+         * threads.
+         *
+         * Called by mdrunner() to start a specific number of threads
+         * (including the main thread) for thread-parallel runs. This
+         * in turn calls mdrunner() for each thread. */
+        void spawnThreads(int numThreadsToLaunch);
 
         /*! \brief Initializes a new Mdrunner from the master.
          *
@@ -238,6 +245,13 @@ class Mdrunner
          */
         const char                             *bonded_opt = nullptr;
 
+        /*! \brief Target update calculation for "cpu", "gpu", or "auto". Default is "auto".
+         *
+         * \internal
+         * \todo replace with string or enum class and initialize with sensible value.
+         */
+        const char                             *update_opt = nullptr;
+
         //! Command-line override for the duration of a neighbor list with the Verlet scheme.
         int                                     nstlist_cmdline = 0;
         //! Parameters for replica-exchange simulations.
@@ -250,8 +264,12 @@ class Mdrunner
         //! \brief Non-owning handle to file used for logging.
         t_fileio                               *logFileHandle = nullptr;
 
-        //! \brief Non-owning handle to communication data structure.
-        t_commrec                              *cr = nullptr;
+        /*! \brief Non-owning handle to communication data structure.
+         *
+         * With real MPI, gets a value from the SimulationContext
+         * supplied to the MdrunnerBuilder. With thread-MPI gets a
+         * value after threads have been spawned. */
+        MPI_Comm                                communicator = MPI_COMM_NULL;
 
         //! \brief Non-owning handle to multi-simulation handler.
         gmx_multisim_t                         *ms = nullptr;
@@ -333,18 +351,12 @@ class MdrunnerBuilder final
          * \brief Constructor requires a handle to a SimulationContext to share.
          *
          * \param mdModules  The handle to the set of modules active in mdrun
-         * \param context    The handle to run-time resources and execution environment details.
+         * \param context    Required handle to simulation context
          *
          * The calling code must guarantee that the
          * pointer remains valid for the lifetime of the builder, and that the
          * resources retrieved from the context remain valid for the lifetime of
          * the runner produced.
-         *
-         * \internal
-         * \todo Find and implement appropriate abstraction layers for SimulationContext.
-         * At some point this parameter should become a constant reference or value
-         * instead of a pointer.
-         * Ref e.g. https://redmine.gromacs.org/issues/2587
          */
         explicit MdrunnerBuilder(std::unique_ptr<MDModules>           mdModules,
                                  compat::not_null<SimulationContext*> context);
@@ -439,23 +451,26 @@ class MdrunnerBuilder final
          */
         MdrunnerBuilder &addBondedTaskAssignment(const char *bonded_opt);
 
-        /*!
-         * \brief Provide access to the multisim communicator to use.
+        /*! \brief
+         * Assign responsibility for tasks for update and constrain calculation.
          *
-         * \param multisim borrowed handle to multisim record.
+         * Required. Director code should provide valid options for
+         * update and constraint task assignment. The builder does not apply any
+         * defaults, so client code should be prepared to provide
+         * (e.g.) "auto" in the event no user input or logic provides
+         * an alternative argument.
          *
-         * Required. Client should get a `gmx_multisim_t*` value from init_multisystem().
-         * Client is responsible for calling done_multisim() on the handle after
-         * simulation.
+         * \param[in] update_opt Target update calculation for "cpu", "gpu", or "auto".
          *
-         * \internal Pointer is copied, but calling code retains ownership and
-         * responsibility for multisim. Mdrunner must not do anything that would
-         * invalidate the original copied-from pointer.
+         * Calling must guarantee that the pointed-to C strings are valid through
+         * simulation launch.
          *
-         * \todo Clarify semantics of specifying optional multisim work
-         * \todo Clarify ownership and management of multisim resources.
+         * \internal
+         * The arguments are passed as references to elements of arrays of C strings.
+         * \todo Replace with modern strings or (better) enum classes.
+         * \todo Make optional and/or encapsulate into task assignment module.
          */
-        MdrunnerBuilder &addMultiSim(gmx_multisim_t* multisim);
+        MdrunnerBuilder &addUpdateTaskAssignment(const char *update_opt);
 
         /*!
          * \brief Set MD options not owned by some other module.

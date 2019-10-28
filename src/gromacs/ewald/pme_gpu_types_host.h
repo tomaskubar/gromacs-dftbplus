@@ -55,6 +55,7 @@
 
 #include "gromacs/ewald/pme.h"
 #include "gromacs/ewald/pme_gpu_program.h"
+#include "gromacs/gpu_utils/clfftinitializer.h"
 #include "gromacs/gpu_utils/gpu_utils.h"      // for GpuApiCallBehavior
 #include "gromacs/gpu_utils/hostallocator.h"
 #include "gromacs/math/vectypes.h"
@@ -95,6 +96,13 @@ struct PmeGpuSettings
     bool performGPUFFT;
     /*! \brief A convenience boolean which tells if PME decomposition is used. */
     bool useDecomposition;
+    /*! \brief True if PME forces are reduced on-GPU, false if reduction is done on the CPU;
+     *  in the former case transfer does not need to happen.
+     *
+     *  Note that this flag may change per-step.
+     */
+    bool useGpuForceReduction;
+
     /*! \brief A boolean which tells if any PME GPU stage should copy all of its outputs to the host.
      * Only intended to be used by the test framework.
      */
@@ -111,11 +119,13 @@ struct PmeGpuSettings
 // possible. Use mdspan?
 struct PmeOutput
 {
-    gmx::ArrayRef<gmx::RVec> forces_;
-    real                     coulombEnergy_;
-    matrix                   coulombVirial_;
-    real                     lennardJonesEnergy_;
-    matrix                   lennardJonesVirial_;
+    gmx::ArrayRef<gmx::RVec> forces_;                     //!< Host staging area for PME forces
+    bool                     haveForceOutput_    = false; //!< True if forces have been staged other false (when forces are reduced on the GPU).
+    real                     coulombEnergy_      = 0;     //!< Host staging area for PME coulomb energy
+    matrix                   coulombVirial_      = {{0}}; //!< Host staging area for PME coulomb virial contributions
+    real                     lennardJonesEnergy_ = 0;     //!< Host staging area for PME LJ energy
+    matrix                   lennardJonesVirial_ = {{0}}; //!< Host staging area for PME LJ virial contributions
+
 };
 
 /*! \internal \brief
@@ -169,6 +179,8 @@ struct PmeShared
     std::vector<real>      bsp_mod[DIM];
     /*! \brief The PME codepath being taken */
     PmeRunMode             runMode;
+    /*! \brief  Whether PME execution is happening on a PME-only rank (from gmx_pme_t.bPPnode). */
+    bool                   isRankPmeOnly;
     /*! \brief The box scaler based on inputrec - created in pme_init and managed by CPU structure */
     class EwaldBoxZScaler *boxScaler;
     /*! \brief The previous computation box to know if we even need to update the current box params.
@@ -188,6 +200,9 @@ struct PmeGpu
 
     //! A handle to the program created by buildPmeGpuProgram()
     PmeGpuProgramHandle programHandle_;
+
+    //! Handle that ensures the clFFT library has been initialized once per process.
+    std::unique_ptr<gmx::ClfftInitializer> initializedClfftLibrary_;
 
     /*! \brief The settings. */
     PmeGpuSettings settings;

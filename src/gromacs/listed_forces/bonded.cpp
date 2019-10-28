@@ -54,12 +54,15 @@
 
 #include <algorithm>
 
-#include "gromacs/listed_forces/pairs.h"
+#include "gromacs/gmxlib/nrnb.h"
+#include "gromacs/listed_forces/disre.h"
+#include "gromacs/listed_forces/orires.h"
 #include "gromacs/math/functions.h"
 #include "gromacs/math/units.h"
 #include "gromacs/math/utilities.h"
 #include "gromacs/math/vec.h"
 #include "gromacs/mdtypes/fcdata.h"
+#include "gromacs/mdtypes/mdatom.h"
 #include "gromacs/pbcutil/ishift.h"
 #include "gromacs/pbcutil/mshift.h"
 #include "gromacs/pbcutil/pbc.h"
@@ -68,6 +71,7 @@
 #include "gromacs/simd/simd_math.h"
 #include "gromacs/simd/vector_operations.h"
 #include "gromacs/utility/basedefinitions.h"
+#include "gromacs/utility/enumerationhelpers.h"
 #include "gromacs/utility/fatalerror.h"
 #include "gromacs/utility/real.h"
 #include "gromacs/utility/smalloc.h"
@@ -76,6 +80,18 @@
 #include "restcbt.h"
 
 using namespace gmx; // TODO: Remove when this file is moved into gmx namespace
+
+namespace
+{
+
+//! Type of CPU function to compute a bonded interaction.
+using BondedFunction = real(*)(int nbonds, const t_iatom iatoms[],
+                               const t_iparams iparams[],
+                               const rvec x[], rvec4 f[], rvec fshift[],
+                               const t_pbc *pbc, const t_graph *g,
+                               real lambda, real *dvdlambda,
+                               const t_mdatoms *md, t_fcdata *fcd,
+                               int *ddgatindex);
 
 /*! \brief Mysterious CMAP coefficient matrix */
 const int cmap_coeff_matrix[] = {
@@ -101,7 +117,7 @@ const int cmap_coeff_matrix[] = {
 /*! \brief Compute dx = xi - xj, modulo PBC if non-NULL
  *
  * \todo This kind of code appears in many places. Consolidate it */
-static int pbc_rvec_sub(const t_pbc *pbc, const rvec xi, const rvec xj, rvec dx)
+int pbc_rvec_sub(const t_pbc *pbc, const rvec xi, const rvec xj, rvec dx)
 {
     if (pbc)
     {
@@ -111,6 +127,97 @@ static int pbc_rvec_sub(const t_pbc *pbc, const rvec xi, const rvec xj, rvec dx)
     {
         rvec_sub(xi, xj, dx);
         return CENTRAL;
+    }
+}
+
+} // namespace
+
+//! \cond
+real bond_angle(const rvec xi, const rvec xj, const rvec xk, const t_pbc *pbc,
+                rvec r_ij, rvec r_kj, real *costh,
+                int *t1, int *t2)
+/* Return value is the angle between the bonds i-j and j-k */
+{
+    /* 41 FLOPS */
+    real th;
+
+    *t1 = pbc_rvec_sub(pbc, xi, xj, r_ij); /*  3		*/
+    *t2 = pbc_rvec_sub(pbc, xk, xj, r_kj); /*  3		*/
+
+    *costh = cos_angle(r_ij, r_kj);        /* 25		*/
+    th     = std::acos(*costh);            /* 10		*/
+    /* 41 TOTAL	*/
+    return th;
+}
+
+real dih_angle(const rvec xi, const rvec xj, const rvec xk, const rvec xl,
+               const t_pbc *pbc,
+               rvec r_ij, rvec r_kj, rvec r_kl, rvec m, rvec n,
+               int *t1, int *t2, int *t3)
+{
+    *t1 = pbc_rvec_sub(pbc, xi, xj, r_ij); /*  3        */
+    *t2 = pbc_rvec_sub(pbc, xk, xj, r_kj); /*  3		*/
+    *t3 = pbc_rvec_sub(pbc, xk, xl, r_kl); /*  3		*/
+
+    cprod(r_ij, r_kj, m);                  /*  9        */
+    cprod(r_kj, r_kl, n);                  /*  9		*/
+    real phi  = gmx_angle(m, n);           /* 49 (assuming 25 for atan2) */
+    real ipr  = iprod(r_ij, n);            /*  5        */
+    real sign = (ipr < 0.0) ? -1.0 : 1.0;
+    phi       = sign*phi;                  /*  1		*/
+    /* 82 TOTAL	*/
+    return phi;
+}
+//! \endcond
+
+void make_dp_periodic(real *dp)  /* 1 flop? */
+{
+    /* dp cannot be outside (-pi,pi) */
+    if (*dp >= M_PI)
+    {
+        *dp -= 2*M_PI;
+    }
+    else if (*dp < -M_PI)
+    {
+        *dp += 2*M_PI;
+    }
+}
+
+namespace
+{
+
+/*! \brief Spreads and accumulates the bonded forces to the two atoms and adds the virial contribution when needed
+ *
+ * When \p g==nullptr, \p shiftIndex is used as the periodic shift.
+ * When \p g!=nullptr, the graph is used to compute the periodic shift.
+ */
+template <BondedKernelFlavor flavor>
+inline void spreadBondForces(const real     bondForce,
+                             const rvec     dx,
+                             const int      ai,
+                             const int      aj,
+                             rvec4         *f,
+                             int            shiftIndex,
+                             const t_graph *g,
+                             rvec          *fshift)
+{
+    if (computeVirial(flavor) && g)
+    {
+        ivec dt;
+        ivec_sub(SHIFT_IVEC(g, ai), SHIFT_IVEC(g, aj), dt);
+        shiftIndex = IVEC2IS(dt);
+    }
+
+    for (int m = 0; m < DIM; m++)                    /*  15          */
+    {
+        const real fij             = bondForce*dx[m];
+        f[ai][m]                  += fij;
+        f[aj][m]                  -= fij;
+        if (computeVirial(flavor))
+        {
+            fshift[shiftIndex][m] += fij;
+            fshift[CENTRAL][m]    -= fij;
+        }
     }
 }
 
@@ -125,6 +232,7 @@ static int pbc_rvec_sub(const t_pbc *pbc, const rvec xi, const rvec xj, rvec dx)
  * Note: the potential is referenced to be +cb at infinite separation
  *       and zero at the equilibrium distance!
  */
+template <BondedKernelFlavor flavor>
 real morse_bonds(int nbonds,
                  const t_iatom forceatoms[], const t_iparams forceparams[],
                  const rvec x[], rvec4 f[], rvec fshift[],
@@ -135,11 +243,10 @@ real morse_bonds(int nbonds,
 {
     const real one = 1.0;
     const real two = 2.0;
-    real       dr, dr2, temp, omtemp, cbomtemp, fbond, vbond, fij, vtot;
+    real       dr, dr2, temp, omtemp, cbomtemp, fbond, vbond, vtot;
     real       b0, be, cb, b0A, beA, cbA, b0B, beB, cbB, L1;
     rvec       dx;
-    int        i, m, ki, type, ai, aj;
-    ivec       dt;
+    int        i, ki, type, ai, aj;
 
     vtot = 0.0;
     for (i = 0; (i < nbonds); )
@@ -181,25 +288,13 @@ real morse_bonds(int nbonds,
 
         *dvdlambda += (cbB - cbA) * omtemp * omtemp - (2-2*omtemp)*omtemp * cb * ((b0B-b0A)*be - (beB-beA)*(dr-b0)); /* 15 */
 
-        if (g)
-        {
-            ivec_sub(SHIFT_IVEC(g, ai), SHIFT_IVEC(g, aj), dt);
-            ki = IVEC2IS(dt);
-        }
-
-        for (m = 0; (m < DIM); m++)                    /*  15          */
-        {
-            fij                 = fbond*dx[m];
-            f[ai][m]           += fij;
-            f[aj][m]           -= fij;
-            fshift[ki][m]      += fij;
-            fshift[CENTRAL][m] -= fij;
-        }
-    }                                         /*  83 TOTAL    */
+        spreadBondForces<flavor>(fbond, dx, ai, aj, f, ki, g, fshift);                                               /* 15 */
+    }                                                                                                                /*  83 TOTAL    */
     return vtot;
 }
 
 //! \cond
+template <BondedKernelFlavor flavor>
 real cubic_bonds(int nbonds,
                  const t_iatom forceatoms[], const t_iparams forceparams[],
                  const rvec x[], rvec4 f[], rvec fshift[],
@@ -211,10 +306,9 @@ real cubic_bonds(int nbonds,
     const real three = 3.0;
     const real two   = 2.0;
     real       kb, b0, kcub;
-    real       dr, dr2, dist, kdist, kdist2, fbond, vbond, fij, vtot;
+    real       dr, dr2, dist, kdist, kdist2, fbond, vbond, vtot;
     rvec       dx;
-    int        i, m, ki, type, ai, aj;
-    ivec       dt;
+    int        i, ki, type, ai, aj;
 
     vtot = 0.0;
     for (i = 0; (i < nbonds); )
@@ -243,25 +337,14 @@ real cubic_bonds(int nbonds,
         vbond      = kdist2 + kcub*kdist2*dist;
         fbond      = -(two*kdist + three*kdist2*kcub)/dr;
 
-        vtot      += vbond;   /* 21 */
+        vtot      += vbond;                                            /* 21 */
 
-        if (g)
-        {
-            ivec_sub(SHIFT_IVEC(g, ai), SHIFT_IVEC(g, aj), dt);
-            ki = IVEC2IS(dt);
-        }
-        for (m = 0; (m < DIM); m++)                    /*  15          */
-        {
-            fij                 = fbond*dx[m];
-            f[ai][m]           += fij;
-            f[aj][m]           -= fij;
-            fshift[ki][m]      += fij;
-            fshift[CENTRAL][m] -= fij;
-        }
-    }                                         /*  54 TOTAL    */
+        spreadBondForces<flavor>(fbond, dx, ai, aj, f, ki, g, fshift); /* 15 */
+    }                                                                  /*  54 TOTAL    */
     return vtot;
 }
 
+template <BondedKernelFlavor flavor>
 real FENE_bonds(int nbonds,
                 const t_iatom forceatoms[], const t_iparams forceparams[],
                 const rvec x[], rvec4 f[], rvec fshift[],
@@ -273,10 +356,9 @@ real FENE_bonds(int nbonds,
     const real half = 0.5;
     const real one  = 1.0;
     real       bm, kb;
-    real       dr2, bm2, omdr2obm2, fbond, vbond, fij, vtot;
+    real       dr2, bm2, omdr2obm2, fbond, vbond, vtot;
     rvec       dx;
-    int        i, m, ki, type, ai, aj;
-    ivec       dt;
+    int        i, ki, type, ai, aj;
 
     vtot = 0.0;
     for (i = 0; (i < nbonds); )
@@ -312,27 +394,15 @@ real FENE_bonds(int nbonds,
         vbond      = -half*kb*bm2*std::log(omdr2obm2);
         fbond      = -kb/omdr2obm2;
 
-        vtot      += vbond;   /* 35 */
+        vtot      += vbond;                                            /* 35 */
 
-        if (g)
-        {
-            ivec_sub(SHIFT_IVEC(g, ai), SHIFT_IVEC(g, aj), dt);
-            ki = IVEC2IS(dt);
-        }
-        for (m = 0; (m < DIM); m++)                    /*  15          */
-        {
-            fij                 = fbond*dx[m];
-            f[ai][m]           += fij;
-            f[aj][m]           -= fij;
-            fshift[ki][m]      += fij;
-            fshift[CENTRAL][m] -= fij;
-        }
-    }                                         /*  58 TOTAL    */
+        spreadBondForces<flavor>(fbond, dx, ai, aj, f, ki, g, fshift); /* 15 */
+    }                                                                  /*  58 TOTAL    */
     return vtot;
 }
 
-static real harmonic(real kA, real kB, real xA, real xB, real x, real lambda,
-                     real *V, real *F)
+real harmonic(real kA, real kB, real xA, real xB, real x, real lambda,
+              real *V, real *F)
 {
     const real half = 0.5;
     real       L1, kk, x0, dx, dx2;
@@ -358,6 +428,7 @@ static real harmonic(real kA, real kB, real xA, real xB, real x, real lambda,
 }
 
 
+template <BondedKernelFlavor flavor>
 real bonds(int nbonds,
            const t_iatom forceatoms[], const t_iparams forceparams[],
            const rvec x[], rvec4 f[], rvec fshift[],
@@ -366,10 +437,9 @@ real bonds(int nbonds,
            const t_mdatoms gmx_unused *md, t_fcdata gmx_unused *fcd,
            int gmx_unused *global_atom_index)
 {
-    int  i, m, ki, ai, aj, type;
-    real dr, dr2, fbond, vbond, fij, vtot;
+    int  i, ki, ai, aj, type;
+    real dr, dr2, fbond, vbond, vtot;
     rvec dx;
-    ivec dt;
 
     vtot = 0.0;
     for (i = 0; (i < nbonds); )
@@ -394,25 +464,15 @@ real bonds(int nbonds,
         }
 
 
-        vtot  += vbond;             /* 1*/
-        fbond *= gmx::invsqrt(dr2); /*   6		*/
-        if (g)
-        {
-            ivec_sub(SHIFT_IVEC(g, ai), SHIFT_IVEC(g, aj), dt);
-            ki = IVEC2IS(dt);
-        }
-        for (m = 0; (m < DIM); m++)     /*  15		*/
-        {
-            fij                 = fbond*dx[m];
-            f[ai][m]           += fij;
-            f[aj][m]           -= fij;
-            fshift[ki][m]      += fij;
-            fshift[CENTRAL][m] -= fij;
-        }
-    }               /* 59 TOTAL	*/
+        vtot  += vbond;                                                /* 1*/
+        fbond *= gmx::invsqrt(dr2);                                    /*   6		*/
+
+        spreadBondForces<flavor>(fbond, dx, ai, aj, f, ki, g, fshift); /* 15 */
+    }                                                                  /* 59 TOTAL	*/
     return vtot;
 }
 
+template <BondedKernelFlavor flavor>
 real restraint_bonds(int nbonds,
                      const t_iatom forceatoms[], const t_iparams forceparams[],
                      const rvec x[], rvec4 f[], rvec fshift[],
@@ -421,13 +481,12 @@ real restraint_bonds(int nbonds,
                      const t_mdatoms gmx_unused *md, t_fcdata gmx_unused *fcd,
                      int gmx_unused *global_atom_index)
 {
-    int  i, m, ki, ai, aj, type;
-    real dr, dr2, fbond, vbond, fij, vtot;
+    int  i, ki, ai, aj, type;
+    real dr, dr2, fbond, vbond, vtot;
     real L1;
     real low, dlow, up1, dup1, up2, dup2, k, dk;
     real drh, drh2;
     rvec dx;
-    ivec dt;
 
     L1   = 1.0 - lambda;
 
@@ -459,7 +518,7 @@ real restraint_bonds(int nbonds,
             vbond       = 0.5*k*drh2;
             fbond       = -k*drh;
             *dvdlambda += 0.5*dk*drh2 - k*dlow*drh;
-        } /* 11 */
+        }   /* 11 */
         else if (dr <= up1)
         {
             vbond = 0;
@@ -472,7 +531,7 @@ real restraint_bonds(int nbonds,
             vbond       = 0.5*k*drh2;
             fbond       = -k*drh;
             *dvdlambda += 0.5*dk*drh2 - k*dup1*drh;
-        } /* 11	*/
+        }   /* 11	*/
         else
         {
             drh         = dr - up2;
@@ -488,26 +547,16 @@ real restraint_bonds(int nbonds,
             continue;
         }
 
-        vtot  += vbond;             /* 1*/
-        fbond *= gmx::invsqrt(dr2); /*   6		*/
-        if (g)
-        {
-            ivec_sub(SHIFT_IVEC(g, ai), SHIFT_IVEC(g, aj), dt);
-            ki = IVEC2IS(dt);
-        }
-        for (m = 0; (m < DIM); m++)             /*  15		*/
-        {
-            fij                 = fbond*dx[m];
-            f[ai][m]           += fij;
-            f[aj][m]           -= fij;
-            fshift[ki][m]      += fij;
-            fshift[CENTRAL][m] -= fij;
-        }
-    }                   /* 59 TOTAL	*/
+        vtot  += vbond;                                                /* 1*/
+        fbond *= gmx::invsqrt(dr2);                                    /*   6		*/
+
+        spreadBondForces<flavor>(fbond, dx, ai, aj, f, ki, g, fshift); /* 15 */
+    }                                                                  /* 59 TOTAL	*/
 
     return vtot;
 }
 
+template <BondedKernelFlavor flavor>
 real polarize(int nbonds,
               const t_iatom forceatoms[], const t_iparams forceparams[],
               const rvec x[], rvec4 f[], rvec fshift[],
@@ -516,10 +565,9 @@ real polarize(int nbonds,
               const t_mdatoms *md, t_fcdata gmx_unused *fcd,
               int gmx_unused *global_atom_index)
 {
-    int  i, m, ki, ai, aj, type;
-    real dr, dr2, fbond, vbond, fij, vtot, ksh;
+    int  i, ki, ai, aj, type;
+    real dr, dr2, fbond, vbond, vtot, ksh;
     rvec dx;
-    ivec dt;
 
     vtot = 0.0;
     for (i = 0; (i < nbonds); )
@@ -540,26 +588,15 @@ real polarize(int nbonds,
             continue;
         }
 
-        vtot  += vbond;             /* 1*/
-        fbond *= gmx::invsqrt(dr2); /*   6		*/
+        vtot  += vbond;                                                /* 1*/
+        fbond *= gmx::invsqrt(dr2);                                    /*   6		*/
 
-        if (g)
-        {
-            ivec_sub(SHIFT_IVEC(g, ai), SHIFT_IVEC(g, aj), dt);
-            ki = IVEC2IS(dt);
-        }
-        for (m = 0; (m < DIM); m++)     /*  15		*/
-        {
-            fij                 = fbond*dx[m];
-            f[ai][m]           += fij;
-            f[aj][m]           -= fij;
-            fshift[ki][m]      += fij;
-            fshift[CENTRAL][m] -= fij;
-        }
-    }               /* 59 TOTAL	*/
+        spreadBondForces<flavor>(fbond, dx, ai, aj, f, ki, g, fshift); /* 15 */
+    }                                                                  /* 59 TOTAL	*/
     return vtot;
 }
 
+template <BondedKernelFlavor flavor>
 real anharm_polarize(int nbonds,
                      const t_iatom forceatoms[], const t_iparams forceparams[],
                      const rvec x[], rvec4 f[], rvec fshift[],
@@ -568,10 +605,9 @@ real anharm_polarize(int nbonds,
                      const t_mdatoms *md, t_fcdata gmx_unused *fcd,
                      int gmx_unused *global_atom_index)
 {
-    int  i, m, ki, ai, aj, type;
-    real dr, dr2, fbond, vbond, fij, vtot, ksh, khyp, drcut, ddr, ddr3;
+    int  i, ki, ai, aj, type;
+    real dr, dr2, fbond, vbond, vtot, ksh, khyp, drcut, ddr, ddr3;
     rvec dx;
-    ivec dt;
 
     vtot = 0.0;
     for (i = 0; (i < nbonds); )
@@ -601,26 +637,15 @@ real anharm_polarize(int nbonds,
             vbond += khyp*ddr*ddr3;
             fbond -= 4*khyp*ddr3;
         }
-        fbond *= gmx::invsqrt(dr2); /*   6		*/
-        vtot  += vbond;             /* 1*/
+        fbond *= gmx::invsqrt(dr2);                                    /*   6		*/
+        vtot  += vbond;                                                /* 1*/
 
-        if (g)
-        {
-            ivec_sub(SHIFT_IVEC(g, ai), SHIFT_IVEC(g, aj), dt);
-            ki = IVEC2IS(dt);
-        }
-        for (m = 0; (m < DIM); m++)     /*  15		*/
-        {
-            fij                 = fbond*dx[m];
-            f[ai][m]           += fij;
-            f[aj][m]           -= fij;
-            fshift[ki][m]      += fij;
-            fshift[CENTRAL][m] -= fij;
-        }
-    }               /* 72 TOTAL	*/
+        spreadBondForces<flavor>(fbond, dx, ai, aj, f, ki, g, fshift); /* 15 */
+    }                                                                  /* 72 TOTAL	*/
     return vtot;
 }
 
+template <BondedKernelFlavor flavor>
 real water_pol(int nbonds,
                const t_iatom forceatoms[], const t_iparams forceparams[],
                const rvec x[], rvec4 f[], rvec gmx_unused fshift[],
@@ -706,7 +731,7 @@ real water_pol(int nbonds,
             kdx[ZZ] = kk[ZZ]*dx[ZZ];
             vtot   += iprod(dx, kdx);
 
-            if (g)
+            if (computeVirial(flavor) && g)
             {
                 ivec_sub(SHIFT_IVEC(g, aS), SHIFT_IVEC(g, aD), dt);
                 ki = IVEC2IS(dt);
@@ -721,14 +746,18 @@ real water_pol(int nbonds,
                 fij                 = -tx-ty-tz;
                 f[aS][m]           += fij;
                 f[aD][m]           -= fij;
-                fshift[ki][m]      += fij;
-                fshift[CENTRAL][m] -= fij;
+                if (computeVirial(flavor))
+                {
+                    fshift[ki][m]      += fij;
+                    fshift[CENTRAL][m] -= fij;
+                }
             }
         }
     }
     return 0.5*vtot;
 }
 
+template <BondedKernelFlavor flavor>
 static real do_1_thole(const rvec xi, const rvec xj, rvec fi, rvec fj,
                        const t_pbc *pbc, real qq,
                        rvec fshift[], real afac)
@@ -752,14 +781,18 @@ static real do_1_thole(const rvec xi, const rvec xj, rvec fi, rvec fj,
         fff                 = fscal*r12[m];
         fi[m]              += fff;
         fj[m]              -= fff;
-        fshift[t][m]       += fff;
-        fshift[CENTRAL][m] -= fff;
+        if (computeVirial(flavor))
+        {
+            fshift[t][m]       += fff;
+            fshift[CENTRAL][m] -= fff;
+        }
     }             /* 15 */
 
     return v0*v1; /* 1 */
     /* 54 */
 }
 
+template <BondedKernelFlavor flavor>
 real thole_pol(int nbonds,
                const t_iatom forceatoms[], const t_iparams forceparams[],
                const rvec x[], rvec4 f[], rvec fshift[],
@@ -787,39 +820,24 @@ real thole_pol(int nbonds,
         al2   = forceparams[type].thole.alpha2;
         qq    = q1*q2;
         afac  = a*gmx::invsixthroot(al1*al2);
-        V    += do_1_thole(x[a1], x[a2], f[a1], f[a2], pbc, qq, fshift, afac);
-        V    += do_1_thole(x[da1], x[a2], f[da1], f[a2], pbc, -qq, fshift, afac);
-        V    += do_1_thole(x[a1], x[da2], f[a1], f[da2], pbc, -qq, fshift, afac);
-        V    += do_1_thole(x[da1], x[da2], f[da1], f[da2], pbc, qq, fshift, afac);
+        V    += do_1_thole<flavor>(x[a1], x[a2], f[a1], f[a2], pbc, qq, fshift, afac);
+        V    += do_1_thole<flavor>(x[da1], x[a2], f[da1], f[a2], pbc, -qq, fshift, afac);
+        V    += do_1_thole<flavor>(x[a1], x[da2], f[a1], f[da2], pbc, -qq, fshift, afac);
+        V    += do_1_thole<flavor>(x[da1], x[da2], f[da1], f[da2], pbc, qq, fshift, afac);
     }
     /* 290 flops */
     return V;
 }
 
-real bond_angle(const rvec xi, const rvec xj, const rvec xk, const t_pbc *pbc,
-                rvec r_ij, rvec r_kj, real *costh,
-                int *t1, int *t2)
-/* Return value is the angle between the bonds i-j and j-k */
-{
-    /* 41 FLOPS */
-    real th;
-
-    *t1 = pbc_rvec_sub(pbc, xi, xj, r_ij); /*  3		*/
-    *t2 = pbc_rvec_sub(pbc, xk, xj, r_kj); /*  3		*/
-
-    *costh = cos_angle(r_ij, r_kj);        /* 25		*/
-    th     = std::acos(*costh);            /* 10		*/
-    /* 41 TOTAL	*/
-    return th;
-}
-
-real angles(int nbonds,
-            const t_iatom forceatoms[], const t_iparams forceparams[],
-            const rvec x[], rvec4 f[], rvec fshift[],
-            const t_pbc *pbc, const t_graph *g,
-            real lambda, real *dvdlambda,
-            const t_mdatoms gmx_unused *md, t_fcdata gmx_unused *fcd,
-            int gmx_unused *global_atom_index)
+template <BondedKernelFlavor flavor>
+std::enable_if_t<flavor != BondedKernelFlavor::ForcesSimdWhenAvailable || !GMX_SIMD_HAVE_REAL, real>
+angles(int nbonds,
+       const t_iatom forceatoms[], const t_iparams forceparams[],
+       const rvec x[], rvec4 f[], rvec fshift[],
+       const t_pbc *pbc, const t_graph *g,
+       real lambda, real *dvdlambda,
+       const t_mdatoms gmx_unused *md, t_fcdata gmx_unused *fcd,
+       int gmx_unused *global_atom_index)
 {
     int  i, ai, aj, ak, t1, t2, type;
     rvec r_ij, r_kj;
@@ -875,18 +893,21 @@ real angles(int nbonds,
                 f[aj][m] += f_j[m];
                 f[ak][m] += f_k[m];
             }
-            if (g != nullptr)
+            if (computeVirial(flavor))
             {
-                copy_ivec(SHIFT_IVEC(g, aj), jt);
+                if (g != nullptr)
+                {
+                    copy_ivec(SHIFT_IVEC(g, aj), jt);
 
-                ivec_sub(SHIFT_IVEC(g, ai), jt, dt_ij);
-                ivec_sub(SHIFT_IVEC(g, ak), jt, dt_kj);
-                t1 = IVEC2IS(dt_ij);
-                t2 = IVEC2IS(dt_kj);
+                    ivec_sub(SHIFT_IVEC(g, ai), jt, dt_ij);
+                    ivec_sub(SHIFT_IVEC(g, ak), jt, dt_kj);
+                    t1 = IVEC2IS(dt_ij);
+                    t2 = IVEC2IS(dt_kj);
+                }
+                rvec_inc(fshift[t1], f_i);
+                rvec_inc(fshift[CENTRAL], f_j);
+                rvec_inc(fshift[t2], f_k);
             }
-            rvec_inc(fshift[t1], f_i);
-            rvec_inc(fshift[CENTRAL], f_j);
-            rvec_inc(fshift[t2], f_k);
         }                                           /* 161 TOTAL	*/
     }
 
@@ -898,14 +919,15 @@ real angles(int nbonds,
 /* As angles, but using SIMD to calculate many angles at once.
  * This routines does not calculate energies and shift forces.
  */
-void
-angles_noener_simd(int nbonds,
-                   const t_iatom forceatoms[], const t_iparams forceparams[],
-                   const rvec x[], rvec4 f[],
-                   const t_pbc *pbc, const t_graph gmx_unused *g,
-                   real gmx_unused lambda,
-                   const t_mdatoms gmx_unused *md, t_fcdata gmx_unused *fcd,
-                   int gmx_unused *global_atom_index)
+template <BondedKernelFlavor flavor>
+std::enable_if_t<flavor == BondedKernelFlavor::ForcesSimdWhenAvailable, real>
+angles(int nbonds,
+       const t_iatom forceatoms[], const t_iparams forceparams[],
+       const rvec x[], rvec4 f[], rvec gmx_unused fshift[],
+       const t_pbc *pbc, const t_graph gmx_unused *g,
+       real gmx_unused lambda, real gmx_unused *dvdlambda,
+       const t_mdatoms gmx_unused *md, t_fcdata gmx_unused *fcd,
+       int gmx_unused *global_atom_index)
 {
     const int            nfa1 = 4;
     int                  i, iu, s;
@@ -1034,10 +1056,13 @@ angles_noener_simd(int nbonds,
         transposeScatterDecrU<4>(reinterpret_cast<real *>(f), aj, f_ix_S + f_kx_S, f_iy_S + f_ky_S, f_iz_S + f_kz_S);
         transposeScatterIncrU<4>(reinterpret_cast<real *>(f), ak, f_kx_S, f_ky_S, f_kz_S);
     }
+
+    return 0;
 }
 
 #endif // GMX_SIMD_HAVE_REAL
 
+template <BondedKernelFlavor flavor>
 real linear_angles(int nbonds,
                    const t_iatom forceatoms[], const t_iparams forceparams[],
                    const rvec x[], rvec4 f[], rvec fshift[],
@@ -1092,29 +1117,34 @@ real linear_angles(int nbonds,
 
         vtot += va;
 
-        if (g)
+        if (computeVirial(flavor))
         {
-            copy_ivec(SHIFT_IVEC(g, aj), jt);
+            if (g)
+            {
+                copy_ivec(SHIFT_IVEC(g, aj), jt);
 
-            ivec_sub(SHIFT_IVEC(g, ai), jt, dt_ij);
-            ivec_sub(SHIFT_IVEC(g, ak), jt, dt_kj);
-            t1 = IVEC2IS(dt_ij);
-            t2 = IVEC2IS(dt_kj);
+                ivec_sub(SHIFT_IVEC(g, ai), jt, dt_ij);
+                ivec_sub(SHIFT_IVEC(g, ak), jt, dt_kj);
+                t1 = IVEC2IS(dt_ij);
+                t2 = IVEC2IS(dt_kj);
+            }
+            rvec_inc(fshift[t1], f_i);
+            rvec_inc(fshift[CENTRAL], f_j);
+            rvec_inc(fshift[t2], f_k);
         }
-        rvec_inc(fshift[t1], f_i);
-        rvec_inc(fshift[CENTRAL], f_j);
-        rvec_inc(fshift[t2], f_k);
     }                                         /* 57 TOTAL	*/
     return vtot;
 }
 
-real urey_bradley(int nbonds,
-                  const t_iatom forceatoms[], const t_iparams forceparams[],
-                  const rvec x[], rvec4 f[], rvec fshift[],
-                  const t_pbc *pbc, const t_graph *g,
-                  real lambda, real *dvdlambda,
-                  const t_mdatoms gmx_unused *md, t_fcdata gmx_unused *fcd,
-                  int gmx_unused *global_atom_index)
+template <BondedKernelFlavor flavor>
+std::enable_if_t<flavor != BondedKernelFlavor::ForcesSimdWhenAvailable || !GMX_SIMD_HAVE_REAL, real>
+urey_bradley(int nbonds,
+             const t_iatom forceatoms[], const t_iparams forceparams[],
+             const rvec x[], rvec4 f[], rvec fshift[],
+             const t_pbc *pbc, const t_graph *g,
+             real lambda, real *dvdlambda,
+             const t_mdatoms gmx_unused *md, t_fcdata gmx_unused *fcd,
+             int gmx_unused *global_atom_index)
 {
     int  i, m, ai, aj, ak, t1, t2, type, ki;
     rvec r_ij, r_kj, r_ik;
@@ -1177,18 +1207,21 @@ real urey_bradley(int nbonds,
                 f[aj][m] += f_j[m];
                 f[ak][m] += f_k[m];
             }
-            if (g)
+            if (computeVirial(flavor))
             {
-                copy_ivec(SHIFT_IVEC(g, aj), jt);
+                if (g)
+                {
+                    copy_ivec(SHIFT_IVEC(g, aj), jt);
 
-                ivec_sub(SHIFT_IVEC(g, ai), jt, dt_ij);
-                ivec_sub(SHIFT_IVEC(g, ak), jt, dt_kj);
-                t1 = IVEC2IS(dt_ij);
-                t2 = IVEC2IS(dt_kj);
+                    ivec_sub(SHIFT_IVEC(g, ai), jt, dt_ij);
+                    ivec_sub(SHIFT_IVEC(g, ak), jt, dt_kj);
+                    t1 = IVEC2IS(dt_ij);
+                    t2 = IVEC2IS(dt_kj);
+                }
+                rvec_inc(fshift[t1], f_i);
+                rvec_inc(fshift[CENTRAL], f_j);
+                rvec_inc(fshift[t2], f_k);
             }
-            rvec_inc(fshift[t1], f_i);
-            rvec_inc(fshift[CENTRAL], f_j);
-            rvec_inc(fshift[t2], f_k);
         }                                       /* 161 TOTAL	*/
         /* Time for the bond calculations */
         if (dr2 == 0.0)
@@ -1199,7 +1232,7 @@ real urey_bradley(int nbonds,
         vtot  += vbond;             /* 1*/
         fbond *= gmx::invsqrt(dr2); /*   6		*/
 
-        if (g)
+        if (computeVirial(flavor) && g)
         {
             ivec_sub(SHIFT_IVEC(g, ai), SHIFT_IVEC(g, ak), dt_ik);
             ki = IVEC2IS(dt_ik);
@@ -1209,8 +1242,11 @@ real urey_bradley(int nbonds,
             fik                 = fbond*r_ik[m];
             f[ai][m]           += fik;
             f[ak][m]           -= fik;
-            fshift[ki][m]      += fik;
-            fshift[CENTRAL][m] -= fik;
+            if (computeVirial(flavor))
+            {
+                fshift[ki][m]      += fik;
+                fshift[CENTRAL][m] -= fik;
+            }
         }
     }
     return vtot;
@@ -1221,13 +1257,15 @@ real urey_bradley(int nbonds,
 /* As urey_bradley, but using SIMD to calculate many potentials at once.
  * This routines does not calculate energies and shift forces.
  */
-void urey_bradley_noener_simd(int nbonds,
-                              const t_iatom forceatoms[], const t_iparams forceparams[],
-                              const rvec x[], rvec4 f[],
-                              const t_pbc *pbc, const t_graph gmx_unused *g,
-                              real gmx_unused lambda,
-                              const t_mdatoms gmx_unused *md, t_fcdata gmx_unused *fcd,
-                              int gmx_unused *global_atom_index)
+template <BondedKernelFlavor flavor>
+std::enable_if_t<flavor == BondedKernelFlavor::ForcesSimdWhenAvailable, real>
+urey_bradley(int nbonds,
+             const t_iatom forceatoms[], const t_iparams forceparams[],
+             const rvec x[], rvec4 f[], rvec gmx_unused fshift[],
+             const t_pbc *pbc, const t_graph gmx_unused *g,
+             real gmx_unused lambda, real gmx_unused *dvdlambda,
+             const t_mdatoms gmx_unused *md, t_fcdata gmx_unused *fcd,
+             int gmx_unused *global_atom_index)
 {
     constexpr int            nfa1 = 4;
     alignas(GMX_SIMD_ALIGNMENT) std::int32_t    ai[GMX_SIMD_REAL_WIDTH];
@@ -1352,10 +1390,13 @@ void urey_bradley_noener_simd(int nbonds,
         transposeScatterDecrU<4>(reinterpret_cast<real *>(f), aj, f_ix_S + f_kx_S, f_iy_S + f_ky_S, f_iz_S + f_kz_S);
         transposeScatterIncrU<4>(reinterpret_cast<real *>(f), ak, f_kx_S, f_ky_S, f_kz_S);
     }
+
+    return 0;
 }
 
 #endif // GMX_SIMD_HAVE_REAL
 
+template <BondedKernelFlavor flavor>
 real quartic_angles(int nbonds,
                     const t_iatom forceatoms[], const t_iparams forceparams[],
                     const rvec x[], rvec4 f[], rvec fshift[],
@@ -1423,40 +1464,25 @@ real quartic_angles(int nbonds,
                 f[aj][m] += f_j[m];
                 f[ak][m] += f_k[m];
             }
-            if (g)
-            {
-                copy_ivec(SHIFT_IVEC(g, aj), jt);
 
-                ivec_sub(SHIFT_IVEC(g, ai), jt, dt_ij);
-                ivec_sub(SHIFT_IVEC(g, ak), jt, dt_kj);
-                t1 = IVEC2IS(dt_ij);
-                t2 = IVEC2IS(dt_kj);
+            if (computeVirial(flavor))
+            {
+                if (g)
+                {
+                    copy_ivec(SHIFT_IVEC(g, aj), jt);
+
+                    ivec_sub(SHIFT_IVEC(g, ai), jt, dt_ij);
+                    ivec_sub(SHIFT_IVEC(g, ak), jt, dt_kj);
+                    t1 = IVEC2IS(dt_ij);
+                    t2 = IVEC2IS(dt_kj);
+                }
+                rvec_inc(fshift[t1], f_i);
+                rvec_inc(fshift[CENTRAL], f_j);
+                rvec_inc(fshift[t2], f_k);
             }
-            rvec_inc(fshift[t1], f_i);
-            rvec_inc(fshift[CENTRAL], f_j);
-            rvec_inc(fshift[t2], f_k);
         }                                       /* 153 TOTAL	*/
     }
     return vtot;
-}
-
-real dih_angle(const rvec xi, const rvec xj, const rvec xk, const rvec xl,
-               const t_pbc *pbc,
-               rvec r_ij, rvec r_kj, rvec r_kl, rvec m, rvec n,
-               int *t1, int *t2, int *t3)
-{
-    *t1 = pbc_rvec_sub(pbc, xi, xj, r_ij); /*  3        */
-    *t2 = pbc_rvec_sub(pbc, xk, xj, r_kj); /*  3		*/
-    *t3 = pbc_rvec_sub(pbc, xk, xl, r_kl); /*  3		*/
-
-    cprod(r_ij, r_kj, m);                  /*  9        */
-    cprod(r_kj, r_kl, n);                  /*  9		*/
-    real phi  = gmx_angle(m, n);           /* 49 (assuming 25 for atan2) */
-    real ipr  = iprod(r_ij, n);            /*  5        */
-    real sign = (ipr < 0.0) ? -1.0 : 1.0;
-    phi       = sign*phi;                  /*  1		*/
-    /* 82 TOTAL	*/
-    return phi;
 }
 
 
@@ -1466,7 +1492,7 @@ real dih_angle(const rvec xi, const rvec xj, const rvec xk, const rvec xl,
  * also calculates the pre-factor required for the dihedral force update.
  * Note that bv and buf should be register aligned.
  */
-static inline void
+inline void
 dih_angle_simd(const rvec *x,
                const int *ai, const int *aj, const int *ak, const int *al,
                const real *pbc_simd,
@@ -1579,6 +1605,9 @@ dih_angle_simd(const rvec *x,
 
 #endif // GMX_SIMD_HAVE_REAL
 
+}      // namespace
+
+template <BondedKernelFlavor flavor>
 void do_dih_fup(int i, int j, int k, int l, real ddphi,
                 rvec r_ij, rvec r_kj, rvec r_kl,
                 rvec m, rvec n, rvec4 f[], rvec fshift[],
@@ -1619,76 +1648,42 @@ void do_dih_fup(int i, int j, int k, int l, real ddphi,
         rvec_dec(f[k], f_k);          /*  3	*/
         rvec_inc(f[l], f_l);          /*  3	*/
 
-        if (g)
+        if (computeVirial(flavor))
         {
-            copy_ivec(SHIFT_IVEC(g, j), jt);
-            ivec_sub(SHIFT_IVEC(g, i), jt, dt_ij);
-            ivec_sub(SHIFT_IVEC(g, k), jt, dt_kj);
-            ivec_sub(SHIFT_IVEC(g, l), jt, dt_lj);
-            t1 = IVEC2IS(dt_ij);
-            t2 = IVEC2IS(dt_kj);
-            t3 = IVEC2IS(dt_lj);
-        }
-        else if (pbc)
-        {
-            t3 = pbc_rvec_sub(pbc, x[l], x[j], dx_jl);
-        }
-        else
-        {
-            t3 = CENTRAL;
-        }
+            if (g)
+            {
+                copy_ivec(SHIFT_IVEC(g, j), jt);
+                ivec_sub(SHIFT_IVEC(g, i), jt, dt_ij);
+                ivec_sub(SHIFT_IVEC(g, k), jt, dt_kj);
+                ivec_sub(SHIFT_IVEC(g, l), jt, dt_lj);
+                t1 = IVEC2IS(dt_ij);
+                t2 = IVEC2IS(dt_kj);
+                t3 = IVEC2IS(dt_lj);
+            }
+            else if (pbc)
+            {
+                t3 = pbc_rvec_sub(pbc, x[l], x[j], dx_jl);
+            }
+            else
+            {
+                t3 = CENTRAL;
+            }
 
-        rvec_inc(fshift[t1], f_i);
-        rvec_dec(fshift[CENTRAL], f_j);
-        rvec_dec(fshift[t2], f_k);
-        rvec_inc(fshift[t3], f_l);
+            rvec_inc(fshift[t1], f_i);
+            rvec_dec(fshift[CENTRAL], f_j);
+            rvec_dec(fshift[t2], f_k);
+            rvec_inc(fshift[t3], f_l);
+        }
     }
     /* 112 TOTAL    */
 }
 
-/* As do_dih_fup above, but without shift forces */
-static void
-do_dih_fup_noshiftf(int i, int j, int k, int l, real ddphi,
-                    rvec r_ij, rvec r_kj, rvec r_kl,
-                    rvec m, rvec n, rvec4 f[])
+namespace
 {
-    rvec f_i, f_j, f_k, f_l;
-    rvec uvec, vvec, svec;
-    real iprm, iprn, nrkj, nrkj2, nrkj_1, nrkj_2;
-    real a, b, p, q, toler;
-
-    iprm  = iprod(m, m);       /*  5    */
-    iprn  = iprod(n, n);       /*  5	*/
-    nrkj2 = iprod(r_kj, r_kj); /*  5	*/
-    toler = nrkj2*GMX_REAL_EPS;
-    if ((iprm > toler) && (iprn > toler))
-    {
-        nrkj_1 = gmx::invsqrt(nrkj2); /* 10	*/
-        nrkj_2 = nrkj_1*nrkj_1;       /*  1	*/
-        nrkj   = nrkj2*nrkj_1;        /*  1	*/
-        a      = -ddphi*nrkj/iprm;    /* 11	*/
-        svmul(a, m, f_i);             /*  3	*/
-        b     = ddphi*nrkj/iprn;      /* 11	*/
-        svmul(b, n, f_l);             /*  3  */
-        p     = iprod(r_ij, r_kj);    /*  5	*/
-        p    *= nrkj_2;               /*  1	*/
-        q     = iprod(r_kl, r_kj);    /*  5	*/
-        q    *= nrkj_2;               /*  1	*/
-        svmul(p, f_i, uvec);          /*  3	*/
-        svmul(q, f_l, vvec);          /*  3	*/
-        rvec_sub(uvec, vvec, svec);   /*  3	*/
-        rvec_sub(f_i, svec, f_j);     /*  3	*/
-        rvec_add(f_l, svec, f_k);     /*  3	*/
-        rvec_inc(f[i], f_i);          /*  3	*/
-        rvec_dec(f[j], f_j);          /*  3	*/
-        rvec_dec(f[k], f_k);          /*  3	*/
-        rvec_inc(f[l], f_l);          /*  3	*/
-    }
-}
 
 #if GMX_SIMD_HAVE_REAL
 /* As do_dih_fup_noshiftf above, but with SIMD and pre-calculated pre-factors */
-static inline void gmx_simdcall
+inline void gmx_simdcall
 do_dih_fup_noshiftf_simd(const int *ai, const int *aj, const int *ak, const int *al,
                          SimdReal p, SimdReal q,
                          SimdReal f_i_x,  SimdReal f_i_y,  SimdReal f_i_z,
@@ -1711,53 +1706,38 @@ do_dih_fup_noshiftf_simd(const int *ai, const int *aj, const int *ak, const int 
 }
 #endif // GMX_SIMD_HAVE_REAL
 
-static real dopdihs(real cpA, real cpB, real phiA, real phiB, int mult,
-                    real phi, real lambda, real *V, real *F)
+/*! \brief Computes and returns the proper dihedral force
+ *
+ * With the appropriate kernel flavor, also computes and accumulates
+ * the energy and dV/dlambda.
+ */
+template <BondedKernelFlavor flavor>
+real dopdihs(real cpA, real cpB, real phiA, real phiB, int mult,
+             real phi, real lambda, real *V, real *dvdlambda)
 {
-    real v, dvdlambda, mdphi, v1, sdphi, ddphi;
-    real L1   = 1.0 - lambda;
-    real ph0  = (L1*phiA + lambda*phiB)*DEG2RAD;
-    real dph0 = (phiB - phiA)*DEG2RAD;
-    real cp   = L1*cpA + lambda*cpB;
+    const real L1    = 1.0 - lambda;
+    const real ph0   = (L1*phiA + lambda*phiB)*DEG2RAD;
+    const real dph0  = (phiB - phiA)*DEG2RAD;
+    const real cp    = L1*cpA + lambda*cpB;
 
-    mdphi =  mult*phi - ph0;
-    sdphi = std::sin(mdphi);
-    ddphi = -cp*mult*sdphi;
-    v1    = 1.0 + std::cos(mdphi);
-    v     = cp*v1;
+    const real mdphi =  mult*phi - ph0;
+    const real sdphi = std::sin(mdphi);
+    const real ddphi = -cp*mult*sdphi;
+    if (computeEnergy(flavor))
+    {
+        const real v1  = 1 + std::cos(mdphi);
+        *V            += cp*v1;
 
-    dvdlambda  = (cpB - cpA)*v1 + cp*dph0*sdphi;
+        *dvdlambda    += (cpB - cpA)*v1 + cp*dph0*sdphi;
+    }
 
-    *V = v;
-    *F = ddphi;
-
-    return dvdlambda;
-
+    return ddphi;
     /* That was 40 flops */
 }
 
-static void
-dopdihs_noener(real cpA, real cpB, real phiA, real phiB, int mult,
-               real phi, real lambda, real *F)
-{
-    real mdphi, sdphi, ddphi;
-    real L1   = 1.0 - lambda;
-    real ph0  = (L1*phiA + lambda*phiB)*DEG2RAD;
-    real cp   = L1*cpA + lambda*cpB;
-
-    mdphi = mult*phi - ph0;
-    sdphi = std::sin(mdphi);
-    ddphi = -cp*mult*sdphi;
-
-    *F = ddphi;
-
-    /* That was 20 flops */
-}
-
-static real dopdihs_min(real cpA, real cpB, real phiA, real phiB, int mult,
-                        real phi, real lambda, real *V, real *F)
-/* similar to dopdihs, except for a minus sign  *
- * and a different treatment of mult/phi0       */
+/*! \brief Similar to \p dopdihs(), except for a minus sign and a different treatment of mult/phi0 */
+real dopdihs_min(real cpA, real cpB, real phiA, real phiB, int mult,
+                 real phi, real lambda, real *V, real *F)
 {
     real v, dvdlambda, mdphi, v1, sdphi, ddphi;
     real L1   = 1.0 - lambda;
@@ -1781,125 +1761,73 @@ static real dopdihs_min(real cpA, real cpB, real phiA, real phiB, int mult,
     /* That was 40 flops */
 }
 
-real pdihs(int nbonds,
-           const t_iatom forceatoms[], const t_iparams forceparams[],
-           const rvec x[], rvec4 f[], rvec fshift[],
-           const t_pbc *pbc, const t_graph *g,
-           real lambda, real *dvdlambda,
-           const t_mdatoms gmx_unused *md, t_fcdata gmx_unused *fcd,
-           int gmx_unused *global_atom_index)
+template <BondedKernelFlavor flavor>
+std::enable_if_t<flavor != BondedKernelFlavor::ForcesSimdWhenAvailable || !GMX_SIMD_HAVE_REAL, real>
+pdihs(int nbonds,
+      const t_iatom forceatoms[], const t_iparams forceparams[],
+      const rvec x[], rvec4 f[], rvec fshift[],
+      const t_pbc *pbc, const t_graph *g,
+      real lambda, real *dvdlambda,
+      const t_mdatoms gmx_unused *md, t_fcdata gmx_unused *fcd,
+      int gmx_unused *global_atom_index)
 {
-    int  i, type, ai, aj, ak, al;
     int  t1, t2, t3;
     rvec r_ij, r_kj, r_kl, m, n;
-    real phi, ddphi, vpd, vtot;
 
-    vtot = 0.0;
+    real vtot = 0.0;
 
-    for (i = 0; (i < nbonds); )
+    for (int i = 0; i < nbonds; )
     {
-        type = forceatoms[i++];
-        ai   = forceatoms[i++];
-        aj   = forceatoms[i++];
-        ak   = forceatoms[i++];
-        al   = forceatoms[i++];
+        const int  ai  = forceatoms[i + 1];
+        const int  aj  = forceatoms[i + 2];
+        const int  ak  = forceatoms[i + 3];
+        const int  al  = forceatoms[i + 4];
 
-        phi = dih_angle(x[ai], x[aj], x[ak], x[al], pbc, r_ij, r_kj, r_kl, m, n,
-                        &t1, &t2, &t3);  /*  84      */
-        *dvdlambda += dopdihs(forceparams[type].pdihs.cpA,
-                              forceparams[type].pdihs.cpB,
-                              forceparams[type].pdihs.phiA,
-                              forceparams[type].pdihs.phiB,
-                              forceparams[type].pdihs.mult,
-                              phi, lambda, &vpd, &ddphi);
-
-        vtot += vpd;
-        do_dih_fup(ai, aj, ak, al, ddphi, r_ij, r_kj, r_kl, m, n,
-                   f, fshift, pbc, g, x, t1, t2, t3); /* 112		*/
-
-    }                                                 /* 223 TOTAL  */
-
-    return vtot;
-}
-
-void make_dp_periodic(real *dp)  /* 1 flop? */
-{
-    /* dp cannot be outside (-pi,pi) */
-    if (*dp >= M_PI)
-    {
-        *dp -= 2*M_PI;
-    }
-    else if (*dp < -M_PI)
-    {
-        *dp += 2*M_PI;
-    }
-}
-
-/* As pdihs above, but without calculating energies and shift forces */
-void
-pdihs_noener(int nbonds,
-             const t_iatom forceatoms[], const t_iparams forceparams[],
-             const rvec x[], rvec4 f[],
-             const t_pbc gmx_unused *pbc, const t_graph gmx_unused *g,
-             real lambda,
-             const t_mdatoms gmx_unused *md, t_fcdata gmx_unused *fcd,
-             int gmx_unused *global_atom_index)
-{
-    int  i, type, ai, aj, ak, al;
-    int  t1, t2, t3;
-    rvec r_ij, r_kj, r_kl, m, n;
-    real phi, ddphi_tot, ddphi;
-
-    for (i = 0; (i < nbonds); )
-    {
-        ai   = forceatoms[i+1];
-        aj   = forceatoms[i+2];
-        ak   = forceatoms[i+3];
-        al   = forceatoms[i+4];
-
-        phi = dih_angle(x[ai], x[aj], x[ak], x[al], pbc, r_ij, r_kj, r_kl, m, n,
-                        &t1, &t2, &t3);
-
-        ddphi_tot = 0;
+        const real phi = dih_angle(x[ai], x[aj], x[ak], x[al], pbc, r_ij, r_kj, r_kl, m, n,
+                                   &t1, &t2, &t3); /*  84      */
 
         /* Loop over dihedrals working on the same atoms,
-         * so we avoid recalculating angles and force distributions.
+         * so we avoid recalculating angles and distributing forces.
          */
+        real ddphi_tot = 0;
         do
         {
-            type = forceatoms[i];
-            dopdihs_noener(forceparams[type].pdihs.cpA,
-                           forceparams[type].pdihs.cpB,
-                           forceparams[type].pdihs.phiA,
-                           forceparams[type].pdihs.phiB,
-                           forceparams[type].pdihs.mult,
-                           phi, lambda, &ddphi);
-            ddphi_tot += ddphi;
+            const int type = forceatoms[i];
+            ddphi_tot +=
+                dopdihs<flavor>(forceparams[type].pdihs.cpA,
+                                forceparams[type].pdihs.cpB,
+                                forceparams[type].pdihs.phiA,
+                                forceparams[type].pdihs.phiB,
+                                forceparams[type].pdihs.mult,
+                                phi, lambda, &vtot, dvdlambda);
 
             i += 5;
         }
         while (i < nbonds &&
-               forceatoms[i+1] == ai &&
-               forceatoms[i+2] == aj &&
-               forceatoms[i+3] == ak &&
-               forceatoms[i+4] == al);
+               forceatoms[i + 1] == ai &&
+               forceatoms[i + 2] == aj &&
+               forceatoms[i + 3] == ak &&
+               forceatoms[i + 4] == al);
 
-        do_dih_fup_noshiftf(ai, aj, ak, al, ddphi_tot, r_ij, r_kj, r_kl, m, n, f);
-    }
+        do_dih_fup<flavor>(ai, aj, ak, al, ddphi_tot, r_ij, r_kj, r_kl, m, n,
+                           f, fshift, pbc, g, x, t1, t2, t3); /* 112		*/
+    }                                                         /* 223 TOTAL  */
+
+    return vtot;
 }
-
 
 #if GMX_SIMD_HAVE_REAL
 
-/* As pdihs_noner above, but using SIMD to calculate many dihedrals at once */
-void
-pdihs_noener_simd(int nbonds,
-                  const t_iatom forceatoms[], const t_iparams forceparams[],
-                  const rvec x[], rvec4 f[],
-                  const t_pbc *pbc, const t_graph gmx_unused *g,
-                  real gmx_unused lambda,
-                  const t_mdatoms gmx_unused *md, t_fcdata gmx_unused *fcd,
-                  int gmx_unused *global_atom_index)
+/* As pdihs above, but using SIMD to calculate multiple dihedrals at once */
+template <BondedKernelFlavor flavor>
+std::enable_if_t<flavor == BondedKernelFlavor::ForcesSimdWhenAvailable, real>
+pdihs(int nbonds,
+      const t_iatom forceatoms[], const t_iparams forceparams[],
+      const rvec x[], rvec4 f[], rvec gmx_unused fshift[],
+      const t_pbc *pbc, const t_graph gmx_unused *g,
+      real gmx_unused lambda, real gmx_unused *dvdlambda,
+      const t_mdatoms gmx_unused *md, t_fcdata gmx_unused *fcd,
+      int gmx_unused *global_atom_index)
 {
     const int             nfa1 = 5;
     int                   i, iu, s;
@@ -2001,20 +1929,23 @@ pdihs_noener_simd(int nbonds,
                                  nx_S, ny_S, nz_S,
                                  f);
     }
+
+    return 0;
 }
 
-/* This is mostly a copy of pdihs_noener_simd above, but with using
+/* This is mostly a copy of the SIMD flavor of pdihs above, but with using
  * the RB potential instead of a harmonic potential.
  * This function can replace rbdihs() when no energy and virial are needed.
  */
-void
-rbdihs_noener_simd(int nbonds,
-                   const t_iatom forceatoms[], const t_iparams forceparams[],
-                   const rvec x[], rvec4 f[],
-                   const t_pbc *pbc, const t_graph gmx_unused *g,
-                   real gmx_unused lambda,
-                   const t_mdatoms gmx_unused *md, t_fcdata gmx_unused *fcd,
-                   int gmx_unused *global_atom_index)
+template <BondedKernelFlavor flavor>
+std::enable_if_t<flavor == BondedKernelFlavor::ForcesSimdWhenAvailable, real>
+rbdihs(int nbonds,
+       const t_iatom forceatoms[], const t_iparams forceparams[],
+       const rvec x[], rvec4 f[], rvec gmx_unused fshift[],
+       const t_pbc *pbc, const t_graph gmx_unused *g,
+       real gmx_unused lambda, real gmx_unused *dvdlambda,
+       const t_mdatoms gmx_unused *md, t_fcdata gmx_unused *fcd,
+       int gmx_unused *global_atom_index)
 {
     const int             nfa1 = 5;
     int                   i, iu, s, j;
@@ -2131,11 +2062,14 @@ rbdihs_noener_simd(int nbonds,
                                  nx_S, ny_S, nz_S,
                                  f);
     }
+
+    return 0;
 }
 
 #endif // GMX_SIMD_HAVE_REAL
 
 
+template <BondedKernelFlavor flavor>
 real idihs(int nbonds,
            const t_iatom forceatoms[], const t_iparams forceparams[],
            const rvec x[], rvec4 f[], rvec fshift[],
@@ -2191,8 +2125,8 @@ real idihs(int nbonds,
 
         dvdl_term += 0.5*(kB - kA)*dp2 - kk*dphi0*dp;
 
-        do_dih_fup(ai, aj, ak, al, -ddphi, r_ij, r_kj, r_kl, m, n,
-                   f, fshift, pbc, g, x, t1, t2, t3); /* 112		*/
+        do_dih_fup<flavor>(ai, aj, ak, al, -ddphi, r_ij, r_kj, r_kl, m, n,
+                           f, fshift, pbc, g, x, t1, t2, t3); /* 112		*/
         /* 218 TOTAL	*/
     }
 
@@ -2200,12 +2134,14 @@ real idihs(int nbonds,
     return vtot;
 }
 
-static real low_angres(int nbonds,
-                       const t_iatom forceatoms[], const t_iparams forceparams[],
-                       const rvec x[], rvec4 f[], rvec fshift[],
-                       const t_pbc *pbc, const t_graph *g,
-                       real lambda, real *dvdlambda,
-                       gmx_bool bZAxis)
+/*! \brief Computes angle restraints of two different types */
+template <BondedKernelFlavor flavor>
+real low_angres(int nbonds,
+                const t_iatom forceatoms[], const t_iparams forceparams[],
+                const rvec x[], rvec4 f[], rvec fshift[],
+                const t_pbc *pbc, const t_graph *g,
+                real lambda, real *dvdlambda,
+                gmx_bool bZAxis)
 {
     int  i, m, type, ai, aj, ak, al;
     int  t1, t2;
@@ -2274,22 +2210,25 @@ static real low_angres(int nbonds,
                 }
             }
 
-            if (g)
-            {
-                ivec_sub(SHIFT_IVEC(g, ai), SHIFT_IVEC(g, aj), dt);
-                t1 = IVEC2IS(dt);
-            }
-            rvec_inc(fshift[t1], f_i);
-            rvec_dec(fshift[CENTRAL], f_i);
-            if (!bZAxis)
+            if (computeVirial(flavor))
             {
                 if (g)
                 {
-                    ivec_sub(SHIFT_IVEC(g, ak), SHIFT_IVEC(g, al), dt);
-                    t2 = IVEC2IS(dt);
+                    ivec_sub(SHIFT_IVEC(g, ai), SHIFT_IVEC(g, aj), dt);
+                    t1 = IVEC2IS(dt);
                 }
-                rvec_inc(fshift[t2], f_k);
-                rvec_dec(fshift[CENTRAL], f_k);
+                rvec_inc(fshift[t1], f_i);
+                rvec_dec(fshift[CENTRAL], f_i);
+                if (!bZAxis)
+                {
+                    if (g)
+                    {
+                        ivec_sub(SHIFT_IVEC(g, ak), SHIFT_IVEC(g, al), dt);
+                        t2 = IVEC2IS(dt);
+                    }
+                    rvec_inc(fshift[t2], f_k);
+                    rvec_dec(fshift[CENTRAL], f_k);
+                }
             }
         }
     }
@@ -2297,6 +2236,7 @@ static real low_angres(int nbonds,
     return vtot; /*  184 / 157 (bZAxis)  total  */
 }
 
+template <BondedKernelFlavor flavor>
 real angres(int nbonds,
             const t_iatom forceatoms[], const t_iparams forceparams[],
             const rvec x[], rvec4 f[], rvec fshift[],
@@ -2305,10 +2245,11 @@ real angres(int nbonds,
             const t_mdatoms gmx_unused *md, t_fcdata gmx_unused *fcd,
             int gmx_unused *global_atom_index)
 {
-    return low_angres(nbonds, forceatoms, forceparams, x, f, fshift, pbc, g,
-                      lambda, dvdlambda, FALSE);
+    return low_angres<flavor>(nbonds, forceatoms, forceparams, x, f, fshift, pbc, g,
+                              lambda, dvdlambda, FALSE);
 }
 
+template <BondedKernelFlavor flavor>
 real angresz(int nbonds,
              const t_iatom forceatoms[], const t_iparams forceparams[],
              const rvec x[], rvec4 f[], rvec fshift[],
@@ -2317,10 +2258,11 @@ real angresz(int nbonds,
              const t_mdatoms gmx_unused *md, t_fcdata gmx_unused *fcd,
              int gmx_unused *global_atom_index)
 {
-    return low_angres(nbonds, forceatoms, forceparams, x, f, fshift, pbc, g,
-                      lambda, dvdlambda, TRUE);
+    return low_angres<flavor>(nbonds, forceatoms, forceparams, x, f, fshift, pbc, g,
+                              lambda, dvdlambda, TRUE);
 }
 
+template <BondedKernelFlavor flavor>
 real dihres(int nbonds,
             const t_iatom forceatoms[], const t_iparams forceparams[],
             const rvec x[], rvec4 f[], rvec fshift[],
@@ -2402,8 +2344,8 @@ real dihres(int nbonds,
             {
                 *dvdlambda += kfac*ddp*((dphiB - dphiA)-(phi0B - phi0A));
             }
-            do_dih_fup(ai, aj, ak, al, ddphi, r_ij, r_kj, r_kl, m, n,
-                       f, fshift, pbc, g, x, t1, t2, t3);      /* 112		*/
+            do_dih_fup<flavor>(ai, aj, ak, al, ddphi, r_ij, r_kj, r_kl, m, n,
+                               f, fshift, pbc, g, x, t1, t2, t3);      /* 112		*/
         }
     }
     return vtot;
@@ -2421,6 +2363,7 @@ real unimplemented(int gmx_unused nbonds,
     gmx_impl("*** you are using a not implemented function");
 }
 
+template <BondedKernelFlavor flavor>
 real restrangles(int nbonds,
                  const t_iatom forceatoms[], const t_iparams forceparams[],
                  const rvec x[], rvec4 f[], rvec fshift[],
@@ -2507,23 +2450,27 @@ real restrangles(int nbonds,
             f[ak][m] += f_k[m];
         }
 
-        if (g)
+        if (computeVirial(flavor))
         {
-            copy_ivec(SHIFT_IVEC(g, aj), jt);
-            ivec_sub(SHIFT_IVEC(g, ai), jt, dt_ij);
-            ivec_sub(SHIFT_IVEC(g, ak), jt, dt_kj);
-            t1 = IVEC2IS(dt_ij);
-            t2 = IVEC2IS(dt_kj);
-        }
+            if (g)
+            {
+                copy_ivec(SHIFT_IVEC(g, aj), jt);
+                ivec_sub(SHIFT_IVEC(g, ai), jt, dt_ij);
+                ivec_sub(SHIFT_IVEC(g, ak), jt, dt_kj);
+                t1 = IVEC2IS(dt_ij);
+                t2 = IVEC2IS(dt_kj);
+            }
 
-        rvec_inc(fshift[t1], f_i);
-        rvec_inc(fshift[CENTRAL], f_j);
-        rvec_inc(fshift[t2], f_k);
+            rvec_inc(fshift[t1], f_i);
+            rvec_inc(fshift[CENTRAL], f_j);
+            rvec_inc(fshift[t2], f_k);
+        }
     }
     return vtot;
 }
 
 
+template <BondedKernelFlavor flavor>
 real restrdihs(int nbonds,
                const t_iatom forceatoms[], const t_iparams forceparams[],
                const rvec x[], rvec4 f[], rvec fshift[],
@@ -2600,38 +2547,39 @@ real restrdihs(int nbonds,
         rvec_inc(f[ak], f_k);
         rvec_inc(f[al], f_l);
 
-
-        /* Updating the fshift forces for the pressure coupling */
-        if (g)
+        if (computeVirial(flavor))
         {
-            copy_ivec(SHIFT_IVEC(g, aj), jt);
-            ivec_sub(SHIFT_IVEC(g, ai), jt, dt_ij);
-            ivec_sub(SHIFT_IVEC(g, ak), jt, dt_kj);
-            ivec_sub(SHIFT_IVEC(g, al), jt, dt_lj);
-            t1 = IVEC2IS(dt_ij);
-            t2 = IVEC2IS(dt_kj);
-            t3 = IVEC2IS(dt_lj);
-        }
-        else if (pbc)
-        {
-            t3 = pbc_rvec_sub(pbc, x[al], x[aj], dx_jl);
-        }
-        else
-        {
-            t3 = CENTRAL;
-        }
+            if (g)
+            {
+                copy_ivec(SHIFT_IVEC(g, aj), jt);
+                ivec_sub(SHIFT_IVEC(g, ai), jt, dt_ij);
+                ivec_sub(SHIFT_IVEC(g, ak), jt, dt_kj);
+                ivec_sub(SHIFT_IVEC(g, al), jt, dt_lj);
+                t1 = IVEC2IS(dt_ij);
+                t2 = IVEC2IS(dt_kj);
+                t3 = IVEC2IS(dt_lj);
+            }
+            else if (pbc)
+            {
+                t3 = pbc_rvec_sub(pbc, x[al], x[aj], dx_jl);
+            }
+            else
+            {
+                t3 = CENTRAL;
+            }
 
-        rvec_inc(fshift[t1], f_i);
-        rvec_inc(fshift[CENTRAL], f_j);
-        rvec_inc(fshift[t2], f_k);
-        rvec_inc(fshift[t3], f_l);
-
+            rvec_inc(fshift[t1], f_i);
+            rvec_inc(fshift[CENTRAL], f_j);
+            rvec_inc(fshift[t2], f_k);
+            rvec_inc(fshift[t3], f_l);
+        }
     }
 
     return vtot;
 }
 
 
+template <BondedKernelFlavor flavor>
 real cbtdihs(int nbonds,
              const t_iatom forceatoms[], const t_iparams forceparams[],
              const rvec x[], rvec4 f[], rvec fshift[],
@@ -2711,42 +2659,46 @@ real cbtdihs(int nbonds,
         rvec_inc(f[al], f_l);
 
 
-        /* Updating the fshift forces for the pressure coupling */
-        if (g)
+        if (computeVirial(flavor))
         {
-            copy_ivec(SHIFT_IVEC(g, aj), jt);
-            ivec_sub(SHIFT_IVEC(g, ai), jt, dt_ij);
-            ivec_sub(SHIFT_IVEC(g, ak), jt, dt_kj);
-            ivec_sub(SHIFT_IVEC(g, al), jt, dt_lj);
-            t1 = IVEC2IS(dt_ij);
-            t2 = IVEC2IS(dt_kj);
-            t3 = IVEC2IS(dt_lj);
-        }
-        else if (pbc)
-        {
-            t3 = pbc_rvec_sub(pbc, x[al], x[aj], dx_jl);
-        }
-        else
-        {
-            t3 = CENTRAL;
-        }
+            if (g)
+            {
+                copy_ivec(SHIFT_IVEC(g, aj), jt);
+                ivec_sub(SHIFT_IVEC(g, ai), jt, dt_ij);
+                ivec_sub(SHIFT_IVEC(g, ak), jt, dt_kj);
+                ivec_sub(SHIFT_IVEC(g, al), jt, dt_lj);
+                t1 = IVEC2IS(dt_ij);
+                t2 = IVEC2IS(dt_kj);
+                t3 = IVEC2IS(dt_lj);
+            }
+            else if (pbc)
+            {
+                t3 = pbc_rvec_sub(pbc, x[al], x[aj], dx_jl);
+            }
+            else
+            {
+                t3 = CENTRAL;
+            }
 
-        rvec_inc(fshift[t1], f_i);
-        rvec_inc(fshift[CENTRAL], f_j);
-        rvec_inc(fshift[t2], f_k);
-        rvec_inc(fshift[t3], f_l);
+            rvec_inc(fshift[t1], f_i);
+            rvec_inc(fshift[CENTRAL], f_j);
+            rvec_inc(fshift[t2], f_k);
+            rvec_inc(fshift[t3], f_l);
+        }
     }
 
     return vtot;
 }
 
-real rbdihs(int nbonds,
-            const t_iatom forceatoms[], const t_iparams forceparams[],
-            const rvec x[], rvec4 f[], rvec fshift[],
-            const t_pbc *pbc, const t_graph *g,
-            real lambda, real *dvdlambda,
-            const t_mdatoms gmx_unused *md, t_fcdata gmx_unused *fcd,
-            int gmx_unused *global_atom_index)
+template <BondedKernelFlavor flavor>
+std::enable_if_t<flavor != BondedKernelFlavor::ForcesSimdWhenAvailable || !GMX_SIMD_HAVE_REAL, real>
+rbdihs(int nbonds,
+       const t_iatom forceatoms[], const t_iparams forceparams[],
+       const rvec x[], rvec4 f[], rvec fshift[],
+       const t_pbc *pbc, const t_graph *g,
+       real lambda, real *dvdlambda,
+       const t_mdatoms gmx_unused *md, t_fcdata gmx_unused *fcd,
+       int gmx_unused *global_atom_index)
 {
     const real c0 = 0.0, c1 = 1.0, c2 = 2.0, c3 = 3.0, c4 = 4.0, c5 = 5.0;
     int        type, ai, aj, ak, al, i, j;
@@ -2835,8 +2787,8 @@ real rbdihs(int nbonds,
 
         ddphi = -ddphi*sin_phi;         /*  11		*/
 
-        do_dih_fup(ai, aj, ak, al, ddphi, r_ij, r_kj, r_kl, m, n,
-                   f, fshift, pbc, g, x, t1, t2, t3); /* 112		*/
+        do_dih_fup<flavor>(ai, aj, ak, al, ddphi, r_ij, r_kj, r_kl, m, n,
+                           f, fshift, pbc, g, x, t1, t2, t3); /* 112		*/
         vtot += v;
     }
     *dvdlambda += dvdl_term;
@@ -2847,7 +2799,7 @@ real rbdihs(int nbonds,
 //! \endcond
 
 /*! \brief Mysterious undocumented function */
-static int
+int
 cmap_setup_grid_index(int ip, int grid_spacing, int *ipm1, int *ipp1, int *ipp2)
 {
     int im1, ip1, ip2;
@@ -2886,6 +2838,8 @@ cmap_setup_grid_index(int ip, int grid_spacing, int *ipm1, int *ipp1, int *ipp2)
     return ip;
 
 }
+
+} // namespace
 
 real
 cmap_dihs(int nbonds,
@@ -3233,48 +3187,53 @@ cmap_dihs(int nbonds,
         }
 
         /* Shift forces */
-        if (g)
+        if (fshift != nullptr)
         {
-            copy_ivec(SHIFT_IVEC(g, a1j), jt1);
-            ivec_sub(SHIFT_IVEC(g, a1i),  jt1, dt1_ij);
-            ivec_sub(SHIFT_IVEC(g, a1k),  jt1, dt1_kj);
-            ivec_sub(SHIFT_IVEC(g, a1l),  jt1, dt1_lj);
-            t11 = IVEC2IS(dt1_ij);
-            t21 = IVEC2IS(dt1_kj);
-            t31 = IVEC2IS(dt1_lj);
+            if (g)
+            {
+                copy_ivec(SHIFT_IVEC(g, a1j), jt1);
+                ivec_sub(SHIFT_IVEC(g, a1i),  jt1, dt1_ij);
+                ivec_sub(SHIFT_IVEC(g, a1k),  jt1, dt1_kj);
+                ivec_sub(SHIFT_IVEC(g, a1l),  jt1, dt1_lj);
+                t11 = IVEC2IS(dt1_ij);
+                t21 = IVEC2IS(dt1_kj);
+                t31 = IVEC2IS(dt1_lj);
 
-            copy_ivec(SHIFT_IVEC(g, a2j), jt2);
-            ivec_sub(SHIFT_IVEC(g, a2i),  jt2, dt2_ij);
-            ivec_sub(SHIFT_IVEC(g, a2k),  jt2, dt2_kj);
-            ivec_sub(SHIFT_IVEC(g, a2l),  jt2, dt2_lj);
-            t12 = IVEC2IS(dt2_ij);
-            t22 = IVEC2IS(dt2_kj);
-            t32 = IVEC2IS(dt2_lj);
-        }
-        else if (pbc)
-        {
-            t31 = pbc_rvec_sub(pbc, x[a1l], x[a1j], h1);
-            t32 = pbc_rvec_sub(pbc, x[a2l], x[a2j], h2);
-        }
-        else
-        {
-            t31 = CENTRAL;
-            t32 = CENTRAL;
-        }
+                copy_ivec(SHIFT_IVEC(g, a2j), jt2);
+                ivec_sub(SHIFT_IVEC(g, a2i),  jt2, dt2_ij);
+                ivec_sub(SHIFT_IVEC(g, a2k),  jt2, dt2_kj);
+                ivec_sub(SHIFT_IVEC(g, a2l),  jt2, dt2_lj);
+                t12 = IVEC2IS(dt2_ij);
+                t22 = IVEC2IS(dt2_kj);
+                t32 = IVEC2IS(dt2_lj);
+            }
+            else if (pbc)
+            {
+                t31 = pbc_rvec_sub(pbc, x[a1l], x[a1j], h1);
+                t32 = pbc_rvec_sub(pbc, x[a2l], x[a2j], h2);
+            }
+            else
+            {
+                t31 = CENTRAL;
+                t32 = CENTRAL;
+            }
 
-        rvec_inc(fshift[t11], f1_i);
-        rvec_inc(fshift[CENTRAL], f1_j);
-        rvec_inc(fshift[t21], f1_k);
-        rvec_inc(fshift[t31], f1_l);
+            rvec_inc(fshift[t11], f1_i);
+            rvec_inc(fshift[CENTRAL], f1_j);
+            rvec_inc(fshift[t21], f1_k);
+            rvec_inc(fshift[t31], f1_l);
 
-        rvec_inc(fshift[t21], f2_i);
-        rvec_inc(fshift[CENTRAL], f2_j);
-        rvec_inc(fshift[t22], f2_k);
-        rvec_inc(fshift[t32], f2_l);
+            rvec_inc(fshift[t12], f2_i);
+            rvec_inc(fshift[CENTRAL], f2_j);
+            rvec_inc(fshift[t22], f2_k);
+            rvec_inc(fshift[t32], f2_l);
+        }
     }
     return vtot;
 }
 
+namespace
+{
 
 //! \cond
 /***********************************************************
@@ -3282,8 +3241,8 @@ cmap_dihs(int nbonds,
  *   G R O M O S  9 6   F U N C T I O N S
  *
  ***********************************************************/
-static real g96harmonic(real kA, real kB, real xA, real xB, real x, real lambda,
-                        real *V, real *F)
+real g96harmonic(real kA, real kB, real xA, real xB, real x, real lambda,
+                 real *V, real *F)
 {
     const real half = 0.5;
     real       L1, kk, x0, dx, dx2;
@@ -3308,6 +3267,7 @@ static real g96harmonic(real kA, real kB, real xA, real xB, real x, real lambda,
     /* That was 21 flops */
 }
 
+template <BondedKernelFlavor flavor>
 real g96bonds(int nbonds,
               const t_iatom forceatoms[], const t_iparams forceparams[],
               const rvec x[], rvec4 f[], rvec fshift[],
@@ -3316,10 +3276,9 @@ real g96bonds(int nbonds,
               const t_mdatoms gmx_unused *md, t_fcdata gmx_unused *fcd,
               int gmx_unused *global_atom_index)
 {
-    int  i, m, ki, ai, aj, type;
-    real dr2, fbond, vbond, fij, vtot;
+    int  i, ki, ai, aj, type;
+    real dr2, fbond, vbond, vtot;
     rvec dx;
-    ivec dt;
 
     vtot = 0.0;
     for (i = 0; (i < nbonds); )
@@ -3337,28 +3296,16 @@ real g96bonds(int nbonds,
                                   forceparams[type].harmonic.rB,
                                   dr2, lambda, &vbond, &fbond);
 
-        vtot  += 0.5*vbond;                         /* 1*/
+        vtot  += 0.5*vbond;                                            /* 1*/
 
-        if (g)
-        {
-            ivec_sub(SHIFT_IVEC(g, ai), SHIFT_IVEC(g, aj), dt);
-            ki = IVEC2IS(dt);
-        }
-        for (m = 0; (m < DIM); m++)     /*  15		*/
-        {
-            fij                 = fbond*dx[m];
-            f[ai][m]           += fij;
-            f[aj][m]           -= fij;
-            fshift[ki][m]      += fij;
-            fshift[CENTRAL][m] -= fij;
-        }
-    }               /* 44 TOTAL	*/
+        spreadBondForces<flavor>(fbond, dx, ai, aj, f, ki, g, fshift); /* 15 */
+    }                                                                  /* 44 TOTAL	*/
     return vtot;
 }
 
-static real g96bond_angle(const rvec xi, const rvec xj, const rvec xk, const t_pbc *pbc,
-                          rvec r_ij, rvec r_kj,
-                          int *t1, int *t2)
+real g96bond_angle(const rvec xi, const rvec xj, const rvec xk, const t_pbc *pbc,
+                   rvec r_ij, rvec r_kj,
+                   int *t1, int *t2)
 /* Return value is the angle between the bonds i-j and j-k */
 {
     real costh;
@@ -3371,6 +3318,7 @@ static real g96bond_angle(const rvec xi, const rvec xj, const rvec xk, const t_p
     return costh;
 }
 
+template <BondedKernelFlavor flavor>
 real g96angles(int nbonds,
                const t_iatom forceatoms[], const t_iparams forceparams[],
                const rvec x[], rvec4 f[], rvec fshift[],
@@ -3419,23 +3367,27 @@ real g96angles(int nbonds,
             f[ak][m] += f_k[m];
         }
 
-        if (g)
+        if (computeVirial(flavor))
         {
-            copy_ivec(SHIFT_IVEC(g, aj), jt);
+            if (g)
+            {
+                copy_ivec(SHIFT_IVEC(g, aj), jt);
 
-            ivec_sub(SHIFT_IVEC(g, ai), jt, dt_ij);
-            ivec_sub(SHIFT_IVEC(g, ak), jt, dt_kj);
-            t1 = IVEC2IS(dt_ij);
-            t2 = IVEC2IS(dt_kj);
+                ivec_sub(SHIFT_IVEC(g, ai), jt, dt_ij);
+                ivec_sub(SHIFT_IVEC(g, ak), jt, dt_kj);
+                t1 = IVEC2IS(dt_ij);
+                t2 = IVEC2IS(dt_kj);
+            }
+            rvec_inc(fshift[t1], f_i);
+            rvec_inc(fshift[CENTRAL], f_j);
+            rvec_inc(fshift[t2], f_k);          /* 9 */
         }
-        rvec_inc(fshift[t1], f_i);
-        rvec_inc(fshift[CENTRAL], f_j);
-        rvec_inc(fshift[t2], f_k);          /* 9 */
         /* 163 TOTAL	*/
     }
     return vtot;
 }
 
+template <BondedKernelFlavor flavor>
 real cross_bond_bond(int nbonds,
                      const t_iatom forceatoms[], const t_iparams forceparams[],
                      const rvec x[], rvec4 f[], rvec fshift[],
@@ -3492,24 +3444,27 @@ real cross_bond_bond(int nbonds,
             f[ak][m] += f_k[m];
         }
 
-        /* Virial stuff */
-        if (g)
+        if (computeVirial(flavor))
         {
-            copy_ivec(SHIFT_IVEC(g, aj), jt);
+            if (g)
+            {
+                copy_ivec(SHIFT_IVEC(g, aj), jt);
 
-            ivec_sub(SHIFT_IVEC(g, ai), jt, dt_ij);
-            ivec_sub(SHIFT_IVEC(g, ak), jt, dt_kj);
-            t1 = IVEC2IS(dt_ij);
-            t2 = IVEC2IS(dt_kj);
+                ivec_sub(SHIFT_IVEC(g, ai), jt, dt_ij);
+                ivec_sub(SHIFT_IVEC(g, ak), jt, dt_kj);
+                t1 = IVEC2IS(dt_ij);
+                t2 = IVEC2IS(dt_kj);
+            }
+            rvec_inc(fshift[t1], f_i);
+            rvec_inc(fshift[CENTRAL], f_j);
+            rvec_inc(fshift[t2], f_k);          /* 9 */
         }
-        rvec_inc(fshift[t1], f_i);
-        rvec_inc(fshift[CENTRAL], f_j);
-        rvec_inc(fshift[t2], f_k);          /* 9 */
         /* 163 TOTAL	*/
     }
     return vtot;
 }
 
+template <BondedKernelFlavor flavor>
 real cross_bond_angle(int nbonds,
                       const t_iatom forceatoms[], const t_iparams forceparams[],
                       const rvec x[], rvec4 f[], rvec fshift[],
@@ -3576,27 +3531,30 @@ real cross_bond_angle(int nbonds,
             f[ak][m] += f_k[m];
         }
 
-        /* Virial stuff */
-        if (g)
+        if (computeVirial(flavor))
         {
-            copy_ivec(SHIFT_IVEC(g, aj), jt);
+            if (g)
+            {
+                copy_ivec(SHIFT_IVEC(g, aj), jt);
 
-            ivec_sub(SHIFT_IVEC(g, ai), jt, dt_ij);
-            ivec_sub(SHIFT_IVEC(g, ak), jt, dt_kj);
-            t1 = IVEC2IS(dt_ij);
-            t2 = IVEC2IS(dt_kj);
+                ivec_sub(SHIFT_IVEC(g, ai), jt, dt_ij);
+                ivec_sub(SHIFT_IVEC(g, ak), jt, dt_kj);
+                t1 = IVEC2IS(dt_ij);
+                t2 = IVEC2IS(dt_kj);
+            }
+            rvec_inc(fshift[t1], f_i);
+            rvec_inc(fshift[CENTRAL], f_j);
+            rvec_inc(fshift[t2], f_k);          /* 9 */
         }
-        rvec_inc(fshift[t1], f_i);
-        rvec_inc(fshift[CENTRAL], f_j);
-        rvec_inc(fshift[t2], f_k);          /* 9 */
         /* 163 TOTAL	*/
     }
     return vtot;
 }
 
-static real bonded_tab(const char *type, int table_nr,
-                       const bondedtable_t *table, real kA, real kB, real r,
-                       real lambda, real *V, real *F)
+/*! \brief Computes the potential and force for a tabulated potential */
+real bonded_tab(const char *type, int table_nr,
+                const bondedtable_t *table, real kA, real kB, real r,
+                real lambda, real *V, real *F)
 {
     real k, tabscale, *VFtab, rt, eps, eps2, Yt, Ft, Geps, Heps2, Fp, VV, FF;
     int  n0, nnn;
@@ -3634,6 +3592,7 @@ static real bonded_tab(const char *type, int table_nr,
     /* That was 22 flops */
 }
 
+template <BondedKernelFlavor flavor>
 real tab_bonds(int nbonds,
                const t_iatom forceatoms[], const t_iparams forceparams[],
                const rvec x[], rvec4 f[], rvec fshift[],
@@ -3642,10 +3601,9 @@ real tab_bonds(int nbonds,
                const t_mdatoms gmx_unused *md, t_fcdata *fcd,
                int gmx_unused  *global_atom_index)
 {
-    int  i, m, ki, ai, aj, type, table;
-    real dr, dr2, fbond, vbond, fij, vtot;
+    int  i, ki, ai, aj, type, table;
+    real dr, dr2, fbond, vbond, vtot;
     rvec dx;
-    ivec dt;
 
     vtot = 0.0;
     for (i = 0; (i < nbonds); )
@@ -3672,25 +3630,15 @@ real tab_bonds(int nbonds,
         }
 
 
-        vtot  += vbond;             /* 1*/
-        fbond *= gmx::invsqrt(dr2); /*   6		*/
-        if (g)
-        {
-            ivec_sub(SHIFT_IVEC(g, ai), SHIFT_IVEC(g, aj), dt);
-            ki = IVEC2IS(dt);
-        }
-        for (m = 0; (m < DIM); m++)     /*  15		*/
-        {
-            fij                 = fbond*dx[m];
-            f[ai][m]           += fij;
-            f[aj][m]           -= fij;
-            fshift[ki][m]      += fij;
-            fshift[CENTRAL][m] -= fij;
-        }
-    }               /* 62 TOTAL	*/
+        vtot  += vbond;                                                /* 1*/
+        fbond *= gmx::invsqrt(dr2);                                    /*   6		*/
+
+        spreadBondForces<flavor>(fbond, dx, ai, aj, f, ki, g, fshift); /* 15 */
+    }                                                                  /* 62 TOTAL	*/
     return vtot;
 }
 
+template <BondedKernelFlavor flavor>
 real tab_angles(int nbonds,
                 const t_iatom forceatoms[], const t_iparams forceparams[],
                 const rvec x[], rvec4 f[], rvec fshift[],
@@ -3751,23 +3699,28 @@ real tab_angles(int nbonds,
                 f[aj][m] += f_j[m];
                 f[ak][m] += f_k[m];
             }
-            if (g)
-            {
-                copy_ivec(SHIFT_IVEC(g, aj), jt);
 
-                ivec_sub(SHIFT_IVEC(g, ai), jt, dt_ij);
-                ivec_sub(SHIFT_IVEC(g, ak), jt, dt_kj);
-                t1 = IVEC2IS(dt_ij);
-                t2 = IVEC2IS(dt_kj);
+            if (computeVirial(flavor))
+            {
+                if (g)
+                {
+                    copy_ivec(SHIFT_IVEC(g, aj), jt);
+
+                    ivec_sub(SHIFT_IVEC(g, ai), jt, dt_ij);
+                    ivec_sub(SHIFT_IVEC(g, ak), jt, dt_kj);
+                    t1 = IVEC2IS(dt_ij);
+                    t2 = IVEC2IS(dt_kj);
+                }
+                rvec_inc(fshift[t1], f_i);
+                rvec_inc(fshift[CENTRAL], f_j);
+                rvec_inc(fshift[t2], f_k);
             }
-            rvec_inc(fshift[t1], f_i);
-            rvec_inc(fshift[CENTRAL], f_j);
-            rvec_inc(fshift[t2], f_k);
         }                                       /* 169 TOTAL	*/
     }
     return vtot;
 }
 
+template <BondedKernelFlavor flavor>
 real tab_dihs(int nbonds,
               const t_iatom forceatoms[], const t_iparams forceparams[],
               const rvec x[], rvec4 f[], rvec fshift[],
@@ -3803,12 +3756,157 @@ real tab_dihs(int nbonds,
                                  phi+M_PI, lambda, &vpd, &ddphi);
 
         vtot += vpd;
-        do_dih_fup(ai, aj, ak, al, -ddphi, r_ij, r_kj, r_kl, m, n,
-                   f, fshift, pbc, g, x, t1, t2, t3); /* 112	*/
+        do_dih_fup<flavor>(ai, aj, ak, al, -ddphi, r_ij, r_kj, r_kl, m, n,
+                           f, fshift, pbc, g, x, t1, t2, t3); /* 112	*/
 
-    }                                                 /* 227 TOTAL  */
+    }                                                         /* 227 TOTAL  */
 
     return vtot;
 }
 
+struct BondedInteractions
+{
+    BondedFunction function;
+    int            nrnbIndex;
+};
+
+/*! \brief Lookup table of bonded interaction functions
+ *
+ * This must have as many entries as interaction_function in ifunc.cpp */
+template<BondedKernelFlavor flavor>
+const std::array<BondedInteractions, F_NRE> c_bondedInteractionFunctions
+    = {
+    BondedInteractions {bonds<flavor>, eNR_BONDS },                       // F_BONDS
+    BondedInteractions {g96bonds<flavor>, eNR_BONDS },                    // F_G96BONDS
+    BondedInteractions {morse_bonds<flavor>, eNR_MORSE },                 // F_MORSE
+    BondedInteractions {cubic_bonds<flavor>, eNR_CUBICBONDS },            // F_CUBICBONDS
+    BondedInteractions {unimplemented, -1 },                              // F_CONNBONDS
+    BondedInteractions {bonds<flavor>, eNR_BONDS },                       // F_HARMONIC
+    BondedInteractions {FENE_bonds<flavor>, eNR_FENEBONDS },              // F_FENEBONDS
+    BondedInteractions {tab_bonds<flavor>, eNR_TABBONDS },                // F_TABBONDS
+    BondedInteractions {tab_bonds<flavor>, eNR_TABBONDS },                // F_TABBONDSNC
+    BondedInteractions {restraint_bonds<flavor>, eNR_RESTRBONDS },        // F_RESTRBONDS
+    BondedInteractions {angles<flavor>, eNR_ANGLES },                     // F_ANGLES
+    BondedInteractions {g96angles<flavor>, eNR_ANGLES },                  // F_G96ANGLES
+    BondedInteractions {restrangles<flavor>, eNR_ANGLES },                // F_RESTRANGLES
+    BondedInteractions {linear_angles<flavor>, eNR_ANGLES },              // F_LINEAR_ANGLES
+    BondedInteractions {cross_bond_bond<flavor>, eNR_CROSS_BOND_BOND },   // F_CROSS_BOND_BONDS
+    BondedInteractions {cross_bond_angle<flavor>, eNR_CROSS_BOND_ANGLE }, // F_CROSS_BOND_ANGLES
+    BondedInteractions {urey_bradley<flavor>, eNR_UREY_BRADLEY },         // F_UREY_BRADLEY
+    BondedInteractions {quartic_angles<flavor>, eNR_QANGLES },            // F_QUARTIC_ANGLES
+    BondedInteractions {tab_angles<flavor>, eNR_TABANGLES },              // F_TABANGLES
+    BondedInteractions {pdihs<flavor>, eNR_PROPER },                      // F_PDIHS
+    BondedInteractions {rbdihs<flavor>, eNR_RB },                         // F_RBDIHS
+    BondedInteractions {restrdihs<flavor>, eNR_PROPER },                  // F_RESTRDIHS
+    BondedInteractions {cbtdihs<flavor>, eNR_RB },                        // F_CBTDIHS
+    BondedInteractions {rbdihs<flavor>, eNR_FOURDIH },                    // F_FOURDIHS
+    BondedInteractions {idihs<flavor>, eNR_IMPROPER },                    // F_IDIHS
+    BondedInteractions {pdihs<flavor>, eNR_IMPROPER },                    // F_PIDIHS
+    BondedInteractions {tab_dihs<flavor>, eNR_TABDIHS },                  // F_TABDIHS
+    BondedInteractions {unimplemented, eNR_CMAP },                        // F_CMAP
+    BondedInteractions {unimplemented, -1 },                              // F_GB12_NOLONGERUSED
+    BondedInteractions {unimplemented, -1 },                              // F_GB13_NOLONGERUSED
+    BondedInteractions {unimplemented, -1 },                              // F_GB14_NOLONGERUSED
+    BondedInteractions {unimplemented, -1 },                              // F_GBPOL_NOLONGERUSED
+    BondedInteractions {unimplemented, -1 },                              // F_NPSOLVATION_NOLONGERUSED
+    BondedInteractions {unimplemented, eNR_NB14 },                        // F_LJ14
+    BondedInteractions {unimplemented, -1 },                              // F_COUL14
+    BondedInteractions {unimplemented, eNR_NB14 },                        // F_LJC14_Q
+    BondedInteractions {unimplemented, eNR_NB14 },                        // F_LJC_PAIRS_NB
+    BondedInteractions {unimplemented, -1 },                              // F_LJ
+    BondedInteractions {unimplemented, -1 },                              // F_BHAM
+    BondedInteractions {unimplemented, -1 },                              // F_LJ_LR_NOLONGERUSED
+    BondedInteractions {unimplemented, -1 },                              // F_BHAM_LR_NOLONGERUSED
+    BondedInteractions {unimplemented, -1 },                              // F_DISPCORR
+    BondedInteractions {unimplemented, -1 },                              // F_COUL_SR
+    BondedInteractions {unimplemented, -1 },                              // F_COUL_LR_NOLONGERUSED
+    BondedInteractions {unimplemented, -1 },                              // F_RF_EXCL
+    BondedInteractions {unimplemented, -1 },                              // F_COUL_RECIP
+    BondedInteractions {unimplemented, -1 },                              // F_LJ_RECIP
+    BondedInteractions {unimplemented, -1 },                              // F_DPD
+    BondedInteractions {polarize<flavor>, eNR_POLARIZE },                 // F_POLARIZATION
+    BondedInteractions {water_pol<flavor>, eNR_WPOL },                    // F_WATER_POL
+    BondedInteractions {thole_pol<flavor>, eNR_THOLE },                   // F_THOLE_POL
+    BondedInteractions {anharm_polarize<flavor>, eNR_ANHARM_POL },        // F_ANHARM_POL
+    BondedInteractions {unimplemented, -1 },                              // F_POSRES
+    BondedInteractions {unimplemented, -1 },                              // F_FBPOSRES
+    BondedInteractions {ta_disres, eNR_DISRES },                          // F_DISRES
+    BondedInteractions {unimplemented, -1 },                              // F_DISRESVIOL
+    BondedInteractions {orires, eNR_ORIRES },                             // F_ORIRES
+    BondedInteractions {unimplemented, -1 },                              // F_ORIRESDEV
+    BondedInteractions {angres<flavor>, eNR_ANGRES },                     // F_ANGRES
+    BondedInteractions {angresz<flavor>, eNR_ANGRESZ },                   // F_ANGRESZ
+    BondedInteractions {dihres<flavor>, eNR_DIHRES },                     // F_DIHRES
+    BondedInteractions {unimplemented, -1 },                              // F_DIHRESVIOL
+    BondedInteractions {unimplemented, -1 },                              // F_CONSTR
+    BondedInteractions {unimplemented, -1 },                              // F_CONSTRNC
+    BondedInteractions {unimplemented, -1 },                              // F_SETTLE
+    BondedInteractions {unimplemented, -1 },                              // F_VSITE2
+    BondedInteractions {unimplemented, -1 },                              // F_VSITE3
+    BondedInteractions {unimplemented, -1 },                              // F_VSITE3FD
+    BondedInteractions {unimplemented, -1 },                              // F_VSITE3FAD
+    BondedInteractions {unimplemented, -1 },                              // F_VSITE3OUT
+    BondedInteractions {unimplemented, -1 },                              // F_VSITE4FD
+    BondedInteractions {unimplemented, -1 },                              // F_VSITE4FDN
+    BondedInteractions {unimplemented, -1 },                              // F_VSITEN
+    BondedInteractions {unimplemented, -1 },                              // F_COM_PULL
+    BondedInteractions {unimplemented, -1 },                              // F_DENSITYFITTING
+    BondedInteractions {unimplemented, -1 },                              // F_EQM
+    BondedInteractions {unimplemented, -1 },                              // F_EPOT
+    BondedInteractions {unimplemented, -1 },                              // F_EKIN
+    BondedInteractions {unimplemented, -1 },                              // F_ETOT
+    BondedInteractions {unimplemented, -1 },                              // F_ECONSERVED
+    BondedInteractions {unimplemented, -1 },                              // F_TEMP
+    BondedInteractions {unimplemented, -1 },                              // F_VTEMP_NOLONGERUSED
+    BondedInteractions {unimplemented, -1 },                              // F_PDISPCORR
+    BondedInteractions {unimplemented, -1 },                              // F_PRES
+    BondedInteractions {unimplemented, -1 },                              // F_DVDL_CONSTR
+    BondedInteractions {unimplemented, -1 },                              // F_DVDL
+    BondedInteractions {unimplemented, -1 },                              // F_DKDL
+    BondedInteractions {unimplemented, -1 },                              // F_DVDL_COUL
+    BondedInteractions {unimplemented, -1 },                              // F_DVDL_VDW
+    BondedInteractions {unimplemented, -1 },                              // F_DVDL_BONDED
+    BondedInteractions {unimplemented, -1 },                              // F_DVDL_RESTRAINT
+    BondedInteractions {unimplemented, -1 },                              // F_DVDL_TEMPERATURE
+    };
+
+/*! \brief List of instantiated BondedInteractions list */
+const gmx::EnumerationArray < BondedKernelFlavor, std::array < BondedInteractions, F_NRE>> c_bondedInteractionFunctionsPerFlavor =
+{
+    c_bondedInteractionFunctions<BondedKernelFlavor::ForcesSimdWhenAvailable>,
+    c_bondedInteractionFunctions<BondedKernelFlavor::ForcesNoSimd>,
+    c_bondedInteractionFunctions<BondedKernelFlavor::ForcesAndVirialAndEnergy>,
+    c_bondedInteractionFunctions<BondedKernelFlavor::ForcesAndEnergy>
+};
+
 //! \endcond
+
+} // namespace
+
+real calculateSimpleBond(const int ftype,
+                         const int numForceatoms, const t_iatom forceatoms[],
+                         const t_iparams forceparams[],
+                         const rvec x[], rvec4 f[], rvec fshift[],
+                         const struct t_pbc *pbc,
+                         const struct t_graph gmx_unused *g,
+                         const real lambda, real *dvdlambda,
+                         const t_mdatoms *md, t_fcdata *fcd,
+                         int gmx_unused *global_atom_index,
+                         const BondedKernelFlavor bondedKernelFlavor)
+{
+    const BondedInteractions &bonded =
+        c_bondedInteractionFunctionsPerFlavor[bondedKernelFlavor][ftype];
+
+    real v = bonded.function(numForceatoms, forceatoms,
+                             forceparams,
+                             x, f, fshift,
+                             pbc, g, lambda, dvdlambda,
+                             md, fcd, global_atom_index);
+
+    return v;
+}
+
+int nrnbIndex(int ftype)
+{
+    return c_bondedInteractionFunctions<BondedKernelFlavor::ForcesAndVirialAndEnergy>[ftype].nrnbIndex;
+}

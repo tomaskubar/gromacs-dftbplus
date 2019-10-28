@@ -74,6 +74,7 @@ class t_state;
 
 namespace gmx
 {
+template <typename T> class ArrayRefWithPadding;
 
 //! Describes supported flavours of constrained updates.
 enum class ConstraintVariable : int
@@ -172,7 +173,7 @@ class Constraints
                    rvec                 *x,
                    rvec                 *xprime,
                    rvec                 *min_proj,
-                   matrix                box,
+                   const matrix          box,
                    real                  lambda,
                    real                 *dvdlambda,
                    rvec                 *v,
@@ -181,7 +182,7 @@ class Constraints
         //! Links the essentialdynamics and constraint code.
         void saveEdsamPointer(gmx_edsam *ed);
         //! Getter for use by domain decomposition.
-        const ArrayRef<const t_blocka> atom2constraints_moltype() const;
+        ArrayRef<const t_blocka> atom2constraints_moltype() const;
         //! Getter for use by domain decomposition.
         ArrayRef < const std::vector < int>> atom2settle_moltype() const;
 
@@ -191,6 +192,12 @@ class Constraints
         ArrayRef<real> rmsdData() const;
         /*! \brief Return the RMSD of the constraints when available. */
         real rmsd() const;
+
+        /*! \brief Get the total number of constraints.
+         *
+         * \returns Total number of constraints, including SETTLE and LINCS/SHAKE constraints.
+         */
+        int numConstraintsTotal();
 
     private:
         //! Implementation type.
@@ -295,7 +302,11 @@ bool inter_charge_group_settles(const gmx_mtop_t &mtop);
 /*! \brief Constrain the initial coordinates and velocities */
 void do_constrain_first(FILE *log, gmx::Constraints *constr,
                         const t_inputrec *inputrec, const t_mdatoms *md,
-                        t_state *state);
+                        int natoms,
+                        ArrayRefWithPadding<RVec> x,
+                        ArrayRefWithPadding<RVec> v,
+                        const matrix box,
+                        real lambda);
 
 }  // namespace gmx
 

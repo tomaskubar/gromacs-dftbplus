@@ -93,7 +93,7 @@ static void set_pme_maxshift(gmx_domdec_t *dd, gmx_ddpme_t *ddpme,
          * between performance and support for most charge-group/cut-off
          * combinations.
          */
-        range  = 2.0/3.0*comm->cutoff/ddbox->box_size[ddpme->dim];
+        range  = 2.0/3.0*comm->systemInfo.cutoff/ddbox->box_size[ddpme->dim];
         /* Avoid extra communication when we are exactly at a boundary */
         range *= 0.999;
 
@@ -192,7 +192,7 @@ static real cellsize_min_dlb(gmx_domdec_comm_t *comm, int dim_ind, int dim)
         /* The cut-off might have changed, e.g. by PME load balacning,
          * from the value used to set comm->cellsize_min, so check it.
          */
-        cellsize_min = std::max(cellsize_min, comm->cutoff/comm->cd[dim_ind].np_dlb);
+        cellsize_min = std::max(cellsize_min, comm->systemInfo.cutoff/comm->cd[dim_ind].np_dlb);
 
         if (comm->bPMELoadBalDLBLimits)
         {
@@ -246,7 +246,7 @@ set_dd_cell_sizes_slb(gmx_domdec_t *dd, const gmx_ddbox_t *ddbox,
                     break;
             }
             real cellsize = cell_dx*ddbox->skew_fac[d];
-            while (cellsize*npulse[d] < comm->cutoff)
+            while (cellsize*npulse[d] < comm->systemInfo.cutoff)
             {
                 npulse[d]++;
             }
@@ -276,7 +276,7 @@ set_dd_cell_sizes_slb(gmx_domdec_t *dd, const gmx_ddbox_t *ddbox,
                 real cell_dx  = ddbox->box_size[d]*comm->slb_frac[d][j];
                 cell_x[j+1]   = cell_x[j] + cell_dx;
                 real cellsize = cell_dx*ddbox->skew_fac[d];
-                while (cellsize*npulse[d] < comm->cutoff &&
+                while (cellsize*npulse[d] < comm->systemInfo.cutoff &&
                        npulse[d] < dd->nc[d]-1)
                 {
                     npulse[d]++;
@@ -301,7 +301,7 @@ set_dd_cell_sizes_slb(gmx_domdec_t *dd, const gmx_ddbox_t *ddbox,
             sprintf(error_string,
                     "The box size in direction %c (%f) times the triclinic skew factor (%f) is too small for a cut-off of %f with %d domain decomposition cells, use 1 or more than %d %s or increase the box size in this direction",
                     dim2char(d), ddbox->box_size[d], ddbox->skew_fac[d],
-                    comm->cutoff,
+                    comm->systemInfo.cutoff,
                     dd->nc[d], dd->nc[d],
                     dd->nnodes > dd->nc[d] ? "cells" : "ranks");
 
@@ -322,11 +322,12 @@ set_dd_cell_sizes_slb(gmx_domdec_t *dd, const gmx_ddbox_t *ddbox,
         copy_rvec(cellsize_min, comm->cellsize_min);
     }
 
-    for (int d = 0; d < comm->npmedecompdim; d++)
+    DDRankSetup &ddRankSetup = comm->ddRankSetup;
+    for (int d = 0; d < ddRankSetup.npmedecompdim; d++)
     {
-        set_pme_maxshift(dd, &comm->ddpme[d],
+        set_pme_maxshift(dd, &ddRankSetup.ddpme[d],
                          comm->slb_frac[dd->dim[d]] == nullptr, ddbox,
-                         comm->ddpme[d].slb_dim_f);
+                         ddRankSetup.ddpme[d].slb_dim_f);
     }
 
     return cell_x_master;
@@ -564,7 +565,7 @@ static void set_dd_cell_sizes_dlb_root(gmx_domdec_t *dd,
     int                range[] = { 0, 0 };
 
     /* Convert the maximum change from the input percentage to a fraction */
-    const real          change_limit = comm->dlb_scale_lim*0.01;
+    const real          change_limit = comm->ddSettings.dlb_scale_lim*0.01;
 
     const int           ncd          = dd->nc[dim];
 
@@ -621,7 +622,7 @@ static void set_dd_cell_sizes_dlb_root(gmx_domdec_t *dd,
 
     real cellsize_limit_f  = cellsize_min_dlb(comm, d, dim)/ddbox->box_size[dim];
     cellsize_limit_f      *= DD_CELL_MARGIN;
-    real dist_min_f_hard   = grid_jump_limit(comm, comm->cutoff, d)/ddbox->box_size[dim];
+    real dist_min_f_hard   = grid_jump_limit(comm, comm->systemInfo.cutoff, d)/ddbox->box_size[dim];
     real dist_min_f        = dist_min_f_hard * DD_CELL_MARGIN;
     if (ddbox->tric_dir[dim])
     {
@@ -705,17 +706,18 @@ static void set_dd_cell_sizes_dlb_root(gmx_domdec_t *dd,
         rowMaster->cellFrac[pos++] = comm->cellsizesWithDlb[d1].fracUpper;
     }
 
-    if (d < comm->npmedecompdim)
+    DDRankSetup &ddRankSetup = comm->ddRankSetup;
+    if (d < ddRankSetup.npmedecompdim)
     {
         /* The master determines the maximum shift for
          * the coordinate communication between separate PME nodes.
          */
-        set_pme_maxshift(dd, &comm->ddpme[d], bUniform, ddbox, rowMaster->cellFrac.data());
+        set_pme_maxshift(dd, &ddRankSetup.ddpme[d], bUniform, ddbox, rowMaster->cellFrac.data());
     }
-    rowMaster->cellFrac[pos++] = comm->ddpme[0].maxshift;
+    rowMaster->cellFrac[pos++] = ddRankSetup.ddpme[0].maxshift;
     if (d >= 1)
     {
-        rowMaster->cellFrac[pos++] = comm->ddpme[1].maxshift;
+        rowMaster->cellFrac[pos++] = ddRankSetup.ddpme[1].maxshift;
     }
 }
 
@@ -767,10 +769,10 @@ static void distribute_dd_cell_sizes_dlb(gmx_domdec_t *dd,
         relative_to_absolute_cell_bounds(dd, ddbox, d1);
     }
     /* Convert the communicated shift from float to int */
-    comm.ddpme[0].maxshift = gmx::roundToInt(cellFracRow[pos++]);
+    comm.ddRankSetup.ddpme[0].maxshift = gmx::roundToInt(cellFracRow[pos++]);
     if (d >= 1)
     {
-        comm.ddpme[1].maxshift = gmx::roundToInt(cellFracRow[pos++]);
+        comm.ddRankSetup.ddpme[1].maxshift = gmx::roundToInt(cellFracRow[pos++]);
     }
 }
 

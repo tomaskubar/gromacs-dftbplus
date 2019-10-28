@@ -1,7 +1,7 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2012,2014,2015,2016,2017,2018, by the GROMACS development team, led by
+ * Copyright (c) 2012,2014,2015,2016,2017,2018,2019, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -35,8 +35,6 @@
 #ifndef CUDA_ARCH_UTILS_CUH_
 #define CUDA_ARCH_UTILS_CUH_
 
-#include "config.h"
-
 #include "gromacs/utility/basedefinitions.h"
 
 /*! \file
@@ -65,78 +63,6 @@ static const int warp_size_log2 = 5;
  *  NOTE that here too we assume 32-wide warps.
  */
 static const unsigned int c_fullWarpMask = 0xffffffff;
-
-/* Below are backward-compatibility wrappers for CUDA 9 warp-wide intrinsics. */
-
-/*! \brief Compatibility wrapper around the CUDA __syncwarp() instrinsic.  */
-static __forceinline__ __device__
-void gmx_syncwarp(const unsigned int activeMask = c_fullWarpMask)
-{
-#if GMX_CUDA_VERSION < 9000
-    /* no sync needed on pre-Volta. */
-    GMX_UNUSED_VALUE(activeMask);
-#else
-    __syncwarp(activeMask);
-#endif
-}
-
-/*! \brief Compatibility wrapper around the CUDA __ballot()/__ballot_sync() instrinsic.  */
-static __forceinline__ __device__
-unsigned int gmx_ballot_sync(const unsigned int activeMask,
-                             const int          pred)
-{
-#if GMX_CUDA_VERSION < 9000
-    GMX_UNUSED_VALUE(activeMask);
-    return __ballot(pred);
-#else
-    return __ballot_sync(activeMask, pred);
-#endif
-}
-
-/*! \brief Compatibility wrapper around the CUDA __any()/__any_sync() instrinsic.  */
-static __forceinline__ __device__
-int gmx_any_sync(const unsigned int activeMask,
-                 const int          pred)
-{
-#if GMX_CUDA_VERSION < 9000
-    GMX_UNUSED_VALUE(activeMask);
-    return __any(pred);
-#else
-    return __any_sync(activeMask, pred);
-#endif
-}
-
-/*! \brief Compatibility wrapper around the CUDA __shfl_up()/__shfl_up_sync() instrinsic.  */
-template <typename T>
-static __forceinline__ __device__
-T gmx_shfl_up_sync(const unsigned int activeMask,
-                   const T            var,
-                   unsigned int       offset,
-                   int                width = warp_size)
-{
-#if GMX_CUDA_VERSION < 9000
-    GMX_UNUSED_VALUE(activeMask);
-    return __shfl_up(var, offset, width);
-#else
-    return __shfl_up_sync(activeMask, var, offset, width);
-#endif
-}
-
-/*! \brief Compatibility wrapper around the CUDA __shfl_down()/__shfl_down_sync() instrinsic.  */
-template <typename T>
-static __forceinline__ __device__
-T gmx_shfl_down_sync(const unsigned int activeMask,
-                     const T            var,
-                     unsigned int       offset,
-                     int                width = warp_size)
-{
-#if GMX_CUDA_VERSION < 9000
-    GMX_UNUSED_VALUE(activeMask);
-    return __shfl_down(var, offset, width);
-#else
-    return __shfl_down_sync(activeMask, var, offset, width);
-#endif
-}
 
 /*! \brief Allow disabling CUDA textures using the GMX_DISABLE_CUDA_TEXTURES macro.
  *
@@ -178,5 +104,15 @@ static const bool c_disableCudaTextures = DISABLE_CUDA_TEXTURES;
         #define GMX_CUDA_MAX_BLOCKS_PER_MP   0
         #define GMX_CUDA_MAX_THREADS_PER_MP  0
 #endif
+
+// Macro defined for clang CUDA device compilation in the presence of debug symbols
+// used to work around codegen bug that breaks some kernels when assertions are on
+// at -O1 and higher (tested with clang 6-8).
+#if defined(__clang__) && defined(__CUDA__) && defined(__CUDA_ARCH__) && !defined(NDEBUG)
+#define CLANG_DISABLE_OPTIMIZATION_ATTRIBUTE __attribute__ ((optnone))
+#else
+#define CLANG_DISABLE_OPTIMIZATION_ATTRIBUTE
+#endif
+
 
 #endif /* CUDA_ARCH_UTILS_CUH_ */

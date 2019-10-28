@@ -39,6 +39,7 @@
 
 #include "gromacs/math/arrayrefwithpadding.h"
 #include "gromacs/math/vectypes.h"
+#include "gromacs/mdtypes/forceoutput.h"
 #include "gromacs/utility/arrayref.h"
 
 class DDBalanceRegionHandler;
@@ -67,8 +68,9 @@ namespace gmx
 class Awh;
 class ForceWithVirial;
 class ImdSession;
-class PpForceWorkload;
+class MdrunScheduleWorkload;
 class MDLogger;
+class StepWorkload;
 }
 
 void do_force(FILE                                     *log,
@@ -83,7 +85,7 @@ void do_force(FILE                                     *log,
               t_nrnb                                   *nrnb,
               gmx_wallcycle                            *wcycle,
               const gmx_localtop_t                     *top,
-              matrix                                    box,
+              const matrix                              box,
               gmx::ArrayRefWithPadding<gmx::RVec>       coordinates,
               history_t                                *hist,
               gmx::ArrayRefWithPadding<gmx::RVec>       force,
@@ -94,12 +96,12 @@ void do_force(FILE                                     *log,
               gmx::ArrayRef<real>                       lambda,
               t_graph                                  *graph,
               t_forcerec                               *fr,
-              gmx::PpForceWorkload                     *ppForceWorkload,
+              gmx::MdrunScheduleWorkload               *runScheduleWork,
               const gmx_vsite_t                        *vsite,
               rvec                                      mu_tot,
               double                                    t,
               gmx_edsam                                *ed,
-              int                                       flags,
+              int                                       legacyFlags,
               const DDBalanceRegionHandler             &ddBalanceRegionHandler);
 
 /* Communicate coordinates (if parallel).
@@ -123,15 +125,14 @@ do_force_lowlevel(t_forcerec                               *fr,
                   const t_mdatoms                          *md,
                   gmx::ArrayRefWithPadding<gmx::RVec>       coordinates,
                   history_t                                *hist,
-                  rvec                                     *f_shortrange,
-                  gmx::ForceWithVirial                     *forceWithVirial,
+                  gmx::ForceOutputs                        *forceOutputs,
                   gmx_enerdata_t                           *enerd,
                   t_fcdata                                 *fcd,
                   const matrix                              box,
                   const real                               *lambda,
                   const t_graph                            *graph,
                   const rvec                               *mu_tot,
-                  int                                       flags,
+                  const gmx::StepWorkload                  &stepWork,
                   const DDBalanceRegionHandler             &ddBalanceRegionHandler);
 /* Call all the force routines */
 

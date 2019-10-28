@@ -79,6 +79,7 @@
 #include "gromacs/trajectory/energyframe.h"
 #include "gromacs/utility/arraysize.h"
 #include "gromacs/utility/fatalerror.h"
+#include "gromacs/utility/mdmodulenotification.h"
 #include "gromacs/utility/smalloc.h"
 #include "gromacs/utility/stringutil.h"
 
@@ -124,12 +125,13 @@ namespace gmx
  * \todo Remove GMX_CONSTRAINTVIR
  * \todo Write free-energy output also to energy file (after adding more tests)
  */
-EnergyOutput::EnergyOutput(ener_file        *fp_ene,
-                           const gmx_mtop_t *mtop,
-                           const t_inputrec *ir,
-                           const pull_t     *pull_work,
-                           FILE             *fp_dhdl,
-                           bool              isRerun)
+EnergyOutput::EnergyOutput(ener_file *              fp_ene,
+                           const gmx_mtop_t *       mtop,
+                           const t_inputrec *       ir,
+                           const pull_t *           pull_work,
+                           FILE *                   fp_dhdl,
+                           bool                     isRerun,
+                           const MdModulesNotifier &mdModulesNotifier)
 {
     const char                *ener_nm[F_NRE];
     static const char         *vir_nm[] = {
@@ -263,6 +265,12 @@ EnergyOutput::EnergyOutput(ener_file        *fp_ene,
     bEner_[F_DISRESVIOL]     = (gmx_mtop_ftype_count(mtop, F_DISRES) > 0);
     bEner_[F_ORIRESDEV]      = (gmx_mtop_ftype_count(mtop, F_ORIRES) > 0);
     bEner_[F_COM_PULL]       = ((ir->bPull && pull_have_potential(pull_work)) || ir->bRot);
+
+    MdModulesEnergyOutputToDensityFittingRequestChecker mdModulesAddOutputToDensityFittingFieldRequest;
+    mdModulesNotifier.notifier_.notify(&mdModulesAddOutputToDensityFittingFieldRequest);
+
+    bEner_[F_DENSITYFITTING] = mdModulesAddOutputToDensityFittingFieldRequest.energyOutputToDensityFitting_;
+
 
     // Counting the energy terms that will be printed and saving their names
     f_nre_ = 0;
@@ -892,17 +900,17 @@ void EnergyOutput::addDataAtEnergyStep(bool                    bDoDHDL,
                                        bool                    bSum,
                                        double                  time,
                                        real                    tmass,
-                                       gmx_enerdata_t         *enerd,
-                                       t_state                *state,
-                                       t_lambda               *fep,
-                                       t_expanded             *expand,
-                                       matrix                  box,
-                                       tensor                  svir,
-                                       tensor                  fvir,
-                                       tensor                  vir,
-                                       tensor                  pres,
-                                       gmx_ekindata_t         *ekind,
-                                       rvec                    mu_tot,
+                                       const gmx_enerdata_t   *enerd,
+                                       const t_state          *state,
+                                       const t_lambda         *fep,
+                                       const t_expanded       *expand,
+                                       const matrix            box,
+                                       const tensor            svir,
+                                       const tensor            fvir,
+                                       const tensor            vir,
+                                       const tensor            pres,
+                                       const gmx_ekindata_t   *ekind,
+                                       const rvec              mu_tot,
                                        const gmx::Constraints *constr)
 {
     int    j, k, kk, n, gid;
@@ -1359,7 +1367,7 @@ void EnergyOutput::printAnnealingTemperatures(FILE *log, SimulationGroups *group
     }
 }
 
-void EnergyOutput::printAverages(FILE *log, SimulationGroups *groups)
+void EnergyOutput::printAverages(FILE *log, const SimulationGroups *groups)
 {
     if (ebin_->nsum_sim <= 0)
     {

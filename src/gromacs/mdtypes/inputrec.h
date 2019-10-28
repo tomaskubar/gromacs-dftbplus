@@ -342,12 +342,8 @@ struct t_inputrec // NOLINT (clang-analyzer-optin.performance.Padding)
     int                         nstcalcenergy;
     //! Group or verlet cutoffs
     int                         cutoff_scheme;
-    //! Which neighbor search method should we use?
-    int                         ns_type;
     //! Number of steps before pairlist is generated
     int                         nstlist;
-    //! Number of cells per rlong
-    int                         ndelta;
     //! Number of steps after which center of mass motion is removed
     int                         nstcomm;
     //! Center of mass motion removal algorithm
@@ -587,6 +583,9 @@ struct t_inputrec // NOLINT (clang-analyzer-optin.performance.Padding)
 
     //! KVT object that contains input parameters converted to the new style.
     gmx::KeyValueTreeObject *params;
+
+    //! KVT for storing simulation parameters that are not part of the mdp file.
+    std::unique_ptr<gmx::KeyValueTreeObject>  internalParameters;
 };
 
 int ir_optimal_nstcalcenergy(const t_inputrec *ir);

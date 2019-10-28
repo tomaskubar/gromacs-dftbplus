@@ -393,8 +393,8 @@ static int nitrogen_is_planar(gmx::ArrayRef<const VirtualSiteConfiguration> vsit
     return res;
 }
 
-static const std::string get_dummymass_name(gmx::ArrayRef<const VirtualSiteConfiguration> vsiteconflist,
-                                            const std::string &atom, const std::string &nextheavy)
+static std::string get_dummymass_name(gmx::ArrayRef<const VirtualSiteConfiguration> vsiteconflist,
+                                      const std::string &atom, const std::string &nextheavy)
 {
     /* Return the dummy mass name if found, or NULL if not set in ddb database */
     const auto found = std::find_if(vsiteconflist.begin(), vsiteconflist.end(),
@@ -554,7 +554,7 @@ static int get_atype(int atom, t_atoms *at, gmx::ArrayRef<const PreprocessResidu
     int      type;
     bool     bNterm;
 
-    if (at->atom[atom].m != 0.0f)
+    if (at->atom[atom].m != 0.0F)
     {
         type = at->atom[atom].type;
     }
@@ -590,7 +590,7 @@ static real get_amass(int atom, t_atoms *at, gmx::ArrayRef<const PreprocessResid
     real     mass;
     bool     bNterm;
 
-    if (at->atom[atom].m != 0.0f)
+    if (at->atom[atom].m != 0.0F)
     {
         mass = at->atom[atom].m;
     }
@@ -1558,7 +1558,7 @@ void do_vsites(gmx::ArrayRef<const PreprocessResidue> rtpFFDB, PreprocessingAtom
                const char *ffdir)
 {
 #define MAXATOMSPERRESIDUE 16
-    int                        k, m, i0, ni0, whatres, resind, add_shift, nvsite, nadd;
+    int                        k, m, i0, ni0, whatres, add_shift, nvsite, nadd;
     int                        ai, aj, ak, al;
     int                        nrfound = 0, needed, nrbonds, nrHatoms, Heavy, nrheavies, tpM, tpHeavy;
     int                        Hatoms[4], heavies[4];
@@ -1570,7 +1570,6 @@ void do_vsites(gmx::ArrayRef<const PreprocessResidue> rtpFFDB, PreprocessingAtom
     int                       *o2n, *newvsite_type, *newcgnr, ats[MAXATOMSPERRESIDUE];
     t_atom                    *newatom;
     char                    ***newatomname;
-    char                      *resnm = nullptr;
     int                        cmplength;
     bool                       isN, planarN, bFound;
 
@@ -1661,14 +1660,14 @@ void do_vsites(gmx::ArrayRef<const PreprocessResidue> rtpFFDB, PreprocessingAtom
 
     /* generate vsite constructions */
     /* loop over all atoms */
-    resind = -1;
+    int resind = -1;
     for (int i = 0; (i < at->nr); i++)
     {
         if (at->atom[i].resind != resind)
         {
             resind = at->atom[i].resind;
-            resnm  = *(at->resinfo[resind].name);
         }
+        const char *resnm = *(at->resinfo[resind].name);
         /* first check for aromatics to virtualize */
         /* don't waste our effort on DNA, water etc. */
         /* Only do the vsite aromatic stuff when we reach the
@@ -2028,11 +2027,10 @@ void do_vsites(gmx::ArrayRef<const PreprocessResidue> rtpFFDB, PreprocessingAtom
             }
             if (bWARNING)
             {
-                fprintf(stderr,
-                        "Warning: cannot convert atom %d %s (bound to a heavy atom "
-                        "%s with \n"
-                        "         %d bonds and %d bound hydrogens atoms) to virtual site\n",
-                        i+1, *(at->atomname[i]), tpname, nrbonds, nrHatoms);
+                gmx_fatal(FARGS, "Cannot convert atom %d %s (bound to a heavy atom "
+                          "%s with \n"
+                          "         %d bonds and %d bound hydrogens atoms) to virtual site\n",
+                          i+1, *(at->atomname[i]), tpname, nrbonds, nrHatoms);
             }
             if (bAddVsiteParam)
             {

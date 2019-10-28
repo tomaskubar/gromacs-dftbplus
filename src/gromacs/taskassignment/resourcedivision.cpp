@@ -422,8 +422,8 @@ int get_nthreads_mpi(const gmx_hw_info_t    *hwinfo,
         nthreads_tot_max = nthreads_hw;
     }
 
-    /* nonbondedOnGpu might be false e.g. because this simulation uses
-     * the group scheme, or is a rerun with energy groups. */
+    /* nonbondedOnGpu might be false e.g. because this simulation
+     * is a rerun with energy groups. */
     ngpu = (nonbondedOnGpu ? gmx::ssize(gpuIdsToUse) : 0);
 
     nrank =
@@ -563,7 +563,7 @@ void check_resource_division_efficiency(const gmx_hw_info_t *hwinfo,
 
     bool anyRankIsUsingGpus = willUsePhysicalGpu;
     /* Thread-MPI seems to have a bug with reduce on 1 node, so use a cond. */
-    if (cr->nnodes + cr->npmenodes > 1)
+    if (cr->nnodes > 1)
     {
         int count[3], count_max[3];
 
@@ -655,7 +655,8 @@ static void print_hw_opt(FILE *fp, const gmx_hw_opt_t *hw_opt)
 void checkAndUpdateHardwareOptions(const gmx::MDLogger &mdlog,
                                    gmx_hw_opt_t        *hw_opt,
                                    const bool           isSimulationMasterRank,
-                                   const int            nPmeRanks)
+                                   const int            nPmeRanks,
+                                   const t_inputrec    *inputrec)
 {
     /* Currently hw_opt only contains default settings or settings supplied
      * by the user on the command line.
@@ -686,6 +687,18 @@ void checkAndUpdateHardwareOptions(const gmx::MDLogger &mdlog,
         {
             gmx_fatal(FARGS, "Setting the number of thread-MPI ranks is only supported with thread-MPI and GROMACS was "
                       "compiled without thread-MPI");
+        }
+    }
+
+    /* With thread-MPI we need to handle TPI and #OpenMP-threads=auto early,
+     * so we can parallelize using MPI only. The general check is done later.
+     */
+    if (GMX_THREAD_MPI && isSimulationMasterRank)
+    {
+        GMX_RELEASE_ASSERT(inputrec, "Expect a valid inputrec");
+        if (EI_TPI(inputrec->eI) && hw_opt->nthreads_omp == 0)
+        {
+            hw_opt->nthreads_omp = 1;
         }
     }
     /* With thread-MPI the master thread sets hw_opt->totNumThreadsIsAuto.
@@ -801,8 +814,18 @@ void checkAndUpdateRequestedNumOpenmpThreads(gmx_hw_opt_t         *hw_opt,
                                              const gmx_multisim_t *ms,
                                              int                   numRanksOnThisNode,
                                              PmeRunMode            pmeRunMode,
-                                             const gmx_mtop_t     &mtop)
+                                             const gmx_mtop_t     &mtop,
+                                             const t_inputrec     &inputrec)
 {
+    if (EI_TPI(inputrec.eI))
+    {
+        if (hw_opt->nthreads_omp > 1)
+        {
+            gmx_fatal(FARGS, "You requested OpenMP parallelization, which is not supported with TPI.");
+        }
+        hw_opt->nthreads_omp = 1;
+    }
+
     if (GMX_THREAD_MPI)
     {
 

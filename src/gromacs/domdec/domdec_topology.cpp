@@ -57,7 +57,6 @@
 #include "gromacs/domdec/domdec.h"
 #include "gromacs/domdec/domdec_network.h"
 #include "gromacs/domdec/ga2la.h"
-#include "gromacs/gmxlib/chargegroup.h"
 #include "gromacs/gmxlib/network.h"
 #include "gromacs/math/vec.h"
 #include "gromacs/mdlib/forcerec.h"
@@ -120,8 +119,6 @@ struct thread_work_t
 struct gmx_reverse_top_t
 {
     //! @cond Doxygen_Suppress
-    //! \brief Do we require all exclusions to be assigned?
-    bool                         bExclRequired = false;
     //! \brief The maximum number of exclusions one atom can have
     int                          n_excl_at_max = 0;
     //! \brief Are there constraints in this revserse top?
@@ -130,8 +127,8 @@ struct gmx_reverse_top_t
     bool                         bSettle = false;
     //! \brief All bonded interactions have to be assigned?
     bool                         bBCheck = false;
-    //! \brief Are there bondeds/exclusions between charge-groups?
-    bool                         bInterCGInteractions = false;
+    //! \brief Are there bondeds/exclusions between atoms?
+    bool                         bInterAtomicInteractions = false;
     //! \brief Reverse ilist for all moltypes
     std::vector<reverse_ilist_t> ril_mt;
     //! \brief The size of ril_mt[?].index summed over all entries
@@ -173,9 +170,9 @@ static int nral_rt(int ftype)
 static gmx_bool dd_check_ftype(int ftype, gmx_bool bBCheck,
                                gmx_bool bConstr, gmx_bool bSettle)
 {
-    return ((((interaction_function[ftype].flags & IF_BOND) != 0u) &&
-             ((interaction_function[ftype].flags & IF_VSITE) == 0u) &&
-             (bBCheck || ((interaction_function[ftype].flags & IF_LIMZERO) == 0u))) ||
+    return ((((interaction_function[ftype].flags & IF_BOND) != 0U) &&
+             ((interaction_function[ftype].flags & IF_VSITE) == 0U) &&
+             (bBCheck || ((interaction_function[ftype].flags & IF_LIMZERO) == 0U))) ||
             (bConstr && (ftype == F_CONSTR || ftype == F_CONSTRNC)) ||
             (bSettle && ftype == F_SETTLE));
 }
@@ -460,38 +457,21 @@ static void global_atomnr_to_moltype_ind(const gmx_reverse_top_t *rt,
     *i_mol = (i_gl - mbi->a_start) - (*mol)*mbi->natoms_mol;
 }
 
-/*! \brief Count the exclusions for all atoms in \p cgs */
-static void count_excls(const t_block *cgs, const t_blocka *excls,
-                        int *n_excl, int *n_intercg_excl, int *n_excl_at_max)
+/*! \brief Returns the maximum number of exclusions per atom */
+static int getMaxNumExclusionsPerAtom(const t_blocka &excls)
 {
-    int cg, at0, at1, at, excl, atj;
-
-    *n_excl         = 0;
-    *n_intercg_excl = 0;
-    *n_excl_at_max  = 0;
-    for (cg = 0; cg < cgs->nr; cg++)
+    int maxNumExcls = 0;
+    for (int at = 0; at < excls.nr; at++)
     {
-        at0 = cgs->index[cg];
-        at1 = cgs->index[cg+1];
-        for (at = at0; at < at1; at++)
-        {
-            for (excl = excls->index[at]; excl < excls->index[at+1]; excl++)
-            {
-                atj = excls->a[excl];
-                if (atj > at)
-                {
-                    (*n_excl)++;
-                    if (atj < at0 || atj >= at1)
-                    {
-                        (*n_intercg_excl)++;
-                    }
-                }
-            }
+        const int numExcls = excls.index[at + 1] - excls.index[at];
 
-            *n_excl_at_max = std::max(*n_excl_at_max,
-                                      excls->index[at+1] - excls->index[at]);
-        }
+        GMX_RELEASE_ASSERT(numExcls != 1 || excls.a[excls.index[at]] == at,
+                           "With 1 exclusion we expect a self-exclusion");
+
+        maxNumExcls = std::max(maxNumExcls, numExcls);
     }
+
+    return maxNumExcls;
 }
 
 /*! \brief Run the reverse ilist generation and store it in r_il when \p bAssign = TRUE */
@@ -516,7 +496,7 @@ static int low_make_reverse_ilist(const InteractionLists &il_mt,
             (bConstr && (ftype == F_CONSTR || ftype == F_CONSTRNC)) ||
             (bSettle && ftype == F_SETTLE))
         {
-            const bool  bVSite = ((interaction_function[ftype].flags & IF_VSITE) != 0u);
+            const bool  bVSite = ((interaction_function[ftype].flags & IF_VSITE) != 0U);
             const int   nral   = NRAL(ftype);
             const auto &il     = il_mt[ftype];
             for (int i = 0; i < il.size(); i += 1+nral)
@@ -648,16 +628,16 @@ static gmx_reverse_top_t make_reverse_top(const gmx_mtop_t *mtop, gmx_bool bFE,
     rt.bSettle = bSettle;
     rt.bBCheck = bBCheck;
 
-    rt.bInterCGInteractions = mtop->bIntermolecularInteractions;
+    rt.bInterAtomicInteractions = mtop->bIntermolecularInteractions;
     rt.ril_mt.resize(mtop->moltype.size());
     rt.ril_mt_tot_size = 0;
     std::vector<int> nint_mt;
     for (size_t mt = 0; mt < mtop->moltype.size(); mt++)
     {
         const gmx_moltype_t &molt = mtop->moltype[mt];
-        if (molt.cgs.nr > 1)
+        if (molt.atoms.nr > 1)
         {
-            rt.bInterCGInteractions = true;
+            rt.bInterAtomicInteractions = true;
         }
 
         /* Make the atom to interaction list for this molecule type */
@@ -746,43 +726,24 @@ void dd_make_reverse_top(FILE *fplog,
     dd->reverse_top  = new gmx_reverse_top_t;
     *dd->reverse_top =
         make_reverse_top(mtop, ir->efep != efepNO,
-                         !dd->splitConstraints, !dd->splitSettles,
+                         !dd->comm->systemInfo.haveSplitConstraints,
+                         !dd->comm->systemInfo.haveSplitSettles,
                          bBCheck, &dd->nbonded_global);
 
     gmx_reverse_top_t *rt = dd->reverse_top;
 
-    /* With the Verlet scheme, exclusions are handled in the non-bonded
-     * kernels and only exclusions inside the cut-off lead to exclusion
-     * forces. Since each atom pair is treated at most once in the non-bonded
-     * kernels, it doesn't matter if the exclusions for the same atom pair
-     * appear multiple times in the exclusion list.
-     */
-    rt->bExclRequired = (ir->cutoff_scheme == ecutsGROUP &&
-                         inputrecExclForces(ir));
-
-    int nexcl          = 0;
-    dd->n_intercg_excl = 0;
+    dd->haveExclusions = false;
     rt->n_excl_at_max  = 0;
     for (const gmx_molblock_t &molb : mtop->molblock)
     {
-        int                  n_excl_mol, n_excl_icg, n_excl_at_max;
-
-        const gmx_moltype_t &molt = mtop->moltype[molb.type];
-        count_excls(&molt.cgs, &molt.excls,
-                    &n_excl_mol, &n_excl_icg, &n_excl_at_max);
-        nexcl              += molb.nmol*n_excl_mol;
-        dd->n_intercg_excl += molb.nmol*n_excl_icg;
-        rt->n_excl_at_max   = std::max(rt->n_excl_at_max, n_excl_at_max);
-    }
-    if (rt->bExclRequired)
-    {
-        dd->nbonded_global += nexcl;
-        if (EEL_FULL(ir->coulombtype) && dd->n_intercg_excl > 0 && fplog)
+        const int maxNumExclusionsPerAtom =
+            getMaxNumExclusionsPerAtom(mtop->moltype[molb.type].excls);
+        // We checked above that max 1 exclusion means only self exclusions
+        if (maxNumExclusionsPerAtom > 1)
         {
-            fprintf(fplog, "There are %d inter charge-group exclusions,\n"
-                    "will use an extra communication step for exclusion forces for %s\n",
-                    dd->n_intercg_excl, eel_names[ir->coulombtype]);
+            dd->haveExclusions = true;
         }
+        rt->n_excl_at_max = std::max(rt->n_excl_at_max, maxNumExclusionsPerAtom);
     }
 
     if (vsite && vsite->numInterUpdategroupVsites > 0)
@@ -796,7 +757,7 @@ void dd_make_reverse_top(FILE *fplog,
         init_domdec_vsites(dd, vsite->numInterUpdategroupVsites);
     }
 
-    if (dd->splitConstraints || dd->splitSettles)
+    if (dd->comm->systemInfo.haveSplitConstraints || dd->comm->systemInfo.haveSplitSettles)
     {
         init_domdec_constraints(dd, mtop);
     }
@@ -1165,9 +1126,9 @@ check_assign_interactions_atom(int i, int i_gl,
                                gmx_bool bBCheck,
                                int *nbonded_local)
 {
-    int j;
+    gmx::ArrayRef<const DDPairInteractionRanges> iZones = zones->iZones;
 
-    j = ind_start;
+    int j = ind_start;
     while (j < ind_end)
     {
         t_iatom   tiatoms[1 + MAXATOMLIST];
@@ -1242,14 +1203,12 @@ check_assign_interactions_atom(int i, int i_gl,
                         kz -= zones->n;
                     }
                     /* Check zone interaction assignments */
-                    bUse = ((iz < zones->nizone &&
+                    bUse = ((iz < iZones.ssize() &&
                              iz <= kz &&
-                             kz >= zones->izone[iz].j0 &&
-                             kz <  zones->izone[iz].j1) ||
-                            (kz < zones->nizone &&
+                             iZones[iz].jZoneRange.isInRange(kz)) ||
+                            (kz < iZones.ssize() &&
                                   iz > kz &&
-                             iz >= zones->izone[kz].j0 &&
-                             iz <  zones->izone[kz].j1));
+                             iZones[kz].jZoneRange.isInRange(iz)));
                     if (bUse)
                     {
                         GMX_ASSERT(ftype != F_CONSTR || (iz == 0 && kz == 0),
@@ -1378,7 +1337,7 @@ static int make_bondeds_zone(gmx_domdec_t *dd,
                              const t_iparams *ip_in,
                              t_idef *idef,
                              int izone,
-                             gmx::RangePartitioning::Block atomRange)
+                             const gmx::Range<int> &atomRange)
 {
     int                mb, mt, mol, i_mol;
     gmx_bool           bBCheck;
@@ -1453,109 +1412,6 @@ static void set_no_exclusions_zone(const gmx_domdec_zones_t *zones,
     }
 }
 
-/*! \brief Set the exclusion data for i-zone \p iz
- *
- * This is a legacy version for the group scheme of the same routine below.
- * Here charge groups and distance checks to ensure unique exclusions
- * are supported.
- */
-static int make_exclusions_zone_cg(gmx_domdec_t *dd, gmx_domdec_zones_t *zones,
-                                   const std::vector<gmx_moltype_t> &moltype,
-                                   gmx_bool bRCheck, real rc2,
-                                   t_pbc *pbc_null, rvec *cg_cm,
-                                   const int *cginfo,
-                                   t_blocka *lexcls,
-                                   int iz,
-                                   int cg_start, int cg_end)
-{
-    int                n_excl_at_max;
-    int                mb, mt, mol;
-    const t_blocka    *excls;
-
-    const gmx_ga2la_t &ga2la  = *dd->ga2la;
-
-    // TODO: Replace this by a more standard range
-    const gmx::RangePartitioning::Block jRange(zones->izone[iz].jcg0,
-                                               zones->izone[iz].jcg1);
-
-    n_excl_at_max = dd->reverse_top->n_excl_at_max;
-
-    /* We set the end index, but note that we might not start at zero here */
-    lexcls->nr = cg_end;
-
-    int n     = lexcls->nra;
-    int count = 0;
-    for (int la = cg_start; la < cg_end; la++)
-    {
-        if (n + (cg_end - cg_start)*n_excl_at_max > lexcls->nalloc_a)
-        {
-            lexcls->nalloc_a = over_alloc_large(n + (cg_end - cg_start)*n_excl_at_max);
-            srenew(lexcls->a, lexcls->nalloc_a);
-        }
-        if (GET_CGINFO_EXCL_INTER(cginfo[la]) ||
-            !GET_CGINFO_EXCL_INTRA(cginfo[la]))
-        {
-            /* Copy the exclusions from the global top */
-            lexcls->index[la] = n;
-            int a_gl          = dd->globalAtomIndices[la];
-            int a_mol;
-            global_atomnr_to_moltype_ind(dd->reverse_top, a_gl, &mb, &mt, &mol, &a_mol);
-            excls = &moltype[mt].excls;
-            for (int j = excls->index[a_mol]; j < excls->index[a_mol+1]; j++)
-            {
-                int aj_mol = excls->a[j];
-                /* Since exclusions are pair interactions,
-                 * just like non-bonded interactions,
-                 * they can be assigned properly up
-                 * to the DD cutoff (not cutoff_min as
-                 * for the other bonded interactions).
-                 */
-                if (const auto *jEntry = ga2la.find(a_gl + aj_mol - a_mol))
-                {
-                    if (iz == 0 && jEntry->cell == 0)
-                    {
-                        lexcls->a[n++] = jEntry->la;
-                        /* Check to avoid double counts */
-                        if (jEntry->la > la)
-                        {
-                            count++;
-                        }
-                    }
-                    else if (jRange.inRange(jEntry->la) &&
-                             (!bRCheck ||
-                              dd_dist2(pbc_null, cg_cm, la, jEntry->la) < rc2))
-                    {
-                        /* jla > la, since jRange.begin() > la */
-                        lexcls->a[n++] = jEntry->la;
-                        count++;
-                    }
-                }
-            }
-        }
-        else
-        {
-            /* There are no inter-atomic excls and this atom is self-excluded.
-             * These exclusions are only required for zone 0,
-             * since other zones do not see themselves.
-             */
-            if (iz == 0)
-            {
-                lexcls->index[la] = n;
-                lexcls->a[n++]    = la;
-            }
-            else
-            {
-                lexcls->index[la] = n;
-            }
-        }
-    }
-
-    lexcls->index[lexcls->nr] = n;
-    lexcls->nra               = n;
-
-    return count;
-}
-
 /*! \brief Set the exclusion data for i-zone \p iz */
 static void make_exclusions_zone(gmx_domdec_t *dd, gmx_domdec_zones_t *zones,
                                  const std::vector<gmx_moltype_t> &moltype,
@@ -1567,9 +1423,7 @@ static void make_exclusions_zone(gmx_domdec_t *dd, gmx_domdec_zones_t *zones,
 
     const gmx_ga2la_t &ga2la  = *dd->ga2la;
 
-    // TODO: Replace this by a more standard range
-    const gmx::RangePartitioning::Block jRange(zones->izone[iz].jcg0,
-                                               zones->izone[iz].jcg1);
+    const auto        &jAtomRange = zones->iZones[iz].jAtomRange;
 
     n_excl_at_max = dd->reverse_top->n_excl_at_max;
 
@@ -1612,7 +1466,7 @@ static void make_exclusions_zone(gmx_domdec_t *dd, gmx_domdec_zones_t *zones,
                      * the number of exclusions in the list, which in turn
                      * can speed up the pair list construction a bit.
                      */
-                    if (jRange.inRange(jEntry->la))
+                    if (jAtomRange.isInRange(jEntry->la))
                     {
                         lexcls->a[n++] = jEntry->la;
                     }
@@ -1665,10 +1519,11 @@ static void check_alloc_index(t_blocka *ba, int nindex_max)
 }
 
 /*! \brief Ensure that we have enough space for exclusion storate in \p lexcls */
-static void check_exclusions_alloc(gmx_domdec_t *dd, gmx_domdec_zones_t *zones,
-                                   t_blocka *lexcls)
+static void check_exclusions_alloc(const gmx_domdec_t       *dd,
+                                   const gmx_domdec_zones_t *zones,
+                                   t_blocka                 *lexcls)
 {
-    const int nr = zones->izone[zones->nizone - 1].cg1;
+    const int nr = zones->iZones.back().iAtomRange.end();
 
     check_alloc_index(lexcls, nr);
 
@@ -1682,11 +1537,10 @@ static void check_exclusions_alloc(gmx_domdec_t *dd, gmx_domdec_zones_t *zones,
 static void finish_local_exclusions(gmx_domdec_t *dd, gmx_domdec_zones_t *zones,
                                     t_blocka *lexcls)
 {
-    // TODO: Replace this by a more standard range
-    const gmx::RangePartitioning::Block nonhomeIzonesAtomRange(zones->izone[0].cg1,
-                                                               zones->izone[zones->nizone - 1].cg1);
+    const gmx::Range<int> nonhomeIzonesAtomRange(zones->iZones[0].iAtomRange.end(),
+                                                 zones->iZones.back().iAtomRange.end());
 
-    if (dd->n_intercg_excl == 0)
+    if (!dd->haveExclusions)
     {
         /* There are no exclusions involving non-home charge groups,
          * but we need to set the indices for neighborsearching.
@@ -1731,13 +1585,12 @@ static int make_local_bondeds_excls(gmx_domdec_t *dd,
                                     t_blocka *lexcls, int *excl_count)
 {
     int                nzone_bondeds, nzone_excl;
-    int                izone, cg0, cg1;
+    int                cg0, cg1;
     real               rc2;
     int                nbonded_local;
-    int                thread;
     gmx_reverse_top_t *rt;
 
-    if (dd->reverse_top->bInterCGInteractions)
+    if (dd->reverse_top->bInterAtomicInteractions)
     {
         nzone_bondeds = zones->n;
     }
@@ -1749,14 +1602,14 @@ static int make_local_bondeds_excls(gmx_domdec_t *dd,
         nzone_bondeds = 1;
     }
 
-    if (dd->n_intercg_excl > 0)
+    if (dd->haveExclusions)
     {
         /* We only use exclusions from i-zones to i- and j-zones */
-        nzone_excl = zones->nizone;
+        nzone_excl = zones->iZones.size();
     }
     else
     {
-        /* There are no inter-cg exclusions and only zone 0 sees itself */
+        /* There are no exclusions and only zone 0 sees itself */
         nzone_excl = 1;
     }
 
@@ -1774,14 +1627,14 @@ static int make_local_bondeds_excls(gmx_domdec_t *dd,
     lexcls->nra   = 0;
     *excl_count   = 0;
 
-    for (izone = 0; izone < nzone_bondeds; izone++)
+    for (int izone = 0; izone < nzone_bondeds; izone++)
     {
         cg0 = zones->cg_range[izone];
         cg1 = zones->cg_range[izone + 1];
 
         const int numThreads = rt->th_work.size();
 #pragma omp parallel for num_threads(numThreads) schedule(static)
-        for (thread = 0; thread < numThreads; thread++)
+        for (int thread = 0; thread < numThreads; thread++)
         {
             try
             {
@@ -1809,7 +1662,7 @@ static int make_local_bondeds_excls(gmx_domdec_t *dd,
                                       pbc_null, cg_cm, idef->iparams,
                                       idef_t,
                                       izone,
-                                      gmx::RangePartitioning::Block(cg0t, cg1t));
+                                      gmx::Range<int>(cg0t, cg1t));
 
                 if (izone < nzone_excl)
                 {
@@ -1824,24 +1677,11 @@ static int make_local_bondeds_excls(gmx_domdec_t *dd,
                         excl_t->nra = 0;
                     }
 
-                    if (!rt->bExclRequired)
-                    {
-                        /* No charge groups and no distance check required */
-                        make_exclusions_zone(dd, zones, mtop->moltype, cginfo,
-                                             excl_t, izone, cg0t,
-                                             cg1t,
-                                             mtop->intermolecularExclusionGroup);
-                    }
-                    else
-                    {
-                        rt->th_work[thread].excl_count =
-                            make_exclusions_zone_cg(dd, zones,
-                                                    mtop->moltype, bRCheck2B, rc2,
-                                                    pbc_null, cg_cm, cginfo,
-                                                    excl_t,
-                                                    izone,
-                                                    cg0t, cg1t);
-                    }
+                    /* No charge groups and no distance check required */
+                    make_exclusions_zone(dd, zones, mtop->moltype, cginfo,
+                                         excl_t, izone, cg0t,
+                                         cg1t,
+                                         mtop->intermolecularExclusionGroup);
                 }
             }
             GMX_CATCH_ALL_AND_EXIT_WITH_FATAL_ERROR;
@@ -1874,9 +1714,9 @@ static int make_local_bondeds_excls(gmx_domdec_t *dd,
     /* Some zones might not have exclusions, but some code still needs to
      * loop over the index, so we set the indices here.
      */
-    for (izone = nzone_excl; izone < zones->nizone; izone++)
+    for (size_t iZone = nzone_excl; iZone < zones->iZones.size(); iZone++)
     {
-        set_no_exclusions_zone(zones, izone, lexcls);
+        set_no_exclusions_zone(zones, iZone, lexcls);
     }
 
     finish_local_exclusions(dd, zones, lexcls);
@@ -1910,7 +1750,7 @@ void dd_make_local_top(gmx_domdec_t *dd, gmx_domdec_zones_t *zones,
     bRCheckMB   = FALSE;
     bRCheck2B   = FALSE;
 
-    if (dd->reverse_top->bInterCGInteractions)
+    if (dd->reverse_top->bInterAtomicInteractions)
     {
         /* We need to check to which cell bondeds should be assigned */
         rc = dd_cutoff_twobody(dd);
@@ -1971,11 +1811,6 @@ void dd_make_local_top(gmx_domdec_t *dd, gmx_domdec_zones_t *zones,
      * we can only do this when we have the charge arrays.
      */
     ltop->idef.ilsort = ilsortUNKNOWN;
-
-    if (dd->reverse_top->bExclRequired)
-    {
-        dd->nbonded_local += nexcl;
-    }
 
     ltop->atomtypes  = mtop.atomtypes;
 }
@@ -2059,43 +1894,20 @@ static void check_link(t_blocka *link, int cg_gl, int cg_gl_j)
     }
 }
 
-/*! \brief Return a vector of the charge group index for all atoms */
-static std::vector<int> make_at2cg(const t_block &cgs)
+t_blocka *makeBondedLinks(const gmx_mtop_t *mtop,
+                          cginfo_mb_t      *cginfo_mb)
 {
-    std::vector<int> at2cg(cgs.index[cgs.nr]);
-    for (int cg = 0; cg < cgs.nr; cg++)
-    {
-        for (int a = cgs.index[cg]; a < cgs.index[cg + 1]; a++)
-        {
-            at2cg[a] = cg;
-        }
-    }
-
-    return at2cg;
-}
-
-t_blocka *make_charge_group_links(const gmx_mtop_t *mtop, gmx_domdec_t *dd,
-                                  cginfo_mb_t *cginfo_mb)
-{
-    gmx_bool            bExclRequired;
     t_blocka           *link;
     cginfo_mb_t        *cgi_mb;
 
-    /* For each charge group make a list of other charge groups
-     * in the system that a linked to it via bonded interactions
+    /* For each atom make a list of other atoms in the system
+     * that a linked to it via bonded interactions
      * which are also stored in reverse_top.
      */
-
-    bExclRequired = dd->reverse_top->bExclRequired;
 
     reverse_ilist_t ril_intermol;
     if (mtop->bIntermolecularInteractions)
     {
-        if (ncg_mtop(mtop) < mtop->natoms)
-        {
-            gmx_fatal(FARGS, "The combination of intermolecular interactions, charge groups and domain decomposition is not supported. Use cutoff-scheme=Verlet (which removes the charge groups) or run without domain decomposition.");
-        }
-
         t_atoms atoms;
 
         atoms.nr   = mtop->natoms;
@@ -2109,7 +1921,7 @@ t_blocka *make_charge_group_links(const gmx_mtop_t *mtop, gmx_domdec_t *dd,
     }
 
     snew(link, 1);
-    snew(link->index, ncg_mtop(mtop)+1);
+    snew(link->index, mtop->natoms + 1);
     link->nalloc_a = 0;
     link->a        = nullptr;
 
@@ -2124,9 +1936,6 @@ t_blocka *make_charge_group_links(const gmx_mtop_t *mtop, gmx_domdec_t *dd,
             continue;
         }
         const gmx_moltype_t &molt  = mtop->moltype[molb.type];
-        const t_block       &cgs   = molt.cgs;
-        const t_blocka      &excls = molt.excls;
-        std::vector<int>     a2c   = make_at2cg(cgs);
         /* Make a reverse ilist in which the interactions are linked
          * to all atoms, not only the first atom as in gmx_reverse_top.
          * The constraints are discarded here.
@@ -2140,77 +1949,62 @@ t_blocka *make_charge_group_links(const gmx_mtop_t *mtop, gmx_domdec_t *dd,
         int mol;
         for (mol = 0; mol < (mtop->bIntermolecularInteractions ? molb.nmol : 1); mol++)
         {
-            for (int cg = 0; cg < cgs.nr; cg++)
+            for (int a = 0; a < molt.atoms.nr; a++)
             {
-                int cg_gl            = cg_offset + cg;
+                int cg_gl            = cg_offset + a;
                 link->index[cg_gl+1] = link->index[cg_gl];
-                for (int a = cgs.index[cg]; a < cgs.index[cg + 1]; a++)
+                int i                = ril.index[a];
+                while (i < ril.index[a+1])
                 {
-                    int i = ril.index[a];
-                    while (i < ril.index[a+1])
+                    int ftype = ril.il[i++];
+                    int nral  = NRAL(ftype);
+                    /* Skip the ifunc index */
+                    i++;
+                    for (int j = 0; j < nral; j++)
                     {
-                        int ftype = ril.il[i++];
+                        int aj = ril.il[i + j];
+                        if (aj != a)
+                        {
+                            check_link(link, cg_gl, cg_offset + aj);
+                        }
+                    }
+                    i += nral_rt(ftype);
+                }
+
+                if (mtop->bIntermolecularInteractions)
+                {
+                    int i = ril_intermol.index[a];
+                    while (i < ril_intermol.index[a+1])
+                    {
+                        int ftype = ril_intermol.il[i++];
                         int nral  = NRAL(ftype);
                         /* Skip the ifunc index */
                         i++;
                         for (int j = 0; j < nral; j++)
                         {
-                            int aj = ril.il[i + j];
-                            if (a2c[aj] != cg)
-                            {
-                                check_link(link, cg_gl, cg_offset+a2c[aj]);
-                            }
+                            /* Here we assume we have no charge groups;
+                             * this has been checked above.
+                             */
+                            int aj = ril_intermol.il[i + j];
+                            check_link(link, cg_gl, aj);
                         }
                         i += nral_rt(ftype);
-                    }
-                    if (bExclRequired)
-                    {
-                        /* Exclusions always go both ways */
-                        for (int j = excls.index[a]; j < excls.index[a + 1]; j++)
-                        {
-                            int aj = excls.a[j];
-                            if (a2c[aj] != cg)
-                            {
-                                check_link(link, cg_gl, cg_offset+a2c[aj]);
-                            }
-                        }
-                    }
-
-                    if (mtop->bIntermolecularInteractions)
-                    {
-                        int i = ril_intermol.index[a];
-                        while (i < ril_intermol.index[a+1])
-                        {
-                            int ftype = ril_intermol.il[i++];
-                            int nral  = NRAL(ftype);
-                            /* Skip the ifunc index */
-                            i++;
-                            for (int j = 0; j < nral; j++)
-                            {
-                                /* Here we assume we have no charge groups;
-                                 * this has been checked above.
-                                 */
-                                int aj = ril_intermol.il[i + j];
-                                check_link(link, cg_gl, aj);
-                            }
-                            i += nral_rt(ftype);
-                        }
                     }
                 }
                 if (link->index[cg_gl+1] - link->index[cg_gl] > 0)
                 {
-                    SET_CGINFO_BOND_INTER(cgi_mb->cginfo[cg]);
+                    SET_CGINFO_BOND_INTER(cgi_mb->cginfo[a]);
                     ncgi++;
                 }
             }
 
-            cg_offset += cgs.nr;
+            cg_offset += molt.atoms.nr;
         }
-        int nlink_mol = link->index[cg_offset] - link->index[cg_offset - cgs.nr];
+        int nlink_mol = link->index[cg_offset] - link->index[cg_offset - molt.atoms.nr];
 
         if (debug)
         {
-            fprintf(debug, "molecule type '%s' %d cgs has %d cg links through bonded interac.\n", *molt.name, cgs.nr, nlink_mol);
+            fprintf(debug, "molecule type '%s' %d atoms has %d atom links through bonded interac.\n", *molt.name, molt.atoms.nr, nlink_mol);
         }
 
         if (molb.nmol > mol)
@@ -2220,14 +2014,14 @@ t_blocka *make_charge_group_links(const gmx_mtop_t *mtop, gmx_domdec_t *dd,
             srenew(link->a, link->nalloc_a);
             for (; mol < molb.nmol; mol++)
             {
-                for (int cg = 0; cg < cgs.nr; cg++)
+                for (int a = 0; a < molt.atoms.nr; a++)
                 {
-                    int cg_gl              = cg_offset + cg;
+                    int cg_gl              = cg_offset + a;
                     link->index[cg_gl + 1] =
-                        link->index[cg_gl + 1 - cgs.nr] + nlink_mol;
+                        link->index[cg_gl + 1 - molt.atoms.nr] + nlink_mol;
                     for (int j = link->index[cg_gl]; j < link->index[cg_gl+1]; j++)
                     {
-                        link->a[j] = link->a[j - nlink_mol] + cgs.nr;
+                        link->a[j] = link->a[j - nlink_mol] + molt.atoms.nr;
                     }
                     if (link->index[cg_gl+1] - link->index[cg_gl] > 0 &&
                         cg_gl - cgi_mb->cg_start < cgi_mb->cg_mod)
@@ -2236,14 +2030,15 @@ t_blocka *make_charge_group_links(const gmx_mtop_t *mtop, gmx_domdec_t *dd,
                         ncgi++;
                     }
                 }
-                cg_offset += cgs.nr;
+                cg_offset += molt.atoms.nr;
             }
         }
     }
 
     if (debug)
     {
-        fprintf(debug, "Of the %d charge groups %d are linked via bonded interactions\n", ncg_mtop(mtop), ncgi);
+        fprintf(debug, "Of the %d atoms %d are linked via bonded interactions\n",
+                mtop->natoms, ncgi);
     }
 
     return link;
@@ -2271,7 +2066,6 @@ static void update_max_bonded_distance(real r2, int ftype, int a1, int a2,
 
 /*! \brief Set the distance, function type and atom indices for the longest distance between charge-groups of molecule type \p molt for two-body and multi-body bonded interactions */
 static void bonded_cg_distance_mol(const gmx_moltype_t *molt,
-                                   const std::vector<int> &at2cg,
                                    gmx_bool bBCheck, gmx_bool bExcl, rvec *cg_cm,
                                    bonded_distance_t *bd_2b,
                                    bonded_distance_t *bd_mb)
@@ -2288,17 +2082,16 @@ static void bonded_cg_distance_mol(const gmx_moltype_t *molt,
                 {
                     for (int ai = 0; ai < nral; ai++)
                     {
-                        int cgi = at2cg[il.iatoms[i+1+ai]];
+                        int atomI = il.iatoms[i + 1 + ai];
                         for (int aj = ai + 1; aj < nral; aj++)
                         {
-                            int cgj = at2cg[il.iatoms[i+1+aj]];
-                            if (cgi != cgj)
+                            int atomJ = il.iatoms[i + 1 + aj];
+                            if (atomI != atomJ)
                             {
-                                real rij2 = distance2(cg_cm[cgi], cg_cm[cgj]);
+                                real rij2 = distance2(cg_cm[atomI], cg_cm[atomJ]);
 
                                 update_max_bonded_distance(rij2, ftype,
-                                                           il.iatoms[i+1+ai],
-                                                           il.iatoms[i+1+aj],
+                                                           atomI, atomJ,
                                                            (nral == 2) ? bd_2b : bd_mb);
                             }
                         }
@@ -2312,16 +2105,15 @@ static void bonded_cg_distance_mol(const gmx_moltype_t *molt,
         const t_blocka *excls = &molt->excls;
         for (int ai = 0; ai < excls->nr; ai++)
         {
-            int cgi = at2cg[ai];
             for (int j = excls->index[ai]; j < excls->index[ai+1]; j++)
             {
-                int cgj = at2cg[excls->a[j]];
-                if (cgi != cgj)
+                int aj = excls->a[j];
+                if (ai != aj)
                 {
-                    real rij2 = distance2(cg_cm[cgi], cg_cm[cgj]);
+                    real rij2 = distance2(cg_cm[ai], cg_cm[aj]);
 
                     /* There is no function type for exclusions, use -1 */
-                    update_max_bonded_distance(rij2, -1, ai, excls->a[j], bd_2b);
+                    update_max_bonded_distance(rij2, -1, ai, aj, bd_2b);
                 }
             }
         }
@@ -2392,11 +2184,11 @@ static bool moltypeHasVsite(const gmx_moltype_t &molt)
     return hasVsite;
 }
 
-//! Compute charge group centers of mass for molecule \p molt
-static void get_cgcm_mol(const gmx_moltype_t *molt,
-                         const gmx_ffparams_t *ffparams,
-                         int ePBC, t_graph *graph, const matrix box,
-                         const rvec *x, rvec *xs, rvec *cg_cm)
+//! Returns coordinates not broken over PBC for a molecule
+static void getWholeMoleculeCoordinates(const gmx_moltype_t *molt,
+                                        const gmx_ffparams_t *ffparams,
+                                        int ePBC, t_graph *graph, const matrix box,
+                                        const rvec *x, rvec *xs)
 {
     int n, i;
 
@@ -2418,7 +2210,7 @@ static void get_cgcm_mol(const gmx_moltype_t *molt,
          * unchanged, just to be 100% sure that we do not affect
          * binary reproducibility of simulations.
          */
-        n = molt->cgs.index[molt->cgs.nr];
+        n = molt->atoms.nr;
         for (i = 0; i < n; i++)
         {
             copy_rvec(x[i], xs[i]);
@@ -2442,8 +2234,6 @@ static void get_cgcm_mol(const gmx_moltype_t *molt,
                          ffparams->iparams.data(), ilist,
                          epbcNONE, TRUE, nullptr, nullptr);
     }
-
-    calc_cgcm(nullptr, 0, molt->cgs.nr, &molt->cgs, xs, cg_cm);
 }
 
 void dd_bonded_cg_distance(const gmx::MDLogger &mdlog,
@@ -2456,7 +2246,7 @@ void dd_bonded_cg_distance(const gmx::MDLogger &mdlog,
     gmx_bool           bExclRequired;
     int                at_offset;
     t_graph            graph;
-    rvec              *xs, *cg_cm;
+    rvec              *xs;
     bonded_distance_t  bd_2b = { 0, -1, -1, -1 };
     bonded_distance_t  bd_mb = { 0, -1, -1, -1 };
 
@@ -2468,7 +2258,7 @@ void dd_bonded_cg_distance(const gmx::MDLogger &mdlog,
     for (const gmx_molblock_t &molb : mtop->molblock)
     {
         const gmx_moltype_t &molt = mtop->moltype[molb.type];
-        if (molt.cgs.nr == 1 || molb.nmol == 0)
+        if (molt.atoms.nr == 1 || molb.nmol == 0)
         {
             at_offset += molb.nmol*molt.atoms.nr;
         }
@@ -2479,18 +2269,16 @@ void dd_bonded_cg_distance(const gmx::MDLogger &mdlog,
                 mk_graph_moltype(molt, &graph);
             }
 
-            std::vector<int> at2cg = make_at2cg(molt.cgs);
             snew(xs, molt.atoms.nr);
-            snew(cg_cm, molt.cgs.nr);
             for (int mol = 0; mol < molb.nmol; mol++)
             {
-                get_cgcm_mol(&molt, &mtop->ffparams, ir->ePBC, &graph, box,
-                             x+at_offset, xs, cg_cm);
+                getWholeMoleculeCoordinates(&molt, &mtop->ffparams, ir->ePBC, &graph, box,
+                                            x+at_offset, xs);
 
                 bonded_distance_t bd_mol_2b = { 0, -1, -1, -1 };
                 bonded_distance_t bd_mol_mb = { 0, -1, -1, -1 };
 
-                bonded_cg_distance_mol(&molt, at2cg, bBCheck, bExclRequired, cg_cm,
+                bonded_cg_distance_mol(&molt, bBCheck, bExclRequired, xs,
                                        &bd_mol_2b, &bd_mol_mb);
 
                 /* Process the mol data adding the atom index offset */
@@ -2505,7 +2293,6 @@ void dd_bonded_cg_distance(const gmx::MDLogger &mdlog,
 
                 at_offset += molt.atoms.nr;
             }
-            sfree(cg_cm);
             sfree(xs);
             if (ir->ePBC != epbcNONE)
             {
@@ -2516,11 +2303,6 @@ void dd_bonded_cg_distance(const gmx::MDLogger &mdlog,
 
     if (mtop->bIntermolecularInteractions)
     {
-        if (ncg_mtop(mtop) < mtop->natoms)
-        {
-            gmx_fatal(FARGS, "The combination of intermolecular interactions, charge groups and domain decomposition is not supported. Use cutoff-scheme=Verlet (which removes the charge groups) or run without domain decomposition.");
-        }
-
         GMX_RELEASE_ASSERT(mtop->intermolecular_ilist, "We should have an ilist when intermolecular interactions are on");
 
         bonded_distance_intermol(*mtop->intermolecular_ilist,

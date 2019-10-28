@@ -149,7 +149,7 @@ static bool isDeviceSane(const gmx_device_info_t *devInfo,
 {
     cl_context_properties properties[] = {
         CL_CONTEXT_PLATFORM,
-        (cl_context_properties) devInfo->ocl_gpu_id.ocl_platform_id,
+        reinterpret_cast<cl_context_properties>(devInfo->ocl_gpu_id.ocl_platform_id),
         0
     };
     // uncrustify spacing
@@ -286,7 +286,7 @@ static int checkGpu(size_t                   deviceId,
     return egpuCompatible;
 }
 
-} // namespace
+} // namespace gmx
 
 /*! \brief Returns an ocl_vendor_id_t value corresponding to the input OpenCL vendor name.
  *
@@ -544,20 +544,6 @@ void get_gpu_device_info_string(char *s, const gmx_gpu_info_t &gpu_info, int ind
     }
 }
 
-bool areAllGpuDevicesFromAmd(const gmx_gpu_info_t &gpuInfo)
-{
-    bool result = true;
-    for (int i = 0; i < gpuInfo.n_dev; ++i)
-    {
-        if ((gpuInfo.gpu_dev[i].stat == egpuCompatible) &&
-            (gpuInfo.gpu_dev[i].vendor_e != OCL_VENDOR_AMD))
-        {
-            result = false;
-            break;
-        }
-    }
-    return result;
-}
 
 void init_gpu(const gmx_device_info_t *deviceInfo)
 {

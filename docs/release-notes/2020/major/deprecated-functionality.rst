@@ -9,8 +9,14 @@
 Changes anticipated to |Gromacs| NEXT functionality
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-Functionality deprecated in |Gromacs| NEXT
+Functionality deprecated in |Gromacs| 2020
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Support for 32bit architectures
+"""""""""""""""""""""""""""""""
+There are no current or planned large scale resources using 32bit architectures,
+and we have no ability to properly test and evaluate them.
+
 
 Functionality deprecated in |Gromacs| 2019
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -37,15 +43,3 @@ changed with ``gmx convert-tpr``, or altered in .mdp file before the
 call to ``gmx grompp``. The convenience of this mdrun option was
 outweighted by the doubtful quality of its implementation, no clear
 record in the log file, and lack of maintenance.
-
-Functionality deprecated before |Gromacs| 2019
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-This functionality has been declared as deprecated in previous versions
-of |Gromacs|, but has not yet been removed.
-
-The group cutoff scheme
-""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
-All remaining aspects of the group cutoff scheme will be removed, once
-a few remaining features (e.g. tabulated interactions, energy-group
-exclusions, and vacuum simulations) are available with the Verlet
-scheme. Deprecated in GROMACS 5.1

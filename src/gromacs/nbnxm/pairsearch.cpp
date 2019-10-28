@@ -45,8 +45,9 @@
 
 #include "pairsearch.h"
 
-#include "gromacs/nbnxm/pairlist.h"
 #include "gromacs/utility/smalloc.h"
+
+#include "pairlist.h"
 
 
 void SearchCycleCounting::printCycles(FILE                               *fp,
@@ -109,13 +110,14 @@ PairsearchWork::~PairsearchWork()
 }
 
 PairSearch::PairSearch(const int                 ePBC,
+                       const bool                doTestParticleInsertion,
                        const ivec               *numDDCells,
                        const gmx_domdec_zones_t *ddZones,
                        const PairlistType        pairlistType,
                        const bool                haveFep,
                        const int                 maxNumThreads,
                        gmx::PinningPolicy        pinningPolicy) :
-    gridSet_(ePBC, numDDCells, ddZones, pairlistType, haveFep, maxNumThreads, pinningPolicy),
+    gridSet_(ePBC, doTestParticleInsertion, numDDCells, ddZones, pairlistType, haveFep, maxNumThreads, pinningPolicy),
     work_(maxNumThreads)
 {
     cycleCounting_.recordCycles_ = (getenv("GMX_NBNXN_CYCLE") != nullptr);

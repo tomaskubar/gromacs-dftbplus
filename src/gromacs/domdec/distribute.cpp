@@ -68,8 +68,6 @@ static void distributeVecSendrecv(gmx_domdec_t                   *dd,
 {
     if (DDMASTER(dd))
     {
-        const t_block         &atomGroups = dd->comm->cgs_gl;
-
         std::vector<gmx::RVec> buffer;
 
         for (int rank = 0; rank < dd->nnodes; rank++)
@@ -81,12 +79,9 @@ static void distributeVecSendrecv(gmx_domdec_t                   *dd,
                 buffer.resize(domainGroups.numAtoms);
 
                 int   localAtom = 0;
-                for (const int &g : domainGroups.atomGroups)
+                for (const int &globalAtom : domainGroups.atomGroups)
                 {
-                    for (int globalAtom = atomGroups.index[g]; globalAtom < atomGroups.index[g + 1]; globalAtom++)
-                    {
-                        buffer[localAtom++] = globalVec[globalAtom];
-                    }
+                    buffer[localAtom++] = globalVec[globalAtom];
                 }
                 GMX_RELEASE_ASSERT(localAtom == domainGroups.numAtoms, "The index count and number of indices should match");
 
@@ -99,12 +94,9 @@ static void distributeVecSendrecv(gmx_domdec_t                   *dd,
 
         const auto &domainGroups = dd->ma->domainGroups[dd->masterrank];
         int         localAtom    = 0;
-        for (const int &g : domainGroups.atomGroups)
+        for (const int &globalAtom : domainGroups.atomGroups)
         {
-            for (int globalAtom = atomGroups.index[g]; globalAtom < atomGroups.index[g + 1]; globalAtom++)
-            {
-                localVec[localAtom++] = globalVec[globalAtom];
-            }
+            localVec[localAtom++] = globalVec[globalAtom];
         }
     }
     else
@@ -130,19 +122,14 @@ static void distributeVecScatterv(gmx_domdec_t                   *dd,
 
         get_commbuffer_counts(&ma, &sendCounts, &displacements);
 
-        const t_block           &atomGroups = dd->comm->cgs_gl;
-
         gmx::ArrayRef<gmx::RVec> buffer = ma.rvecBuffer;
         int localAtom                   = 0;
         for (int rank = 0; rank < dd->nnodes; rank++)
         {
             const auto &domainGroups = ma.domainGroups[rank];
-            for (const int &g : domainGroups.atomGroups)
+            for (const int &globalAtom : domainGroups.atomGroups)
             {
-                for (int globalAtom = atomGroups.index[g]; globalAtom < atomGroups.index[g + 1]; globalAtom++)
-                {
-                    buffer[localAtom++] = globalVec[globalAtom];
-                }
+                buffer[localAtom++] = globalVec[globalAtom];
             }
         }
     }
@@ -202,7 +189,7 @@ static void dd_distribute_dfhist(gmx_domdec_t *dd, df_history_t *dfhist)
 
 static void dd_distribute_state(gmx_domdec_t *dd,
                                 const t_state *state, t_state *state_local,
-                                PaddedVector<gmx::RVec> *f)
+                                PaddedHostVector<gmx::RVec> *f)
 {
     int nh = state_local->nhchainlength;
 
@@ -319,9 +306,9 @@ computeAtomGroupDomainIndex(const gmx_domdec_t                         &dd,
     for (int d = DIM - 1; d >= 0; d--)
     {
         real pos_d = cog[d];
-        if (d < dd.npbcdim)
+        if (d < dd.unitCellInfo.npbcdim)
         {
-            bool bScrew = (dd.bScrewPBC && d == XX);
+            bool bScrew = (dd.unitCellInfo.haveScrewPBC && d == XX);
             if (ddbox.tric_dir[d] && dd.nc[d] > 1)
             {
                 /* Use triclinic coordinates for this dimension */
@@ -397,23 +384,20 @@ getAtomGroupDistribution(const gmx::MDLogger &mdlog,
     }
 
     matrix triclinicCorrectionMatrix;
-    make_tric_corr_matrix(dd->npbcdim, box, triclinicCorrectionMatrix);
+    make_tric_corr_matrix(dd->unitCellInfo.npbcdim, box, triclinicCorrectionMatrix);
 
     ivec       npulse;
     const auto cellBoundaries =
         set_dd_cell_sizes_slb(dd, &ddbox, setcellsizeslbMASTER, npulse);
 
-    const t_block *cgs     = &dd->comm->cgs_gl;
-    const int     *cgindex = cgs->index;
-
     std::vector < std::vector < int>> indices(dd->nnodes);
 
-    if (dd->comm->useUpdateGroups)
+    if (dd->comm->systemInfo.useUpdateGroups)
     {
         int atomOffset = 0;
         for (const gmx_molblock_t &molblock : mtop.molblock)
         {
-            const auto &updateGrouping = dd->comm->updateGroupingPerMoleculetype[molblock.type];
+            const auto &updateGrouping = dd->comm->systemInfo.updateGroupingPerMoleculetype[molblock.type];
 
             for (int mol = 0; mol < molblock.nmol; mol++)
             {
@@ -443,17 +427,17 @@ getAtomGroupDistribution(const gmx::MDLogger &mdlog,
     }
     else
     {
-        /* Compute the center of geometry for all atoms or charge groups */
-        for (int icg = 0; icg < cgs->nr; icg++)
+        /* Compute the center of geometry for all atoms */
+        for (int atom = 0; atom < mtop.natoms; atom++)
         {
             int domainIndex =
                 computeAtomGroupDomainIndex(*dd, ddbox, triclinicCorrectionMatrix,
                                             cellBoundaries,
-                                            cgindex[icg], cgindex[icg + 1], box,
+                                            atom, atom + 1, box,
                                             pos);
 
-            indices[domainIndex].push_back(icg);
-            ma.domainGroups[domainIndex].numAtoms += cgindex[icg + 1] - cgindex[icg];
+            indices[domainIndex].push_back(atom);
+            ma.domainGroups[domainIndex].numAtoms += 1;
         }
     }
 
@@ -506,7 +490,7 @@ static void distributeAtomGroups(const gmx::MDLogger &mdlog,
     {
         GMX_ASSERT(box && pos, "box or pos not set on master");
 
-        if (dd->bScrewPBC)
+        if (dd->unitCellInfo.haveScrewPBC)
         {
             check_screw_box(box);
         }
@@ -571,13 +555,13 @@ static void distributeAtomGroups(const gmx::MDLogger &mdlog,
     }
 }
 
-void distributeState(const gmx::MDLogger     &mdlog,
-                     gmx_domdec_t            *dd,
-                     const gmx_mtop_t        &mtop,
-                     t_state                 *state_global,
-                     const gmx_ddbox_t       &ddbox,
-                     t_state                 *state_local,
-                     PaddedVector<gmx::RVec> *f)
+void distributeState(const gmx::MDLogger         &mdlog,
+                     gmx_domdec_t                *dd,
+                     const gmx_mtop_t            &mtop,
+                     t_state                     *state_global,
+                     const gmx_ddbox_t           &ddbox,
+                     t_state                     *state_local,
+                     PaddedHostVector<gmx::RVec> *f)
 {
     rvec *xGlobal = (DDMASTER(dd) ? state_global->x.rvec_array() : nullptr);
 

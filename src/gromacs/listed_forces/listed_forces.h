@@ -86,7 +86,8 @@ class t_state;
 
 namespace gmx
 {
-class ForceWithVirial;
+class ForceOutputs;
+class StepWorkload;
 }
 
 //! Type of CPU function to compute a bonded interaction.
@@ -110,15 +111,14 @@ void calc_listed(const t_commrec *cr,
                  struct gmx_wallcycle *wcycle,
                  const t_idef *idef,
                  const rvec x[], history_t *hist,
-                 rvec f[],
-                 gmx::ForceWithVirial *forceWithVirial,
+                 gmx::ForceOutputs *forceOutputs,
                  const t_forcerec *fr,
                  const struct t_pbc *pbc, const struct t_pbc *pbc_full,
                  const struct t_graph *g,
                  gmx_enerdata_t *enerd, t_nrnb *nrnb, const real *lambda,
                  const t_mdatoms *md,
                  struct t_fcdata *fcd, int *ddgatindex,
-                 int force_flags);
+                 const gmx::StepWorkload &stepWork);
 
 /*! \brief As calc_listed(), but only determines the potential energy
  * for the perturbed interactions.
@@ -144,8 +144,7 @@ do_force_listed(struct gmx_wallcycle           *wcycle,
                 const t_idef                   *idef,
                 const rvec                      x[],
                 history_t                      *hist,
-                rvec                           *forceForUseWithShiftForces,
-                gmx::ForceWithVirial           *forceWithVirial,
+                gmx::ForceOutputs              *forceOutputs,
                 const t_forcerec               *fr,
                 const struct t_pbc             *pbc,
                 const struct t_graph           *graph,
@@ -155,11 +154,11 @@ do_force_listed(struct gmx_wallcycle           *wcycle,
                 const t_mdatoms                *md,
                 struct t_fcdata                *fcd,
                 int                            *global_atom_index,
-                int                             flags);
+                const gmx::StepWorkload        &stepWork);
 
-/*! \brief Returns true if there are position restraints. */
-bool havePositionRestraints(const t_idef   &idef,
-                            const t_fcdata &fcd);
+/*! \brief Returns true if there are position, distance or orientation restraints. */
+bool haveRestraints(const t_idef   &idef,
+                    const t_fcdata &fcd);
 
 /*! \brief Returns true if there are CPU (i.e. not GPU-offloaded) bonded interactions to compute. */
 bool haveCpuBondeds(const t_forcerec &fr);

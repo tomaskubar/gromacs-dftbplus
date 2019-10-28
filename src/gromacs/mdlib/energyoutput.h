@@ -71,6 +71,7 @@ namespace gmx
 {
 class Awh;
 class Constraints;
+struct MdModulesNotifier;
 }
 
 //! \brief Printed names for intergroup energies
@@ -117,13 +118,15 @@ class EnergyOutput
          * \param[in] pull_work  Pulling simulations data
          * \param[in] fp_dhdl    FEP file.
          * \param[in] isRerun    Is this is a rerun instead of the simulations.
+         * \param[in] mdModulesNotifier Notifications to MD modules.
          */
-        EnergyOutput(ener_file        *fp_ene,
-                     const gmx_mtop_t *mtop,
-                     const t_inputrec *ir,
-                     const pull_t     *pull_work,
-                     FILE             *fp_dhdl,
-                     bool              isRerun);
+        EnergyOutput(ener_file *              fp_ene,
+                     const gmx_mtop_t *       mtop,
+                     const t_inputrec *       ir,
+                     const pull_t *           pull_work,
+                     FILE *                   fp_dhdl,
+                     bool                     isRerun,
+                     const MdModulesNotifier &mdModulesNotifier);
 
         ~EnergyOutput();
 
@@ -152,17 +155,17 @@ class EnergyOutput
                                  bool                    bSum,
                                  double                  time,
                                  real                    tmass,
-                                 gmx_enerdata_t         *enerd,
-                                 t_state                *state,
-                                 t_lambda               *fep,
-                                 t_expanded             *expand,
-                                 matrix                  lastbox,
-                                 tensor                  svir,
-                                 tensor                  fvir,
-                                 tensor                  vir,
-                                 tensor                  pres,
-                                 gmx_ekindata_t         *ekind,
-                                 rvec                    mu_tot,
+                                 const gmx_enerdata_t   *enerd,
+                                 const t_state          *state,
+                                 const t_lambda         *fep,
+                                 const t_expanded       *expand,
+                                 const matrix            lastbox,
+                                 const tensor            svir,
+                                 const tensor            fvir,
+                                 const tensor            vir,
+                                 const tensor            pres,
+                                 const gmx_ekindata_t   *ekind,
+                                 const rvec              mu_tot,
                                  const gmx::Constraints *constr);
 
         /*! \brief Update the data averaging structure counts.
@@ -217,7 +220,7 @@ class EnergyOutput
          * \param[in]   log      Where to print.
          * \param[in]   groups   Atom groups.
          */
-        void printAverages(FILE *log, SimulationGroups *groups);
+        void printAverages(FILE *log, const SimulationGroups *groups);
 
         /*! \brief Get the number of thermodynamic terms recorded.
          *

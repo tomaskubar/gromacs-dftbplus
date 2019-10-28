@@ -32,19 +32,17 @@
 # To help us fund GROMACS development, we humbly ask that you cite
 # the research papers on the package. Check out http://www.gromacs.org.
 
-# Make an "object library" for test infrastructure code that we re-use
-# in multiple test executables.
-add_library(mdrun_test_objlib OBJECT
+# Make a static library for test infrastructure code that we re-use
+# in multiple test executables across the repository.
+gmx_add_unit_test_library(mdrun_test_infrastructure
     energyreader.cpp
     energycomparison.cpp
     moduletest.cpp
+    mdmodulenotification.cpp
     terminationhelper.cpp
     trajectorycomparison.cpp
     trajectoryreader.cpp
     )
-gmx_target_compile_options(mdrun_test_objlib)
-target_compile_definitions(mdrun_test_objlib PRIVATE HAVE_CONFIG_H)
-target_include_directories(mdrun_test_objlib SYSTEM BEFORE PRIVATE ${PROJECT_SOURCE_DIR}/src/external/thread_mpi/include)
 
 set(testname "MdrunTests")
 set(exename "mdrun-test")
@@ -53,21 +51,23 @@ gmx_add_gtest_executable(
     ${exename}
     # files with code for tests
     compressed_x_output.cpp
+    densityfittingmodule.cpp
+    exactcontinuation.cpp
     grompp.cpp
     helpwriting.cpp
     initialconstraints.cpp
     interactiveMD.cpp
     pmetest.cpp
+    simulator.cpp
     swapcoords.cpp
     tabulated_bonded_interactions.cpp
     termination.cpp
     trajectory_writing.cpp
     mimic.cpp
-    # pseudo-library for code for testing mdrun
-    $<TARGET_OBJECTS:mdrun_test_objlib>
     # pseudo-library for code for mdrun
     $<TARGET_OBJECTS:mdrun_objlib>
     )
+target_link_libraries(${exename} PRIVATE mdrun_test_infrastructure)
 gmx_register_gtest_test(${testname} ${exename} OPENMP_THREADS 2 INTEGRATION_TEST)
 
 # To avoid running into test timeouts, some end-to-end tests of mdrun
@@ -80,16 +80,29 @@ gmx_add_gtest_executable(
     ${exename}
     # files with code for tests
     minimize.cpp
+    nonbonded_bench.cpp
     normalmodes.cpp
     rerun.cpp
     simple_mdrun.cpp
-    tpitest.cpp
-    # pseudo-library for code for testing mdrun
-    $<TARGET_OBJECTS:mdrun_test_objlib>
     # pseudo-library for code for mdrun
     $<TARGET_OBJECTS:mdrun_objlib>
     )
+target_link_libraries(${exename} PRIVATE mdrun_test_infrastructure)
 gmx_register_gtest_test(${testname} ${exename} OPENMP_THREADS 2 INTEGRATION_TEST)
+
+# TPI does not support OpenMP, so we need a separate test binary
+set(testname "MdrunTpiTests")
+set(exename "mdrun-tpi-test")
+
+gmx_add_gtest_executable(
+    ${exename}
+    # files with code for tests
+    tpitest.cpp
+    # pseudo-library for code for mdrun
+    $<TARGET_OBJECTS:mdrun_objlib>
+    )
+target_link_libraries(${exename} PRIVATE mdrun_test_infrastructure)
+gmx_register_gtest_test(${testname} ${exename} INTEGRATION_TEST)
 
 # Tests that only make sense to run with multiple ranks and/or real
 # MPI are implemented here.
@@ -106,9 +119,8 @@ gmx_add_gtest_executable(
     multisimtest.cpp
     pmetest.cpp
     replicaexchange.cpp
-    # pseudo-library for code for testing mdrun
-    $<TARGET_OBJECTS:mdrun_test_objlib>
     # pseudo-library for code for mdrun
     $<TARGET_OBJECTS:mdrun_objlib>
     )
-gmx_register_gtest_test(${testname} ${exename} OPENMP_THREADS 2 INTEGRATION_TEST)
+target_link_libraries(${exename} PRIVATE mdrun_test_infrastructure)
+gmx_register_gtest_test(${testname} ${exename} MPI_RANKS 2 OPENMP_THREADS 2 INTEGRATION_TEST)

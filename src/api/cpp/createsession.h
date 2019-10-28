@@ -46,8 +46,6 @@
 #include "gmxapi/context.h"
 #include "gmxapi/session.h"
 
-struct gmx_multisim_t;
-
 namespace gmx
 {
 class MdrunnerBuilder;
@@ -72,9 +70,8 @@ namespace gmxapi
  */
 std::shared_ptr<Session> createSession(std::shared_ptr<ContextImpl>  context,
                                        gmx::MdrunnerBuilder        &&runnerBuilder,
-                                       const gmx::SimulationContext &simulationContext,
-                                       gmx::LogFilePtr               logFilehandle,
-                                       gmx_multisim_t              * multiSim);
+                                       gmx::SimulationContext      &&simulationContext,
+                                       gmx::LogFilePtr               logFilehandle);
 
 
 }      // end namespace gmxapi

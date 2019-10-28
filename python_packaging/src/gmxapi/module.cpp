@@ -79,6 +79,13 @@ PYBIND11_MODULE(_gmxapi, m){
     using namespace gmxpy::detail;
     m.doc() = docstring;
 
+    // Register exceptions and catch-all exception translators. We do this early
+    // to give more freedom to the other export functions. Note that bindings
+    // for C++ symbols should be expressed before those symbols are referenced
+    // in other bindings, and that exception translators are tried in reverse
+    // order of registration for uncaught C++ exceptions.
+    export_exceptions(m);
+
     // Export core bindings
     m.def("has_feature",
           &gmxapi::Version::hasFeature,
@@ -89,5 +96,6 @@ PYBIND11_MODULE(_gmxapi, m){
     // Get bindings exported by the various components.
     export_context(m);
     export_system(m);
+    export_tprfile(m);
 
 } // end pybind11 module

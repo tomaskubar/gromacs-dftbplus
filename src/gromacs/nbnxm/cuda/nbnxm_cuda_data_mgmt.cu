@@ -51,6 +51,7 @@
 // TODO Remove this comment when the above order issue is resolved
 #include "gromacs/gpu_utils/cudautils.cuh"
 #include "gromacs/gpu_utils/gpu_utils.h"
+#include "gromacs/gpu_utils/gpueventsynchronizer.cuh"
 #include "gromacs/gpu_utils/pmalloc_cuda.h"
 #include "gromacs/hardware/gpu_hw_info.h"
 #include "gromacs/math/vectypes.h"
@@ -154,8 +155,9 @@ static void init_atomdata_first(cu_atomdata_t *ad, int ntypes)
 
 /*! Selects the Ewald kernel type, analytical on SM 3.0 and later, tabulated on
     earlier GPUs, single or twin cut-off. */
-static int pick_ewald_kernel_type(bool                     bTwinCut)
+static int pick_ewald_kernel_type(const interaction_const_t &ic)
 {
+    bool bTwinCut = (ic.rcoulomb != ic.rvdw);
     bool bUseAnalyticalEwald, bForceAnalyticalEwald, bForceTabulatedEwald;
     int  kernel_type;
 
@@ -308,8 +310,7 @@ static void init_nbparam(cu_nbparam_t                   *nbp,
     }
     else if ((EEL_PME(ic->eeltype) || ic->eeltype == eelEWALD))
     {
-        /* Initially rcoulomb == rvdw, so it's surely not twin cut-off. */
-        nbp->eeltype = pick_ewald_kernel_type(false);
+        nbp->eeltype = pick_ewald_kernel_type(*ic);
     }
     else
     {
@@ -353,7 +354,7 @@ void gpu_pme_loadbal_update_param(const nonbonded_verlet_t    *nbv,
 
     set_cutoff_parameters(nbp, ic, nbv->pairlistSets().params());
 
-    nbp->eeltype        = pick_ewald_kernel_type(ic->rcoulomb != ic->rvdw);
+    nbp->eeltype        = pick_ewald_kernel_type(*ic);
 
     GMX_RELEASE_ASSERT(ic->coulombEwaldTables, "Need valid Coulomb Ewald correction tables");
     init_ewald_coulomb_force_table(*ic->coulombEwaldTables, nbp);
@@ -481,6 +482,9 @@ gpu_init(const gmx_device_info_t   *deviceInfo,
     stat = cudaEventCreateWithFlags(&nb->misc_ops_and_local_H2D_done, cudaEventDisableTiming);
     CU_RET_ERR(stat, "cudaEventCreate on misc_ops_and_local_H2D_done failed");
 
+    nb->xAvailableOnDevice   = new GpuEventSynchronizer();
+    nb->xNonLocalCopyD2HDone = new GpuEventSynchronizer();
+
     /* WARNING: CUDA timings are incorrect with multiple streams.
      *          This is the main reason why they are disabled by default.
      */
@@ -498,16 +502,12 @@ gpu_init(const gmx_device_info_t   *deviceInfo,
 
     cuda_init_const(nb, ic, listParams, nbat->params());
 
-    nb->natoms                   = 0;
-    nb->natoms_alloc             = 0;
     nb->atomIndicesSize          = 0;
     nb->atomIndicesSize_alloc    = 0;
     nb->ncxy_na                  = 0;
     nb->ncxy_na_alloc            = 0;
     nb->ncxy_ind                 = 0;
     nb->ncxy_ind_alloc           = 0;
-    nb->nfrvec                   = 0;
-    nb->nfrvec_alloc             = 0;
     nb->ncell                    = 0;
     nb->ncell_alloc              = 0;
 
@@ -550,7 +550,7 @@ void gpu_init_pairlist(gmx_nbnxn_cuda_t          *nb,
         iTimers.didPairlistH2D = true;
     }
 
-    Context context = nullptr;
+    DeviceContext context = nullptr;
 
     reallocateDeviceBuffer(&d_plist->sci, h_plist->sci.size(),
                            &d_plist->nsci, &d_plist->sci_nalloc, context);
@@ -623,12 +623,13 @@ static void nbnxn_cuda_clear_e_fshift(gmx_nbnxn_cuda_t *nb)
     CU_RET_ERR(stat, "cudaMemsetAsync on e_el falied");
 }
 
-void gpu_clear_outputs(gmx_nbnxn_cuda_t *nb, int flags)
+void gpu_clear_outputs(gmx_nbnxn_cuda_t *nb,
+                       bool              computeVirial)
 {
     nbnxn_cuda_clear_f(nb, nb->atdat->natoms);
     /* clear shift force array and energies if the outputs were
        used in the current step */
-    if (flags & GMX_FORCE_VIRIAL)
+    if (computeVirial)
     {
         nbnxn_cuda_clear_e_fshift(nb);
     }
@@ -898,9 +899,7 @@ void nbnxn_gpu_init_x_to_nbat_x(const Nbnxm::GridSet            &gridSet,
         const int           atomIndicesSize   = gridSet.atomIndices().size();
         const int          *cxy_na            = grid.cxy_na().data();
         const int          *cxy_ind           = grid.cxy_ind().data();
-        const int           numRealAtomsTotal = gridSet.numRealAtomsTotal();
 
-        reallocateDeviceBuffer(&gpu_nbv->xrvec, numRealAtomsTotal, &gpu_nbv->natoms, &gpu_nbv->natoms_alloc, nullptr);
         reallocateDeviceBuffer(&gpu_nbv->atomIndices, atomIndicesSize, &gpu_nbv->atomIndicesSize, &gpu_nbv->atomIndicesSize_alloc, nullptr);
 
         if (atomIndicesSize > 0)
@@ -964,14 +963,16 @@ void nbnxn_gpu_init_x_to_nbat_x(const Nbnxm::GridSet            &gridSet,
 }
 
 /* Initialization for F buffer operations on GPU. */
-void nbnxn_gpu_init_add_nbat_f_to_f(const int                *cell,
-                                    gmx_nbnxn_gpu_t          *gpu_nbv,
-                                    int                       natoms_total)
+void nbnxn_gpu_init_add_nbat_f_to_f(const int                  *cell,
+                                    gmx_nbnxn_gpu_t            *gpu_nbv,
+                                    int                         natoms_total,
+                                    GpuEventSynchronizer* const localReductionDone)
 {
 
     cudaStream_t         stream  = gpu_nbv->stream[InteractionLocality::Local];
 
-    reallocateDeviceBuffer(&gpu_nbv->frvec, natoms_total, &gpu_nbv->nfrvec, &gpu_nbv->nfrvec_alloc, nullptr);
+    GMX_ASSERT(localReductionDone, "localReductionDone should be a valid pointer");
+    gpu_nbv->localFReductionDone = localReductionDone;
 
     if (natoms_total > 0)
     {

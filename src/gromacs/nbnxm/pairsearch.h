@@ -55,14 +55,14 @@
 
 #include "gromacs/domdec/domdec.h"
 #include "gromacs/math/vectypes.h"
-#include "gromacs/nbnxm/atomdata.h"
-#include "gromacs/nbnxm/pairlist.h"
 #include "gromacs/timing/cyclecounter.h"
 #include "gromacs/utility/alignedallocator.h"
 #include "gromacs/utility/arrayref.h"
 #include "gromacs/utility/real.h"
 
+#include "atomdata.h"
 #include "gridset.h"
+#include "pairlist.h"
 
 struct gmx_domdec_zones_t;
 struct PairsearchWork;
@@ -180,8 +180,7 @@ class PairSearch
                        const rvec                      lowerCorner,
                        const rvec                      upperCorner,
                        const gmx::UpdateGroupsCog     *updateGroupsCog,
-                       int                             atomStart,
-                       int                             atomEnd,
+                       gmx::Range<int>                 atomRange,
                        real                            atomDensity,
                        gmx::ArrayRef<const int>        atomInfo,
                        gmx::ArrayRef<const gmx::RVec>  x,
@@ -192,7 +191,7 @@ class PairSearch
             cycleCounting_.start(enbsCCgrid);
 
             gridSet_.putOnGrid(box, ddZone, lowerCorner, upperCorner,
-                               updateGroupsCog, atomStart, atomEnd, atomDensity,
+                               updateGroupsCog, atomRange, atomDensity,
                                atomInfo, x, numAtomsMoved, move, nbat);
 
             cycleCounting_.stop(enbsCCgrid);
@@ -207,6 +206,7 @@ class PairSearch
          * \param[in] maxNumThreads   The maximum number of threads used in the search
          */
         PairSearch(int                       ePBC,
+                   bool                      doTestParticleInsertion,
                    const ivec               *numDDCells,
                    const gmx_domdec_zones_t *zones,
                    PairlistType              pairlistType,

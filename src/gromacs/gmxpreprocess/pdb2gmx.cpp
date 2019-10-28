@@ -262,10 +262,10 @@ static void read_rtprename(const char *fname, FILE *fp,
     }
 }
 
-static const std::string search_resrename(gmx::ArrayRef<const RtpRename> rr,
-                                          const char *name,
-                                          bool bStart, bool bEnd,
-                                          bool bCompareFFRTPname)
+static std::string search_resrename(gmx::ArrayRef<const RtpRename> rr,
+                                    const char *name,
+                                    bool bStart, bool bEnd,
+                                    bool bCompareFFRTPname)
 {
     auto found = std::find_if(rr.begin(), rr.end(), [&name, &bCompareFFRTPname](const auto &rename)
                               { return ((!bCompareFFRTPname && (name == rename.gmx)) ||
@@ -1750,6 +1750,7 @@ int pdb2gmx::run()
 
         if ((i == 0) || (this_chainnumber != prev_chainnumber) || (bWat_ != bPrevWat_))
         {
+            GMX_RELEASE_ASSERT(pdba_all.pdbinfo, "Must have pdbinfo from reading a PDB file if chain number is changing");
             this_chainstart = pdba_all.atom[i].resind;
             bMerged         = false;
             if (i > 0 && !bWat_)

@@ -104,7 +104,15 @@ static PmeGpuKernelParamsBase *pme_gpu_get_kernel_params_base_ptr(const PmeGpu *
 int pme_gpu_get_atom_data_alignment(const PmeGpu * /*unused*/)
 {
     //TODO: this can be simplified, as c_pmeAtomDataAlignment is now constant
-    return c_pmeAtomDataAlignment;
+    if (c_usePadding)
+    {
+        return c_pmeAtomDataAlignment;
+    }
+    else
+    {
+        return 0;
+    }
+
 }
 
 int pme_gpu_get_atoms_per_warp(const PmeGpu *pmeGpu)
@@ -223,24 +231,6 @@ void pme_gpu_realloc_coordinates(const PmeGpu *pmeGpu)
                                    paddingCount, pmeGpu->archSpecific->pmeStream);
         }
     }
-}
-
-void pme_gpu_copy_input_coordinates(const PmeGpu *pmeGpu, const rvec *h_coordinates)
-{
-    GMX_ASSERT(h_coordinates, "Bad host-side coordinate buffer in PME GPU");
-#if GMX_DOUBLE
-    GMX_RELEASE_ASSERT(false, "Only single precision is supported");
-    GMX_UNUSED_VALUE(h_coordinates);
-#else
-    const float *h_coordinatesFloat = reinterpret_cast<const float *>(h_coordinates);
-    copyToDeviceBuffer(&pmeGpu->kernelParams->atoms.d_coordinates, h_coordinatesFloat,
-                       0, pmeGpu->kernelParams->atoms.nAtoms * DIM,
-                       pmeGpu->archSpecific->pmeStream, pmeGpu->settings.transferKind, nullptr);
-    // FIXME: sync required since the copied data will be used by PP stream when using single GPU for both
-    //        Remove after adding the required event-based sync between the above H2D and the transform kernel
-    pme_gpu_synchronize(pmeGpu);
-
-#endif
 }
 
 void pme_gpu_free_coordinates(const PmeGpu *pmeGpu)
@@ -632,10 +622,9 @@ int getSplineParamFullIndex(int order, int splineIndex, int dimIndex, int atomIn
     return result;
 }
 
-PmeOutput pme_gpu_getEnergyAndVirial(const gmx_pme_t &pme)
+void pme_gpu_getEnergyAndVirial(const gmx_pme_t &pme,
+                                PmeOutput       *output)
 {
-    PmeOutput     output;
-
     const PmeGpu *pmeGpu = pme.gpu;
     for (int j = 0; j < c_virialAndEnergyCount; j++)
     {
@@ -643,15 +632,28 @@ PmeOutput pme_gpu_getEnergyAndVirial(const gmx_pme_t &pme)
     }
 
     unsigned int j = 0;
-    output.coulombVirial_[XX][XX] = 0.25f * pmeGpu->staging.h_virialAndEnergy[j++];
-    output.coulombVirial_[YY][YY] = 0.25f * pmeGpu->staging.h_virialAndEnergy[j++];
-    output.coulombVirial_[ZZ][ZZ] = 0.25f * pmeGpu->staging.h_virialAndEnergy[j++];
-    output.coulombVirial_[XX][YY] = output.coulombVirial_[YY][XX] = 0.25f * pmeGpu->staging.h_virialAndEnergy[j++];
-    output.coulombVirial_[XX][ZZ] = output.coulombVirial_[ZZ][XX] = 0.25f * pmeGpu->staging.h_virialAndEnergy[j++];
-    output.coulombVirial_[YY][ZZ] = output.coulombVirial_[ZZ][YY] = 0.25f * pmeGpu->staging.h_virialAndEnergy[j++];
-    output.coulombEnergy_         = 0.5f * pmeGpu->staging.h_virialAndEnergy[j++];
+    output->coulombVirial_[XX][XX] = 0.25F * pmeGpu->staging.h_virialAndEnergy[j++];
+    output->coulombVirial_[YY][YY] = 0.25F * pmeGpu->staging.h_virialAndEnergy[j++];
+    output->coulombVirial_[ZZ][ZZ] = 0.25F * pmeGpu->staging.h_virialAndEnergy[j++];
+    output->coulombVirial_[XX][YY] = output->coulombVirial_[YY][XX] = 0.25F * pmeGpu->staging.h_virialAndEnergy[j++];
+    output->coulombVirial_[XX][ZZ] = output->coulombVirial_[ZZ][XX] = 0.25F * pmeGpu->staging.h_virialAndEnergy[j++];
+    output->coulombVirial_[YY][ZZ] = output->coulombVirial_[ZZ][YY] = 0.25F * pmeGpu->staging.h_virialAndEnergy[j++];
+    output->coulombEnergy_         = 0.5F * pmeGpu->staging.h_virialAndEnergy[j++];
+}
 
-    return output;
+/*! \brief Sets the force-related members in \p output
+ *
+ * \param[in]   pmeGpu      PME GPU data structure
+ * \param[out]  output      Pointer to PME output data structure
+ */
+static void pme_gpu_getForceOutput(PmeGpu    *pmeGpu,
+                                   PmeOutput *output)
+{
+    output->haveForceOutput_ = !pmeGpu->settings.useGpuForceReduction;
+    if (output->haveForceOutput_)
+    {
+        output->forces_      =  pmeGpu->staging.h_forces;
+    }
 }
 
 PmeOutput pme_gpu_getOutput(const gmx_pme_t &pme,
@@ -659,28 +661,25 @@ PmeOutput pme_gpu_getOutput(const gmx_pme_t &pme,
 {
     PmeGpu    *pmeGpu = pme.gpu;
     const bool haveComputedEnergyAndVirial = (flags & GMX_PME_CALC_ENER_VIR) != 0;
-    if (!haveComputedEnergyAndVirial)
-    {
-        // The caller knows from the flags that the energy and the virial are not usable
-        PmeOutput output;
-        output.forces_ = pmeGpu->staging.h_forces;
-        return output;
-    }
 
-    if (pme_gpu_performs_solve(pmeGpu))
-    {
-        PmeOutput output = pme_gpu_getEnergyAndVirial(pme);
-        output.forces_ = pmeGpu->staging.h_forces;
-        return output;
-    }
-    else
-    {
-        PmeOutput output;
-        get_pme_ener_vir_q(pme.solve_work, pme.nthread, &output);
-        output.forces_ = pmeGpu->staging.h_forces;
-        return output;
-    }
+    PmeOutput  output;
 
+    pme_gpu_getForceOutput(pmeGpu, &output);
+
+    // The caller knows from the flags that the energy and the virial are not usable
+    // on the else branch
+    if (haveComputedEnergyAndVirial)
+    {
+        if (pme_gpu_performs_solve(pmeGpu))
+        {
+            pme_gpu_getEnergyAndVirial(pme, &output);
+        }
+        else
+        {
+            get_pme_ener_vir_q(pme.solve_work, pme.nthread, &output);
+        }
+    }
+    return output;
 }
 
 void pme_gpu_update_input_box(PmeGpu gmx_unused       *pmeGpu,
@@ -693,7 +692,7 @@ void pme_gpu_update_input_box(PmeGpu gmx_unused       *pmeGpu,
     pmeGpu->common->boxScaler->scaleBox(box, scaledBox);
     auto   *kernelParamsPtr      = pme_gpu_get_kernel_params_base_ptr(pmeGpu);
     kernelParamsPtr->current.boxVolume = scaledBox[XX][XX] * scaledBox[YY][YY] * scaledBox[ZZ][ZZ];
-    GMX_ASSERT(kernelParamsPtr->current.boxVolume != 0.0f, "Zero volume of the unit cell");
+    GMX_ASSERT(kernelParamsPtr->current.boxVolume != 0.0F, "Zero volume of the unit cell");
     matrix recipBox;
     gmx::invertBoxMatrix(scaledBox, recipBox);
 
@@ -791,8 +790,9 @@ static void pme_gpu_copy_common_data_from(const gmx_pme_t *pme)
     pmeGpu->common->nn.insert(pmeGpu->common->nn.end(), pme->nnx, pme->nnx + cellCount * pme->nkx);
     pmeGpu->common->nn.insert(pmeGpu->common->nn.end(), pme->nny, pme->nny + cellCount * pme->nky);
     pmeGpu->common->nn.insert(pmeGpu->common->nn.end(), pme->nnz, pme->nnz + cellCount * pme->nkz);
-    pmeGpu->common->runMode   = pme->runMode;
-    pmeGpu->common->boxScaler = pme->boxScaler;
+    pmeGpu->common->runMode       = pme->runMode;
+    pmeGpu->common->isRankPmeOnly = !pme->bPPnode;
+    pmeGpu->common->boxScaler     = pme->boxScaler;
 }
 
 /*! \libinternal \brief
@@ -817,6 +817,8 @@ static void pme_gpu_init(gmx_pme_t               *pme,
     pmeGpu->settings.useDecomposition = (pme->nnodes == 1);
     /* TODO: CPU gather with GPU spread is broken due to different theta/dtheta layout. */
     pmeGpu->settings.performGPUGather = true;
+    // By default GPU-side reduction is off (explicitly set here for tests, otherwise reset per-step)
+    pmeGpu->settings.useGpuForceReduction = false;
 
     pme_gpu_set_testing(pmeGpu, false);
 
@@ -824,12 +826,14 @@ static void pme_gpu_init(gmx_pme_t               *pme,
     GMX_ASSERT(pmeGpuProgram != nullptr, "GPU kernels must be already compiled");
     pmeGpu->programHandle_ = pmeGpuProgram;
 
+    pmeGpu->initializedClfftLibrary_ = std::make_unique<gmx::ClfftInitializer>();
+
     pme_gpu_init_internal(pmeGpu);
     pme_gpu_alloc_energy_virial(pmeGpu);
 
     pme_gpu_copy_common_data_from(pme);
 
-    GMX_ASSERT(pmeGpu->common->epsilon_r != 0.0f, "PME GPU: bad electrostatic coefficient");
+    GMX_ASSERT(pmeGpu->common->epsilon_r != 0.0F, "PME GPU: bad electrostatic coefficient");
 
     auto *kernelParamsPtr = pme_gpu_get_kernel_params_base_ptr(pmeGpu);
     kernelParamsPtr->constants.elFactor = ONE_4PI_EPS0 / pmeGpu->common->epsilon_r;
@@ -947,7 +951,6 @@ void pme_gpu_destroy(PmeGpu *pmeGpu)
     pme_gpu_free_energy_virial(pmeGpu);
     pme_gpu_free_bspline_values(pmeGpu);
     pme_gpu_free_forces(pmeGpu);
-    pme_gpu_free_coordinates(pmeGpu);
     pme_gpu_free_coefficients(pmeGpu);
     pme_gpu_free_spline_data(pmeGpu);
     pme_gpu_free_grid_indices(pmeGpu);
@@ -982,7 +985,6 @@ void pme_gpu_reinit_atoms(PmeGpu *pmeGpu, const int nAtoms, const real *charges)
 
     if (haveToRealloc)
     {
-        pme_gpu_realloc_coordinates(pmeGpu);
         pme_gpu_realloc_forces(pmeGpu);
         pme_gpu_realloc_spline_data(pmeGpu);
         pme_gpu_realloc_grid_indices(pmeGpu);
@@ -1013,11 +1015,12 @@ std::pair<int, int> inline pmeGpuCreateGrid(const PmeGpu *pmeGpu, int blockCount
     return std::pair<int, int>(colCount, minRowCount);
 }
 
-void pme_gpu_spread(const PmeGpu    *pmeGpu,
-                    int gmx_unused   gridIndex,
-                    real            *h_grid,
-                    bool             computeSplines,
-                    bool             spreadCharges)
+void pme_gpu_spread(const PmeGpu         *pmeGpu,
+                    GpuEventSynchronizer *xReadyOnDevice,
+                    int gmx_unused        gridIndex,
+                    real                 *h_grid,
+                    bool                  computeSplines,
+                    bool                  spreadCharges)
 {
     GMX_ASSERT(computeSplines || spreadCharges, "PME spline/spread kernel has invalid input (nothing to do)");
     const auto   *kernelParamsPtr = pmeGpu->kernelParams.get();
@@ -1035,6 +1038,17 @@ void pme_gpu_spread(const PmeGpu    *pmeGpu,
     // TODO: also consider using cudaFuncSetCacheConfig() for preferring shared memory on older architectures
     //(for spline data mostly, together with varying PME_GPU_PARALLEL_SPLINE define)
     GMX_ASSERT(!c_usePadding || !(c_pmeAtomDataAlignment % atomsPerBlock), "inconsistent atom data padding vs. spreading block size");
+
+    // Ensure that coordinates are ready on the device before launching spread;
+    // only needed with CUDA on PP+PME ranks, not on separate PME ranks, in unit tests
+    // nor in OpenCL as these cases use a single stream (hence xReadyOnDevice == nullptr).
+    GMX_ASSERT(xReadyOnDevice != nullptr ||
+               (GMX_GPU != GMX_GPU_CUDA) || pmeGpu->common->isRankPmeOnly || pme_gpu_is_testing(pmeGpu),
+               "Need a valid coordinate synchronizer on PP+PME ranks with CUDA.");
+    if (xReadyOnDevice)
+    {
+        xReadyOnDevice->enqueueWaitEvent(pmeGpu->archSpecific->pmeStream);
+    }
 
     const int          blockCount = pmeGpu->nAtomsPadded / atomsPerBlock;
     auto               dimGrid    = pmeGpuCreateGrid(pmeGpu, blockCount);
@@ -1207,8 +1221,7 @@ void pme_gpu_solve(const PmeGpu *pmeGpu, t_complex *h_grid,
 
 void pme_gpu_gather(PmeGpu                *pmeGpu,
                     PmeForceOutputHandling forceTreatment,
-                    const float           *h_grid
-                    )
+                    const float           *h_grid)
 {
     /* Copying the input CPU forces for reduction */
     if (forceTreatment != PmeForceOutputHandling::Set)
@@ -1269,18 +1282,105 @@ void pme_gpu_gather(PmeGpu                *pmeGpu,
     launchGpuKernel(kernelPtr, config, timingEvent, "PME gather", kernelArgs);
     pme_gpu_stop_timing(pmeGpu, timingId);
 
-    pme_gpu_copy_output_forces(pmeGpu);
+    if (pmeGpu->settings.useGpuForceReduction)
+    {
+        pmeGpu->archSpecific->pmeForcesReady.markEvent(pmeGpu->archSpecific->pmeStream);
+    }
+    else
+    {
+        pme_gpu_copy_output_forces(pmeGpu);
+    }
 }
 
-void * pme_gpu_get_kernelparam_coordinates(const PmeGpu *pmeGpu)
+DeviceBuffer<float> pme_gpu_get_kernelparam_coordinates(const PmeGpu *pmeGpu)
+{
+    GMX_ASSERT(pmeGpu && pmeGpu->kernelParams, "PME GPU device buffer was requested in non-GPU build or before the GPU PME was initialized.");
+
+    return pmeGpu->kernelParams->atoms.d_coordinates;
+}
+
+void * pme_gpu_get_kernelparam_forces(const PmeGpu *pmeGpu)
 {
     if (pmeGpu && pmeGpu->kernelParams)
     {
-        return pmeGpu->kernelParams->atoms.d_coordinates;
+        return pmeGpu->kernelParams->atoms.d_forces;
     }
     else
     {
         return nullptr;
     }
+}
 
+/*! \brief Check the validity of the device buffer.
+ *
+ * Checks if the buffer is not nullptr and, when possible, if it is big enough.
+ *
+ * \todo Split and move this function to gpu_utils.
+ *
+ * \param[in] buffer        Device buffer to be checked.
+ * \param[in] requiredSize  Number of elements that the buffer will have to accommodate.
+ *
+ * \returns If the device buffer can be set.
+ */
+template<typename T>
+static bool checkDeviceBuffer(gmx_unused DeviceBuffer<T> buffer, gmx_unused int requiredSize)
+{
+#if GMX_GPU == GMX_GPU_CUDA
+    GMX_ASSERT(buffer != nullptr, "The device pointer is nullptr");
+    return buffer != nullptr;
+#elif GMX_GPU == GMX_GPU_OPENCL
+    size_t size;
+    int    retval = clGetMemObjectInfo(buffer, CL_MEM_SIZE, sizeof(size), &size, nullptr);
+    GMX_ASSERT(retval == CL_SUCCESS, gmx::formatString("clGetMemObjectInfo failed with error code #%d", retval).c_str());
+    GMX_ASSERT(static_cast<int>(size) >= requiredSize, "Number of atoms in device buffer is smaller then required size.");
+    return retval == CL_SUCCESS && static_cast<int>(size) >= requiredSize;
+#elif GMX_GPU == GMX_GPU_NONE
+    GMX_ASSERT(false, "Setter for device-side coordinates was called in non-GPU build.");
+    return false;
+#endif
+}
+
+void pme_gpu_set_kernelparam_coordinates(const PmeGpu *pmeGpu, DeviceBuffer<float> d_x)
+{
+    GMX_ASSERT(pmeGpu && pmeGpu->kernelParams, "PME GPU device buffer can not be set in non-GPU builds or before the GPU PME was initialized.");
+
+    GMX_ASSERT(checkDeviceBuffer(d_x, pmeGpu->kernelParams->atoms.nAtoms), "The device-side buffer can not be set.");
+
+    pmeGpu->kernelParams->atoms.d_coordinates = d_x;
+}
+
+void * pme_gpu_get_stream(const PmeGpu *pmeGpu)
+{
+    if (pmeGpu)
+    {
+        return static_cast<void *>(&pmeGpu->archSpecific->pmeStream);
+    }
+    else
+    {
+        return nullptr;
+    }
+}
+
+void * pme_gpu_get_context(const PmeGpu *pmeGpu)
+{
+    if (pmeGpu)
+    {
+        return static_cast<void *>(&pmeGpu->archSpecific->context);
+    }
+    else
+    {
+        return nullptr;
+    }
+}
+
+GpuEventSynchronizer *pme_gpu_get_forces_ready_synchronizer(const PmeGpu *pmeGpu)
+{
+    if (pmeGpu && pmeGpu->kernelParams)
+    {
+        return &pmeGpu->archSpecific->pmeForcesReady;
+    }
+    else
+    {
+        return nullptr;
+    }
 }

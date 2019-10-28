@@ -63,6 +63,7 @@
 #include "gromacs/mdlib/qm_mopac.h"
 #include "gromacs/mdlib/qm_orca.h"
 #include "gromacs/mdtypes/commrec.h"
+#include "gromacs/mdtypes/forceoutput.h"
 #include "gromacs/mdtypes/forcerec.h"
 #include "gromacs/mdtypes/inputrec.h"
 #include "gromacs/mdtypes/md_enums.h"
@@ -849,7 +850,7 @@ std::vector<int> qmmmAtomIndices(const t_inputrec &ir, const gmx_mtop_t &mtop)
 void removeQmmmAtomCharges(gmx_mtop_t *mtop, gmx::ArrayRef<const int> qmmmAtoms)
 {
     int molb = 0;
-    for (int i = 0; i < qmmmAtoms.ssize(); i++)
+    for (gmx::index i = 0; i < qmmmAtoms.ssize(); i++)
     {
         int     indexInMolecule;
         mtopGetMolblockIndex(mtop, qmmmAtoms[i], &molb, nullptr, &indexInMolecule);
@@ -1037,7 +1038,7 @@ void QMMM_rec::update_QMMMrec_verlet_ns(const t_commrec      *cr,
  // nbnxn_pairlist_t **nbl  = fr->nbv->grp[0].nbl_lists.nbl;
  // int                nnbl = fr->nbv->grp[0].nbl_lists.nnbl;
  // nbnxn_search_t     nbs  = fr->nbv->nbs;
-    gmx::ArrayRef<const NbnxnPairlistCpu> nbl = fr->nbv->pairlistSets().pairlistSet(Nbnxm::InteractionLocality::Local).cpuLists();
+    gmx::ArrayRef<const NbnxnPairlistCpu> nbl = fr->nbv->pairlistSets().pairlistSet(gmx::InteractionLocality::Local).cpuLists();
     int nnbl = nbl.ssize();
  // gmx::ArrayRef<const int> nbs = fr->nbv->getLocalAtomOrder();
  // gmx::ArrayRef<const int> atomIndices = fr->nbv->atomIndices();
@@ -1175,24 +1176,36 @@ void QMMM_rec::update_QMMMrec_verlet_ns(const t_commrec      *cr,
     return;
 } /* update_QMMMrec_verlet_ns */
 
-real QMMM_rec::calculate_QMMM(const t_commrec      *cr,
-                              const t_forcerec     *fr,
-                                    rvec            f[],
-                                    t_nrnb         *nrnb,
-                              const gmx_wallcycle_t wcycle)
+real QMMM_rec::calculate_QMMM(const t_commrec           *cr,
+                              gmx::ForceWithShiftForces *forceWithShiftForces,
+                              const t_forcerec          *fr,
+                                    t_nrnb              *nrnb,
+                              const gmx_wallcycle_t      wcycle)
 {
-    real QMener = 0.0;
-
     if (!GMX_QMMM)
     {
         gmx_incons("Compiled without QMMM");
     }
 
-    QMMM_QMrec& qm_ = qm[0];
-    QMMM_MMrec& mm_ = mm[0];
+    real
+        QMener = 0.0;
+    /* a selection for the QM package depending on which is requested
+     * (Gaussian, GAMESS-UK, MOPAC or ORCA) needs to be implemented here. Now
+     * it works through defines.... Not so nice yet
+     */
 
-    rvec *forces = nullptr, *fshift = nullptr;
+    QMMM_QMrec&
+        qm_ = qm[0];
+    QMMM_MMrec&
+        mm_ = mm[0];
+
+    rvec
+        *forces = nullptr,
+        *fshift = nullptr;
  
+    gmx::ArrayRef<gmx::RVec> fMM      = forceWithShiftForces->force();
+    gmx::ArrayRef<gmx::RVec> fshiftMM = forceWithShiftForces->shiftForces();
+
     if (GMX_QMMM_DFTBPLUS)
     {
         snew(forces, (qm_.nrQMatoms + mm_.nrMMatoms + mm_.nrMMatoms_full));
@@ -1208,13 +1221,12 @@ real QMMM_rec::calculate_QMMM(const t_commrec      *cr,
 
     if (GMX_QMMM_DFTBPLUS)
     {
-        
         for (int i = 0; i < qm_.nrQMatoms; i++)
         {
             for (int j = 0; j < DIM; j++)
             {
-                f[qm_.indexQM[i]][j]          -= forces[i][j];
-                fr->fshift[qm_.shiftQM[i]][j] += fshift[i][j];
+                fMM[qm_.indexQM[i]][j]        -= forces[i][j];
+                fshiftMM[qm_.shiftQM[i]][j]   += fshift[i][j];
              // f[qm->indexQM[i]][j]          -= forces_qm[i][j];
              // fr->fshift[qm->shiftQM[i]][j] += fshift_qm[i][j];
             }
@@ -1224,8 +1236,8 @@ real QMMM_rec::calculate_QMMM(const t_commrec      *cr,
         {
             for (int j = 0; j < DIM; j++)
             {
-                f[mm_.indexMM[i]][j]          -= forces[qm_.nrQMatoms+i][j];
-                fr->fshift[mm_.shiftMM[i]][j] += fshift[qm_.nrQMatoms+i][j];
+                fMM[mm_.indexMM[i]][j]        -= forces[qm_.nrQMatoms+i][j];
+                fshiftMM[mm_.shiftMM[i]][j]   += fshift[qm_.nrQMatoms+i][j];
              // f[mm->indexMM[i]][j]          -= forces_mm[i][j];
              // fr->fshift[mm->shiftMM[i]][j] += fshift_mm[i][j];
             }
@@ -1237,8 +1249,8 @@ real QMMM_rec::calculate_QMMM(const t_commrec      *cr,
         {
             for (int j = 0; j < DIM; j++)
             {
-                f[mm_.indexMM_full[i]][j]          -= forces[qm_.nrQMatoms+mm_.nrMMatoms+i][j];
-                fr->fshift[mm_.shiftMM_full[i]][j] += fshift[qm_.nrQMatoms+mm_.nrMMatoms+i][j];
+                fMM[mm_.indexMM_full[i]][j]        -= forces[qm_.nrQMatoms+mm_.nrMMatoms+i][j];
+                fshiftMM[mm_.shiftMM_full[i]][j]   += fshift[qm_.nrQMatoms+mm_.nrMMatoms+i][j];
              // f[mm->indexMM_full[i]][j]          -= forces_mm_full[i][j];
              // fr->fshift[mm->shiftMM_full[i]][j] += fshift_mm_full[i][j];
             }
@@ -1253,16 +1265,16 @@ real QMMM_rec::calculate_QMMM(const t_commrec      *cr,
         {
             for (int j = 0; j < DIM; j++)
             {
-                f[qm_.indexQM[i]][j]          -= forces[i][j];
-                fr->fshift[qm_.shiftQM[i]][j] += fshift[i][j];
+                fMM[qm_.indexQM[i]][j]          -= forces[i][j];
+                fshiftMM[qm_.shiftQM[i]][j]     += fshift[i][j];
             }
         }
         for (int i = 0; i < mm_.nrMMatoms; i++)
         {
             for (int j = 0; j < DIM; j++)
             {
-                f[mm_.indexMM[i]][j]          -= forces[qm_.nrQMatoms+i][j];
-                fr->fshift[mm_.shiftMM[i]][j] += fshift[qm_.nrQMatoms+i][j];
+                fMM[mm_.indexMM[i]][j]      -= forces[qm_.nrQMatoms+i][j];
+                fshiftMM[mm_.shiftMM[i]][j] += fshift[qm_.nrQMatoms+i][j];
             }
         }
     }

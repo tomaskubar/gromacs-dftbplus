@@ -74,8 +74,6 @@ void pr_forcerec(FILE *fplog, t_forcerec *fr);
  * The force calculation needs information on which atoms it
  * should do work.
  * \param[inout] fr                  The forcerec
- * \param[in]    ncg_home            Number of charge groups on this processor
- * \param[in]    ncg_force           Number of charge groups to compute force on
  * \param[in]    natoms_force        Number of atoms to compute force on
  * \param[in]    natoms_force_constr Number of atoms involved in constraints
  * \param[in]    natoms_f_novirsum   Number of atoms for which
@@ -83,7 +81,6 @@ void pr_forcerec(FILE *fplog, t_forcerec *fr);
  */
 void
 forcerec_set_ranges(t_forcerec *fr,
-                    int ncg_home, int ncg_force,
                     int natoms_force,
                     int natoms_force_constr, int natoms_f_novirsum);
 
@@ -98,23 +95,23 @@ void init_interaction_const_tables(FILE                   *fp,
 
 /*! \brief Initialize forcerec structure.
  *
- * \param[in]  fplog       File for printing
- * \param[in]  mdlog       File for printing
- * \param[out] fr          The forcerec
- * \param[in]  fcd         Force constant data
- * \param[in]  ir          Inputrec structure
- * \param[in]  mtop        Molecular topology
- * \param[in]  cr          Communication structures
- * \param[in]  box         Simulation box
- * \param[in]  tabfn       Table potential file for non-bonded interactions
- * \param[in]  tabpfn      Table potential file for pair interactions
- * \param[in]  tabbfnm     Table potential files for bonded interactions
- * \param[in]  hardwareInfo  Information about hardware
- * \param[in]  deviceInfo  Info about GPU device to use for short-ranged work
- * \param[in]  useGpuForBonded  Whether bonded interactions will run on a GPU
- * \param[in]  bNoSolvOpt  Do not use solvent optimization
- * \param[in]  print_force Print forces for atoms with force >= print_force
- * \param[out] wcycle      Pointer to cycle counter object
+ * \param[in]  fplog              File for printing
+ * \param[in]  mdlog              File for printing
+ * \param[out] fr                 The forcerec
+ * \param[in]  fcd                Force constant data
+ * \param[in]  ir                 Inputrec structure
+ * \param[in]  mtop               Molecular topology
+ * \param[in]  cr                 Communication structures
+ * \param[in]  box                Simulation box
+ * \param[in]  tabfn              Table potential file for non-bonded interactions
+ * \param[in]  tabpfn             Table potential file for pair interactions
+ * \param[in]  tabbfnm            Table potential files for bonded interactions
+ * \param[in]  hardwareInfo       Information about hardware
+ * \param[in]  deviceInfo         Info about GPU device to use for short-ranged work
+ * \param[in]  useGpuForBonded    Whether bonded interactions will run on a GPU
+ * \param[in]  pmeOnlyRankUsesGpu Whether there is a PME task on a GPU on a PME-only rank
+ * \param[in]  print_force        Print forces for atoms with force >= print_force
+ * \param[out] wcycle             Pointer to cycle counter object
  */
 void init_forcerec(FILE                             *fplog,
                    const gmx::MDLogger              &mdlog,
@@ -130,7 +127,7 @@ void init_forcerec(FILE                             *fplog,
                    const gmx_hw_info_t              &hardwareInfo,
                    const gmx_device_info_t          *deviceInfo,
                    bool                              useGpuForBonded,
-                   gmx_bool                          bNoSolvOpt,
+                   bool                              pmeOnlyRankUsesGpu,
                    real                              print_force,
                    gmx_wallcycle                    *wcycle);
 

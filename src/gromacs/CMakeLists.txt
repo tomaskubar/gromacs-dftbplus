@@ -69,23 +69,11 @@ function (gmx_compile_cpp_as_cuda)
     _gmx_add_files_to_property(GMX_LIBGROMACS_GPU_IMPL_SOURCES ${ARGN})
 endfunction ()
 
-function (gmx_install_headers)
-    if (NOT GMX_BUILD_MDRUN_ONLY)
-        file(RELATIVE_PATH _dest ${PROJECT_SOURCE_DIR}/src ${CMAKE_CURRENT_LIST_DIR})
-        install(FILES       ${ARGN}
-                DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}/${_dest}"
-                COMPONENT   development)
-    endif()
-    _gmx_add_files_to_property(GMX_INSTALLED_HEADERS ${ARGN})
-endfunction ()
-
-function (gmx_write_installed_header_list)
-    get_property(_list GLOBAL PROPERTY GMX_INSTALLED_HEADERS)
-    string(REPLACE ";" "\n" _list "${_list}")
-    # TODO: Make this only update the file timestamp if the contents actually change.
-    file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/installed-headers.txt "${_list}")
-endfunction()
-
+# Add these contents first because linking their tests can take a lot
+# of time, so we want lots of parallel work still available after
+# linking starts.
+add_subdirectory(utility)
+# Add normal contents
 add_subdirectory(gmxlib)
 add_subdirectory(mdlib)
 add_subdirectory(applied_forces)
@@ -113,7 +101,6 @@ add_subdirectory(taskassignment)
 add_subdirectory(timing)
 add_subdirectory(topology)
 add_subdirectory(trajectory)
-add_subdirectory(utility)
 add_subdirectory(swap)
 add_subdirectory(essentialdynamics)
 add_subdirectory(pulling)
@@ -122,6 +109,7 @@ add_subdirectory(simd)
 add_subdirectory(imd)
 add_subdirectory(compat)
 add_subdirectory(mimic)
+add_subdirectory(modularsimulator)
 if (NOT GMX_BUILD_MDRUN_ONLY)
     add_subdirectory(gmxana)
     add_subdirectory(gmxpreprocess)
@@ -153,16 +141,11 @@ endif()
 list(APPEND libgromacs_object_library_dependencies thread_mpi)
 
 configure_file(version.h.cmakein version.h)
-gmx_install_headers(
-    analysisdata.h
-    commandline.h
-    options.h
-    random.h
-    selection.h
-    trajectoryanalysis.h
-    utility.h
-    ${CMAKE_CURRENT_BINARY_DIR}/version.h
-    )
+if(GMX_INSTALL_LEGACY_API)
+  install(FILES
+          ${CMAKE_CURRENT_BINARY_DIR}/version.h
+          DESTINATION include/gromacs)
+endif()
 
 # This code is here instead of utility/CMakeLists.txt, because CMake
 # custom commands and source file properties can only be set in the directory
@@ -200,12 +183,7 @@ if (GMX_USE_CUDA)
     # with keywords otherwise...
     set(CUDA_LIBRARIES PRIVATE ${CUDA_LIBRARIES})
     if (NOT GMX_CLANG_CUDA)
-        # FindCUDA.cmake expects this library to already exist, so we
-        # create it here.
-        add_library(libgromacs_generated OBJECT "")
-        set_target_properties(libgromacs_generated PROPERTIES LINKER_LANGUAGE CXX)
-        cuda_add_library(libgromacs ${LIBGROMACS_SOURCES})
-        list(APPEND libgromacs_object_library_dependencies libgromacs_generated)
+        gmx_cuda_add_library(libgromacs ${LIBGROMACS_SOURCES})
     else()
         add_library(libgromacs ${LIBGROMACS_SOURCES})
     endif()
@@ -214,10 +192,14 @@ else()
     add_library(libgromacs ${LIBGROMACS_SOURCES})
 endif()
 
+# Add these contents first because linking their tests can take a lot
+# of time, so we want lots of parallel work still available after
+# linking starts.
 add_subdirectory(fileio)
-if (NOT GMX_BUILD_MDRUN_ONLY)
-    add_subdirectory(selection)
-endif()
+add_subdirectory(selection)
+
+# Suppress a warning about our abuse of t_inputrec
+gmx_source_file_warning_suppression(mdtypes/inputrec.cpp -Wno-class-memaccess HAS_NO_CLASS_MEMACCESS)
 
 # Handle the object libraries that contain the source file
 # dependencies that need special handling because they are generated
@@ -284,6 +266,11 @@ endif()
 #
 # TODO Perhaps generalize this for all headers from src/external
 target_include_directories(libgromacs SYSTEM PRIVATE ${PROJECT_SOURCE_DIR}/src/external)
+
+# Temporary fix to allow external access to restraintpotentail
+target_include_directories(libgromacs PUBLIC
+                           $<INSTALL_INTERFACE:include>
+                           )
 
 if(SIMD_AVX_512_CXX_SUPPORTED AND NOT ("${GMX_SIMD_ACTIVE}" STREQUAL "AVX_512_KNL"))
     # Since we might be overriding -march=core-avx2, add a flag so we don't warn for this specific file.
@@ -360,8 +347,6 @@ if (GMX_CLANG_TIDY)
        "${CLANG_TIDY_EXE};-warnings-as-errors=*")
 endif()
 
-gmx_write_installed_header_list()
-
 # Only install the library in mdrun-only mode if it is actually necessary
 # for the binary
 if (NOT GMX_BUILD_MDRUN_ONLY OR BUILD_SHARED_LIBS)
@@ -370,6 +355,7 @@ if (NOT GMX_BUILD_MDRUN_ONLY OR BUILD_SHARED_LIBS)
             LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
             RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
             ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+            INCLUDES DESTINATION include
             COMPONENT libraries)
 endif()
 

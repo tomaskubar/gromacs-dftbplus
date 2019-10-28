@@ -2552,8 +2552,48 @@ molecular dynamics simulations*, (2002).
 
    </div>
 
+.. raw:: html
+
+   <div id="ref-PallPairInteractions">
+
+.. _refPallPairInteractions:
+
+:sup:`182` Páll, S., Hess, B.,
+"A flexible algorithm for calculating pair interactions on SIMD architectures,"
+*Comput. Phys. Commun.*, **183**, 2641–2650 (2013).
 
 .. raw:: html
 
    </div>
 
+
+.. raw:: html
+
+   <div id="ref-Orzechowski2019">
+
+.. _refOrzechowski2008:
+
+:sup:`182` Orzechowski M, Tama F., "Flexible fitting of high-resolution x-ray 
+structures into cryoelectron microscopy maps using biased molecular dynamics simulations",
+*Biophysical journal*, *95*, 5692–705, (2008).
+
+.. raw:: html
+
+   </div>
+
+.. raw:: html
+
+   <div id="ref-Igaev2019">
+
+.. _refIgaev2019:
+
+:sup:`183` Igaev, M., Kutzner, C., Bock, L. V., Vaiana, A. C., & Grubmüller, H.,
+"Automated cryo-EM structure refinement using correlation-driven molecular dynamics", *eLife*, **8**, e43542 (2019).
+
+.. raw:: html
+
+   </div>
+
+.. raw:: html
+
+   </div>

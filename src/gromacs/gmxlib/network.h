@@ -46,15 +46,21 @@
 #include "gromacs/utility/basedefinitions.h"
 #include "gromacs/utility/gmxmpi.h"
 #include "gromacs/utility/stringutil.h"
+#include "gromacs/utility/unique_cptr.h"
 
+struct gmx_multisim_t;
 struct t_commrec;
 struct t_filenm;
 
-struct t_commrec *init_commrec();
-/* Allocate, initialize and return the commrec. */
-
+//! Free memory associated with the commrec.
 void done_commrec(t_commrec *cr);
-/* Free memory associated with the commrec. */
+
+//! Convenience alias.
+using CommrecHandle = gmx::unique_cptr<t_commrec, done_commrec>;
+
+//! Allocate, initialize and return the commrec.
+CommrecHandle init_commrec(MPI_Comm              communicator,
+                           const gmx_multisim_t *ms);
 
 struct t_commrec *reinitialize_commrec_for_this_thread(const t_commrec *cro);
 
@@ -115,5 +121,8 @@ gmx_fatal_collective(int f_errno, const char *file, int line,
  * This is useful for handling errors in code that is executed identically
  * for all processes.
  */
+
+//! Make a barrier across all ranks of this simulation
+void simulationBarrier(const t_commrec *cr);
 
 #endif

@@ -39,6 +39,7 @@
  *  \author Dimitrios Karkoulis <dimitris.karkoulis@gmail.com>
  *  \author Teemu Virolainen <teemu@streamcomputing.eu>
  *  \author Szilárd Páll <pall.szilard@gmail.com>
+ *  \ingroup module_nbnxm
  */
 #include "gmxpre.h"
 
@@ -293,8 +294,7 @@ map_interaction_types_to_gpu_kernel_flavors(const interaction_const_t *ic,
     }
     else if ((EEL_PME(ic->eeltype) || ic->eeltype == eelEWALD))
     {
-        /* Initially rcoulomb == rvdw, so it's surely not twin cut-off. */
-        *gpu_eeltype = gpu_pick_ewald_kernel_type(false);
+        *gpu_eeltype = nbnxn_gpu_pick_ewald_kernel_type(*ic);
     }
     else
     {
@@ -429,7 +429,7 @@ void gpu_pme_loadbal_update_param(const nonbonded_verlet_t    *nbv,
 
     set_cutoff_parameters(nbp, ic, nbv->pairlistSets().params());
 
-    nbp->eeltype = gpu_pick_ewald_kernel_type(ic->rcoulomb != ic->rvdw);
+    nbp->eeltype = nbnxn_gpu_pick_ewald_kernel_type(*ic);
 
     GMX_RELEASE_ASSERT(ic->coulombEwaldTables, "Need valid Coulomb Ewald correction tables");
     init_ewald_coulomb_force_table(*ic->coulombEwaldTables, nbp, nb->dev_rundata);
@@ -488,7 +488,7 @@ static void init_timings(gmx_wallclock_gpu_nbnxn_t *t)
 
 //! OpenCL notification callback function
 static void CL_CALLBACK
-ocl_notify_fn( const char *pErrInfo, const void *, size_t, void *)
+ocl_notify_fn(const char *pErrInfo, const void gmx_unused *private_info, size_t gmx_unused cb, void gmx_unused *user_data)
 {
     if (pErrInfo != nullptr)
     {
@@ -762,7 +762,7 @@ static void nbnxn_ocl_clear_f(gmx_nbnxn_ocl_t *nb, int natoms_clear)
 
     cl_atomdata_t           *atomData = nb->atdat;
     cl_command_queue         ls       = nb->stream[InteractionLocality::Local];
-    cl_float                 value    = 0.0f;
+    cl_float                 value    = 0.0F;
 
     cl_error = clEnqueueFillBuffer(ls, atomData->f, &value, sizeof(cl_float),
                                    0, natoms_clear*sizeof(rvec), 0, nullptr, nullptr);
@@ -771,14 +771,13 @@ static void nbnxn_ocl_clear_f(gmx_nbnxn_ocl_t *nb, int natoms_clear)
 }
 
 //! This function is documented in the header file
-void
-gpu_clear_outputs(gmx_nbnxn_ocl_t   *nb,
-                  const int          flags)
+void gpu_clear_outputs(gmx_nbnxn_ocl_t *nb,
+                       bool             computeVirial)
 {
     nbnxn_ocl_clear_f(nb, nb->atdat->natoms);
     /* clear shift force array and energies if the outputs were
        used in the current step */
-    if (flags & GMX_FORCE_VIRIAL)
+    if (computeVirial)
     {
         nbnxn_ocl_clear_e_fshift(nb);
     }
@@ -825,7 +824,7 @@ void gpu_init_pairlist(gmx_nbnxn_ocl_t           *nb,
     }
 
     // TODO most of this function is same in CUDA and OpenCL, move into the header
-    Context context = nb->dev_rundata->context;
+    DeviceContext context = nb->dev_rundata->context;
 
     reallocateDeviceBuffer(&d_plist->sci, h_plist->sci.size(),
                            &d_plist->nsci, &d_plist->sci_nalloc, context);
