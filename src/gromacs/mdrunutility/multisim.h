@@ -43,34 +43,46 @@
 #ifndef GMX_MDRUNUTILITY_MULTISIM_H
 #define GMX_MDRUNUTILITY_MULTISIM_H
 
+#include <memory>
 #include <string>
 
 #include "gromacs/utility/arrayref.h"
 #include "gromacs/utility/gmxmpi.h"
+#include "gromacs/utility/mpiinplacebuffers.h"
 
-struct mpi_in_place_buf_t;
-
+/*! \libinternal
+ * \brief Coordinate multi-simulation resources for mdrun
+ *
+ * \todo Change this to class
+ */
 struct gmx_multisim_t
 {
-    int       nsim              = 1;
-    int       sim               = 0;
-    MPI_Group mpi_group_masters = MPI_GROUP_NULL;
-    MPI_Comm  mpi_comm_masters  = MPI_COMM_NULL;
-    /* these buffers are used as destination buffers if MPI_IN_PLACE isn't
-       supported.*/
-    mpi_in_place_buf_t *mpb = nullptr;
+    //! Default constructor
+    gmx_multisim_t();
+    /*! \brief Constructor useful for mdrun simulations
+     *
+     * Splits the communicator into multidirs.size() separate
+     * simulations, if >1, and creates a communication structure
+     * between the master these simulations.
+     *
+     * Valid to call regardless of build configuration, but \c
+     * multidirs must be empty unless a real MPI build is used. */
+    gmx_multisim_t(MPI_Comm                         comm,
+                   gmx::ArrayRef<const std::string> multidirs);
+    //! Destructor
+    ~gmx_multisim_t();
+
+    //! The number of simulations in the set of multi-simulations
+    int                                 nsim              = 1;
+    //! The index of the simulation that owns this object within the set
+    int                                 sim               = 0;
+    //! The MPI Group between master ranks of simulations, valid only on master ranks.
+    MPI_Group                           mpi_group_masters = MPI_GROUP_NULL;
+    //! The MPI communicator between master ranks of simulations, valid only on master ranks.
+    MPI_Comm                            mpi_comm_masters  = MPI_COMM_NULL;
+    //! Communication buffers needed if MPI_IN_PLACE isn't supported
+    mpi_in_place_buf_t *                mpb               = nullptr;
 };
-
-/*! \brief Initializes multi-simulations.
- *
- * Splits the communication into multidirs.size() separate
- * simulations, if >1, and creates a communication structure between
- * the master these simulations. */
-gmx_multisim_t *init_multisystem(MPI_Comm                         comm,
-                                 gmx::ArrayRef<const std::string> multidirs);
-
-//! Cleans up multi-system handler.
-void done_multisim(gmx_multisim_t *ms);
 
 //! Calculate the sum over the simulations of an array of ints
 void gmx_sumi_sim(int nr, int r[], const gmx_multisim_t *ms);
@@ -83,6 +95,11 @@ void gmx_sumf_sim(int nr, float r[], const gmx_multisim_t *ms);
 
 //! Calculate the sum over the simulations of an array of doubles
 void gmx_sumd_sim(int nr, double r[], const gmx_multisim_t *ms);
+
+/*! \brief Return a vector containing the gathered values of \c
+ * localValue found on the master rank of each simulation. */
+std::vector<int> gatherIntFromMultiSimulation(const gmx_multisim_t *ms,
+                                              int                   localValue);
 
 /*! \brief Check if val is the same on all simulations for a mdrun
  * -multidir run
@@ -112,6 +129,12 @@ static bool inline isMultiSim(const gmx_multisim_t *ms)
     return ms != nullptr;
 }
 
+/*! \brief Return whether this rank is the master rank of a
+ * simulation, using \c ms (if it is valid) and otherwise \c
+ * communicator */
+bool findIsSimulationMasterRank(const gmx_multisim_t *ms,
+                                MPI_Comm              communicator);
+
 //! Are we the master simulation of a possible multi-simulation?
 bool isMasterSim(const gmx_multisim_t *ms);
 
@@ -120,5 +143,8 @@ bool isMasterSim(const gmx_multisim_t *ms);
  * This rank prints the remaining run time etc. */
 bool isMasterSimMasterRank(const gmx_multisim_t *ms,
                            bool                  isMaster);
+
+//! Make a barrier across all multi-simulation master ranks
+void multiSimBarrier(const gmx_multisim_t *ms);
 
 #endif

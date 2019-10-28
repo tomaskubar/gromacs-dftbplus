@@ -1198,21 +1198,13 @@ void pbc_dx_d(const t_pbc *pbc, const dvec x1, const dvec x2, dvec dx)
 
 void calc_shifts(const matrix box, rvec shift_vec[])
 {
-    int k, l, m, d, n, test;
-
-    n = 0;
-    for (m = -D_BOX_Z; m <= D_BOX_Z; m++)
+    for (int n = 0, m = -D_BOX_Z; m <= D_BOX_Z; m++)
     {
-        for (l = -D_BOX_Y; l <= D_BOX_Y; l++)
+        for (int l = -D_BOX_Y; l <= D_BOX_Y; l++)
         {
-            for (k = -D_BOX_X; k <= D_BOX_X; k++, n++)
+            for (int k = -D_BOX_X; k <= D_BOX_X; k++, n++)
             {
-                test = XYZ2IS(k, l, m);
-                if (n != test)
-                {
-                    gmx_incons("inconsistent shift numbering");
-                }
-                for (d = 0; d < DIM; d++)
+                for (int d = 0; d < DIM; d++)
                 {
                     shift_vec[n][d] = k*box[XX][d] + l*box[YY][d] + m*box[ZZ][d];
                 }
@@ -1473,10 +1465,8 @@ void put_atoms_in_box(int ePBC, const matrix box, gmx::ArrayRef<gmx::RVec> x)
 
 void put_atoms_in_box_omp(int ePBC, const matrix box, gmx::ArrayRef<gmx::RVec> x, gmx_unused int nth)
 {
-    int t;
-
 #pragma omp parallel for num_threads(nth) schedule(static)
-    for (t = 0; t < nth; t++)
+    for (int t = 0; t < nth; t++)
     {
         try
         {
@@ -1595,7 +1585,7 @@ static void low_do_pbc_mtop(FILE *fplog, int ePBC, const matrix box,
     {
         const gmx_moltype_t &moltype = mtop->moltype[molb.type];
         if (moltype.atoms.nr == 1 ||
-            (!bFirst && moltype.cgs.nr == 1))
+            (!bFirst && moltype.atoms.nr == 1))
         {
             /* Just one atom or charge group in the molecule, no PBC required */
             as += molb.nmol*moltype.atoms.nr;

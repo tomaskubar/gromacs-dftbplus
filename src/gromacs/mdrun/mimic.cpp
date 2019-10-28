@@ -141,21 +141,21 @@ using gmx::SimulationSignaller;
 
 void gmx::LegacySimulator::do_mimic()
 {
-    t_inputrec              *ir   = inputrec;
-    int64_t                  step, step_rel;
-    double                   t, lam0[efptNR];
-    bool                     isLastStep               = false;
-    bool                     doFreeEnergyPerturbation = false;
-    unsigned int             force_flags;
-    tensor                   force_vir, shake_vir, total_vir, pres;
-    rvec                     mu_tot;
-    gmx_localtop_t           top;
-    PaddedVector<gmx::RVec>  f {};
-    gmx_global_stat_t        gstat;
-    t_graph                 *graph = nullptr;
-    gmx_shellfc_t           *shellfc;
+    t_inputrec                  *ir   = inputrec;
+    int64_t                      step, step_rel;
+    double                       t, lam0[efptNR];
+    bool                         isLastStep               = false;
+    bool                         doFreeEnergyPerturbation = false;
+    unsigned int                 force_flags;
+    tensor                       force_vir, shake_vir, total_vir, pres;
+    rvec                         mu_tot;
+    gmx_localtop_t               top;
+    PaddedHostVector<gmx::RVec>  f {};
+    gmx_global_stat_t            gstat;
+    t_graph                     *graph = nullptr;
+    gmx_shellfc_t               *shellfc;
 
-    double                   cycles;
+    double                       cycles;
 
     /* Domain decomposition could incorrectly miss a bonded
        interaction, but checking for that requires a global
@@ -226,16 +226,9 @@ void gmx::LegacySimulator::do_mimic()
 
     initialize_lambdas(fplog, *ir, MASTER(cr), &state_global->fep_state, state_global->lambda, lam0);
 
-    gmx_mdoutf        *outf = init_mdoutf(fplog, nfile, fnm, mdrunOptions, cr, outputProvider, ir, top_global, oenv, wcycle,
+    gmx_mdoutf        *outf = init_mdoutf(fplog, nfile, fnm, mdrunOptions, cr, outputProvider, mdModulesNotifier, ir, top_global, oenv, wcycle,
                                           StartingBehavior::NewSimulation);
-    gmx::EnergyOutput  energyOutput(mdoutf_get_fp_ene(outf), top_global, ir, pull_work, mdoutf_get_fp_dhdl(outf), true);
-
-    /* Kinetic energy data */
-    std::unique_ptr<gmx_ekindata_t> eKinData = std::make_unique<gmx_ekindata_t>();
-    gmx_ekindata_t                 *ekind    = eKinData.get();
-    init_ekindata(fplog, top_global, &(ir->opts), ekind);
-    /* Copy the cos acceleration to the groups struct */
-    ekind->cosacc.cos_accel = ir->cos_accel;
+    gmx::EnergyOutput  energyOutput(mdoutf_get_fp_ene(outf), top_global, ir, pull_work, mdoutf_get_fp_dhdl(outf), true, mdModulesNotifier);
 
     gstat = global_stat_init(ir);
 
@@ -383,7 +376,7 @@ void gmx::LegacySimulator::do_mimic()
 
         if (ir->efep != efepNO)
         {
-            setCurrentLambdasLocal(step, ir->fepvals, lam0, state);
+            setCurrentLambdasLocal(step, ir->fepvals, lam0, state->lambda, state->fep_state);
         }
 
         if (MASTER(cr))
@@ -443,7 +436,7 @@ void gmx::LegacySimulator::do_mimic()
                                 &state->hist,
                                 f.arrayRefWithPadding(), force_vir, mdatoms,
                                 nrnb, wcycle, graph,
-                                shellfc, fr, ppForceWorkload, t, mu_tot,
+                                shellfc, fr, runScheduleWork, t, mu_tot,
                                 vsite,
                                 ddBalanceRegionHandler);
         }
@@ -462,7 +455,7 @@ void gmx::LegacySimulator::do_mimic()
                      state->box, state->x.arrayRefWithPadding(), &state->hist,
                      f.arrayRefWithPadding(), force_vir, mdatoms, enerd, fcd,
                      state->lambda, graph,
-                     fr, ppForceWorkload, vsite, mu_tot, t, ed,
+                     fr, runScheduleWork, vsite, mu_tot, t, ed,
                      GMX_FORCE_NS | force_flags,
                      ddBalanceRegionHandler);
         }
@@ -563,7 +556,7 @@ void gmx::LegacySimulator::do_mimic()
         {
             /* Sum up the foreign energy and dhdl terms for md and sd.
                Currently done every step so that dhdl is correct in the .edr */
-            sum_dhdl(enerd, state->lambda, ir->fepvals);
+            sum_dhdl(enerd, state->lambda, *ir->fepvals);
         }
 
         /* Output stuff */

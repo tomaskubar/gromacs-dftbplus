@@ -50,7 +50,6 @@
 #include "gromacs/domdec/domdec.h"
 #include "gromacs/domdec/domdec_struct.h"
 #include "gromacs/domdec/mdsetup.h"
-#include "gromacs/gmxlib/chargegroup.h"
 #include "gromacs/gmxlib/network.h"
 #include "gromacs/math/functions.h"
 #include "gromacs/math/units.h"
@@ -78,6 +77,7 @@
 #include "gromacs/utility/arraysize.h"
 #include "gromacs/utility/cstringutil.h"
 #include "gromacs/utility/fatalerror.h"
+#include "gromacs/utility/gmxassert.h"
 #include "gromacs/utility/smalloc.h"
 
 typedef struct {
@@ -106,8 +106,8 @@ struct gmx_shellfc_t {
     int          nflexcon;               /* The number of flexible constraints        */
 
     /* Temporary arrays, should be fixed size 2 when fully converted to C++ */
-    PaddedVector<gmx::RVec> *x;          /* Array for iterative minimization          */
-    PaddedVector<gmx::RVec> *f;          /* Array for iterative minimization          */
+    PaddedHostVector<gmx::RVec>     *x;  /* Array for iterative minimization          */
+    PaddedHostVector<gmx::RVec>     *f;  /* Array for iterative minimization          */
 
     /* Flexible constraint working data */
     rvec        *acc_dir;                /* Acceleration direction for flexcon        */
@@ -160,6 +160,8 @@ static void predict_shells(FILE *fplog, rvec x[], rvec v[], real dt,
     int                   i, m, s1, n1, n2, n3;
     real                  dt_1, fudge, tm, m1, m2, m3;
     rvec                 *ptr;
+
+    GMX_RELEASE_ASSERT(mass || mtop, "Must have masses or a way to look them up");
 
     /* We introduce a fudge factor for performance reasons: with this choice
      * the initial force on the shells is about a factor of two lower than
@@ -256,8 +258,8 @@ static void predict_shells(FILE *fplog, rvec x[], rvec v[], real dt,
  * \param[in]  mtop  Molecular topology.
  * \returns Array holding the number of particles of a type
  */
-static std::array<int, eptNR> countPtypes(FILE             *fplog,
-                                          const gmx_mtop_t *mtop)
+std::array<int, eptNR> countPtypes(FILE             *fplog,
+                                   const gmx_mtop_t *mtop)
 {
     std::array<int, eptNR> nptype = { { 0 } };
     /* Count number of shells, and find their indices */
@@ -306,10 +308,10 @@ gmx_shellfc_t *init_shell_flexcon(FILE *fplog,
 {
     gmx_shellfc_t            *shfc;
     t_shell                  *shell;
-    int                      *shell_index = nullptr, *at2cg;
+    int                      *shell_index = nullptr;
 
     int                       ns, nshell, nsi;
-    int                       i, j, type, a_offset, cg, mol, ftype, nra;
+    int                       i, j, type, a_offset, mol, ftype, nra;
     real                      qS, alpha;
     int                       aS, aN = 0; /* Shell and nucleus */
     int                       bondtypes[] = { F_BONDS, F_HARMONIC, F_CUBICBONDS, F_POLARIZATION, F_ANHARM_POL, F_WATER_POL };
@@ -326,8 +328,8 @@ gmx_shellfc_t *init_shell_flexcon(FILE *fplog,
     }
 
     snew(shfc, 1);
-    shfc->x        = new PaddedVector<gmx::RVec>[2] {};
-    shfc->f        = new PaddedVector<gmx::RVec>[2] {};
+    shfc->x        = new PaddedHostVector<gmx::RVec>[2] {};
+    shfc->f        = new PaddedHostVector<gmx::RVec>[2] {};
     shfc->nflexcon = nflexcon;
 
     if (nshell == 0)
@@ -384,6 +386,7 @@ gmx_shellfc_t *init_shell_flexcon(FILE *fplog,
     ffparams = &mtop->ffparams;
 
     /* Now fill the structures */
+    /* TODO: See if we can use update groups that cover shell constructions */
     shfc->bInterCG = FALSE;
     ns             = 0;
     a_offset       = 0;
@@ -391,18 +394,8 @@ gmx_shellfc_t *init_shell_flexcon(FILE *fplog,
     {
         const gmx_molblock_t *molb = &mtop->molblock[mb];
         const gmx_moltype_t  *molt = &mtop->moltype[molb->type];
-        const t_block        *cgs  = &molt->cgs;
 
-        snew(at2cg, molt->atoms.nr);
-        for (cg = 0; cg < cgs->nr; cg++)
-        {
-            for (i = cgs->index[cg]; i < cgs->index[cg+1]; i++)
-            {
-                at2cg[i] = cg;
-            }
-        }
-
-        const t_atom *atom = molt->atoms.atom;
+        const t_atom         *atom = molt->atoms.atom;
         for (mol = 0; mol < molb->nmol; mol++)
         {
             for (j = 0; (j < NBT); j++)
@@ -484,7 +477,7 @@ gmx_shellfc_t *init_shell_flexcon(FILE *fplog,
                             }
                             gmx_fatal(FARGS, "Can not handle more than three bonds per shell\n");
                         }
-                        if (at2cg[aS] != at2cg[aN])
+                        if (aS != aN)
                         {
                             /* shell[nsi].bInterCG = TRUE; */
                             shfc->bInterCG = TRUE;
@@ -530,7 +523,6 @@ gmx_shellfc_t *init_shell_flexcon(FILE *fplog,
             a_offset += molt->atoms.nr;
         }
         /* Done with this molecule type */
-        sfree(at2cg);
     }
 
     /* Verify whether it's all correct */
@@ -578,7 +570,7 @@ gmx_shellfc_t *init_shell_flexcon(FILE *fplog,
         {
             if (fplog)
             {
-                fprintf(fplog, "\nNOTE: there are shells that are connected to particles outside their own charge group, will not predict shells positions during the run\n\n");
+                fprintf(fplog, "\nNOTE: in the current version shell prediction during the crun is disabled\n\n");
             }
             /* Prediction improves performance, so we should implement either:
              * 1. communication for the atoms needed for prediction
@@ -890,7 +882,7 @@ static void init_adir(gmx_shellfc_t            *shfc,
                       rvec                     *x,
                       rvec                     *f,
                       rvec                     *acc_dir,
-                      matrix                    box,
+                      const matrix              box,
                       gmx::ArrayRef<const real> lambda,
                       real                     *dvdlambda)
 {
@@ -984,7 +976,7 @@ void relax_shell_flexcon(FILE                                     *fplog,
                          int                                       natoms,
                          gmx::ArrayRefWithPadding<gmx::RVec>       x,
                          gmx::ArrayRefWithPadding<gmx::RVec>       v,
-                         matrix                                    box,
+                         const matrix                              box,
                          gmx::ArrayRef<real>                       lambda,
                          history_t                                *hist,
                          gmx::ArrayRefWithPadding<gmx::RVec>       f,
@@ -995,7 +987,7 @@ void relax_shell_flexcon(FILE                                     *fplog,
                          t_graph                                  *graph,
                          gmx_shellfc_t                            *shfc,
                          t_forcerec                               *fr,
-                         gmx::PpForceWorkload                     *ppForceWorkload,
+                         gmx::MdrunScheduleWorkload               *runScheduleWork,
                          double                                    t,
                          rvec                                      mu_tot,
                          const gmx_vsite_t                        *vsite,
@@ -1131,7 +1123,7 @@ void relax_shell_flexcon(FILE                                     *fplog,
              box, x, hist,
              forceWithPadding[Min], force_vir, md, enerd, fcd,
              lambda, graph,
-             fr, ppForceWorkload, vsite, mu_tot, t, nullptr,
+             fr, runScheduleWork, vsite, mu_tot, t, nullptr,
              (bDoNS ? GMX_FORCE_NS : 0) | shellfc_flags,
              ddBalanceRegionHandler);
 
@@ -1242,7 +1234,7 @@ void relax_shell_flexcon(FILE                                     *fplog,
                  top, box, posWithPadding[Try], hist,
                  forceWithPadding[Try], force_vir,
                  md, enerd, fcd, lambda, graph,
-                 fr, ppForceWorkload, vsite, mu_tot, t, nullptr,
+                 fr, runScheduleWork, vsite, mu_tot, t, nullptr,
                  shellfc_flags,
                  ddBalanceRegionHandler);
         sum_epot(&(enerd->grpp), enerd->term);

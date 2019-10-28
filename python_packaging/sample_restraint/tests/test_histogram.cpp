@@ -7,9 +7,6 @@
 #include <iostream>
 #include <vector>
 
-#include "gromacs/utility/classhelpers.h"
-#include "gromacs/utility/arrayref.h"
-
 #include "ensemblepotential.h"
 #include "sessionresources.h"
 
@@ -96,9 +93,3 @@ TEST(EnsembleHistogramPotentialPlugin, ForceCalc)
 }
 
 } // end anonymous namespace
-
-int main(int argc, char* argv[])
-{
-    ::testing::InitGoogleTest(&argc, argv);
-    return RUN_ALL_TESTS();
-}

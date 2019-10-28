@@ -45,20 +45,20 @@
 
 #include "gromacs/utility/classhelpers.h"
 
-struct ForceProviders;
 
 struct t_inputrec;
 
 namespace gmx
 {
 
+class ForceProviders;
 class KeyValueTreeObjectBuilder;
 class KeyValueTreeObject;
 class IKeyValueTreeErrorHandler;
 class IKeyValueTreeTransformRules;
-class IMDOutputProvider;
-class KeyValueTreeObject;
 class IMDModule;
+class IMDOutputProvider;
+struct MdModulesNotifier;
 
 /*! \libinternal \brief
  * Manages the collection of all modules used for mdrun.
@@ -167,7 +167,11 @@ class MDModules
          * MDModules should not change after some point, we should move this
          * to a builder class.
          */
-        void add(std::shared_ptr<gmx::IMDModule> module);
+        void add(std::shared_ptr<IMDModule> module);
+
+        /*! \brief Return a handle to the callbacks.
+         */
+        const MdModulesNotifier &notifier();
 
     private:
         class Impl;

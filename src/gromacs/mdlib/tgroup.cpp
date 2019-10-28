@@ -79,10 +79,9 @@ static void init_grpstat(const gmx_mtop_t *mtop, int ngacc, t_grp_acc gstat[])
 }
 
 void init_ekindata(FILE gmx_unused *log, const gmx_mtop_t *mtop, const t_grpopts *opts,
-                   gmx_ekindata_t *ekind)
+                   gmx_ekindata_t *ekind, real cos_accel)
 {
     int i;
-    int nthread, thread;
 
     /* bNEMD tells if we should remove remove the COM velocity
      * from the velocities during velocity scaling in T-coupling.
@@ -104,13 +103,13 @@ void init_ekindata(FILE gmx_unused *log, const gmx_mtop_t *mtop, const t_grpopts
         ekind->tcstat[i].ekinscalef_nhc = 1.0;
     }
 
-    nthread         = gmx_omp_nthreads_get(emntUpdate);
+    int nthread     = gmx_omp_nthreads_get(emntUpdate);
     ekind->nthreads = nthread;
     snew(ekind->ekin_work_alloc, nthread);
     snew(ekind->ekin_work, nthread);
     snew(ekind->dekindl_work, nthread);
 #pragma omp parallel for num_threads(nthread) schedule(static)
-    for (thread = 0; thread < nthread; thread++)
+    for (int thread = 0; thread < nthread; thread++)
     {
         try
         {
@@ -135,6 +134,8 @@ void init_ekindata(FILE gmx_unused *log, const gmx_mtop_t *mtop, const t_grpopts
     ekind->ngacc = opts->ngacc;
     ekind->grpstat.resize(opts->ngacc);
     init_grpstat(mtop, opts->ngacc, ekind->grpstat.data());
+
+    ekind->cosacc.cos_accel = cos_accel;
 }
 
 void accumulate_u(const t_commrec *cr, const t_grpopts *opts, gmx_ekindata_t *ekind)

@@ -1,7 +1,7 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2018, by the GROMACS development team, led by
+ * Copyright (c) 2018,2019, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -42,7 +42,7 @@
 #ifndef GMX_DOMDEC_DOMDEC_UTILITY_H
 #define GMX_DOMDEC_DOMDEC_UTILITY_H
 
-#include "gromacs/math/paddedvector.h"
+#include "gromacs/gpu_utils/hostallocator.h"
 #include "gromacs/mdtypes/forcerec.h"
 
 #include "domdec_internal.h"
@@ -56,10 +56,17 @@ static inline bool isDlbOn(const gmx_domdec_comm_t *comm)
 
 /*! \brief Returns true if the DLB state indicates that the balancer is off/disabled.
  */
+static inline bool isDlbDisabled(const DlbState &dlbState)
+{
+    return (dlbState == DlbState::offUser ||
+            dlbState == DlbState::offForever);
+};
+
+/*! \brief Returns true if the DLB state indicates that the balancer is off/disabled.
+ */
 static inline bool isDlbDisabled(const gmx_domdec_comm_t *comm)
 {
-    return (comm->dlbState == DlbState::offUser ||
-            comm->dlbState == DlbState::offForever);
+    return isDlbDisabled(comm->dlbState);
 };
 
 /*! \brief Returns the character, x/y/z, corresponding to dimension dim */
@@ -86,30 +93,39 @@ static inline int ddcginfo(const cginfo_mb_t *cginfo_mb,
 /*! \brief Returns the number of MD steps for which load has been recorded */
 static inline int dd_load_count(const gmx_domdec_comm_t *comm)
 {
-    return (comm->eFlop ? comm->flop_n : comm->cycl_n[ddCyclF]);
+    return (comm->ddSettings.eFlop ? comm->flop_n : comm->cycl_n[ddCyclF]);
 }
 
-/*! \brief Resize the state and f, if !=nullptr, to natoms */
-void dd_resize_state(t_state                 *state,
-                     PaddedVector<gmx::RVec> *f,
-                     int                      natoms);
+/*! \brief Resize the state and f, if !=nullptr, to natoms
+ *
+ * \param[in]  state   Current state
+ * \param[in]  f       The vector of forces to be resized
+ * \param[out] natoms  New number of atoms to accommodate
+ */
+void dd_resize_state(t_state                          *state,
+                     gmx::PaddedHostVector<gmx::RVec> *f,
+                     int                               natoms);
 
-/*! \brief Enrsure fr, state and f, if != nullptr, can hold numChargeGroups atoms for the Verlet scheme and charge groups for the group scheme */
-void dd_check_alloc_ncg(t_forcerec              *fr,
-                        t_state                 *state,
-                        PaddedVector<gmx::RVec> *f,
-                        int                      numChargeGroups);
+/*! \brief Enrsure fr, state and f, if != nullptr, can hold numChargeGroups atoms for the Verlet scheme and charge groups for the group scheme
+ *
+ * \param[in]  fr               Force record
+ * \param[in]  state            Current state
+ * \param[in]  f                The force buffer
+ * \param[out] numChargeGroups  Number of charged groups
+ */
+void dd_check_alloc_ncg(t_forcerec                       *fr,
+                        t_state                          *state,
+                        gmx::PaddedHostVector<gmx::RVec> *f,
+                        int                               numChargeGroups);
 
 /*! \brief Returns a domain-to-domain cutoff distance given an atom-to-atom cutoff */
 static inline real
-atomToAtomIntoDomainToDomainCutoff(const gmx_domdec_comm_t &comm,
-                                   real                     cutoff)
+atomToAtomIntoDomainToDomainCutoff(const DDSystemInfo &systemInfo,
+                                   real                cutoff)
 {
-    if (comm.useUpdateGroups)
+    if (systemInfo.useUpdateGroups)
     {
-        GMX_ASSERT(comm.updateGroupsCog, "updateGroupsCog should be initialized here");
-
-        cutoff += 2*comm.updateGroupsCog->maxUpdateGroupRadius();
+        cutoff += 2*systemInfo.maxUpdateGroupRadius;
     }
 
     return cutoff;
@@ -117,14 +133,12 @@ atomToAtomIntoDomainToDomainCutoff(const gmx_domdec_comm_t &comm,
 
 /*! \brief Returns an atom-to-domain cutoff distance given a domain-to-domain cutoff */
 static inline real
-domainToDomainIntoAtomToDomainCutoff(const gmx_domdec_comm_t &comm,
-                                     real                     cutoff)
+domainToDomainIntoAtomToDomainCutoff(const DDSystemInfo &systemInfo,
+                                     real                cutoff)
 {
-    if (comm.useUpdateGroups)
+    if (systemInfo.useUpdateGroups)
     {
-        GMX_ASSERT(comm.updateGroupsCog, "updateGroupsCog should be initialized here");
-
-        cutoff -= comm.updateGroupsCog->maxUpdateGroupRadius();
+        cutoff -= systemInfo.maxUpdateGroupRadius;
     }
 
     return cutoff;

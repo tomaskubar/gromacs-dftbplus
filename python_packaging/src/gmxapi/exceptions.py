@@ -1,3 +1,4 @@
+#
 # This file is part of the GROMACS molecular simulation package.
 #
 # Copyright (c) 2019, by the GROMACS development team, led by
@@ -32,8 +33,7 @@
 # the research papers on the package. Check out http://www.gromacs.org.
 
 """
-Exceptions and Warnings raised by gmxapi module operations
-==========================================================
+Exceptions and Warnings raised by gmxapi module operations.
 
 Errors, warnings, and other exceptions used in the GROMACS
 Python package are defined in the `exceptions` submodule.
@@ -46,8 +46,12 @@ as a gmxapi.exceptions.Error, please report the bug.
 """
 
 __all__ = ['ApiError',
+           'DataShapeError',
            'Error',
+           'FeatureNotAvailableError',
+           'NotImplementedError',
            'ProtocolError',
+           'TypeError',
            'UsageError',
            'ValueError',
            'Warning'
@@ -66,11 +70,47 @@ class ApiError(Error):
     """An API operation was attempted with an incompatible object."""
 
 
+class DataShapeError(Error):
+    """An object has an incompatible shape.
+
+    This exception does not imply that the Type or any other aspect of the data
+    has been checked.
+    """
+
+
+class NotImplementedError(Error):
+    """Specified feature is not implemented in the current code.
+
+    This exception indicates that the implemented code does not support the
+    API as specified. The calling code has used valid syntax, as documented for
+    the API, but has reached incompletely implemented code, which should be
+    considered a bug.
+    """
+    # May be useful for error checking in base classes or as a development tool
+    # to avoid releasing incomplete implementations (e.g. overlooked "To do"s)
+
+
+class FeatureNotAvailableError(Error):
+    """Requested feature not available in the current environment.
+
+    This exception will usually indicate an issue with the user's environment or
+    run time details. There may be a missing optional dependency, which should
+    be specified in the exception message.
+    """
+
+
 class ProtocolError(Error):
     """Unexpected API behavior or protocol violation.
 
     This exception generally indicates a gmxapi bug, since it should only
     occur through incorrect assumptions or misuse of API implementation internals.
+    """
+
+
+class TypeError(Error):
+    """Incompatible type for gmxapi data.
+
+    Reference datamodel.rst for more on gmxapi data typing.
     """
 
 

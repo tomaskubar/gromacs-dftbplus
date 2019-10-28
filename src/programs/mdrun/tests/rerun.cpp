@@ -44,31 +44,11 @@
 
 #include "config.h"
 
-#include <map>
-#include <memory>
-#include <string>
-#include <tuple>
-#include <vector>
-
-#include <gtest/gtest.h>
-
-#include "gromacs/options/filenameoption.h"
-#include "gromacs/topology/idef.h"
 #include "gromacs/topology/ifunc.h"
 #include "gromacs/trajectory/energyframe.h"
-#include "gromacs/trajectory/trajectoryframe.h"
 #include "gromacs/utility/stringutil.h"
 
-#include "testutils/mpitest.h"
-#include "testutils/simulationdatabase.h"
-#include "testutils/testasserts.h"
-
-#include "energycomparison.h"
-#include "energyreader.h"
-#include "mdruncomparison.h"
-#include "moduletest.h"
-#include "trajectorycomparison.h"
-#include "trajectoryreader.h"
+#include "simulatorcomparison.h"
 
 namespace gmx
 {
@@ -76,123 +56,6 @@ namespace test
 {
 namespace
 {
-
-//! Functor for comparing reference and test frames on particular energies to match.
-class EnergyComparator
-{
-    public:
-        //! Constructor
-        EnergyComparator(const EnergyTolerances &energiesToMatch)
-            : energiesToMatch_(energiesToMatch) {}
-        //! The functor method.
-        void operator()(const EnergyFrame &reference, const EnergyFrame &test)
-        {
-            compareEnergyFrames(reference, test, energiesToMatch_);
-        }
-        //! Container of the energies to match and the tolerance required.
-        const EnergyTolerances &energiesToMatch_;
-};
-
-//! Run grompp for a normal mdrun, the run, and its rerun.
-void executeRerunTest(TestFileManager        *fileManager,
-                      SimulationRunner       *runner,
-                      const std::string      &simulationName,
-                      int                     maxWarningsTolerated,
-                      const MdpFieldValues   &mdpFieldValues,
-                      const EnergyTolerances &energiesToMatch)
-{
-    // TODO At some point we should also test PME-only ranks.
-    int numRanksAvailable = getNumberOfTestMpiRanks();
-    if (!isNumberOfPpRanksSupported(simulationName, numRanksAvailable))
-    {
-        fprintf(stdout, "Test system '%s' cannot run with %d ranks.\n"
-                "The supported numbers are: %s\n",
-                simulationName.c_str(), numRanksAvailable,
-                reportNumbersOfPpRanksSupported(simulationName).c_str());
-        return;
-    }
-
-    auto normalRunTrajectoryFileName = fileManager->getTemporaryFilePath("normal.trr");
-    auto normalRunEdrFileName        = fileManager->getTemporaryFilePath("normal.edr");
-    auto rerunTrajectoryFileName     = fileManager->getTemporaryFilePath("rerun.trr");
-    auto rerunEdrFileName            = fileManager->getTemporaryFilePath("rerun.edr");
-
-    // prepare the .tpr file
-    {
-        // TODO evolve grompp to report the number of warnings issued, so
-        // tests always expect the right number.
-        CommandLine caller;
-        caller.append("grompp");
-        caller.addOption("-maxwarn", maxWarningsTolerated);
-        runner->useTopGroAndNdxFromDatabase(simulationName);
-        runner->useStringAsMdpFile(prepareMdpFileContents(mdpFieldValues));
-        EXPECT_EQ(0, runner->callGrompp(caller));
-    }
-
-    // do the normal mdrun
-    {
-        runner->fullPrecisionTrajectoryFileName_ = normalRunTrajectoryFileName;
-        runner->edrFileName_                     = normalRunEdrFileName;
-        CommandLine normalRunCaller;
-        normalRunCaller.append("mdrun");
-        ASSERT_EQ(0, runner->callMdrun(normalRunCaller));
-    }
-
-    // do a rerun on the .trr just produced
-    {
-        runner->fullPrecisionTrajectoryFileName_ = rerunTrajectoryFileName;
-        runner->edrFileName_                     = rerunEdrFileName;
-        CommandLine rerunCaller;
-        rerunCaller.append("mdrun");
-        rerunCaller.addOption("-rerun", normalRunTrajectoryFileName);
-        ASSERT_EQ(0, runner->callMdrun(rerunCaller));
-    }
-
-    // Build the functor that will compare reference and test
-    // energy frames on the chosen energy fields.
-    //
-    // TODO It would be less code if we used a lambda for this, but either
-    // clang 3.4 or libstdc++ 5.2.1 have an issue with capturing a
-    // std::unordered_map
-    EnergyComparator energyComparator(energiesToMatch);
-    // Build the manager that will present matching pairs of frames to compare.
-    //
-    // TODO Here is an unnecessary copy of keys (ie. the energy field
-    // names), for convenience. In the future, use a range.
-    auto namesOfEnergiesToMatch = getKeys(energiesToMatch);
-    FramePairManager<EnergyFrameReader, EnergyFrame>
-         energyManager(openEnergyFileToReadFields(normalRunEdrFileName, namesOfEnergiesToMatch),
-                  openEnergyFileToReadFields(rerunEdrFileName, namesOfEnergiesToMatch));
-    // Compare the energy frames.
-    energyManager.compareAllFramePairs(energyComparator);
-
-    // Specify how trajectory frame matching must work.
-    TrajectoryFrameMatchSettings trajectoryMatchSettings {
-        true, true, true, true, false, true
-    };
-    /* Specify the default expected tolerances for trajectory
-     * components for all simulation systems. */
-    TrajectoryTolerances trajectoryTolerances {
-        defaultRealTolerance(),                                               // box
-        relativeToleranceAsFloatingPoint(1.0, 1.0e-3),                        // positions
-        defaultRealTolerance(),                                               // velocities - unused for rerun
-        relativeToleranceAsFloatingPoint(100.0, GMX_DOUBLE ? 1.0e-7 : 1.0e-5) // forces
-    };
-
-    // Build the functor that will compare reference and test
-    // trajectory frames in the chosen way.
-    auto trajectoryComparator = [&trajectoryMatchSettings, &trajectoryTolerances](const TrajectoryFrame &reference, const TrajectoryFrame &test)
-        {
-            compareTrajectoryFrames(reference, test, trajectoryMatchSettings, trajectoryTolerances);
-        };
-    // Build the manager that will present matching pairs of frames to compare
-    FramePairManager<TrajectoryFrameReader, TrajectoryFrame>
-    trajectoryManager(std::make_unique<TrajectoryFrameReader>(normalRunTrajectoryFileName),
-                      std::make_unique<TrajectoryFrameReader>(rerunTrajectoryFileName));
-    // Compare the trajectory frames.
-    trajectoryManager.compareAllFramePairs(trajectoryComparator);
-}
-
 /*! \brief Test fixture base for mdrun -rerun
  *
  * This test ensures mdrun can run a simulation, writing a trajectory
@@ -225,6 +88,19 @@ class MdrunRerunTest : public MdrunTestFixture,
                        public ::testing::WithParamInterface <
                        std::tuple < std::string, std::string>>
 {
+    public:
+        //! Trajectory components to compare
+        static const TrajectoryFrameMatchSettings trajectoryMatchSettings;
+};
+
+// Compare box, positions and forces, but not velocities
+// (velocities are ignored in reruns)
+const TrajectoryFrameMatchSettings MdrunRerunTest::trajectoryMatchSettings =
+{
+    true, true, true,
+    ComparisonConditions::MustCompare,
+    ComparisonConditions::NoComparison,
+    ComparisonConditions::MustCompare
 };
 
 TEST_P(MdrunRerunTest, WithinTolerances)
@@ -241,8 +117,8 @@ TEST_P(MdrunRerunTest, WithinTolerances)
                                                 "no", "no");
 
     // bd is much less reproducible in a rerun than the other integrators
-    const int        toleranceScaleFactor = (integrator == "bd") ? 2 : 1;
-    EnergyTolerances energiesToMatch
+    const int            toleranceScaleFactor = (integrator == "bd") ? 2 : 1;
+    EnergyTermsToCompare energyTermsToCompare
     {{
          {
              interaction_function[F_EPOT].longname,
@@ -250,10 +126,15 @@ TEST_P(MdrunRerunTest, WithinTolerances)
          },
      }};
 
+    // Specify how trajectory frame matching must work
+    TrajectoryComparison trajectoryComparison {
+        trajectoryMatchSettings, TrajectoryComparison::s_defaultTrajectoryTolerances
+    };
+
     int numWarningsToTolerate = 0;
     executeRerunTest(&fileManager_, &runner_,
                      simulationName, numWarningsToTolerate, mdpFieldValues,
-                     energiesToMatch);
+                     energyTermsToCompare, trajectoryComparison);
 }
 
 // TODO The time for OpenCL kernel compilation means these tests time
@@ -288,9 +169,9 @@ TEST_P(MdrunRerunFreeEnergyTest, WithinTolerances)
     auto mdpFieldValues = prepareMdpFieldValues(simulationName.c_str(),
                                                 integrator.c_str(),
                                                 "no", "no");
-    mdpFieldValues["other"] += formatString("\ninit-lambda-state %d", initLambdaState);
+    mdpFieldValues["other"] += formatString("\ninit-lambda-state = %d", initLambdaState);
 
-    EnergyTolerances energiesToMatch
+    EnergyTermsToCompare energyTermsToCompare
     {{
          {
              interaction_function[F_EPOT].longname, relativeToleranceAsPrecisionDependentUlp(10.0, 24, 32)
@@ -309,12 +190,17 @@ TEST_P(MdrunRerunFreeEnergyTest, WithinTolerances)
          }
      }};
 
+    // Specify how trajectory frame matching must work
+    TrajectoryComparison trajectoryComparison {
+        MdrunRerunTest::trajectoryMatchSettings, TrajectoryComparison::s_defaultTrajectoryTolerances
+    };
+
     // The md integrator triggers a warning for nearly decoupled
     // states, which we need to suppress. TODO sometimes?
     int numWarningsToTolerate = (integrator == "md") ? 1 : 0;
     executeRerunTest(&fileManager_, &runner_,
                      simulationName, numWarningsToTolerate, mdpFieldValues,
-                     energiesToMatch);
+                     energyTermsToCompare, trajectoryComparison);
 }
 
 // TODO The time for OpenCL kernel compilation means these tests time

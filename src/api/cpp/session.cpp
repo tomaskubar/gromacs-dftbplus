@@ -40,10 +40,8 @@
 #include "gmxapi/session.h"
 
 #include <memory>
-#include "gromacs/gmxlib/network.h"
 #include "gromacs/mdlib/sighandler.h"
 #include "gromacs/mdrunutility/logging.h"
-#include "gromacs/mdrunutility/multisim.h"
 #include "gromacs/restraint/restraintpotential.h"
 #include "gromacs/utility/gmxassert.h"
 #include "gromacs/utility/basenetwork.h"
@@ -65,14 +63,17 @@ namespace gmxapi
 /*!
  * \brief Provide RAII management of communications resource state.
  *
- * To acquire an MpiContextManager is to have assurance that the GROMACS MPI
+ * To acquire an MpiContextManager is to have assurance that any external MPI
  * environment is ready to use. When the MpiContextManager is released or
  * goes out of scope, the destructor finalizes the resources.
  *
- * \todo Figure out how to manage MPI versus tMPI.
- * \todo gmx::init should take a subcommunicator rather than use MPI_COMM_WORLD
+ * Note that thread-MPI chooses the number of ranks and constructs its
+ * MPI communicator internally, so does not and is unlikely to ever
+ * participate here.
+ *
  * \todo There is no resource for logging or reporting errors during initialization
- * \todo Clarify relationship with gmx::SimulationContext.
+ * \todo Remove this class by managing the MPI context with mpi4py and so
+ *       configuring the SimulationContext externally
  *
  * \ingroup gmxapi
  */
@@ -82,27 +83,14 @@ class MpiContextManager
         MpiContextManager()
         {
             gmx::init(nullptr, nullptr);
-#ifdef GMX_MPI
-#if GMX_MPI
-#if GMX_THREAD_MPI
-            // With thread-MPI, gmx_mpi_initialized() is false until after
-            // spawnThreads in the middle of gmx::Mdrunner::mdrunner(), but
-            // without thread-MPI, MPI is initialized by the time gmx::init()
-            // returns. In other words, this is not an effective context manager
-            // for thread-MPI, but it should be effective for MPI.
-            // \todo Distinguish scope / lifetime for comm resources from implementation details.
-            // \todo Normalize scope / lifetime of comm resources.
-#else
-            GMX_ASSERT(gmx_mpi_initialized(), "MPI should be initialized before reaching this point.");
-#endif // GMX_THREAD_MPI
-#endif // GMX_MPI
-#endif // defined(GMX_MPI)
+            GMX_RELEASE_ASSERT(!GMX_LIB_MPI || gmx_mpi_initialized(), "MPI should be initialized before reaching this point.");
         };
 
         ~MpiContextManager()
         {
-            // This is safe to call. It is a no-op if thread-MPI, and if the
-            // constructor completed then MPI is initialized.
+            // This is always safe to call. It is a no-op if
+            // thread-MPI, and if the constructor completed then the
+            // MPI library is initialized with reference counting.
             gmx::finalize();
         }
 
@@ -187,35 +175,28 @@ Status SessionImpl::run() noexcept
 
 std::unique_ptr<SessionImpl> SessionImpl::create(std::shared_ptr<ContextImpl>  context,
                                                  gmx::MdrunnerBuilder        &&runnerBuilder,
-                                                 const gmx::SimulationContext &simulationContext,
-                                                 gmx::LogFilePtr               logFilehandle,
-                                                 gmx_multisim_t              * multiSim)
+                                                 gmx::SimulationContext      &&simulationContext,
+                                                 gmx::LogFilePtr               logFilehandle)
 {
     // We should be able to get a communicator (or subcommunicator) through the
     // Context.
     return std::make_unique<SessionImpl>(std::move(context),
                                          std::move(runnerBuilder),
-                                         simulationContext,
-                                         std::move(logFilehandle),
-                                         multiSim);
+                                         std::move(simulationContext),
+                                         std::move(logFilehandle));
 }
 
 SessionImpl::SessionImpl(std::shared_ptr<ContextImpl>  context,
                          gmx::MdrunnerBuilder        &&runnerBuilder,
-                         const gmx::SimulationContext &simulationContext,
-                         gmx::LogFilePtr               fplog,
-                         gmx_multisim_t              * multiSim) :
+                         gmx::SimulationContext      &&simulationContext,
+                         gmx::LogFilePtr               fplog) :
     context_(std::move(context)),
     mpiContextManager_(std::make_unique<MpiContextManager>()),
-    simulationContext_(simulationContext),
-    logFilePtr_(std::move(fplog)),
-    multiSim_(multiSim)
+    simulationContext_(std::move(simulationContext)),
+    logFilePtr_(std::move(fplog))
 {
     GMX_ASSERT(context_, "SessionImpl invariant implies valid ContextImpl handle.");
     GMX_ASSERT(mpiContextManager_, "SessionImpl invariant implies valid MpiContextManager guard.");
-    GMX_ASSERT(simulationContext_.communicationRecord_, "SessionImpl invariant implies valid commrec.");
-    GMX_UNUSED_VALUE(multiSim_);
-    GMX_UNUSED_VALUE(simulationContext_);
 
     // \todo Session objects can have logic specialized for the runtime environment.
 
@@ -234,15 +215,13 @@ SessionImpl::SessionImpl(std::shared_ptr<ContextImpl>  context,
 
 std::shared_ptr<Session> createSession(std::shared_ptr<ContextImpl>  context,
                                        gmx::MdrunnerBuilder        &&runnerBuilder,
-                                       const gmx::SimulationContext &simulationContext,
-                                       gmx::LogFilePtr               logFilehandle,
-                                       gmx_multisim_t              * multiSim)
+                                       gmx::SimulationContext      &&simulationContext,
+                                       gmx::LogFilePtr               logFilehandle)
 {
     auto newSession = SessionImpl::create(std::move(context),
                                           std::move(runnerBuilder),
-                                          simulationContext,
-                                          std::move(logFilehandle),
-                                          multiSim);
+                                          std::move(simulationContext),
+                                          std::move(logFilehandle));
     auto launchedSession = std::make_shared<Session>(std::move(newSession));
     return launchedSession;
 }

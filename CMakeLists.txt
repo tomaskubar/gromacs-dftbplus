@@ -36,6 +36,7 @@ cmake_minimum_required(VERSION 3.9.6)
 if(POLICY CMP0074) #3.12
     cmake_policy(SET CMP0074 NEW)
 endif()
+cmake_policy(SET CMP0068 NEW) # From CMake-3.9
 
 # CMake modules/macros are in a subdirectory to keep this file cleaner
 # This needs to be set before project() in order to pick up toolchain files
@@ -180,6 +181,8 @@ mark_as_advanced(GMX_COOL_QUOTES)
 gmx_add_cache_dependency(GMX_COOL_QUOTES BOOL "NOT GMX_FAHCORE" OFF)
 
 option(GMX_USE_OPENCL "Enable OpenCL acceleration" OFF)
+
+option(GMX_INSTALL_LEGACY_API "Install legacy headers" OFF)
 
 # The earliest version of the CUDA toolkit that supports c++14 is 9.0
 set(REQUIRED_CUDA_VERSION 9.0)
@@ -363,6 +366,7 @@ check_include_files(time.h       HAVE_TIME_H)
 check_include_files(sys/time.h   HAVE_SYS_TIME_H)
 check_include_files(io.h         HAVE_IO_H)
 check_include_files(sched.h      HAVE_SCHED_H)
+check_include_files(xmmintrin.h  HAVE_XMMINTRIN_H)
 
 include(CheckCXXSymbolExists)
 check_cxx_symbol_exists(gettimeofday      sys/time.h   HAVE_GETTIMEOFDAY)
@@ -472,10 +476,10 @@ gmx_option_trivalue(
 
 if (GMX_HWLOC)
     # Find quietly the second time.
-    if(HWLOC_VERSION)
+    if (HWLOC_FIND_QUIETLY_AFTER_FIRST_RUN)
         set(HWLOC_FIND_QUIETLY TRUE)
     endif()
-    find_package(Hwloc 1.5)
+    find_package(HWLOC 1.5) 
 
     if (HWLOC_FOUND)
         if (HWLOC_LIBRARIES MATCHES ".a$")
@@ -495,8 +499,10 @@ if (GMX_HWLOC)
             list(APPEND GMX_EXTRA_LIBRARIES ${HWLOC_LIBRARIES})
         endif()
     elseif(GMX_HWLOC_FORCE)
-        message(FATAL_ERROR "Hwloc package support required, but not found.")
+        message(FATAL_ERROR "HWLOC package support required, but not found.")
     endif()
+
+    set(HWLOC_FIND_QUIETLY_AFTER_FIRST_RUN TRUE CACHE INTERNAL "Be quiet during future attempts to find HWLOC")
 endif()
 
 option(GMX_EXTERNAL_TINYXML2 "Use external TinyXML-2 instead of compiling the version bundled with GROMACS." OFF)
@@ -571,15 +577,6 @@ if(WIN32)
     # This makes windows.h not declare min/max as macros that would break
     # C++ code using std::min/std::max.
     add_definitions(-DNOMINMAX)
-endif()
-
-if(CMAKE_SYSTEM_NAME STREQUAL "Darwin") #Work-around for cmake bug #10837
-    if (CMAKE_COMPILER_IS_GNUCC OR CMAKE_C_COMPILER_ID MATCHES "Intel" OR CMAKE_C_COMPILER_ID MATCHES "Clang")
-        set(CMAKE_INCLUDE_SYSTEM_FLAG_C "-isystem ")
-    endif()
-    if (CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Intel" OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
-        set(CMAKE_INCLUDE_SYSTEM_FLAG_CXX "-isystem ")
-    endif()
 endif()
 
 option(GMX_BUILD_UNITTESTS "Build unit tests with BUILD_TESTING" ON)
@@ -826,10 +823,7 @@ else()
     # RPATHs), and makes the binaries in the build tree relocatable.
     if(CMAKE_INSTALL_LIBDIR STREQUAL "lib")
         set(CMAKE_BUILD_WITH_INSTALL_RPATH TRUE)
-        if(POLICY CMP0068)
-            cmake_policy(SET CMP0068 NEW) # From CMake-3.9
-            set(CMAKE_BUILD_WITH_INSTALL_NAME_DIR TRUE)
-        endif()
+        set(CMAKE_BUILD_WITH_INSTALL_NAME_DIR TRUE)
     endif()
     # Set the RPATH as relative to the executable location to make the
     # binaries relocatable.
@@ -888,6 +882,7 @@ if (NOT GMX_BUILD_MDRUN_ONLY)
     find_package(ImageMagick QUIET COMPONENTS convert)
     include(gmxTestImageMagick)
     GMX_TEST_IMAGEMAGICK(IMAGE_CONVERT_POSSIBLE)
+    # TODO: Resolve circular dependency between docs, gromacs, and python_packaging
     add_subdirectory(docs)
     add_subdirectory(share)
     add_subdirectory(scripts)

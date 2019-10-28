@@ -47,6 +47,7 @@
 #include <cstring>
 
 #include <algorithm>
+#include <numeric>
 #include <string>
 #include <vector>
 
@@ -60,6 +61,48 @@
 #include "gromacs/utility/smalloc.h"
 #include "gromacs/utility/stringutil.h"
 #include "gromacs/utility/textwriter.h"
+
+namespace gmx
+{
+
+IndexGroupsAndNames::IndexGroupsAndNames(
+        const t_blocka &indexGroup, ArrayRef<char const * const> groupNames)
+    : indexGroup_ {indexGroup}
+{
+    std::copy(groupNames.begin(), groupNames.end(), std::back_inserter(groupNames_));
+    GMX_ASSERT(indexGroup_.nr == ssize(groupNames),
+               "Number of groups must match number of group names.");
+}
+
+bool IndexGroupsAndNames::containsGroupName(const std::string &groupName) const
+{
+    return std::any_of(std::begin(groupNames_), std::end(groupNames_),
+                       [&groupName](const std::string &name){return equalCaseInsensitive(groupName, name); });
+}
+
+std::vector<index> IndexGroupsAndNames::indices(const std::string &groupName) const
+{
+    if (!containsGroupName(groupName))
+    {
+        GMX_THROW(InconsistentInputError(std::string("Group ") + groupName +
+                                         " referenced in the .mdp file was not found in the index file.\n"
+                                         "Group names must match either [moleculetype] names or custom index group\n"
+                                         "names, in which case you must supply an index file to the '-n' option\n"
+                                         "of grompp."));
+    }
+    const auto         groupNamePosition = std::find_if(std::begin(groupNames_), std::end(groupNames_),
+                                                        [&groupName](const std::string &name){return equalCaseInsensitive(groupName, name); });
+    const auto         groupIndex        = std::distance(std::begin(groupNames_), groupNamePosition);
+    const auto         groupSize         = indexGroup_.index[groupIndex+1] - indexGroup_.index[groupIndex];
+    std::vector<index> groupIndices(groupSize);
+    const auto         startingIndex = indexGroup_.index[groupIndex];
+    std::iota(std::begin(groupIndices), std::end(groupIndices), startingIndex);
+    std::transform(std::begin(groupIndices), std::end(groupIndices), std::begin(groupIndices),
+                   [blockLookup = indexGroup_.a](auto i){return blockLookup[i]; });
+    return groupIndices;
+}
+
+} // namespace gmx
 
 /********************************************************************
  * gmx_ana_indexgrps_t functions
@@ -248,9 +291,9 @@ gmx_ana_indexgrps_find(gmx_ana_index_t *dest, std::string *destName,
 void
 gmx_ana_indexgrps_print(gmx::TextWriter *writer, gmx_ana_indexgrps_t *g, int maxn)
 {
-    for (int i = 0; i < gmx::ssize(g->g); ++i)
+    for (gmx::index i = 0; i < gmx::ssize(g->g); ++i)
     {
-        writer->writeString(gmx::formatString(" Group %2d \"%s\" ",
+        writer->writeString(gmx::formatString(" Group %2zd \"%s\" ",
                                               i, g->names[i].c_str()));
         gmx_ana_index_dump(writer, &g->g[i], maxn);
     }
@@ -965,7 +1008,7 @@ gmx_ana_index_has_full_blocks(const gmx_ana_index_t        *g,
     while (i < g->isize)
     {
         /* Find the block that begins with the first unmatched atom */
-        while (bi < b->numBlocks() && b->block(bi).begin() != g->index[i])
+        while (bi < b->numBlocks() && *b->block(bi).begin() != g->index[i])
         {
             ++bi;
         }
@@ -975,7 +1018,7 @@ gmx_ana_index_has_full_blocks(const gmx_ana_index_t        *g,
             return false;
         }
         /* Check that the block matches the index */
-        for (j = b->block(bi).begin(); j < b->block(bi).end(); ++j, ++i)
+        for (j = *b->block(bi).begin(); j < *b->block(bi).end(); ++j, ++i)
         {
             if (g->index[i] != j)
             {

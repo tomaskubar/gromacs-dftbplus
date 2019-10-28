@@ -3,7 +3,7 @@
  *
  * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
  * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2016,2017,2018, by the GROMACS development team, led by
+ * Copyright (c) 2013,2014,2015,2016,2017,2018,2019, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -68,6 +68,7 @@
 #include <cstring>
 
 #include <algorithm>
+#include <array>
 #include <string>
 
 /* This file is completely threadsafe - keep it that way! */
@@ -147,11 +148,12 @@ void printCopyright(gmx::TextWriter *writer)
         "Jon Vincent",
         "Teemu Virolainen",
         "Christian Wennberg",
-        "Maarten Wolf"
+        "Maarten Wolf",
+        "Artem Zhmurov"
     };
     static const char * const CopyrightText[] = {
         "Copyright (c) 1991-2000, University of Groningen, The Netherlands.",
-        "Copyright (c) 2001-2018, The GROMACS development team at",
+        "Copyright (c) 2001-2019, The GROMACS development team at",
         "Uppsala University, Stockholm University and",
         "the Royal Institute of Technology, Sweden.",
         "check out http://www.gromacs.org for more information."
@@ -166,14 +168,14 @@ void printCopyright(gmx::TextWriter *writer)
     {
         for (int j = 0; j < 4 && i < NCONTRIBUTORS; ++j, ++i)
         {
-            const int width = 18;
-            char      buf[30];
-            const int offset = centeringOffset(width, strlen(Contributors[i]));
-            GMX_RELEASE_ASSERT(strlen(Contributors[i]) + offset < asize(buf),
+            const int            width = 18;
+            std::array<char, 30> buf;
+            const int            offset = centeringOffset(width, strlen(Contributors[i]));
+            GMX_RELEASE_ASSERT(static_cast<int>(strlen(Contributors[i])) + offset < gmx::ssize(buf),
                                "Formatting buffer is not long enough");
-            std::fill(buf, buf+width, ' ');
-            std::strcpy(buf+offset, Contributors[i]);
-            writer->writeString(formatString(" %-*s", width, buf));
+            std::fill(buf.begin(), buf.begin()+offset, ' ');
+            std::strncpy(buf.data()+offset, Contributors[i], gmx::ssize(buf) - offset);
+            writer->writeString(formatString(" %-*s", width, buf.data()));
         }
         writer->ensureLineBreak();
     }

@@ -1,7 +1,7 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2018, by the GROMACS development team, led by
+ * Copyright (c) 2018,2019, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -45,30 +45,10 @@
  *  \inlibraryapi
  */
 
+#include "gromacs/gpu_utils/devicebuffer_datatype.h"
 #include "gromacs/gpu_utils/gpu_utils.h" //only for GpuApiCallBehavior
 #include "gromacs/gpu_utils/gputraits_ocl.h"
 #include "gromacs/utility/gmxassert.h"
-
-/*! \libinternal \brief
- * A minimal cl_mem wrapper that remembers its allocation type.
- * The only point is making template type deduction possible.
- */
-template<typename ValueType>
-class TypedClMemory
-{
-    private:
-        //! \brief Underlying data - not nulled right here only because we still have some snew()'s around
-        cl_mem data_;
-    public:
-        //! \brief An assignment operator - the purpose is to make allocation/zeroing work
-        TypedClMemory &operator=(cl_mem data){data_ = data; return *this; }
-        //! \brief Returns underlying cl_mem transparently
-        operator cl_mem() {return data_; }
-};
-
-//! \libinternal \brief A device-side buffer of ValueTypes
-template<typename ValueType>
-using DeviceBuffer = TypedClMemory<ValueType>;
 
 /*! \libinternal \brief
  * Allocates a device-side buffer.
@@ -77,17 +57,17 @@ using DeviceBuffer = TypedClMemory<ValueType>;
  * \tparam        ValueType            Raw value type of the \p buffer.
  * \param[in,out] buffer               Pointer to the device-side buffer.
  * \param[in]     numValues            Number of values to accomodate.
- * \param[in]     context              The buffer's context-to-be.
+ * \param[in]     deviceContext        The buffer's device context-to-be.
  */
 template <typename ValueType>
 void allocateDeviceBuffer(DeviceBuffer<ValueType> *buffer,
                           size_t                   numValues,
-                          Context                  context)
+                          DeviceContext            deviceContext)
 {
     GMX_ASSERT(buffer, "needs a buffer pointer");
     void  *hostPtr = nullptr;
     cl_int clError;
-    *buffer = clCreateBuffer(context, CL_MEM_READ_WRITE, numValues * sizeof(ValueType), hostPtr, &clError);
+    *buffer = clCreateBuffer(deviceContext, CL_MEM_READ_WRITE, numValues * sizeof(ValueType), hostPtr, &clError);
     GMX_RELEASE_ASSERT(clError == CL_SUCCESS, "clCreateBuffer failure");
 }
 

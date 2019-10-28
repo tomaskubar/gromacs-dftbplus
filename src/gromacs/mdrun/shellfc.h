@@ -42,6 +42,7 @@
 #include "gromacs/math/arrayrefwithpadding.h"
 #include "gromacs/mdlib/vsite.h"
 #include "gromacs/timing/wallcycle.h"
+#include "gromacs/topology/atoms.h"
 
 class DDBalanceRegionHandler;
 struct gmx_enerdata_t;
@@ -61,7 +62,7 @@ namespace gmx
 {
 class Constraints;
 class ImdSession;
-class PpForceWorkload;
+class MdrunScheduleWorkload;
 }
 
 /* Initialization function, also predicts the initial shell postions.
@@ -90,7 +91,7 @@ void relax_shell_flexcon(FILE                                     *log,
                          int                                       natoms,
                          gmx::ArrayRefWithPadding<gmx::RVec>       x,
                          gmx::ArrayRefWithPadding<gmx::RVec>       v,
-                         matrix                                    box,
+                         const matrix                              box,
                          gmx::ArrayRef<real>                       lambda,
                          history_t                                *hist,
                          gmx::ArrayRefWithPadding<gmx::RVec>       f,
@@ -101,7 +102,7 @@ void relax_shell_flexcon(FILE                                     *log,
                          t_graph                                  *graph,
                          gmx_shellfc_t                            *shfc,
                          t_forcerec                               *fr,
-                         gmx::PpForceWorkload                     *ppForceWorkload,
+                         gmx::MdrunScheduleWorkload               *runScheduleWork,
                          double                                    t,
                          rvec                                      mu_tot,
                          const gmx_vsite_t                        *vsite,
@@ -109,5 +110,16 @@ void relax_shell_flexcon(FILE                                     *log,
 
 /* Print some final output */
 void done_shellfc(FILE *fplog, gmx_shellfc_t *shellfc, int64_t numSteps);
+
+/*! \brief Count the different particle types in a system
+ *
+ * Routine prints a warning to stderr in case an unknown particle type
+ * is encountered.
+ * \param[in]  fplog Print what we have found if not NULL
+ * \param[in]  mtop  Molecular topology.
+ * \returns Array holding the number of particles of a type
+ */
+std::array<int, eptNR> countPtypes(FILE             *fplog,
+                                   const gmx_mtop_t *mtop);
 
 #endif

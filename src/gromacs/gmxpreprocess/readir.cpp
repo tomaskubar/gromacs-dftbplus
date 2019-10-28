@@ -49,9 +49,7 @@
 #include "gromacs/awh/read_params.h"
 #include "gromacs/fileio/readinp.h"
 #include "gromacs/fileio/warninp.h"
-#include "gromacs/gmxlib/chargegroup.h"
 #include "gromacs/gmxlib/network.h"
-#include "gromacs/gmxpreprocess/keyvaluetreemdpwriter.h"
 #include "gromacs/gmxpreprocess/toputil.h"
 #include "gromacs/math/functions.h"
 #include "gromacs/math/units.h"
@@ -64,6 +62,7 @@
 #include "gromacs/options/options.h"
 #include "gromacs/options/treesupport.h"
 #include "gromacs/pbcutil/pbc.h"
+#include "gromacs/selection/indexutil.h"
 #include "gromacs/topology/block.h"
 #include "gromacs/topology/ifunc.h"
 #include "gromacs/topology/index.h"
@@ -78,7 +77,9 @@
 #include "gromacs/utility/ikeyvaluetreeerror.h"
 #include "gromacs/utility/keyvaluetree.h"
 #include "gromacs/utility/keyvaluetreebuilder.h"
+#include "gromacs/utility/keyvaluetreemdpwriter.h"
 #include "gromacs/utility/keyvaluetreetransform.h"
+#include "gromacs/utility/mdmodulenotification.h"
 #include "gromacs/utility/smalloc.h"
 #include "gromacs/utility/strconvert.h"
 #include "gromacs/utility/stringcompare.h"
@@ -206,11 +207,6 @@ static void check_nst(const char *desc_nst, int nst,
     }
 }
 
-static bool ir_NVE(const t_inputrec *ir)
-{
-    return (EI_MD(ir->eI) && ir->etc == etcNO);
-}
-
 static int lcd(int n1, int n2)
 {
     int d, i;
@@ -227,23 +223,17 @@ static int lcd(int n1, int n2)
     return d;
 }
 
-static void process_interaction_modifier(const t_inputrec *ir, int *eintmod)
+//! Convert legacy mdp entries to modern ones.
+static void process_interaction_modifier(int *eintmod)
 {
-    if (*eintmod == eintmodPOTSHIFT_VERLET)
+    if (*eintmod == eintmodPOTSHIFT_VERLET_UNSUPPORTED)
     {
-        if (ir->cutoff_scheme == ecutsVERLET)
-        {
-            *eintmod = eintmodPOTSHIFT;
-        }
-        else
-        {
-            *eintmod = eintmodNONE;
-        }
+        *eintmod = eintmodPOTSHIFT;
     }
 }
 
-void check_ir(const char *mdparin, t_inputrec *ir, t_gromppopts *opts,
-              warninp_t wi)
+void check_ir(const char *mdparin, const gmx::MdModulesNotifier &mdModulesNotifier,
+              t_inputrec *ir, t_gromppopts *opts, warninp_t wi)
 /* Check internal consistency.
  * NOTE: index groups are not set here yet, don't check things
  * like temperature coupling group options here, but in triple_check
@@ -286,8 +276,8 @@ void check_ir(const char *mdparin, t_inputrec *ir, t_gromppopts *opts,
     sprintf(err_buf, "nstlist can not be smaller than 0. (If you were trying to use the heuristic neighbour-list update scheme for efficient buffering for improved energy conservation, please use the Verlet cut-off scheme instead.)");
     CHECK(ir->nstlist < 0);
 
-    process_interaction_modifier(ir, &ir->coulomb_modifier);
-    process_interaction_modifier(ir, &ir->vdw_modifier);
+    process_interaction_modifier(&ir->coulomb_modifier);
+    process_interaction_modifier(&ir->vdw_modifier);
 
     if (ir->cutoff_scheme == ecutsGROUP)
     {
@@ -350,7 +340,7 @@ void check_ir(const char *mdparin, t_inputrec *ir, t_gromppopts *opts,
         if (!(ir->coulomb_modifier == eintmodNONE ||
               ir->coulomb_modifier == eintmodPOTSHIFT))
         {
-            sprintf(warn_buf, "coulomb_modifier=%s is not supported with the Verlet cut-off scheme", eintmod_names[ir->coulomb_modifier]);
+            sprintf(warn_buf, "coulomb_modifier=%s is not supported", eintmod_names[ir->coulomb_modifier]);
             warning_error(wi, warn_buf);
         }
 
@@ -372,7 +362,13 @@ void check_ir(const char *mdparin, t_inputrec *ir, t_gromppopts *opts,
 
         rc_max = std::max(ir->rvdw, ir->rcoulomb);
 
-        if (ir->verletbuf_tol <= 0)
+        if (EI_TPI(ir->eI))
+        {
+            /* With TPI we set the pairlist cut-off later using the radius of the insterted molecule */
+            ir->verletbuf_tol = 0;
+            ir->rlist         = rc_max;
+        }
+        else if (ir->verletbuf_tol <= 0)
         {
             if (ir->verletbuf_tol == 0)
             {
@@ -525,6 +521,17 @@ void check_ir(const char *mdparin, t_inputrec *ir, t_gromppopts *opts,
             check_nst("nstcalcenergy", ir->nstcalcenergy,
                       "nstenergy", &ir->nstenergy, wi);
         }
+
+        // Inquire all MdModules, if their parameters match with the energy
+        // calculation frequency
+        gmx::EnergyCalculationFrequencyErrors energyCalculationFrequencyErrors(ir->nstcalcenergy);
+        mdModulesNotifier.notifier_.notify(&energyCalculationFrequencyErrors);
+
+        // Emit all errors from the energy calculation frequency checks
+        for (const std::string &energyFrequencyErrorMessage : energyCalculationFrequencyErrors.errorMessages())
+        {
+            warning_error(wi, energyFrequencyErrorMessage);
+        }
     }
 
     if (ir->nsteps == 0 && !ir->bContinuation)
@@ -544,14 +551,10 @@ void check_ir(const char *mdparin, t_inputrec *ir, t_gromppopts *opts,
     {
         sprintf(err_buf, "TPI only works with pbc = %s", epbc_names[epbcXYZ]);
         CHECK(ir->ePBC != epbcXYZ);
-        sprintf(err_buf, "TPI only works with ns = %s", ens_names[ensGRID]);
-        CHECK(ir->ns_type != ensGRID);
         sprintf(err_buf, "with TPI nstlist should be larger than zero");
         CHECK(ir->nstlist <= 0);
         sprintf(err_buf, "TPI does not work with full electrostatics other than PME");
         CHECK(EEL_FULL(ir->coulombtype) && !EEL_PME(ir->coulombtype));
-        sprintf(err_buf, "TPI does not work (yet) with the Verlet cut-off scheme");
-        CHECK(ir->cutoff_scheme == ecutsVERLET);
     }
 
     /* SHAKE / LINCS */
@@ -809,9 +812,13 @@ void check_ir(const char *mdparin, t_inputrec *ir, t_gromppopts *opts,
         {
             sprintf(err_buf, "nstlog must be non-zero");
             CHECK(ir->nstlog == 0);
-            sprintf(err_buf, "nst-transition-matrix (%d) must be an integer multiple of nstlog (%d)",
-                    expand->nstTij, ir->nstlog);
-            CHECK((expand->nstTij % ir->nstlog) != 0);
+            // Avoid modulus by zero in the case that already triggered an error exit.
+            if (ir->nstlog != 0)
+            {
+                sprintf(err_buf, "nst-transition-matrix (%d) must be an integer multiple of nstlog (%d)",
+                        expand->nstTij, ir->nstlog);
+                CHECK((expand->nstTij % ir->nstlog) != 0);
+            }
         }
     }
 
@@ -1012,17 +1019,7 @@ void check_ir(const char *mdparin, t_inputrec *ir, t_gromppopts *opts,
         }
     }
 
-    if (EI_VV(ir->eI))
-    {
-        if (ir->epc > epcNO)
-        {
-            if ((ir->epc != epcBERENDSEN) && (ir->epc != epcMTTK))
-            {
-                warning_error(wi, "for md-vv and md-vv-avek, can only use Berendsen and Martyna-Tuckerman-Tobias-Klein (MTTK) equations for pressure control; MTTK is equivalent to Parrinello-Rahman.");
-            }
-        }
-    }
-    else
+    if (!EI_VV(ir->eI))
     {
         if (ir->epc == epcMTTK)
         {
@@ -1188,18 +1185,14 @@ void check_ir(const char *mdparin, t_inputrec *ir, t_gromppopts *opts,
     }
     if ((ir->epsilon_surface != 0) && EEL_FULL(ir->coulombtype))
     {
-        if (ir->cutoff_scheme == ecutsVERLET)
-        {
-            sprintf(warn_buf, "Since molecules/charge groups are broken using the Verlet scheme, you can not use a dipole correction to the %s electrostatics.",
-                    eel_names[ir->coulombtype]);
-            warning(wi, warn_buf);
-        }
-        else
-        {
-            sprintf(warn_buf, "Dipole corrections to %s electrostatics only work if all charge groups that can cross PBC boundaries are dipoles. If this is not the case set epsilon_surface to 0",
-                    eel_names[ir->coulombtype]);
-            warning_note(wi, warn_buf);
-        }
+        sprintf(err_buf, "Cannot have periodic molecules with epsilon_surface > 0");
+        CHECK(ir->bPeriodicMols);
+        sprintf(warn_buf, "With epsilon_surface > 0 all molecules should be neutral.");
+        warning_note(wi, warn_buf);
+        sprintf(warn_buf,
+                "With epsilon_surface > 0 you can only use domain decomposition "
+                "when there are only small molecules with all bonds constrained (mdrun will check for this).");
+        warning_note(wi, warn_buf);
     }
 
     if (ir_vdw_switched(ir))
@@ -1254,10 +1247,7 @@ void check_ir(const char *mdparin, t_inputrec *ir, t_gromppopts *opts,
     /* Neither of the following things should be problematic.
     if (ir->bQMMM)
     {
-        if (ir->cutoff_scheme != ecutsGROUP)
-        {
-            warning_error(wi, "QMMM is currently only supported with cutoff-scheme=group");
-        }
+        warning_error(wi, "QMMM is currently not supported");
         if (!EI_DYNAMICS(ir->eI))
         {
             char buf[STRLEN];
@@ -1708,17 +1698,6 @@ void get_ir(const char *mdparin, const char *mdparout,
     snew(dumstr[0], STRLEN);
     snew(dumstr[1], STRLEN);
 
-    if (-1 == search_einp(inp, "cutoff-scheme"))
-    {
-        sprintf(warn_buf,
-                "%s did not specify a value for the .mdp option "
-                "\"cutoff-scheme\". As of GROMACS 2020, the Verlet scheme "
-                "is the only cutoff scheme supported. This may affect your "
-                "simulation if you are using an old mdp file that assumes use "
-                "of the (removed) group cutoff scheme.", mdparin);
-        warning_note(wi, warn_buf);
-    }
-
     /* ignore the following deprecated commands */
     replace_inp_entry(inp, "title", nullptr);
     replace_inp_entry(inp, "cpp", nullptr);
@@ -1755,6 +1734,7 @@ void get_ir(const char *mdparin, const char *mdparout,
     replace_inp_entry(inp, "gb-dielectric-offset", nullptr);
     replace_inp_entry(inp, "sa-algorithm", nullptr);
     replace_inp_entry(inp, "sa-surface-tension", nullptr);
+    replace_inp_entry(inp, "ns-type", nullptr);
 
     /* replace the following commands with the clearer new versions*/
     replace_inp_entry(inp, "unconstrained-start", "continuation");
@@ -1836,8 +1816,6 @@ void get_ir(const char *mdparin, const char *mdparout,
     ir->cutoff_scheme = get_eeenum(&inp, "cutoff-scheme",    ecutscheme_names, wi);
     printStringNoNewline(&inp, "nblist update frequency");
     ir->nstlist = get_eint(&inp, "nstlist",    10, wi);
-    printStringNoNewline(&inp, "ns algorithm (simple or grid)");
-    ir->ns_type = get_eeenum(&inp, "ns-type",    ens_names, wi);
     printStringNoNewline(&inp, "Periodic boundary conditions: xyz, no, xy");
     ir->ePBC          = get_eeenum(&inp, "pbc",       epbc_names, wi);
     ir->bPeriodicMols = get_eeenum(&inp, "periodic-molecules", yesno_names, wi) != 0;
@@ -2698,11 +2676,11 @@ static void calc_nrdf(const gmx_mtop_t *mtop, t_inputrec *ir, char **gnames)
     snew(na_vcm, groups.groups[SimulationAtomGroupType::MassCenterVelocityRemoval].size()+1);
     snew(nrdf_vcm_sub, groups.groups[SimulationAtomGroupType::MassCenterVelocityRemoval].size()+1);
 
-    for (int i = 0; i < gmx::ssize(groups.groups[SimulationAtomGroupType::TemperatureCoupling]); i++)
+    for (gmx::index i = 0; i < gmx::ssize(groups.groups[SimulationAtomGroupType::TemperatureCoupling]); i++)
     {
         nrdf_tc[i] = 0;
     }
-    for (int i = 0; i < gmx::ssize(groups.groups[SimulationAtomGroupType::MassCenterVelocityRemoval])+1; i++)
+    for (gmx::index i = 0; i < gmx::ssize(groups.groups[SimulationAtomGroupType::MassCenterVelocityRemoval])+1; i++)
     {
         nrdf_vcm[i]     = 0;
         clear_ivec(dof_vcm[i]);
@@ -2861,7 +2839,7 @@ static void calc_nrdf(const gmx_mtop_t *mtop, t_inputrec *ir, char **gnames)
          * the number of degrees of freedom in each vcm group when COM
          * translation is removed and 6 when rotation is removed as well.
          */
-        for (int j = 0; j < gmx::ssize(groups.groups[SimulationAtomGroupType::MassCenterVelocityRemoval])+1; j++)
+        for (gmx::index j = 0; j < gmx::ssize(groups.groups[SimulationAtomGroupType::MassCenterVelocityRemoval])+1; j++)
         {
             switch (ir->comm_mode)
             {
@@ -2884,10 +2862,10 @@ static void calc_nrdf(const gmx_mtop_t *mtop, t_inputrec *ir, char **gnames)
             }
         }
 
-        for (int i = 0; i < gmx::ssize(groups.groups[SimulationAtomGroupType::TemperatureCoupling]); i++)
+        for (gmx::index i = 0; i < gmx::ssize(groups.groups[SimulationAtomGroupType::TemperatureCoupling]); i++)
         {
             /* Count the number of atoms of TC group i for every VCM group */
-            for (int j = 0; j < gmx::ssize(groups.groups[SimulationAtomGroupType::MassCenterVelocityRemoval])+1; j++)
+            for (gmx::index j = 0; j < gmx::ssize(groups.groups[SimulationAtomGroupType::MassCenterVelocityRemoval])+1; j++)
             {
                 na_vcm[j] = 0;
             }
@@ -2905,7 +2883,7 @@ static void calc_nrdf(const gmx_mtop_t *mtop, t_inputrec *ir, char **gnames)
              */
             nrdf_uc    = nrdf_tc[i];
             nrdf_tc[i] = 0;
-            for (int j = 0; j < gmx::ssize(groups.groups[SimulationAtomGroupType::MassCenterVelocityRemoval])+1; j++)
+            for (gmx::index j = 0; j < gmx::ssize(groups.groups[SimulationAtomGroupType::MassCenterVelocityRemoval])+1; j++)
             {
                 if (nrdf_vcm[j] > nrdf_vcm_sub[j])
                 {
@@ -3054,6 +3032,7 @@ static void make_IMD_group(t_IMD *IMDgroup, char *IMDgname, t_blocka *grps, char
 void do_index(const char* mdparin, const char *ndx,
               gmx_mtop_t *mtop,
               bool bVerbose,
+              const gmx::MdModulesNotifier &notifier,
               t_inputrec *ir,
               warninp_t wi)
 {
@@ -3400,6 +3379,10 @@ void do_index(const char* mdparin, const char *ndx,
         make_IMD_group(ir->imd, is->imd_grp, defaultIndexGroups, gnames);
     }
 
+    gmx::IndexGroupsAndNames defaultIndexGroupsAndNames(
+            *defaultIndexGroups, gmx::arrayRefFromArray(gnames, defaultIndexGroups->nr));
+    notifier.notifier_.notify(defaultIndexGroupsAndNames);
+
     auto accelerations          = gmx::splitString(is->acc);
     auto accelerationGroupNames = gmx::splitString(is->accgrps);
     if (accelerationGroupNames.size() * DIM != accelerations.size())
@@ -3588,7 +3571,7 @@ void do_index(const char* mdparin, const char *ndx,
     bExcl = do_egp_flag(ir, groups, "energygrp-excl", is->egpexcl, EGP_EXCL);
     if (bExcl && ir->cutoff_scheme == ecutsVERLET)
     {
-        warning_error(wi, "Energy group exclusions are not (yet) implemented for the Verlet scheme");
+        warning_error(wi, "Energy group exclusions are currently not supported");
     }
     if (bExcl && EEL_FULL(ir->coulombtype))
     {
@@ -4156,7 +4139,6 @@ void double_check(t_inputrec *ir, matrix box,
                   bool bHasAnyConstraints,
                   warninp_t wi)
 {
-    real        min_size;
     char        warn_buf[STRLEN];
     const char *ptr;
 
@@ -4215,104 +4197,10 @@ void double_check(t_inputrec *ir, matrix box,
         {
             warning(wi, "With nstlist=0 atoms are only put into the box at step 0, therefore drifting atoms might cause the simulation to crash.");
         }
-        if (ir->ns_type == ensGRID)
+        if (gmx::square(ir->rlist) >= max_cutoff2(ir->ePBC, box))
         {
-            if (gmx::square(ir->rlist) >= max_cutoff2(ir->ePBC, box))
-            {
-                sprintf(warn_buf, "ERROR: The cut-off length is longer than half the shortest box vector or longer than the smallest box diagonal element. Increase the box size or decrease rlist.\n");
-                warning_error(wi, warn_buf);
-            }
-        }
-        else
-        {
-            min_size = std::min(box[XX][XX], std::min(box[YY][YY], box[ZZ][ZZ]));
-            if (2*ir->rlist >= min_size)
-            {
-                sprintf(warn_buf, "ERROR: One of the box lengths is smaller than twice the cut-off length. Increase the box size or decrease rlist.");
-                warning_error(wi, warn_buf);
-                if (TRICLINIC(box))
-                {
-                    fprintf(stderr, "Grid search might allow larger cut-off's than simple search with triclinic boxes.");
-                }
-            }
-        }
-    }
-}
-
-void check_chargegroup_radii(const gmx_mtop_t *mtop, const t_inputrec *ir,
-                             rvec *x,
-                             warninp_t wi)
-{
-    real rvdw1, rvdw2, rcoul1, rcoul2;
-    char warn_buf[STRLEN];
-
-    calc_chargegroup_radii(mtop, x, &rvdw1, &rvdw2, &rcoul1, &rcoul2);
-
-    if (rvdw1 > 0)
-    {
-        printf("Largest charge group radii for Van der Waals: %5.3f, %5.3f nm\n",
-               rvdw1, rvdw2);
-    }
-    if (rcoul1 > 0)
-    {
-        printf("Largest charge group radii for Coulomb:       %5.3f, %5.3f nm\n",
-               rcoul1, rcoul2);
-    }
-
-    if (ir->rlist > 0)
-    {
-        if (rvdw1  + rvdw2  > ir->rlist ||
-            rcoul1 + rcoul2 > ir->rlist)
-        {
-            sprintf(warn_buf,
-                    "The sum of the two largest charge group radii (%f) "
-                    "is larger than rlist (%f)\n",
-                    std::max(rvdw1+rvdw2, rcoul1+rcoul2), ir->rlist);
-            warning(wi, warn_buf);
-        }
-        else
-        {
-            /* Here we do not use the zero at cut-off macro,
-             * since user defined interactions might purposely
-             * not be zero at the cut-off.
-             */
-            if (ir_vdw_is_zero_at_cutoff(ir) &&
-                rvdw1 + rvdw2 > ir->rlist - ir->rvdw)
-            {
-                sprintf(warn_buf, "The sum of the two largest charge group "
-                        "radii (%f) is larger than rlist (%f) - rvdw (%f).\n"
-                        "With exact cut-offs, better performance can be "
-                        "obtained with cutoff-scheme = %s, because it "
-                        "does not use charge groups at all.",
-                        rvdw1+rvdw2,
-                        ir->rlist, ir->rvdw,
-                        ecutscheme_names[ecutsVERLET]);
-                if (ir_NVE(ir))
-                {
-                    warning(wi, warn_buf);
-                }
-                else
-                {
-                    warning_note(wi, warn_buf);
-                }
-            }
-            if (ir_coulomb_is_zero_at_cutoff(ir) &&
-                rcoul1 + rcoul2 > ir->rlist - ir->rcoulomb)
-            {
-                sprintf(warn_buf, "The sum of the two largest charge group radii (%f) is larger than rlist (%f) - rcoulomb (%f).\n"
-                        "With exact cut-offs, better performance can be obtained with cutoff-scheme = %s, because it does not use charge groups at all.",
-                        rcoul1+rcoul2,
-                        ir->rlist, ir->rcoulomb,
-                        ecutscheme_names[ecutsVERLET]);
-                if (ir_NVE(ir))
-                {
-                    warning(wi, warn_buf);
-                }
-                else
-                {
-                    warning_note(wi, warn_buf);
-                }
-            }
+            sprintf(warn_buf, "ERROR: The cut-off length is longer than half the shortest box vector or longer than the smallest box diagonal element. Increase the box size or decrease rlist.\n");
+            warning_error(wi, warn_buf);
         }
     }
 }

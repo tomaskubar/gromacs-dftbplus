@@ -166,16 +166,13 @@ bool pme_gpu_supports_build(std::string *error)
     return addMessageIfNotSupported(errorReasons, error);
 }
 
-bool pme_gpu_supports_hardware(const gmx_hw_info_t &hwinfo,
-                               std::string         *error)
+bool pme_gpu_supports_hardware(const gmx_hw_info_t gmx_unused &hwinfo,
+                               std::string                    *error)
 {
     std::list<std::string> errorReasons;
+
     if (GMX_GPU == GMX_GPU_OPENCL)
     {
-        if (!areAllGpuDevicesFromAmd(hwinfo.gpu_info))
-        {
-            errorReasons.emplace_back("non-AMD devices");
-        }
 #ifdef __APPLE__
         errorReasons.emplace_back("Apple OS X operating system");
 #endif
@@ -676,8 +673,11 @@ gmx_pme_t *gmx_pme_init(const t_commrec         *cr,
             MPI_Comm_size(pme->mpi_comm_d[1], &pme->nnodes_minor);
 #endif
         }
-        pme->bPPnode = thisRankHasDuty(cr, DUTY_PP);
     }
+    // cr is always initialized if there is a a PP rank, so we can safely assume
+    // that when it is not, like in ewald tests, we not on a PP rank.
+    pme->bPPnode = ((cr != nullptr && cr->duty != 0) &&
+                    thisRankHasDuty(cr, DUTY_PP));
 
     pme->nthread = nthread;
 

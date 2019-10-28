@@ -148,11 +148,11 @@ extern const char *ecutscheme_names[ecutsNR+1];
 
 /*! \brief Coulomb / VdW interaction modifiers.
  *
- * grompp replaces eintmodPOTSHIFT_VERLET by eintmodPOTSHIFT or eintmodNONE.
+ * grompp replaces eintmodPOTSHIFT_VERLET_UNSUPPORTED by eintmodPOTSHIFT.
  * Exactcutoff is only used by Reaction-field-zero, and is not user-selectable.
  */
 enum eintmod {
-    eintmodPOTSHIFT_VERLET, eintmodPOTSHIFT, eintmodNONE, eintmodPOTSWITCH, eintmodEXACTCUTOFF, eintmodFORCESWITCH, eintmodNR
+    eintmodPOTSHIFT_VERLET_UNSUPPORTED, eintmodPOTSHIFT, eintmodNONE, eintmodPOTSWITCH, eintmodEXACTCUTOFF, eintmodFORCESWITCH, eintmodNR
 };
 //! String corresponding to interaction modifiers
 extern const char *eintmod_names[eintmodNR+1];
@@ -210,15 +210,6 @@ extern const char *eljpme_names[eljpmeNR+1];
 
 //! Macro to tell us whether we use LJPME
 #define EVDW_PME(e) ((e) == evdwPME)
-
-//! Neighborsearching algorithm
-enum {
-    ensGRID, ensSIMPLE, ensNR
-};
-//! String corresponding to neighborsearching
-extern const char *ens_names[ensNR+1];
-//! Macro for correct NS algorithm
-#define ENS(e)         enum_name(e, ensNR, ens_names)
 
 /*! \brief Integrator algorithm
  *

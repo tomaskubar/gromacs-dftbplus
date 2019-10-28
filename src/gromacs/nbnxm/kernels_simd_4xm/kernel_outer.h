@@ -247,7 +247,7 @@
 
     invtsp_S  = SimdReal(ic->coulombEwaldTables->scale);
 #ifdef CALC_ENERGIES
-    mhalfsp_S = SimdReal(-0.5/ic->coulombEwaldTables->scale);
+    mhalfsp_S = SimdReal(-0.5_real/ic->coulombEwaldTables->scale);
 #endif
 
 #ifdef TAB_FDV0
@@ -616,13 +616,13 @@
 #define CHECK_EXCLS
             while (cjind < cjind1 && nbl->cj[cjind].excl != NBNXN_INTERACTION_MASK_ALL)
             {
-#include "gromacs/nbnxm/kernels_simd_4xm/kernel_inner.h"
+#include "kernel_inner.h"
                 cjind++;
             }
 #undef CHECK_EXCLS
             for (; (cjind < cjind1); cjind++)
             {
-#include "gromacs/nbnxm/kernels_simd_4xm/kernel_inner.h"
+#include "kernel_inner.h"
             }
 #undef HALF_LJ
 #undef CALC_COULOMB
@@ -634,13 +634,13 @@
 #define CHECK_EXCLS
             while (cjind < cjind1 && nbl->cj[cjind].excl != NBNXN_INTERACTION_MASK_ALL)
             {
-#include "gromacs/nbnxm/kernels_simd_4xm/kernel_inner.h"
+#include "kernel_inner.h"
                 cjind++;
             }
 #undef CHECK_EXCLS
             for (; (cjind < cjind1); cjind++)
             {
-#include "gromacs/nbnxm/kernels_simd_4xm/kernel_inner.h"
+#include "kernel_inner.h"
             }
 #undef CALC_COULOMB
         }
@@ -650,13 +650,13 @@
 #define CHECK_EXCLS
             while (cjind < cjind1 && nbl->cj[cjind].excl != NBNXN_INTERACTION_MASK_ALL)
             {
-#include "gromacs/nbnxm/kernels_simd_4xm/kernel_inner.h"
+#include "kernel_inner.h"
                 cjind++;
             }
 #undef CHECK_EXCLS
             for (; (cjind < cjind1); cjind++)
             {
-#include "gromacs/nbnxm/kernels_simd_4xm/kernel_inner.h"
+#include "kernel_inner.h"
             }
         }
 #undef CALC_LJ

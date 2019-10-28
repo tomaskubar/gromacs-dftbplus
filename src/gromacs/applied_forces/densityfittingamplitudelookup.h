@@ -59,15 +59,15 @@ namespace gmx
  */
 enum class DensityFittingAmplitudeMethod
 {
-    Unity,   //!< same spread amplitude, unity, for all atoms
-    Mass,    //!< atom mass is the spread amplitude
-    Charges, //!< partial charge determines the spread amplitude
+    Unity,  //!< same spread amplitude, unity, for all atoms
+    Mass,   //!< atom mass is the spread amplitude
+    Charge, //!< partial charge determines the spread amplitude
     Count
 };
 
 //! The names of the methods to determine the amplitude of the atoms to be spread on a grid
 const EnumerationArray<DensityFittingAmplitudeMethod, const char * const>
-c_densityFittingAmplitudeMethodNames = {{"unity", "mass", "charges"}};
+c_densityFittingAmplitudeMethodNames = {{"unity", "mass", "charge"}};
 
 class DensityFittingAmplitudeLookupImpl;
 

@@ -415,6 +415,7 @@ template <
     const bool wrapY
     >
 __launch_bounds__(c_spreadMaxThreadsPerBlock)
+CLANG_DISABLE_OPTIMIZATION_ATTRIBUTE
 __global__ void pme_spline_and_spread_kernel(const PmeGpuCudaKernelParams kernelParams)
 {
     const int        atomsPerBlock = c_spreadMaxThreadsPerBlock / c_pmeSpreadGatherThreadsPerAtom;
@@ -448,7 +449,7 @@ __global__ void pme_spline_and_spread_kernel(const PmeGpuCudaKernelParams kernel
         __syncthreads();
         calculate_splines<order, atomsPerBlock>(kernelParams, atomIndexOffset, (const float3 *)sm_coordinates,
                                                 sm_coefficients, sm_theta, sm_gridlineIndices);
-        gmx_syncwarp();
+        __syncwarp();
     }
     else
     {

@@ -435,6 +435,127 @@ struct dd_comm_setup_work_t
     int                    nsend_zone = 0;
 };
 
+/*! \brief Information about the simulated system */
+struct DDSystemInfo
+{
+    //! True when update groups are used
+    bool                                useUpdateGroups = false;
+    //! Update atom grouping for each molecule type
+    std::vector<gmx::RangePartitioning> updateGroupingPerMoleculetype;
+    //! The maximum radius over all update groups
+    real                                maxUpdateGroupRadius;
+
+    //! Are molecules always whole, i.e. not broken by PBC?
+    bool moleculesAreAlwaysWhole         = false;
+    //! Are there inter-domain bonded interactions?
+    bool haveInterDomainBondeds          = false;
+    //! Are there inter-domain multi-body interactions?
+    bool haveInterDomainMultiBodyBondeds = false;
+
+    //! Cut-off for multi-body interactions
+    real minCutoffForMultiBody = 0;
+    //! Cut-off for non-bonded/2-body interactions
+    real cutoff = 0;
+    //! The lower limit for the DD cell size
+    real cellsizeLimit = 0;
+
+    //! Can atoms connected by constraints be assigned to different domains?
+    bool haveSplitConstraints = false;
+    //! Can atoms connected by settles be assigned to different domains?
+    bool haveSplitSettles = false;
+    //! Estimated communication range needed for constraints
+    real constraintCommunicationRange = 0;
+
+    //! Whether to only communicate atoms beyond the non-bonded cut-off when they are involved in bonded interactions with non-local atoms
+    bool filterBondedCommunication = false;
+    //! Whether to increase the multi-body cut-off beyond the minimum required
+    bool increaseMultiBodyCutoff = false;
+};
+
+/*! \brief Settings that affect the behavior of the domain decomposition
+ *
+ * These settings depend on options chosen by the user, set by enviroment
+ * variables, as well as hardware support. The initial DLB state also
+ * depends on the integrator.
+ *
+ * Note: Settings that depend on the simulated system are in DDSystemInfo.
+ */
+struct DDSettings
+{
+    //! Use MPI_Sendrecv communication instead of non-blocking calls
+    bool useSendRecv2 = false;
+
+    /* Information for managing the dynamic load balancing */
+    //! Maximum DLB scaling per load balancing step in percent
+    int  dlb_scale_lim = 0;
+    //! Flop counter (0=no,1=yes,2=with (eFlop-1)*5% noise
+    int  eFlop = 0;
+
+    //! Request 1D domain decomposition with maximum one communication pulse
+    bool request1DAnd1Pulse;
+
+    //! Whether to order the DD dimensions from z to x
+    bool useDDOrderZYX = false;
+
+    //! Whether to use MPI Cartesian reordering of communicators, when supported (almost never)
+    bool useCartesianReorder = true;
+
+    //! Whether we should record the load
+    bool recordLoad = false;
+
+    /* Debugging */
+    //! Step interval for dumping the local+non-local atoms to pdb
+    int  nstDDDump = 0;
+    //! Step interval for duming the DD grid to pdb
+    int  nstDDDumpGrid = 0;
+    //! DD debug print level: 0, 1, 2
+    int  DD_debug = 0;
+
+    //! The DLB state at the start of the run
+    DlbState initialDlbState = DlbState::offCanTurnOn;
+};
+
+/*! \brief Information on how the DD ranks are set up */
+struct DDRankSetup
+{
+    /**< The number of particle-particle (non PME-only) ranks */
+    int         numPPRanks = 0;
+    /**< The DD PP grid */
+    ivec        numPPCells = { 0, 0, 0 };
+
+    /* PME and Cartesian communicator stuff */
+    bool        usePmeOnlyRanks = false;
+    /**< The number of decomposition dimensions for PME, 0: no PME */
+    int         npmedecompdim = 0;
+    /**< The number of ranks doing PME (PP/PME or only PME) */
+    int         numRanksDoingPme = 0;
+    /**< The number of PME ranks/domains along x */
+    int         npmenodes_x = 0;
+    /**< The number of PME ranks/domains along y */
+    int         npmenodes_y = 0;
+    /**< The 1D or 2D PME domain decomposition setup */
+    gmx_ddpme_t ddpme[2];
+};
+
+/*! \brief Information on Cartesian MPI setup of the DD ranks */
+struct CartesianRankSetup
+{
+    /**< Use Cartesian communication between PP and PME ranks */
+    bool             bCartesianPP_PME = false;
+    /**< Cartesian grid for combinted PP+PME ranks */
+    ivec             ntot = { };
+    /**< The number of dimensions for the PME setup that are Cartesian */
+    int              cartpmedim = 0;
+    /**< The Cartesian index to sim rank conversion, used with bCartesianPP_PME */
+    std::vector<int> ddindex2simnodeid;
+
+    /* The DD particle-particle nodes only */
+    /**< Use a Cartesian communicator for PP */
+    bool             bCartesianPP = false;
+    /**< The Cartesian index to DD rank conversion, used with bCartesianPP */
+    std::vector<int> ddindex2ddnodeid;
+};
+
 /*! \brief Struct for domain decomposition communication
  *
  * This struct contains most information about domain decomposition
@@ -447,60 +568,24 @@ struct dd_comm_setup_work_t
  */
 struct gmx_domdec_comm_t // NOLINT (clang-analyzer-optin.performance.Padding)
 {
-    /* PME and Cartesian communicator stuff */
-    /**< The number of decomposition dimensions for PME, 0: no PME */
-    int         npmedecompdim = 0;
-    /**< The number of ranks doing PME (PP/PME or only PME) */
-    int         npmenodes = 0;
-    /**< The number of PME ranks/domains along x */
-    int         npmenodes_x = 0;
-    /**< The number of PME ranks/domains along y */
-    int         npmenodes_y = 0;
-    /**< Use Cartesian communication between PP and PME ranks */
-    gmx_bool    bCartesianPP_PME = false;
-    /**< Cartesian grid for combinted PP+PME ranks */
-    ivec        ntot = { };
-    /**< The number of dimensions for the PME setup that are Cartesian */
-    int         cartpmedim = 0;
-    /**< The PME ranks, size npmenodes */
-    int        *pmenodes = nullptr;
-    /**< The Cartesian index to sim rank conversion, used with bCartesianPP_PME */
-    int        *ddindex2simnodeid = nullptr;
-    /**< The 1D or 2D PME domain decomposition setup */
-    gmx_ddpme_t ddpme[2];
+    /**< Constant parameters that control DD behavior */
+    DDSettings ddSettings;
 
-    /* The DD particle-particle nodes only */
-    /**< Use a Cartesian communicator for PP */
-    gmx_bool bCartesianPP = false;
-    /**< The Cartesian index to DD rank conversion, used with bCartesianPP */
-    int     *ddindex2ddnodeid = nullptr;
-
-    /* The DLB state, used for reloading old states, during e.g. EM */
-    /**< The global charge groups, this defined the DD state (except for the DLB state) */
-    t_block cgs_gl = { };
+    /**< Information on how the DD ranks are set up */
+    DDRankSetup        ddRankSetup;
+    /**< Information on the Cartesian part of the DD rank setup */
+    CartesianRankSetup cartesianRankSetup;
 
     /* Charge group / atom sorting */
     /**< Data structure for cg/atom sorting */
     std::unique_ptr<gmx_domdec_sort_t> sort;
 
-    //! True when update groups are used
-    bool                                  useUpdateGroups = false;
-    //!  Update atom grouping for each molecule type
-    std::vector<gmx::RangePartitioning>   updateGroupingPerMoleculetype;
     //! Centers of mass of local update groups
     std::unique_ptr<gmx::UpdateGroupsCog> updateGroupsCog;
 
-    /* Are there charge groups? */
-    bool haveInterDomainBondeds          = false; /**< Are there inter-domain bonded interactions? */
-    bool haveInterDomainMultiBodyBondeds = false; /**< Are there inter-domain multi-body interactions? */
-
-    /* Data for the optional bonded interaction atom communication range */
-    /**< Only communicate atoms beyond the non-bonded cut-off when they are involved in bonded interactions with non-local atoms */
-    gmx_bool  bBondComm = false;
-    /**< Links between cg's through bonded interactions */
-    t_blocka *cglink = nullptr;
-    /**< Local cg availability, TODO: remove when group scheme is removed */
-    char     *bLocalCG = nullptr;
+    /* Data for the optional filtering of communication of atoms for bonded interactions */
+    /**< Links between atoms through bonded interactions */
+    t_blocka *bondedLinks = nullptr;
 
     /* The DLB state, possible values are defined above */
     DlbState dlbState;
@@ -512,11 +597,12 @@ struct gmx_domdec_comm_t // NOLINT (clang-analyzer-optin.performance.Padding)
     /* Cell sizes for static load balancing, first index cartesian */
     real **slb_frac = nullptr;
 
+    /**< Information about the simulated system */
+    DDSystemInfo systemInfo;
+
     /* The width of the communicated boundaries */
     /**< Cut-off for multi-body interactions, also 2-body bonded when \p cutoff_mody > \p cutoff */
     real     cutoff_mbody = 0;
-    /**< Cut-off for non-bonded/2-body interactions */
-    real     cutoff = 0;
     /**< The minimum guaranteed cell-size, Cartesian indexing */
     rvec     cellsize_min = { };
     /**< The minimum guaranteed cell-size with dlb=auto */
@@ -533,8 +619,6 @@ struct gmx_domdec_comm_t // NOLINT (clang-analyzer-optin.performance.Padding)
      */
     real PMELoadBal_max_cutoff = 0;
 
-    /**< tric_dir from \p gmx_ddbox_t is only stored here because dd_get_ns_ranges needs it */
-    ivec tric_dir = { };
     /**< box lower corner, required with dim's without pbc and -gcom */
     rvec box0 = { };
     /**< box size, required with dim's without pbc and -gcom */
@@ -564,7 +648,10 @@ struct gmx_domdec_comm_t // NOLINT (clang-analyzer-optin.performance.Padding)
 
     /** The coordinate/force communication setup and indices */
     gmx_domdec_comm_dim_t cd[DIM];
-    /** The maximum number of cells to communicate with in one dimension */
+    /** Restricts the maximum number of cells to communicate with in one dimension
+     *
+     * Dynamic load balancing is not permitted to change sizes if it
+     * would violate this restriction. */
     int                   maxpulse = 0;
 
     /** Which cg distribution is stored on the master node,
@@ -605,8 +692,6 @@ struct gmx_domdec_comm_t // NOLINT (clang-analyzer-optin.performance.Padding)
     std::vector<DDCellsizesWithDlb> cellsizesWithDlb;
 
     /* Stuff for load communication */
-    /**< Should we record the load */
-    gmx_bool        bRecordLoad = false;
     /**< The recorded load data */
     domdec_load_t  *load = nullptr;
     /**< The number of MPI ranks sharing the GPU our rank is using */
@@ -618,10 +703,6 @@ struct gmx_domdec_comm_t // NOLINT (clang-analyzer-optin.performance.Padding)
     MPI_Comm        mpi_comm_gpu_shared;
 #endif
 
-    /* Information for managing the dynamic load balancing */
-    /**< Maximum DLB scaling per load balancing step in percent */
-    int            dlb_scale_lim = 0;
-
     /**< Struct for timing the force load balancing region */
     BalanceRegion *balanceRegion = nullptr;
 
@@ -632,8 +713,6 @@ struct gmx_domdec_comm_t // NOLINT (clang-analyzer-optin.performance.Padding)
     int    cycl_n[ddCyclNr] = { };
     /**< The maximum cycle count */
     float  cycl_max[ddCyclNr] = { };
-    /** Flop counter (0=no,1=yes,2=with (eFlop-1)*5% noise */
-    int    eFlop = 0;
     /**< Total flops counted */
     double flop = 0.0;
     /**< The number of flop recordings */
@@ -676,22 +755,14 @@ struct gmx_domdec_comm_t // NOLINT (clang-analyzer-optin.performance.Padding)
     double load_pme = 0.0;
 
     /** The last partition step */
-    int64_t partition_step = 0;
-
-    /* Debugging */
-    /**< Step interval for dumping the local+non-local atoms to pdb */
-    int  nstDDDump = 0;
-    /**< Step interval for duming the DD grid to pdb */
-    int  nstDDDumpGrid = 0;
-    /**< DD debug print level: 0, 1, 2 */
-    int  DD_debug = 0;
+    int64_t partition_step = INT_MIN;
 };
 
 /*! \brief DD zone permutation
  *
  * Zone permutation from the Cartesian x-major/z-minor order to an order
  * that leads to consecutive charge groups for neighbor searching.
- * TODO: remove when the group scheme is removed
+ * TODO: It should be possible to remove this now that the group scheme is removed
  */
 static const int zone_perm[3][4] = { {0, 0, 0, 0}, {1, 0, 0, 0}, {3, 0, 1, 2} };
 

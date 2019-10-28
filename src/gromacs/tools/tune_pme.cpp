@@ -465,7 +465,7 @@ static gmx_bool analyze_data(
                 {
                     /* Somehow the performance number was not aquired for this run,
                      * therefor set the average to some negative value: */
-                    pd->ns_per_day_Av = -1.0f*nrepeats;
+                    pd->ns_per_day_Av = -1.0F*nrepeats;
                     break;
                 }
             }
@@ -2019,7 +2019,7 @@ static float inspect_tpr(int nfile, t_filenm fnm[], real *rcoulomb)
     *rcoulomb = ir->rcoulomb;
 
     /* Return the estimate for the number of PME nodes */
-    float npme = pme_load_estimate(&mtop, ir, state.box);
+    float npme = pme_load_estimate(mtop, *ir, state.box);
     return npme;
 }
 

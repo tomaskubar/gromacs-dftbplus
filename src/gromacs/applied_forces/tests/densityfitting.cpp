@@ -58,11 +58,13 @@
 #include "gromacs/options/treesupport.h"
 #include "gromacs/utility/keyvaluetreebuilder.h"
 #include "gromacs/utility/keyvaluetreetransform.h"
+#include "gromacs/utility/mdmodulenotification.h"
 #include "gromacs/utility/real.h"
 #include "gromacs/utility/smalloc.h"
 #include "gromacs/utility/stringcompare.h"
 
 #include "testutils/testasserts.h"
+#include "testutils/testfilemanager.h"
 #include "testutils/testmatchers.h"
 
 namespace gmx
@@ -71,59 +73,76 @@ namespace gmx
 namespace
 {
 
-TEST(DensityFittingTest, Options)
+class DensityFittingTest : public ::testing::Test
 {
-    auto densityFittingModule(gmx::createDensityFittingModule());
+    public:
 
+        void addMdpOptionDensityFittingActive()
+        {
+            mdpValueBuilder_.rootObject().addValue("density-guided-simulation-active", std::string("yes"));
+        }
+
+        void addMdpOptionReferenceDensity()
+        {
+            mdpValueBuilder_.rootObject().addValue(
+                    "density-guided-simulation-reference-density-filename",
+                    std::string(test::TestFileManager::getInputFilePath("ellipsoid-density.mrc")));
+        }
+
+        //! build an mdp options tree that sets the options for the density fitting module
+        void makeDensityFittingModuleWithSetOptions()
+        {
+            KeyValueTreeObject mdpOptionsTree = mdpValueBuilder_.build();
+
+            densityFittingModule_ = DensityFittingModuleInfo::create(&notifier_);
+
+            // set up options
+            Options densityFittingModuleOptions;
+            densityFittingModule_->mdpOptionProvider()->initMdpOptions(&densityFittingModuleOptions);
+
+            // Add rules to transform mdp inputs to densityFittingModule data
+            KeyValueTreeTransformer transform;
+            transform.rules()->addRule().keyMatchType("/", StringCompareType::CaseAndDashInsensitive);
+            densityFittingModule_->mdpOptionProvider()->initMdpTransform(transform.rules());
+
+            // Execute the transform on the mdpValues
+            auto transformedMdpValues = transform.transform(mdpOptionsTree, nullptr);
+            assignOptionsFromKeyValueTree(&densityFittingModuleOptions, transformedMdpValues.object(), nullptr);
+        }
+
+        void intializeForceProviders()
+        {
+            densityFittingModule_->initForceProviders(&densityFittingForces_);
+        }
+
+    protected:
+
+        KeyValueTreeBuilder        mdpValueBuilder_;
+        MdModulesNotifier          notifier_;
+        ForceProviders             densityFittingForces_;
+        std::unique_ptr<IMDModule> densityFittingModule_;
+};
+
+TEST_F(DensityFittingTest, ForceProviderLackingInputThrows)
+{
     // Prepare MDP inputs
-    gmx::KeyValueTreeBuilder mdpValueBuilder;
-    mdpValueBuilder.rootObject().addValue("density-guided-simulation-active", "yes");
-    KeyValueTreeObject       densityFittingMdpValues = mdpValueBuilder.build();
+    addMdpOptionDensityFittingActive();
 
-    // set up options
-    gmx::Options densityFittingModuleOptions;
-    densityFittingModule->mdpOptionProvider()->initMdpOptions(&densityFittingModuleOptions);
-
-    // Add rules to transform mdp inputs to densityFittingModule data
-    gmx::KeyValueTreeTransformer transform;
-    transform.rules()->addRule().keyMatchType("/", gmx::StringCompareType::CaseAndDashInsensitive);
-    densityFittingModule->mdpOptionProvider()->initMdpTransform(transform.rules());
-
-    // Execute the transform on the mdpValues
-    auto transformedMdpValues = transform.transform(densityFittingMdpValues, nullptr);
-    gmx::assignOptionsFromKeyValueTree(&densityFittingModuleOptions, transformedMdpValues.object(), nullptr);
+    makeDensityFittingModuleWithSetOptions();
 
     // Build the force provider, once all input data is gathered
-    ForceProviders densityFittingForces;
-    densityFittingModule->initForceProviders(&densityFittingForces);
+    EXPECT_ANY_THROW(intializeForceProviders());
+}
 
-    // Build a minimal simulation system.
-    t_mdatoms               mdAtoms;
-    mdAtoms.homenr = 1;
-    PaddedVector<gmx::RVec> x             = {{0, 0, 0}};
-    matrix                  simulationBox = {{0, 0, 0}, {0, 0, 0}, {0, 0, 0}};
-    const double            t             = 0.0;
-    t_commrec              *cr            = init_commrec();
-    gmx::ForceProviderInput forceProviderInput(x, mdAtoms, t, simulationBox, *cr);
+TEST_F(DensityFittingTest, SingleAtom)
+{
+    // Prepare MDP inputs
+    addMdpOptionDensityFittingActive();
+    addMdpOptionReferenceDensity();
 
-    // The forces that the force-provider is to update
-    PaddedVector<gmx::RVec>  f = {{0, 0, 0}};
-    gmx::ForceWithVirial     forceWithVirial(f, false);
+    makeDensityFittingModuleWithSetOptions();
 
-    gmx_enerdata_t           energyData(1, 0);
-    gmx::ForceProviderOutput forceProviderOutput(&forceWithVirial, &energyData);
-
-    // update the forces
-    densityFittingForces.calculateForces(forceProviderInput, &forceProviderOutput);
-
-    // check that calculated forces match expected forces
-    std::vector<RVec> expectedForce = {{0, 0, 0}};
-    EXPECT_THAT(expectedForce, Pointwise(test::RVecEq(test::defaultFloatTolerance()),
-                                         forceProviderOutput.forceWithVirial_.force_));
-
-    // clean up C-style commrec, so this test leaks no memory
-    // \todo remove once commrec manages its own memory
-    done_commrec(cr);
+    EXPECT_ANY_THROW(intializeForceProviders());
 }
 
 } // namespace

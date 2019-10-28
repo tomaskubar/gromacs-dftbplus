@@ -81,6 +81,11 @@
 
 #include "pull_internal.h"
 
+namespace gmx
+{
+extern template LocalAtomSet LocalAtomSetManager::add<void, void>(ArrayRef<const int> globalAtomIndex);
+} // namespace gmx
+
 static int groupPbcFromParams(const t_pull_group &params, bool setPbcRefToPrevStepCOM)
 {
     if (params.nat <= 1)
@@ -1780,7 +1785,7 @@ static void init_pull_group_index(FILE *fplog, const t_commrec *cr,
         else if (ir->eI == eiBD)
         {
             real mbd;
-            if (ir->bd_fric != 0.0f)
+            if (ir->bd_fric != 0.0F)
             {
                 mbd = ir->bd_fric*ir->delta_t;
             }

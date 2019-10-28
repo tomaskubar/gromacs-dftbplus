@@ -1,7 +1,7 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2018, by the GROMACS development team, led by
+ * Copyright (c) 2018,2019, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -60,22 +60,10 @@
 #include <vector>
 
 #include "gromacs/math/vectypes.h"
-#include "gromacs/utility/basedefinitions.h"
-#include "gromacs/utility/real.h"
 
-struct gmx_mtop_t;
-struct gmx_output_env_t;
-struct pull_params_t;
-struct pull_t;
-struct t_commrec;
-struct t_filenm;
-struct t_inputrec;
-struct t_mdatoms;
-struct t_pbc;
-
+// TODO: Get from a header once the public API settles down a bit.
 namespace gmxapi
 {
-class Session;
 class SessionResources;
 }
 

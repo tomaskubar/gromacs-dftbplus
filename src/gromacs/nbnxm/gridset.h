@@ -55,6 +55,7 @@
 #include "gromacs/math/vectypes.h"
 #include "gromacs/utility/alignedallocator.h"
 #include "gromacs/utility/arrayref.h"
+#include "gromacs/utility/range.h"
 
 #include "grid.h"
 #include "gridsetdata.h"
@@ -73,6 +74,12 @@ namespace Nbnxm
 
 /*! \internal
  * \brief Holds a set of search grids for the local + non-local DD zones
+ *
+ * The are three different possible setups:
+ * - a single grid, this is the standard case without domain decomposition
+ * - one grid for each domain decomposition zone
+ * - with test particle insertion there are two grids, one for the system
+ *   to insert in and one for the molecule that is inserted
  */
 class GridSet
 {
@@ -84,11 +91,14 @@ class GridSet
         {
             //! Constructor, without DD \p numDDCells and \p ddZones should be nullptr
             DomainSetup(int                       ePBC,
+                        bool                      doTestParticleInsertion,
                         const ivec               *numDDCells,
                         const gmx_domdec_zones_t *ddZones);
 
             //! The type of PBC
             int                       ePBC;
+            //! Tells whether we are doing test-particle insertion
+            bool                      doTestParticleInsertion;
             //! Are there multiple domains?
             bool                      haveMultipleDomains;
             //! Are there multiple domains along each dimension?
@@ -99,6 +109,7 @@ class GridSet
 
         //! Constructs a grid set for 1 or multiple DD zones, when numDDCells!=nullptr
         GridSet(int                       ePBC,
+                bool                      doTestParticleInsertion,
                 const ivec               *numDDCells,
                 const gmx_domdec_zones_t *ddZones,
                 PairlistType              pairlistType,
@@ -106,14 +117,13 @@ class GridSet
                 int                       numThreads,
                 gmx::PinningPolicy        pinningPolicy);
 
-        //! Puts the atoms in \p ddZone on the grid and copies the coordinates to \p nbat
+        //! Puts the atoms on the grid with index \p gridIndex and copies the coordinates to \p nbat
         void putOnGrid(const matrix                    box,
-                       int                             ddZone,
+                       int                             gridIndex,
                        const rvec                      lowerCorner,
                        const rvec                      upperCorner,
                        const gmx::UpdateGroupsCog     *updateGroupsCog,
-                       int                             atomStart,
-                       int                             atomEnd,
+                       gmx::Range<int>                 atomRange,
                        real                            atomDensity,
                        gmx::ArrayRef<const int>        atomInfo,
                        gmx::ArrayRef<const gmx::RVec>  x,
@@ -122,7 +132,7 @@ class GridSet
                        nbnxn_atomdata_t               *nbat);
 
         //! Returns the domain setup
-        const DomainSetup domainSetup() const
+        DomainSetup domainSetup() const
         {
             return domainSetup_;
         }

@@ -47,8 +47,6 @@
 #include "gromacs/utility/basedefinitions.h"
 #include "gromacs/utility/real.h"
 
-struct ForceProviders;
-
 /* Abstract type for PME that is defined only in the routine that use them. */
 struct gmx_ns_t;
 struct gmx_pme_t;
@@ -61,6 +59,9 @@ class QMMM_rec;
 namespace gmx
 {
 class GpuBonded;
+class ForceProviders;
+class StatePropagatorDataGpu;
+class PmePpCommGpu;
 }
 
 /* macros for the cginfo data in forcerec
@@ -76,12 +77,8 @@ class GpuBonded;
 #define GET_CGINFO_GID(cgi)        ( (cgi)            &   255)
 #define SET_CGINFO_FEP(cgi)          (cgi) =  ((cgi)  |  (1<<15))
 #define GET_CGINFO_FEP(cgi)        ( (cgi)            &  (1<<15))
-#define SET_CGINFO_EXCL_INTRA(cgi)   (cgi) =  ((cgi)  |  (1<<16))
-#define GET_CGINFO_EXCL_INTRA(cgi) ( (cgi)            &  (1<<16))
 #define SET_CGINFO_EXCL_INTER(cgi)   (cgi) =  ((cgi)  |  (1<<17))
 #define GET_CGINFO_EXCL_INTER(cgi) ( (cgi)            &  (1<<17))
-#define SET_CGINFO_SOLOPT(cgi, opt)  (cgi) = (((cgi)  & ~(3<<18)) | ((opt)<<18))
-#define GET_CGINFO_SOLOPT(cgi)     (((cgi)>>18)       &   3)
 #define SET_CGINFO_CONSTR(cgi)       (cgi) =  ((cgi)  |  (1<<20))
 #define GET_CGINFO_CONSTR(cgi)     ( (cgi)            &  (1<<20))
 #define SET_CGINFO_SETTLE(cgi)       (cgi) =  ((cgi)  |  (1<<21))
@@ -93,8 +90,6 @@ class GpuBonded;
 #define GET_CGINFO_HAS_VDW(cgi)    ( (cgi)            &  (1<<23))
 #define SET_CGINFO_HAS_Q(cgi)        (cgi) =  ((cgi)  |  (1<<24))
 #define GET_CGINFO_HAS_Q(cgi)      ( (cgi)            &  (1<<24))
-#define SET_CGINFO_NATOMS(cgi, opt)  (cgi) = (((cgi)  & ~(63<<25)) | ((opt)<<25))
-#define GET_CGINFO_NATOMS(cgi)     (((cgi)>>25)       &   63)
 
 
 /* Value to be used in mdrun for an infinite cut-off.
@@ -123,6 +118,13 @@ struct gmx_ewald_tab_t;
 struct ewald_corr_thread_t;
 
 struct t_forcerec { // NOLINT (clang-analyzer-optin.performance.Padding)
+    // Declare an explicit constructor and destructor, so they can be
+    // implemented in a single source file, so that not every source
+    // file that includes this one needs to understand how to find the
+    // destructors of the objects pointed to by unique_ptr members.
+    t_forcerec();
+    ~t_forcerec();
+
     struct interaction_const_t *ic = nullptr;
 
     /* PBC stuff */
@@ -183,18 +185,11 @@ struct t_forcerec { // NOLINT (clang-analyzer-optin.performance.Padding)
     real     sc_sigma6_def = 0;
     real     sc_sigma6_min = 0;
 
-    /* NS Stuff */
-    int  cg0 = 0;
-    int  hcg = 0;
-    /* solvent_opt contains the enum for the most common solvent
-     * in the system, which will be optimized.
-     * It can be set to esolNO to disable all water optimization */
-    int                 solvent_opt                  = 0;
-    int                 nWatMol                      = 0;
-    gmx_bool            bGrid                        = FALSE;
-    gmx_bool            bExcl_IntraCGAll_InterCGNone = FALSE;
+    /* Information about atom properties for the molecule blocks in the system */
     struct cginfo_mb_t *cginfo_mb                    = nullptr;
+    /* Information about atom properties for local and non-local atoms */
     std::vector<int>    cginfo;
+
     rvec               *shift_vec                    = nullptr;
 
     int                 cutoff_scheme = 0;     /* group- or Verlet-style cutoff */
@@ -207,8 +202,6 @@ struct t_forcerec { // NOLINT (clang-analyzer-optin.performance.Padding)
     int                    nwall    = 0;
     t_forcetable        ***wall_tab = nullptr;
 
-    /* The number of charge groups participating in do_force_lowlevel */
-    int ncg_force = 0;
     /* The number of atoms participating in do_force_lowlevel */
     int natoms_force = 0;
     /* The number of atoms participating in force and constraints */
@@ -231,8 +224,8 @@ struct t_forcerec { // NOLINT (clang-analyzer-optin.performance.Padding)
     /* PME/Ewald stuff */
     struct gmx_ewald_tab_t *ewald_table = nullptr;
 
-    /* Shift force array for computing the virial */
-    rvec *fshift = nullptr;
+    /* Shift force array for computing the virial, size SHIFTS */
+    std::vector<gmx::RVec> shiftForces;
 
     /* Non bonded Parameter lists */
     int      ntype        = 0; /* Number of atom types */
@@ -283,7 +276,15 @@ struct t_forcerec { // NOLINT (clang-analyzer-optin.performance.Padding)
     int                         nthread_ewc = 0;
     struct ewald_corr_thread_t *ewc_t       = nullptr;
 
-    struct ForceProviders      *forceProviders = nullptr;
+    gmx::ForceProviders        *forceProviders = nullptr;
+
+    // The stateGpu object is created in runner, forcerec just keeps the copy of the pointer.
+    // TODO: This is not supposed to be here. StatePropagatorDataGpu should be a part of
+    //       general StatePropagatorData object that is passed around
+    gmx::StatePropagatorDataGpu  *stateGpu = nullptr;
+
+    /* For PME-PP GPU communication */
+    std::unique_ptr<gmx::PmePpCommGpu> pmePpCommGpu;
 };
 
 /* Important: Starting with Gromacs-4.6, the values of c6 and c12 in the nbfp array have

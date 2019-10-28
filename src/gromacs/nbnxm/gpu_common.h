@@ -58,10 +58,11 @@
 #include "gromacs/gpu_utils/gpu_utils.h"
 #include "gromacs/listed_forces/gpubonded.h"
 #include "gromacs/math/vec.h"
-#include "gromacs/mdlib/force_flags.h"
+#include "gromacs/mdtypes/simulation_workload.h"
 #include "gromacs/nbnxm/nbnxm.h"
 #include "gromacs/pbcutil/ishift.h"
 #include "gromacs/timing/gpu_timing.h"
+#include "gromacs/timing/wallcycle.h"
 #include "gromacs/utility/fatalerror.h"
 #include "gromacs/utility/stringutil.h"
 
@@ -124,10 +125,10 @@ gpuAtomToInteractionLocality(const AtomLocality atomLocality)
 }
 
 
-void
-setupGpuShortRangeWork(gmx_nbnxn_gpu_t                  *nb,
-                       const gmx::GpuBonded             *gpuBonded,
-                       const Nbnxm::InteractionLocality  iLocality)
+//NOLINTNEXTLINE(misc-definitions-in-headers)
+void setupGpuShortRangeWork(gmx_nbnxn_gpu_t                  *nb,
+                            const gmx::GpuBonded             *gpuBonded,
+                            const gmx::InteractionLocality    iLocality)
 {
     GMX_ASSERT(nb, "Need a valid nbnxn_gpu object");
 
@@ -150,14 +151,14 @@ setupGpuShortRangeWork(gmx_nbnxn_gpu_t                  *nb,
  */
 static bool
 haveGpuShortRangeWork(const gmx_nbnxn_gpu_t            &nb,
-                      const Nbnxm::InteractionLocality  iLocality)
+                      const gmx::InteractionLocality    iLocality)
 {
     return nb.haveWork[iLocality];
 }
 
-bool
-haveGpuShortRangeWork(const gmx_nbnxn_gpu_t     *nb,
-                      const Nbnxm::AtomLocality  aLocality)
+//NOLINTNEXTLINE(misc-definitions-in-headers)
+bool haveGpuShortRangeWork(const gmx_nbnxn_gpu_t     *nb,
+                           const gmx::AtomLocality    aLocality)
 {
     GMX_ASSERT(nb, "Need a valid nbnxn_gpu object");
 
@@ -301,7 +302,7 @@ gpu_reduce_staged_outputs(const StagingData         &nbst,
  * \param[in]  timers            Pointer to GPU timers data
  * \param[in]  plist             Pointer to the pair list data
  * \param[in]  atomLocality      Atom locality specifier
- * \param[in]  didEnergyKernels  True if energy kernels have been called in the current step
+ * \param[in]  stepWork          Force schedule flags
  * \param[in]  doTiming          True if timing is enabled.
  *
  */
@@ -311,7 +312,7 @@ gpu_accumulate_timings(gmx_wallclock_gpu_nbnxn_t *timings,
                        GpuTimers                 *timers,
                        const GpuPairlist         *plist,
                        AtomLocality               atomLocality,
-                       bool                       didEnergyKernels,
+                       const gmx::StepWorkload   &stepWork,
                        bool                       doTiming)
 {
     /* timing data accumulation */
@@ -321,7 +322,8 @@ gpu_accumulate_timings(gmx_wallclock_gpu_nbnxn_t *timings,
     }
 
     /* determine interaction locality from atom locality */
-    const InteractionLocality iLocality = gpuAtomToInteractionLocality(atomLocality);
+    const InteractionLocality iLocality        = gpuAtomToInteractionLocality(atomLocality);
+    const bool                didEnergyKernels = stepWork.computeEnergy;
 
     /* only increase counter once (at local F wait) */
     if (iLocality == InteractionLocality::Local)
@@ -346,16 +348,17 @@ gpu_accumulate_timings(gmx_wallclock_gpu_nbnxn_t *timings,
        for the force D2H). */
     countPruneKernelTime(timers, timings, iLocality);
 
-    /* only count atdat and pair-list H2D at pair-search step */
+    /* only count atdat at pair-search steps (add only once, at local F wait) */
+    if (stepWork.doNeighborSearch && atomLocality == AtomLocality::Local)
+    {
+        /* atdat transfer timing */
+        timings->pl_h2d_c++;
+        timings->pl_h2d_t += timers->atdat.getLastRangeTime();
+    }
+
+    /* only count pair-list H2D when actually performed */
     if (timers->interaction[iLocality].didPairlistH2D)
     {
-        /* atdat transfer timing (add only once, at local F wait) */
-        if (atomLocality == AtomLocality::Local)
-        {
-            timings->pl_h2d_c++;
-            timings->pl_h2d_t += timers->atdat.getLastRangeTime();
-        }
-
         timings->pl_h2d_t += timers->interaction[iLocality].pl_h2d.getLastRangeTime();
 
         /* Clear the timing flag for the next step */
@@ -363,20 +366,37 @@ gpu_accumulate_timings(gmx_wallclock_gpu_nbnxn_t *timings,
     }
 }
 
-//TODO: move into shared source file with gmx_compile_cpp_as_cuda
+/*! \brief Attempts to complete nonbonded GPU task.
+ *
+ * See documentation in nbnxm_gpu.h for details.
+ *
+ * \todo Move into shared source file with gmx_compile_cpp_as_cuda
+ */
 //NOLINTNEXTLINE(misc-definitions-in-headers)
-bool gpu_try_finish_task(gmx_nbnxn_gpu_t    *nb,
-                         const int           flags,
-                         const AtomLocality  aloc,
-                         real               *e_lj,
-                         real               *e_el,
-                         rvec               *fshift,
-                         GpuTaskCompletion   completionKind)
+bool gpu_try_finish_task(gmx_nbnxn_gpu_t          *nb,
+                         const gmx::StepWorkload  &stepWork,
+                         const AtomLocality        aloc,
+                         real                     *e_lj,
+                         real                     *e_el,
+                         gmx::ArrayRef<gmx::RVec>  shiftForces,
+                         GpuTaskCompletion         completionKind,
+                         gmx_wallcycle            *wcycle)
 {
     GMX_ASSERT(nb, "Need a valid nbnxn_gpu object");
 
     /* determine interaction locality from atom locality */
     const InteractionLocality iLocality = gpuAtomToInteractionLocality(aloc);
+
+
+    // Transfers are launched and therefore need to be waited on if:
+    // - buffer ops is not offloaded
+    // - energies or virials are needed (on the local stream)
+    //
+    // (Note that useGpuFBufferOps and computeVirial are mutually exclusive
+    // in current code as virial steps do CPU reduction.)
+    const bool haveResultToWaitFor =
+        (!stepWork.useGpuFBufferOps ||
+         (aloc == AtomLocality::Local && (stepWork.computeEnergy || stepWork.computeVirial)));
 
     //  We skip when during the non-local phase there was actually no work to do.
     //  This is consistent with nbnxn_gpu_launch_kernel but it also considers possible
@@ -386,25 +406,39 @@ bool gpu_try_finish_task(gmx_nbnxn_gpu_t    *nb,
         // Query the state of the GPU stream and return early if we're not done
         if (completionKind == GpuTaskCompletion::Check)
         {
+            // To get the wcycle call count right, when in GpuTaskCompletion::Check mode,
+            // we start without counting and only when the task finished we issue a
+            // start/stop to increment.
+            // GpuTaskCompletion::Wait mode the timing is expected to be done in the caller.
+            wallcycle_start_nocount(wcycle, ewcWAIT_GPU_NB_L);
+
             if (!haveStreamTasksCompleted(nb->stream[iLocality]))
             {
+                wallcycle_stop(wcycle, ewcWAIT_GPU_NB_L);
+
                 // Early return to skip the steps below that we have to do only
                 // after the NB task completed
                 return false;
             }
+
+            wallcycle_increment_event_count(wcycle, ewcWAIT_GPU_NB_L);
         }
-        else
+        else if (haveResultToWaitFor)
         {
             gpuStreamSynchronize(nb->stream[iLocality]);
         }
 
-        bool calcEner   = (flags & GMX_FORCE_ENERGY) != 0;
-        bool calcFshift = (flags & GMX_FORCE_VIRIAL) != 0;
-
-        gpu_accumulate_timings(nb->timings, nb->timers, nb->plist[iLocality], aloc, calcEner,
+        // TODO: this needs to be moved later because conditional wait could brake timing
+        // with a future OpenCL implementation, but with CUDA timing is anyway disabled
+        // in all cases where we skip the wait.
+        gpu_accumulate_timings(nb->timings, nb->timers, nb->plist[iLocality], aloc, stepWork,
                                nb->bDoTime != 0);
 
-        gpu_reduce_staged_outputs(nb->nbst, iLocality, calcEner, calcFshift, e_lj, e_el, fshift);
+        if (stepWork.computeEnergy || stepWork.computeVirial)
+        {
+            gpu_reduce_staged_outputs(nb->nbst, iLocality, stepWork.computeEnergy, stepWork.computeVirial,
+                                      e_lj, e_el, as_rvec_array(shiftForces.data()));
+        }
     }
 
     /* Always reset both pruning flags (doesn't hurt doing it even when timing is off). */
@@ -425,22 +459,32 @@ bool gpu_try_finish_task(gmx_nbnxn_gpu_t    *nb,
  * pruning flags.
  *
  * \param[in] nb The nonbonded data GPU structure
- * \param[in] flags Force flags
+ * \param[in]  stepWork     Force schedule flags
  * \param[in] aloc Atom locality identifier
  * \param[out] e_lj Pointer to the LJ energy output to accumulate into
  * \param[out] e_el Pointer to the electrostatics energy output to accumulate into
- * \param[out] fshift Pointer to the shift force buffer to accumulate into
+ * \param[out] shiftForces Shift forces buffer to accumulate into
+ * \param[out] wcycle Pointer to wallcycle data structure
+ * \return            The number of cycles the gpu wait took
  */
 //NOLINTNEXTLINE(misc-definitions-in-headers) TODO: move into source file
-void gpu_wait_finish_task(gmx_nbnxn_gpu_t *nb,
-                          int              flags,
-                          AtomLocality     aloc,
-                          real            *e_lj,
-                          real            *e_el,
-                          rvec            *fshift)
+float gpu_wait_finish_task(gmx_nbnxn_gpu_t         *nb,
+                           const gmx::StepWorkload &stepWork,
+                           AtomLocality             aloc,
+                           real                    *e_lj,
+                           real                    *e_el,
+                           gmx::ArrayRef<gmx::RVec> shiftForces,
+                           gmx_wallcycle           *wcycle)
 {
-    gpu_try_finish_task(nb, flags, aloc, e_lj, e_el, fshift,
-                        GpuTaskCompletion::Wait);
+    auto cycleCounter =
+        (gpuAtomToInteractionLocality(aloc) == InteractionLocality::Local) ? ewcWAIT_GPU_NB_L : ewcWAIT_GPU_NB_NL;
+
+    wallcycle_start(wcycle, cycleCounter);
+    gpu_try_finish_task(nb, stepWork, aloc, e_lj, e_el, shiftForces,
+                        GpuTaskCompletion::Wait, wcycle);
+    float waitTime = wallcycle_stop(wcycle, cycleCounter);
+
+    return waitTime;
 }
 
 } // namespace Nbnxm

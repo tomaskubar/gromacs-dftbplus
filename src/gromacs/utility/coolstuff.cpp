@@ -940,7 +940,16 @@ std::string getCoolQuote()
         { "The Lord of the Rings can be confusing to follow because many of the bad minions look and sound familiar; that's why Tolkien gave them each an ORCid.", "Caroline Bartman" },
         { "Mendeleev's first attempt, the perfluoric table, was a total disaster, and his subsequent attempts, the perchloric and perbromic tables, were not favorably received. Only his fourth attempt, the periodic table, gained general acceptance.", "Anonymous" },
         { "Don’t bring an anecdote to a data fight.", "Molly Hodgdon" },
-        { "Give someone a program, you frustrate them for a day; teach them how to program, you frustrate them for a lifetime.", "David Leinweber" }
+        { "Give someone a program, you frustrate them for a day; teach them how to program, you frustrate them for a lifetime.", "David Leinweber" },
+        { "Or (horrors!) use Berendsen!", "Justin Lemkul" },
+        { "The absence of real intelligence doesn't prove you're using AI", "Magnus Lundborg" },
+        { "People who do QM/MM must be rather patient and enjoy quality over speed", "Kresten Lindorff-Larsen" },
+        { "I don’t think we’re afraid of inline assembly.", "Szilard Pall" },
+        { "I'm a strong believer that ignorance is important in science. If you know too much, you start seeing reasons why things won't work. That's why its important to change your field to collect more ignorance.", "Sydney Brenner" },
+        { "It's more useful when you know what you're doing.", "Artem Zhmurov" },
+        { "I have noticed a large, negative correlation between having a well-defined mission workload and concern for the Top500. It's almost like LINPACK is what you focus on when you don't know what to focus on.", "Jeff Hammond" },
+        { "Between equal rights, force decides.", "Karl Marx"},
+        {"To dissimulate is to feign not to have what one has. To simulate is to feign to have what one hasn't.", "Jean Baudrillard"},
     };
 
     if (beCool())

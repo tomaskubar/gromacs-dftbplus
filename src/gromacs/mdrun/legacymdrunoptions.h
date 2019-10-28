@@ -66,8 +66,6 @@ extern void(*plumedcmd)(plumed,const char*,const void*);
 #endif
 /* END PLUMED */
 
-struct gmx_multisim_t;
-
 namespace gmx
 {
 
@@ -83,8 +81,8 @@ namespace gmx
  * that all of these declarations and defaults are local to the
  * modules.
  *
- * \todo Contextual aspects, such as working directory, MPI
- * environment, and environment variable handling are more properly
+ * \todo Contextual aspects, such as working directory
+ * and environment variable handling are more properly
  * the role of SimulationContext, and should be moved there */
 class LegacyMdrunOptions
 {
@@ -166,12 +164,15 @@ class LegacyMdrunOptions
         { nullptr, "auto", "cpu", "gpu", nullptr };
         const char       *bonded_opt_choices[5] =
         { nullptr, "auto", "cpu", "gpu", nullptr };
+        const char       *update_opt_choices[5] =
+        { nullptr, "auto", "cpu", "gpu", nullptr };
         const char       *gpuIdsAvailable       = "";
         const char       *userGpuTaskAssignment = "";
 
+
         ImdOptions       &imdOptions = mdrunOptions.imdOptions;
 
-        t_pargs           pa[47] = {
+        t_pargs           pa[48] = {
 
             { "-dd",      FALSE, etRVEC, {&realddxyz},
               "Domain decomposition grid, 0 is optimize" },
@@ -227,13 +228,15 @@ class LegacyMdrunOptions
             { "-nstlist", FALSE, etINT, {&nstlist_cmdline},
               "Set nstlist when using a Verlet buffer tolerance (0 is guess)" },
             { "-tunepme", FALSE, etBOOL, {&mdrunOptions.tunePme},
-              "Optimize PME load between PP/PME ranks or GPU/CPU (only with the Verlet cut-off scheme)" },
+              "Optimize PME load between PP/PME ranks or GPU/CPU" },
             { "-pme",     FALSE, etENUM, {pme_opt_choices},
               "Perform PME calculations on" },
             { "-pmefft", FALSE, etENUM, {pme_fft_opt_choices},
               "Perform PME FFT calculations on" },
             { "-bonded",     FALSE, etENUM, {bonded_opt_choices},
               "Perform bonded calculations on" },
+            { "-update", FALSE, etENUM, {update_opt_choices},
+              "Perform update and constraints on"},
             { "-v",       FALSE, etBOOL, {&mdrunOptions.verbose},
               "Be loud and noisy" },
             { "-pforce",  FALSE, etREAL, {&pforce},
@@ -276,11 +279,6 @@ class LegacyMdrunOptions
               "HIDDENReset the cycle counters after half the number of steps or halfway [TT]-maxh[tt]" }
         };
         /*! \} */
-
-        //! Handle to communication object.
-        t_commrec        *cr = nullptr;
-        //! Multi-simulation object.
-        gmx_multisim_t   *ms = nullptr;
 
         //! Parses the command-line input and prepares to start mdrun.
         int updateFromCommandLine(int argc, char **argv, ArrayRef<const char *> desc);

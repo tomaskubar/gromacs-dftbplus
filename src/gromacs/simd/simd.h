@@ -76,6 +76,7 @@
 #include <cstdint>
 
 #include <array>
+#include <type_traits>
 
 #include "gromacs/utility/classhelpers.h"
 #include "gromacs/utility/real.h"
@@ -477,12 +478,16 @@ struct SimdTraits<const T>
 
 /*! \brief Load function that returns SIMD or scalar
  *
+ * Note that a load of T* where T is const returns a value, which is a
+ * copy, and the caller cannot be constrained to not change it, so the
+ * return type uses std::remove_const_t.
+ *
  * \tparam T Type to load (type is always mandatory)
  * \param  m Pointer to aligned memory
  * \return   Loaded value
  */
 template<typename T>
-static inline T
+static inline std::remove_const_t<T>
 load(const typename internal::SimdTraits<T>::type *m) //disabled by SFINAE for non-SIMD types
 {
     return simdLoad(m, typename internal::SimdTraits<T>::tag());
@@ -543,7 +548,7 @@ class SimdSetZeroProxy
 {
     public:
         //!\brief Conversion method that returns 0.0 as float
-        operator float() const { return 0.0f; }
+        operator float() const { return 0.0F; }
         //!\brief Conversion method that returns 0.0 as double
         operator double() const { return 0.0; }
         //!\brief Conversion method that returns 0.0 as int32
@@ -576,7 +581,7 @@ class SimdSetZeroProxy
  *         variable to zero based on the conversion function called when you
  *         assign the result.
  */
-static inline const SimdSetZeroProxy gmx_simdcall
+static inline SimdSetZeroProxy gmx_simdcall
 setZero()
 {
     return {};

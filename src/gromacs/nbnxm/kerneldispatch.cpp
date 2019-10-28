@@ -42,32 +42,33 @@
 #include "gromacs/math/vectypes.h"
 #include "gromacs/mdlib/enerdata_utils.h"
 #include "gromacs/mdlib/force.h"
-#include "gromacs/mdlib/force_flags.h"
 #include "gromacs/mdlib/gmx_omp_nthreads.h"
 #include "gromacs/mdtypes/enerdata.h"
+#include "gromacs/mdtypes/forceoutput.h"
 #include "gromacs/mdtypes/inputrec.h"
 #include "gromacs/mdtypes/interaction_const.h"
 #include "gromacs/mdtypes/md_enums.h"
 #include "gromacs/mdtypes/mdatom.h"
+#include "gromacs/mdtypes/simulation_workload.h"
 #include "gromacs/nbnxm/gpu_data_mgmt.h"
 #include "gromacs/nbnxm/nbnxm.h"
-#include "gromacs/nbnxm/nbnxm_simd.h"
-#include "gromacs/nbnxm/kernels_reference/kernel_gpu_ref.h"
 #include "gromacs/simd/simd.h"
 #include "gromacs/timing/wallcycle.h"
 #include "gromacs/utility/gmxassert.h"
 #include "gromacs/utility/real.h"
 
 #include "kernel_common.h"
+#include "nbnxm_simd.h"
 #include "pairlistset.h"
 #include "pairlistsets.h"
+#include "kernels_reference/kernel_gpu_ref.h"
 #define INCLUDE_KERNELFUNCTION_TABLES
-#include "gromacs/nbnxm/kernels_reference/kernel_ref.h"
+#include "kernels_reference/kernel_ref.h"
 #ifdef GMX_NBNXN_SIMD_2XNN
-#include "gromacs/nbnxm/kernels_simd_2xmm/kernels.h"
+#include "kernels_simd_2xmm/kernels.h"
 #endif
 #ifdef GMX_NBNXN_SIMD_4XN
-#include "gromacs/nbnxm/kernels_simd_4xm/kernels.h"
+#include "kernels_simd_4xm/kernels.h"
 #endif
 #undef INCLUDE_FUNCTION_TABLES
 
@@ -142,7 +143,7 @@ reduceGroupEnergySimdBuffers(int                       numGroups,
  * \param[in,out] nbat          The atomdata for the interactions
  * \param[in]     ic            Non-bonded interaction constants
  * \param[in]     shiftVectors  The PBC shift vectors
- * \param[in]     forceFlags    Flags that tell what to compute
+ * \param[in]     stepWork      Flags that tell what to compute
  * \param[in]     clearF        Enum that tells if to clear the force output buffer
  * \param[out]    vCoulomb      Output buffer for Coulomb energies
  * \param[out]    vVdw          Output buffer for Van der Waals energies
@@ -154,7 +155,7 @@ nbnxn_kernel_cpu(const PairlistSet              &pairlistSet,
                  nbnxn_atomdata_t               *nbat,
                  const interaction_const_t      &ic,
                  rvec                           *shiftVectors,
-                 int                             forceFlags,
+                 const gmx::StepWorkload        &stepWork,
                  int                             clearF,
                  real                           *vCoulomb,
                  real                           *vVdw,
@@ -243,7 +244,7 @@ nbnxn_kernel_cpu(const PairlistSet              &pairlistSet,
     int gmx_unused                        nthreads = gmx_omp_nthreads_get(emntNonbonded);
     wallcycle_sub_start(wcycle, ewcsNONBONDED_CLEAR);
 #pragma omp parallel for schedule(static) num_threads(nthreads)
-    for (int nb = 0; nb < pairlists.ssize(); nb++)
+    for (gmx::index nb = 0; nb < pairlists.ssize(); nb++)
     {
         // Presently, the kernels do not call C++ code that can throw,
         // so no need for a try/catch pair in this OpenMP region.
@@ -265,7 +266,7 @@ nbnxn_kernel_cpu(const PairlistSet              &pairlistSet,
         // TODO: Change to reference
         const NbnxnPairlistCpu *pairlist = &pairlists[nb];
 
-        if (!(forceFlags & GMX_FORCE_ENERGY))
+        if (!stepWork.computeEnergy)
         {
             /* Don't calculate energies */
             switch (kernelSetup.kernelType)
@@ -395,7 +396,7 @@ nbnxn_kernel_cpu(const PairlistSet              &pairlistSet,
     }
     wallcycle_sub_stop(wcycle, ewcsNONBONDED_KERNEL);
 
-    if (forceFlags & GMX_FORCE_ENERGY)
+    if (stepWork.computeEnergy)
     {
         reduce_energies_over_lists(nbat, pairlists.ssize(), vVdw, vCoulomb);
     }
@@ -405,7 +406,7 @@ static void accountFlops(t_nrnb                           *nrnb,
                          const PairlistSet                &pairlistSet,
                          const nonbonded_verlet_t         &nbv,
                          const interaction_const_t        &ic,
-                         const int                         forceFlags)
+                         const gmx::StepWorkload          &stepWork)
 {
     const bool usingGpuKernels = nbv.useGpu();
 
@@ -424,7 +425,7 @@ static void accountFlops(t_nrnb                           *nrnb,
         enr_nbnxn_kernel_ljc = eNR_NBNXN_LJ_TAB;
     }
     int enr_nbnxn_kernel_lj = eNR_NBNXN_LJ;
-    if (forceFlags & GMX_FORCE_ENERGY)
+    if (stepWork.computeEnergy)
     {
         /* In eNR_??? the nbnxn F+E kernels are always the F kernel + 1 */
         enr_nbnxn_kernel_ljc += 1;
@@ -439,31 +440,30 @@ static void accountFlops(t_nrnb                           *nrnb,
     inc_nrnb(nrnb, enr_nbnxn_kernel_ljc-eNR_NBNXN_LJ_RF+eNR_NBNXN_RF,
              pairlistSet.natpair_q_);
 
-    const bool calcEnergy = ((forceFlags & GMX_FORCE_ENERGY) != 0);
     if (ic.vdw_modifier == eintmodFORCESWITCH)
     {
         /* We add up the switch cost separately */
-        inc_nrnb(nrnb, eNR_NBNXN_ADD_LJ_FSW + (calcEnergy ? 1 : 0),
+        inc_nrnb(nrnb, eNR_NBNXN_ADD_LJ_FSW + (stepWork.computeEnergy ? 1 : 0),
                  pairlistSet.natpair_ljq_ + pairlistSet.natpair_lj_);
     }
     if (ic.vdw_modifier == eintmodPOTSWITCH)
     {
         /* We add up the switch cost separately */
-        inc_nrnb(nrnb, eNR_NBNXN_ADD_LJ_PSW + (calcEnergy ? 1 : 0),
+        inc_nrnb(nrnb, eNR_NBNXN_ADD_LJ_PSW + (stepWork.computeEnergy ? 1 : 0),
                  pairlistSet.natpair_ljq_ + pairlistSet.natpair_lj_);
     }
     if (ic.vdwtype == evdwPME)
     {
         /* We add up the LJ Ewald cost separately */
-        inc_nrnb(nrnb, eNR_NBNXN_ADD_LJ_EWALD + (calcEnergy ? 1 : 0),
+        inc_nrnb(nrnb, eNR_NBNXN_ADD_LJ_EWALD + (stepWork.computeEnergy ? 1 : 0),
                  pairlistSet.natpair_ljq_ + pairlistSet.natpair_lj_);
     }
 }
 
 void
-nonbonded_verlet_t::dispatchNonbondedKernel(Nbnxm::InteractionLocality iLocality,
+nonbonded_verlet_t::dispatchNonbondedKernel(gmx::InteractionLocality   iLocality,
                                             const interaction_const_t &ic,
-                                            int                        forceFlags,
+                                            const gmx::StepWorkload   &stepWork,
                                             int                        clearF,
                                             const t_forcerec          &fr,
                                             gmx_enerdata_t            *enerd,
@@ -481,7 +481,7 @@ nonbonded_verlet_t::dispatchNonbondedKernel(Nbnxm::InteractionLocality iLocality
                              nbat.get(),
                              ic,
                              fr.shift_vec,
-                             forceFlags,
+                             stepWork,
                              clearF,
                              enerd->grpp.ener[egCOULSR].data(),
                              fr.bBHAM ?
@@ -491,14 +491,14 @@ nonbonded_verlet_t::dispatchNonbondedKernel(Nbnxm::InteractionLocality iLocality
             break;
 
         case Nbnxm::KernelType::Gpu8x8x8:
-            Nbnxm::gpu_launch_kernel(gpu_nbv, forceFlags, iLocality);
+            Nbnxm::gpu_launch_kernel(gpu_nbv, stepWork, iLocality);
             break;
 
         case Nbnxm::KernelType::Cpu8x8x8_PlainC:
             nbnxn_kernel_gpu_ref(pairlistSet.gpuList(),
                                  nbat.get(), &ic,
                                  fr.shift_vec,
-                                 forceFlags,
+                                 stepWork,
                                  clearF,
                                  nbat->out[0].f,
                                  nbat->out[0].fshift.data(),
@@ -513,19 +513,19 @@ nonbonded_verlet_t::dispatchNonbondedKernel(Nbnxm::InteractionLocality iLocality
 
     }
 
-    accountFlops(nrnb, pairlistSet, *this, ic, forceFlags);
+    accountFlops(nrnb, pairlistSet, *this, ic, stepWork);
 }
 
 void
-nonbonded_verlet_t::dispatchFreeEnergyKernel(Nbnxm::InteractionLocality  iLocality,
-                                             t_forcerec                 *fr,
+nonbonded_verlet_t::dispatchFreeEnergyKernel(gmx::InteractionLocality    iLocality,
+                                             const t_forcerec           *fr,
                                              rvec                        x[],
-                                             rvec                        f[],
+                                             gmx::ForceWithShiftForces  *forceWithShiftForces,
                                              const t_mdatoms            &mdatoms,
                                              t_lambda                   *fepvals,
                                              real                       *lambda,
                                              gmx_enerdata_t             *enerd,
-                                             const int                   forceFlags,
+                                             const gmx::StepWorkload    &stepWork,
                                              t_nrnb                     *nrnb)
 {
     const auto nbl_fep = pairlistSets().pairlistSet(iLocality).fepLists();
@@ -540,16 +540,15 @@ nonbonded_verlet_t::dispatchFreeEnergyKernel(Nbnxm::InteractionLocality  iLocali
     /* Add short-range interactions */
     donb_flags |= GMX_NONBONDED_DO_SR;
 
-    /* Currently all group scheme kernels always calculate (shift-)forces */
-    if (forceFlags & GMX_FORCE_FORCES)
+    if (stepWork.computeForces)
     {
         donb_flags |= GMX_NONBONDED_DO_FORCE;
     }
-    if (forceFlags & GMX_FORCE_VIRIAL)
+    if (stepWork.computeVirial)
     {
         donb_flags |= GMX_NONBONDED_DO_SHIFTFORCE;
     }
-    if (forceFlags & GMX_FORCE_ENERGY)
+    if (stepWork.computeEnergy)
     {
         donb_flags |= GMX_NONBONDED_DO_POTENTIAL;
     }
@@ -567,12 +566,13 @@ nonbonded_verlet_t::dispatchFreeEnergyKernel(Nbnxm::InteractionLocality  iLocali
 
     wallcycle_sub_start(wcycle_, ewcsNONBONDED_FEP);
 #pragma omp parallel for schedule(static) num_threads(nbl_fep.ssize())
-    for (int th = 0; th < nbl_fep.ssize(); th++)
+    for (gmx::index th = 0; th < nbl_fep.ssize(); th++)
     {
         try
         {
             gmx_nb_free_energy_kernel(nbl_fep[th].get(),
-                                      x, f, fr, &mdatoms, &kernel_data, nrnb);
+                                      x, forceWithShiftForces,
+                                      fr, &mdatoms, &kernel_data, nrnb);
         }
         GMX_CATCH_ALL_AND_EXIT_WITH_FATAL_ERROR;
     }
@@ -591,7 +591,7 @@ nonbonded_verlet_t::dispatchFreeEnergyKernel(Nbnxm::InteractionLocality  iLocali
     /* If we do foreign lambda and we have soft-core interactions
      * we have to recalculate the (non-linear) energies contributions.
      */
-    if (fepvals->n_lambda > 0 && (forceFlags & GMX_FORCE_DHDL) && fepvals->sc_alpha != 0)
+    if (fepvals->n_lambda > 0 && stepWork.computeDhdl && fepvals->sc_alpha != 0)
     {
         real lam_i[efptNR];
         kernel_data.flags          = (donb_flags & ~(GMX_NONBONDED_DO_FORCE | GMX_NONBONDED_DO_SHIFTFORCE)) | GMX_NONBONDED_DO_FOREIGNLAMBDA;
@@ -608,12 +608,13 @@ nonbonded_verlet_t::dispatchFreeEnergyKernel(Nbnxm::InteractionLocality  iLocali
             }
             reset_foreign_enerdata(enerd);
 #pragma omp parallel for schedule(static) num_threads(nbl_fep.ssize())
-            for (int th = 0; th < nbl_fep.ssize(); th++)
+            for (gmx::index th = 0; th < nbl_fep.ssize(); th++)
             {
                 try
                 {
                     gmx_nb_free_energy_kernel(nbl_fep[th].get(),
-                                              x, f, fr, &mdatoms, &kernel_data, nrnb);
+                                              x, forceWithShiftForces,
+                                              fr, &mdatoms, &kernel_data, nrnb);
                 }
                 GMX_CATCH_ALL_AND_EXIT_WITH_FATAL_ERROR;
             }

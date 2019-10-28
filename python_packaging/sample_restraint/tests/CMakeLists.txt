@@ -1,7 +1,3 @@
-# Activate the CTest module for this directory.
-enable_testing()
-
-
 if(DOWNLOAD_GOOGLETEST)
     # Download and unpack googletest at configure time
     configure_file(CMakeLists.gtest.in googletest-download/CMakeLists.txt)
@@ -25,9 +21,25 @@ if(DOWNLOAD_GOOGLETEST)
     add_subdirectory(${CMAKE_CURRENT_BINARY_DIR}/googletest-src
                      ${CMAKE_CURRENT_BINARY_DIR}/googletest-build
                      EXCLUDE_FROM_ALL)
+    add_library(GTest::GTest ALIAS gtest)
     add_library(GTest::Main ALIAS gtest_main)
 else()
-    find_package(GTest REQUIRED)
+    if(GMXAPI_EXTENSION_MASTER_PROJECT)
+        find_package(GTest REQUIRED)
+    else() # building as part of a GROMACS build...
+        if(TARGET gtest)
+            add_library(GTest::GTest ALIAS gtest)
+            add_library(GTest::Main ALIAS gtest_main)
+        else()
+            find_package(GTest)
+        endif()
+        if(NOT TARGET GTest::GTest)
+            message(FATAL_ERROR "GTest::GTest target should have been supplied by the parent project.")
+        endif()
+        if(NOT TARGET GTest::Main)
+            message(FATAL_ERROR "GTest::Main target should have been supplied by the parent project.")
+        endif()
+    endif()
 endif() # DOWNLOAD_GOOGLETEST
 
 #
@@ -36,7 +48,10 @@ endif() # DOWNLOAD_GOOGLETEST
 
 
 # Copy test files
-# TODO: solve test data file requirement in a follow up change
+# TODO: Deduplicate and leverage CMake dependencies.
+# We also build a test file in the spc_water_box pytest test fixture, but we can
+# presumably extract both of those from the GROMACS installation, or at least
+# through the gmxapi Python package resources.
 file(DOWNLOAD
      https://github.com/kassonlab/sample_restraint/raw/master/tests/data/topol.tpr
      ${CMAKE_CURRENT_SOURCE_DIR}/topol.tpr
@@ -55,42 +70,29 @@ configure_file(testingconfiguration.in.h testingconfiguration.h)
 
 # Test that the library can access its dependencies and build.
 add_executable(library-test test_binding.cpp)
+target_include_directories(library-test PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
+target_link_libraries(library-test Gromacs::gmxapi GTest::Main)
 gtest_add_tests(TARGET library-test
                 TEST_LIST BasicPlugin)
 
-target_include_directories(library-test PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
-target_link_libraries(library-test Gromacs::gmxapi gtest_main)
-
-set_tests_properties(${BasicPlugin} PROPERTIES
-                     COMPILE_DEFINITIONS "${GMOCK_COMPILE_DEFINITIONS}"
-                     COMPILE_FLAGS "${GMOCK_COMPILE_FLAGS}")
-
 # Test the C++ force evaluation for the restrained-ensemble biasing potential.
 add_executable(histogram-test test_histogram.cpp)
+target_include_directories(histogram-test PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
+set_target_properties(histogram-test PROPERTIES SKIP_BUILD_RPATH FALSE)
+target_link_libraries(histogram-test ensemblepotential Gromacs::gmxapi
+                      GTest::Main)
 gtest_add_tests(TARGET histogram-test
                 TEST_LIST EnsembleHistogramPotentialPlugin)
 
-target_include_directories(histogram-test PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
-
-set_target_properties(histogram-test PROPERTIES SKIP_BUILD_RPATH FALSE)
-target_link_libraries(histogram-test ensemblepotential Gromacs::gmxapi
-                      gtest_main)
-
-set_tests_properties(${EnsembleHistogramPotentialPlugin} PROPERTIES
-                     COMPILE_DEFINITIONS "${GMOCK_COMPILE_DEFINITIONS}"
-                     COMPILE_FLAGS "${GMOCK_COMPILE_FLAGS}")
-
 # Test the flat-bottom bounding potential built in to the ensemble restraint.
 add_executable(bounding-test test_bounding_restraint.cpp)
-gtest_add_tests(TARGET bounding-test
-                TEST_LIST EnsembleBoundingPotentialPlugin)
-
 target_include_directories(bounding-test PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
-
 set_target_properties(bounding-test PROPERTIES SKIP_BUILD_RPATH FALSE)
 target_link_libraries(bounding-test ensemblepotential Gromacs::gmxapi
                       GTest::Main)
+gtest_add_tests(TARGET bounding-test
+                TEST_LIST EnsembleBoundingPotentialPlugin)
 
-set_tests_properties(${EnsembleBoundingPotentialPlugin} PROPERTIES
-                     COMPILE_DEFINITIONS "${GMOCK_COMPILE_DEFINITIONS}"
-                     COMPILE_FLAGS "${GMOCK_COMPILE_FLAGS}")
+if (NOT GMXAPI_EXTENSION_MASTER_PROJECT)
+    include(CMakeGROMACS.txt)
+endif ()

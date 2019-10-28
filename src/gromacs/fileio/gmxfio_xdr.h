@@ -50,6 +50,8 @@ struct t_fileio;
 void gmx_fio_setprecision(struct t_fileio *fio, gmx_bool bDouble);
 /* Select the floating point precision for reading and writing files */
 
+bool gmx_fio_is_double(struct t_fileio *fio);
+
 XDR *gmx_fio_getxdr(struct t_fileio *fio);
 /* Return the file pointer itself */
 
@@ -103,6 +105,8 @@ gmx_bool gmx_fio_ndoe_int64(struct t_fileio *fio, int64_t *item, int n,
                             int line);
 gmx_bool gmx_fio_ndoe_uchar(struct t_fileio *fio, unsigned char *item, int n,
                             const char *desc, const char *srcfile, int line);
+gmx_bool gmx_fio_ndoe_char(struct t_fileio *fio, char *item, int n,
+                           const char *desc, const char *srcfile, int line);
 gmx_bool gmx_fio_ndoe_ushort(struct t_fileio *fio, unsigned short *item, int n,
                              const char *desc, const char *srcfile, int line);
 gmx_bool gmx_fio_ndoe_rvec(struct t_fileio *fio, rvec *item, int n,
@@ -140,6 +144,7 @@ gmx_bool gmx_fio_ndoe_string(struct t_fileio *fio, char *item[], int n,
 #define gmx_fio_ndo_int32(fio, item, n)             gmx_fio_ndoe_int32(fio, item, n, (#item), __FILE__, __LINE__)
 #define gmx_fio_ndo_int64(fio, item, n)             gmx_fio_ndoe_int64(fio, item, n, (#item), __FILE__, __LINE__)
 #define gmx_fio_ndo_uchar(fio, item, n)             gmx_fio_ndoe_uchar(fio, item, n, (#item), __FILE__, __LINE__)
+#define gmx_fio_ndo_char(fio, item, n)              gmx_fio_ndoe_char(fio, item, n, (#item), __FILE__, __LINE__)
 #define gmx_fio_ndo_ushort(fio, item, n)            gmx_fio_ndoe_ushort(fio, item, n, (#item), __FILE__, __LINE__)
 #define gmx_fio_ndo_rvec(fio, item, n)              gmx_fio_ndoe_rvec(fio, item, n, (#item), __FILE__, __LINE__)
 #define gmx_fio_ndo_ivec(fio, item, n)              gmx_fio_ndoe_ivec(fio, item, n, (#item), __FILE__, __LINE__)
@@ -184,6 +189,12 @@ class FileIOXdrSerializer : public ISerializer
         void doRvec(rvec *value) override;
         //! Handle I/O if string.
         void doString(std::string *value) override;
+        //! Special case for handling I/O of a vector of characters.
+        void doCharArray(char *values, int elements) override;
+        //! Special case for handling I/O of a vector of unsigned characters.
+        void doUCharArray(unsigned char *values, int elements) override;
+        //! Special case for handling I/O of a vector of rvecs.
+        void doRvecArray(rvec *values, int elements) override;
 
     private:
         //! File I/O handle.

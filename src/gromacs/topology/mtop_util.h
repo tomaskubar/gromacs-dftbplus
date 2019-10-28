@@ -69,10 +69,6 @@ gmx_mtop_finalize(gmx_mtop_t *mtop);
 void
 gmx_mtop_count_atomtypes(const gmx_mtop_t *mtop, int state, int typecount[]);
 
-/* Returns the total number of charge groups in mtop */
-int
-ncg_mtop(const gmx_mtop_t *mtop);
-
 /*!\brief Returns the total number of molecules in mtop
  *
  * \param[in] mtop  The global topology
@@ -81,9 +77,6 @@ int gmx_mtop_num_molecules(const gmx_mtop_t &mtop);
 
 /* Returns the total number of residues in mtop. */
 int gmx_mtop_nres(const gmx_mtop_t *mtop);
-
-/* Removes the charge groups, i.e. makes single atom charge groups, in mtop */
-void gmx_mtop_remove_chargegroups(gmx_mtop_t *mtop);
 
 class AtomIterator;
 
@@ -259,10 +252,9 @@ gmx_mtop_ftype_count(const gmx_mtop_t *mtop, int ftype);
 int
 gmx_mtop_ftype_count(const gmx_mtop_t &mtop, int ftype);
 
-/* Returns a charge group index for the whole system */
-t_block
-gmx_mtop_global_cgs(const gmx_mtop_t *mtop);
-
+/* Returns the total number of interactions in the system with all interaction flags that are set in \p if_flags set */
+int gmx_mtop_interaction_count(const gmx_mtop_t &mtop,
+                               int unsigned      if_flags);
 
 /* Returns a single t_atoms struct for the whole system */
 t_atoms

@@ -1,7 +1,7 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2014,2015,2016,2018, by the GROMACS development team, led by
+ * Copyright (c) 2014,2015,2016,2018,2019, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -328,11 +328,23 @@ std::string FloatingPointTolerance::toString(const FloatingPointDifference &diff
 FloatingPointTolerance
 relativeToleranceAsFloatingPoint(double magnitude, double tolerance)
 {
-    const double absoluteTolerance = std::abs(magnitude) * tolerance;
-    return FloatingPointTolerance(absoluteTolerance, absoluteTolerance,
-                                  tolerance, tolerance,
-                                  UINT64_MAX, UINT64_MAX,
-                                  false);
+    return relativeToleranceAsPrecisionDependentFloatingPoint(
+            magnitude, float(tolerance), tolerance);
+}
+
+FloatingPointTolerance
+relativeToleranceAsPrecisionDependentFloatingPoint(double magnitude,
+                                                   float  singleTolerance,
+                                                   double doubleTolerance)
+{
+    const float  absoluteSingleTolerance = std::abs(float(magnitude)) * singleTolerance;
+    const double absoluteDoubleTolerance = std::abs(magnitude) * doubleTolerance;
+    return {
+               absoluteSingleTolerance, absoluteDoubleTolerance,
+               singleTolerance, doubleTolerance,
+               UINT64_MAX, UINT64_MAX,
+               false
+    };
 }
 //! \endcond
 

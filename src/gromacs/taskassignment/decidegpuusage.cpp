@@ -60,6 +60,7 @@
 #include "gromacs/mdtypes/commrec.h"
 #include "gromacs/mdtypes/inputrec.h"
 #include "gromacs/mdtypes/md_enums.h"
+#include "gromacs/mdtypes/mdrunoptions.h"
 #include "gromacs/taskassignment/taskassignment.h"
 #include "gromacs/topology/topology.h"
 #include "gromacs/utility/baseversion.h"
@@ -487,6 +488,101 @@ bool decideWhetherToUseGpusForBonded(const bool       useGpuForNonbonded,
     bool usingOurCpuForPmeOrEwald = (usingLJPme || (usingElecPmeOrEwald && !useGpuForPme && numPmeRanksPerSimulation <= 0));
 
     return gpusWereDetected && usingOurCpuForPmeOrEwald;
+}
+
+bool decideWhetherToUseGpuForUpdate(const bool        forceGpuUpdateDefaultOn,
+                                    const bool        isDomainDecomposition,
+                                    const bool        useGpuForPme,
+                                    const bool        useGpuForNonbonded,
+                                    const bool        useGpuForBufferOps,
+                                    const TaskTarget  updateTarget,
+                                    const bool        gpusWereDetected,
+                                    const t_inputrec &inputrec,
+                                    const bool        haveVSites,
+                                    const bool        useEssentialDynamics,
+                                    const bool        doOrientationRestraints,
+                                    const bool        doDistanceRestraints,
+                                    const bool        useReplicaExchange)
+{
+
+    if (updateTarget == TaskTarget::Cpu)
+    {
+        return false;
+    }
+
+    std::string errorMessage;
+
+    if (isDomainDecomposition)
+    {
+        errorMessage += "Domain decomposition is not supported.\n";
+    }
+    // Using the GPU-version of update makes sense if forces are already on the GPU, i.e. if at least:
+    // 1. PME is on the GPU (there should be a copy of coordinates on a GPU in rvec format for PME spread).
+    // 2. Non-bonded interactions and buffer ops are on the GPU.
+    if (!(useGpuForPme || (useGpuForNonbonded && useGpuForBufferOps)))
+    {
+        errorMessage += "Either PME or short-ranged non-bonded interaction tasks must run on the GPU.\n";
+    }
+    if (!gpusWereDetected)
+    {
+        errorMessage += "Compatible GPUs must have been found.\n";
+    }
+    if (GMX_GPU != GMX_GPU_CUDA)
+    {
+        errorMessage += "Only a CUDA build is supported.\n";
+    }
+    if (inputrec.eI != eiMD)
+    {
+        errorMessage += "Only the md integrator is supported.\n";
+    }
+    if (inputrec.etc == etcNOSEHOOVER)
+    {
+        errorMessage += "Nose-Hoover temperature coupling is not supported.\n";
+    }
+    if (inputrec.epc != epcNO && inputrec.epc != epcPARRINELLORAHMAN)
+    {
+        errorMessage += "Only Parrinello-Rahman pressure control is supported.\n";
+    }
+    if (haveVSites)
+    {
+        errorMessage += "Virtual sites are not supported.\n";
+    }
+    if (useEssentialDynamics)
+    {
+        errorMessage += "Essential dynamics is not supported.\n";
+    }
+    if (inputrec.bPull || inputrec.pull)
+    {
+        errorMessage += "Pulling is not supported.\n";
+    }
+    if (doOrientationRestraints)
+    {
+        errorMessage += "Orientation restraints are not supported.\n";
+    }
+    if (doDistanceRestraints)
+    {
+        errorMessage += "Distance restraints are not supported.\n";
+    }
+    if (inputrec.efep != efepNO)
+    {
+        errorMessage += "Free energy perturbations are not supported.\n";
+    }
+    if (useReplicaExchange)
+    {
+        errorMessage += "Replica exchange simulations are not supported.\n";
+    }
+    if (!errorMessage.empty())
+    {
+        if (updateTarget == TaskTarget::Gpu)
+        {
+            std::string prefix = gmx::formatString("Update task on the GPU was required,\n"
+                                                   "but the following condition(s) were not satisfied:\n");
+            GMX_THROW(InconsistentInputError((prefix + errorMessage).c_str()));
+        }
+        return false;
+    }
+
+    return ((forceGpuUpdateDefaultOn && updateTarget == TaskTarget::Auto) || (updateTarget == TaskTarget::Gpu));
 }
 
 }  // namespace gmx

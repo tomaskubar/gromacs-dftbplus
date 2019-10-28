@@ -9,9 +9,6 @@
 
 #include "ensemblepotential.h"
 
-#include "gromacs/utility/classhelpers.h"
-#include "gromacs/utility/arrayref.h"
-
 #include <gtest/gtest.h>
 
 namespace {
@@ -80,9 +77,3 @@ TEST(EnsembleBoundingPotentialPlugin, ForceCalc)
 }
 
 } // end anonymous namespace
-
-int main(int argc, char* argv[])
-{
-    ::testing::InitGoogleTest(&argc, argv);
-    return RUN_ALL_TESTS();
-}

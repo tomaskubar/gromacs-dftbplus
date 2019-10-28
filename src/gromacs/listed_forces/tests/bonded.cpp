@@ -547,17 +547,19 @@ class ListedForcesTest : public ::testing::TestWithParam<std::tuple<iListInput, 
             t_mdatoms         mdatoms    = {0};
             mdatoms.chargeA              = chargeA.data();
             OutputQuantities  output;
-            output.energy = bondedFunction(input_.ftype) (iatoms.size(),
-                                                          iatoms.data(),
-                                                          &input_.iparams,
-                                                          as_rvec_array(x_.data()),
-                                                          output.f, output.fshift,
-                                                          &pbc_,
-                                                          /* const struct t_graph *g */ nullptr,
-                                                          lambda, &output.dvdlambda,
-                                                          &mdatoms,
-                                                          /* struct t_fcdata * */ nullptr,
-                                                          ddgatindex.data());
+            output.energy = calculateSimpleBond(input_.ftype,
+                                                iatoms.size(),
+                                                iatoms.data(),
+                                                &input_.iparams,
+                                                as_rvec_array(x_.data()),
+                                                output.f, output.fshift,
+                                                &pbc_,
+                                                /* const struct t_graph *g */ nullptr,
+                                                lambda, &output.dvdlambda,
+                                                &mdatoms,
+                                                /* struct t_fcdata * */ nullptr,
+                                                ddgatindex.data(),
+                                                BondedKernelFlavor::ForcesAndVirialAndEnergy);
             // Internal consistency test of both test input
             // and bonded functions.
             EXPECT_TRUE((input_.fep || (output.dvdlambda == 0.0)));
@@ -596,12 +598,12 @@ TEST_P (ListedForcesTest, Ifunc)
 std::vector<iListInput> c_InputBonds =
 {
     { iListInput().setHarmonic(F_BONDS, 0.15, 500.0) },
-    { iListInput(2e-6f, 1e-8).setHarmonic(F_BONDS, 0.15, 500.0, 0.17, 400.0) },
-    { iListInput(1e-4f, 1e-8).setHarmonic(F_G96BONDS, 0.15, 50.0) },
+    { iListInput(2e-6F, 1e-8).setHarmonic(F_BONDS, 0.15, 500.0, 0.17, 400.0) },
+    { iListInput(1e-4F, 1e-8).setHarmonic(F_G96BONDS, 0.15, 50.0) },
     { iListInput().setHarmonic(F_G96BONDS, 0.15, 50.0, 0.17, 40.0) },
     { iListInput().setCubic(0.16, 50.0, 2.0) },
-    { iListInput(2e-6f, 1e-8).setMorse(0.15, 50.0, 2.0, 0.17, 40.0, 1.6) },
-    { iListInput(2e-6f, 1e-8).setMorse(0.15, 30.0, 2.7) },
+    { iListInput(2e-6F, 1e-8).setMorse(0.15, 50.0, 2.0, 0.17, 40.0, 1.6) },
+    { iListInput(2e-6F, 1e-8).setMorse(0.15, 30.0, 2.7) },
     { iListInput().setFene(0.4, 5.0) }
 };
 
@@ -675,6 +677,8 @@ std::vector<std::vector<gmx::RVec> > c_coordinatesForTests =
 //! PBC values for testing
 std::vector<int> c_pbcForTests = { epbcNONE, epbcXY, epbcXYZ };
 
+// Those tests give errors with the intel compiler and nothing else, so we disable them only there.
+#ifndef __INTEL_COMPILER
 INSTANTIATE_TEST_CASE_P(Bond, ListedForcesTest, ::testing::Combine(::testing::ValuesIn(c_InputBonds), ::testing::ValuesIn(c_coordinatesForTests), ::testing::ValuesIn(c_pbcForTests)));
 
 INSTANTIATE_TEST_CASE_P(Angle, ListedForcesTest, ::testing::Combine(::testing::ValuesIn(c_InputAngles), ::testing::ValuesIn(c_coordinatesForTests), ::testing::ValuesIn(c_pbcForTests)));
@@ -684,7 +688,7 @@ INSTANTIATE_TEST_CASE_P(Dihedral, ListedForcesTest, ::testing::Combine(::testing
 INSTANTIATE_TEST_CASE_P(Polarize, ListedForcesTest, ::testing::Combine(::testing::ValuesIn(c_InputPols), ::testing::ValuesIn(c_coordinatesForTests), ::testing::ValuesIn(c_pbcForTests)));
 
 INSTANTIATE_TEST_CASE_P(Restraints, ListedForcesTest, ::testing::Combine(::testing::ValuesIn(c_InputRestraints), ::testing::ValuesIn(c_coordinatesForTests), ::testing::ValuesIn(c_pbcForTests)));
-
+#endif
 }  // namespace
 
 }  // namespace gmx

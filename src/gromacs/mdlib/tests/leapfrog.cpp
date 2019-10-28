@@ -33,15 +33,17 @@
  * the research papers on the package. Check out http://www.gromacs.org.
  */
 /*! \internal \file
- * \brief Integrator tests
+ * \brief Tests for the Leap-Frog integrator
  *
- * Test for CUDA implementation of the Leap-Frog integrator.
+ *  The test creates a system of independent particles exerting constant
+ *  external forces and makes several numerical integration timesteps.
+ *  The results are compared with the analytical solution (for the systems
+ *  without the temperature coupling) and with the pre-computed reference
+ *  values. The tests use runners that are created for each available
+ *  implementation of the tested algorithm.
  *
- * \todo Connect to the CPU-based version.
- * \todo Prepare for temperature and pressure controlled integrators.
+ * \todo Add tests for integrators with pressure control.
  * \todo Add PBC handling test.
- * \todo Take over coordinates/velocities/forces handling - this infrastructure
- *       will be removed from integrator.
  *
  * \author Artem Zhmurov <zhmurov@gmail.com>
  * \ingroup module_mdlib
@@ -63,209 +65,215 @@
 
 #include "gromacs/gpu_utils/gpu_testutils.h"
 #include "gromacs/math/vec.h"
-#include "gromacs/mdlib/leapfrog_cuda.h"
+#include "gromacs/math/vectypes.h"
+#include "gromacs/mdtypes/mdatom.h"
 #include "gromacs/utility/stringutil.h"
 
 #include "testutils/refdata.h"
 #include "testutils/testasserts.h"
 
+#include "leapfrogtestdata.h"
+#include "leapfrogtestrunners.h"
+
 namespace gmx
 {
 namespace test
 {
+namespace
+{
 
-#if GMX_GPU == GMX_GPU_CUDA
-
-/*! \brief The parameter space for the test.
+/*! \brief The parameters for the test.
  *
- * The test will run for all possible combinations of accessible
- * values of the:
+ * The test will run for combinations of:
+ *
  * 1. Number of atoms
  * 2. Timestep
- * 3-5. Velocity components
- * 6-8. Force components
- * 9. Number of steps
+ * 3. Number of steps
+ * 4. Velocity components
+ * 5. Force components
+ * 6. Number of temperature coupling groups
  */
-typedef std::tuple<int, real, real, real, real, real, real, real, int> IntegratorTestParameters;
+struct LeapFrogTestParameters
+{
+    //! Total number of atoms
+    int  numAtoms;
+    //! Timestep
+    real timestep;
+    //! Number of integration steps
+    int  numSteps;
+    //! Initial velocity
+    rvec v;
+    //! Constant force
+    rvec f;
+    //! Number of temperature coupling group (zero for no temperature coupling)
+    int  numTCoupleGroups;
+    //! Number of steps between pressure coupling steps (zero for no pressure coupling).
+    int  nstpcouple;
+};
 
-/*! \brief Test fixture for integrator.
- *
- *  Creates a system of independent particles exerting constant external forces,
- *  makes several numerical integration timesteps and compares the result
- *  with analytical solution.
- *
+//! The set of parameters combinations to run the test on
+const LeapFrogTestParameters parametersSets[] = {{  1, 0.001,    1, {0.0,  0.0, 0.0}, { 0.0, 0.0,  0.0},  0, 0},  // Zero velocity and force
+                                                 {  1, 0.001,    1, {0.0,  0.0, 0.0}, {-3.0, 2.0, -1.0},  0, 0},  // Zero velocity
+                                                 {  1, 0.001,    1, {1.0, -2.0, 3.0}, { 0.0, 0.0,  0.0},  0, 0},  // Zero force
+                                                 {  1, 0.001,    1, {1.0, -2.0, 3.0}, {-3.0, 2.0, -1.0},  0, 0},  // 1 particle
+                                                 { 10, 0.001,    1, {1.0, -2.0, 3.0}, {-3.0, 2.0, -1.0},  0, 0},  // 10 particles
+                                                 {100, 0.001,    1, {1.0, -2.0, 3.0}, {-3.0, 2.0, -1.0},  0, 0},  // 100 particles
+                                                 {300, 0.001,    1, {1.0, -2.0, 3.0}, {-3.0, 2.0, -1.0},  0, 0},  // 300 particles
+                                                 {  1, 0.0005,   1, {1.0, -2.0, 3.0}, {-3.0, 2.0, -1.0},  0, 0},  // 0.0005 ps timestep
+                                                 {  1, 0.001,   10, {1.0, -2.0, 3.0}, {-3.0, 2.0, -1.0},  0, 0},  // 10 step
+                                                 {  1, 0.001,  100, {1.0, -2.0, 3.0}, {-3.0, 2.0, -1.0},  0, 0},  // 100 steps
+                                                 {100, 0.001,    1, {1.0, -2.0, 3.0}, {-3.0, 2.0, -1.0},  1, 0},  // 1 temperature couple group
+                                                 {100, 0.001,    1, {1.0, -2.0, 3.0}, {-3.0, 2.0, -1.0},  2, 0},  // 2 temperature couple groups
+                                                 {100, 0.001,    1, {1.0, -2.0, 3.0}, {-3.0, 2.0, -1.0}, 10, 0},  // 10 temperature couple groups
+                                                 {100, 0.001,   10, {1.0, -2.0, 3.0}, {-3.0, 2.0, -1.0},  0, 1},  // With pressure coupling
+                                                 {100, 0.001,   10, {1.0, -2.0, 3.0}, {-3.0, 2.0, -1.0},  2, 1},  // With both temperature and pressure coupling
+                                                 {100, 0.001,   10, {1.0, -2.0, 3.0}, {-3.0, 2.0, -1.0},  0, 3}}; // Do pressure coupling not on every step
+
+
+
+/*! \brief Test fixture for LeapFrog integrator.
  */
-class IntegratorTest : public ::testing::TestWithParam<IntegratorTestParameters>
+class LeapFrogTest : public ::testing::TestWithParam<LeapFrogTestParameters>
 {
     public:
-        //! Number of atoms in the system
-        int  numAtoms_;
-        //! Integration timestep
-        real timestep_;
+        //! Availiable runners (CPU and GPU versions of the Leap-Frog)
+        static std::unordered_map <std::string, void(*)(LeapFrogTestData *testData,
+                                                        const int         numSteps)> s_runners_;
+        //! Reference data
+        TestReferenceData                   refData_;
+        //! Checker for reference data
+        TestReferenceChecker                checker_;
 
-        //! Initial coordinates
-        std::vector<RVec> x0_;
-        //! Current coordinates
-        std::vector<RVec> x_;
-        //! Coordinates after integrator update
-        std::vector<RVec> xPrime_;
-        //! Initial velocities
-        std::vector<RVec> v0_;
-        //! Current velocities
-        std::vector<RVec> v_;
-        //! External forces
-        std::vector<RVec> f_;
-        //! Inverse masses of the particles
-        std::vector<real> inverseMasses_;
-        //! MD atoms structure in which inverse masses will be passed to the integrator
-        t_mdatoms         mdAtoms_;
-
-        /*! \brief Test initialization function.
-         *
-         * \param[in]  numAtoms  Number of atoms in the system
-         * \param[in]  timestep  Integration timestep
-         * \param[in]  v0        Initial velocity (same for all particles)
-         * \param[in]  f0        External constant force, acting on all particles
-         */
-        void init(int numAtoms, real timestep, rvec v0, rvec f0)
+        LeapFrogTest() :
+            checker_(refData_.rootChecker())
         {
-            numAtoms_    = numAtoms;
-            timestep_    = timestep;
-
-            x0_.resize(numAtoms_);
-            x_.resize(numAtoms_);
-            xPrime_.resize(numAtoms_);
-            v0_.resize(numAtoms_);
-            v_.resize(numAtoms_);
-            f_.resize(numAtoms_);
-            inverseMasses_.resize(numAtoms_);
-
-            mdAtoms_.nr = numAtoms_;
-
-            for (unsigned i = 0; i < x_.size(); i++)
-            {
-                // Typical PBC box size is tens of nanometers
-                x_[i][XX] = (i%21)*1.0;
-                x_[i][YY] = 6.5 + (i%13)*(-1.0);
-                x_[i][ZZ] = (i%32)*(0.0);
-
-                for (int d = 0; d < DIM; d++)
-                {
-                    xPrime_[i][d] = 0.0;
-                    // Thermal velocity is ~1 nm/ps (|v0| = 1-2 nm/ps)
-                    v_[i][d] = v0[d];
-                    // TODO Check what value typical MD forces have (now ~ 1 kJ/mol/nm)
-                    f_[i][d] = f0[d];
-
-                    x0_[i][d] = x_[i][d];
-                    v0_[i][d] = v_[i][d];
-                }
-                // Atom masses are ~1-100 g/mol
-                inverseMasses_[i] = 1.0/(1.0 + i%100);
-            }
-            mdAtoms_.invmass = inverseMasses_.data();
         }
 
-        //! Store whether any compatible GPUs exist.
-        static bool s_hasCompatibleGpus;
-        //! Before any test is run, work out whether any compatible GPUs exist.
+        //! Setup the runners one for all parameters sets
         static void SetUpTestCase()
         {
-            s_hasCompatibleGpus = canComputeOnGpu();
+            //
+            // All runners should be registered here under appropriate conditions
+            //
+            s_runners_["LeapFrogSimple"]  = integrateLeapFrogSimple;
+            if (GMX_GPU == GMX_GPU_CUDA && canComputeOnGpu())
+            {
+                s_runners_["LeapFrogGpu"] = integrateLeapFrogGpu;
+            }
+        }
+
+        /*! \brief Test the numerical integrator against analytical solution for simple constant force case.
+         *
+         * \param[in]  tolerance  Tolerance
+         * \param[in]  testData   Test data object
+         * \param[in]  totalTime  Total numerical integration time
+         */
+        void testAgainstAnalyticalSolution(FloatingPointTolerance     tolerance,
+                                           const LeapFrogTestData    &testData,
+                                           const real                 totalTime)
+        {
+            for (int i = 0; i < testData.numAtoms_; i++)
+            {
+                rvec xAnalytical;
+                rvec vAnalytical;
+                for (int d = 0; d < DIM; d++)
+                {
+                    // Analytical solution for constant-force particle movement
+                    real x0 = testData.x0_[i][d];
+                    real v0 = testData.v0_[i][d];
+                    real f  = testData.f_[i][d];
+                    real im = testData.inverseMasses_[i];
+
+                    xAnalytical[d] = x0 + v0*totalTime + 0.5*f*totalTime*totalTime*im;
+                    vAnalytical[d] = v0 + f*totalTime*im;
+
+                    EXPECT_REAL_EQ_TOL(xAnalytical[d], testData.xPrime_[i][d], tolerance)
+                    << gmx::formatString("Coordinate %d of atom %d is different from analytical solution.", d, i);
+
+                    EXPECT_REAL_EQ_TOL(vAnalytical[d], testData.v_[i][d], tolerance)
+                    << gmx::formatString("Velocity component %d of atom %d is different from analytical solution.", d, i);
+                }
+            }
+        }
+
+        /*! \brief Test the numerical integrator against pre-computed reference values.
+         *
+         * \param[in]  testData   Test data object
+         */
+        void testAgainstReferenceData(const LeapFrogTestData    &testData)
+        {
+            TestReferenceChecker finalPositionsRef(checker_.checkSequenceCompound("FinalPositions", testData.numAtoms_));
+            for (int i = 0; i < testData.numAtoms_; i++)
+            {
+                const gmx::RVec     &xPrime  = testData.xPrime_[i];
+                TestReferenceChecker xPrimeRef(finalPositionsRef.checkCompound("Atom", nullptr));
+                xPrimeRef.checkReal(xPrime[XX], "XX");
+                xPrimeRef.checkReal(xPrime[YY], "YY");
+                xPrimeRef.checkReal(xPrime[ZZ], "ZZ");
+            }
+
+            TestReferenceChecker finalVelocitiesRef(checker_.checkSequenceCompound("FinalVelocities", testData.numAtoms_));
+            for (int i = 0; i < testData.numAtoms_; i++)
+            {
+                const gmx::RVec     &v  = testData.v_[i];
+                TestReferenceChecker vRef(finalVelocitiesRef.checkCompound("Atom", nullptr));
+                vRef.checkReal(v[XX], "XX");
+                vRef.checkReal(v[YY], "YY");
+                vRef.checkReal(v[ZZ], "ZZ");
+            }
         }
 };
 
-bool IntegratorTest::s_hasCompatibleGpus = false;
+std::unordered_map <std::string, void(*)(LeapFrogTestData *testData,
+                                         const int         numSteps)> LeapFrogTest::s_runners_;
 
-// The test will run only if:
-// 1. The code was compiled with CUDA
-// 2. There is a CUDA-capable GPU in a system
-// 3. This GPU is detectable
-// 4. GPU detection was not disabled by GMX_DISABLE_GPU_DETECTION environment variable
-TEST_P(IntegratorTest, SimpleIntegration)
+TEST_P(LeapFrogTest, SimpleIntegration)
 {
-    if (!s_hasCompatibleGpus)
+    // Cycle through all available runners
+    for (const auto &runner : s_runners_)
     {
-        return;
-    }
+        std::string            runnerName = runner.first;
 
-    int  numAtoms;    // 1. Number of atoms
-    real timestep;    // 2. Timestep
-    rvec v0;          // 3. Velocity
-    rvec f0;          // 4. Force
-    int  nStep;       // 5. Number of steps
-    std::tie(numAtoms, timestep, v0[XX], v0[YY], v0[ZZ], f0[XX], f0[YY], f0[ZZ], nStep) = GetParam();
+        LeapFrogTestParameters parameters = GetParam();
 
-    std::string testDescription = formatString("while testing %d atoms for %d timestep (dt = %f, v0=(%f, %f, %f), f0=(%f, %f, %f))",
-                                               numAtoms, nStep, timestep,
-                                               v0[XX], v0[YY], v0[ZZ],
-                                               f0[XX], f0[YY], f0[ZZ]);
+        std::string            testDescription = formatString("Testing %s with %d atoms for %d timesteps with %d temperature coupling groups and %s pressure coupling (dt = %f, v0=(%f, %f, %f), f0=(%f, %f, %f), nstpcouple = %d)",
+                                                              runnerName.c_str(),
+                                                              parameters.numAtoms, parameters.numSteps, parameters.numTCoupleGroups,
+                                                              parameters.nstpcouple == 0 ? "without" : "with",
+                                                              parameters.timestep,
+                                                              parameters.v[XX], parameters.v[YY], parameters.v[ZZ],
+                                                              parameters.f[XX], parameters.f[YY], parameters.f[ZZ],
+                                                              parameters.nstpcouple);
+        SCOPED_TRACE(testDescription);
 
+        std::unique_ptr<LeapFrogTestData> testData =
+            std::make_unique<LeapFrogTestData>(parameters.numAtoms, parameters.timestep,
+                                               parameters.v, parameters.f,
+                                               parameters.numTCoupleGroups,
+                                               parameters.nstpcouple);
 
-    init(numAtoms, timestep, v0, f0);
+        runner.second(testData.get(), parameters.numSteps);
 
-    std::unique_ptr<LeapFrogCuda> integrator = std::make_unique<LeapFrogCuda>();
+        real totalTime = parameters.numSteps*parameters.timestep;
+        // TODO For the case of constant force, the numerical scheme is exact and
+        //      the only source of errors is floating point arithmetic. Hence,
+        //      the tolerance can be calculated.
+        FloatingPointTolerance tolerance = absoluteTolerance(parameters.numSteps*0.000005);
 
-    integrator->set(mdAtoms_);
-
-    for (int step = 0; step < nStep; step++)
-    {
-        integrator->copyIntegrateCopy(numAtoms,
-                                      (rvec*)(x_.data()),
-                                      (rvec*)(xPrime_.data()),
-                                      (rvec*)(v_.data()),
-                                      (rvec*)(f_.data()),
-                                      timestep_);
-
-        for (int i = 0; i < numAtoms; i++)
+        // Test against the analytical solution (without temperature coupling)
+        if (parameters.numTCoupleGroups == 0 && parameters.nstpcouple == 0)
         {
-            for (int d = 0; d < DIM; d++)
-            {
-                x_.at(i)[d] = xPrime_.at(i)[d];
-            }
+            testAgainstAnalyticalSolution(tolerance, *testData, totalTime);
         }
-    }
 
-    real totalTime = nStep*timestep;
-    // TODO For the case of constant force, the numerical scheme is exact and
-    //      the only source of errors is floating point arithmetic. Hence,
-    //      the tolerance can be calculated.
-    FloatingPointTolerance tolerance = absoluteTolerance(nStep*0.000005);
-
-    for (unsigned i = 0; i < x_.size(); i++)
-    {
-        rvec xAnalytical;
-        rvec vAnalytical;
-        for (int d = 0; d < DIM; d++)
-        {
-            // Analytical solution for constant-force particle movement
-            xAnalytical[d] = x0_[i][d] + v0_[i][d]*totalTime + 0.5*f_[i][d]*totalTime*totalTime*inverseMasses_[i];
-            vAnalytical[d] = v0_[i][d] + f_[i][d]*totalTime*inverseMasses_[i];
-
-            EXPECT_REAL_EQ_TOL(xPrime_[i][d], xAnalytical[d], tolerance)
-            << gmx::formatString("Coordinate %d of atom %d is different from analytical solution", d, i)
-            << testDescription;
-
-            EXPECT_REAL_EQ_TOL(v_[i][d], vAnalytical[d], tolerance)
-            << gmx::formatString("Velocity component %d of atom %d is different from analytical solution", d, i)
-            << testDescription;
-        }
+        checker_.setDefaultTolerance(tolerance);
+        testAgainstReferenceData(*testData);
     }
 }
 
-INSTANTIATE_TEST_CASE_P(WithParameters, IntegratorTest,
-                            ::testing::Combine(
-                                    ::testing::Values(1, 10, 300),    // Number of atoms
-                                    ::testing::Values(0.001, 0.0005), // Timestep
-                                    ::testing::Values(-2.0, 0.0),     // vx
-                                    ::testing::Values( 0.0, 2.0),     // vy
-                                    ::testing::Values( 0.0),          // vz
-                                    ::testing::Values(-1.0, 0.0),     // fx
-                                    ::testing::Values( 0.0, 1.0),     // fy
-                                    ::testing::Values( 2.0),          // fz
-                                    ::testing::Values(1, 10)          // Number of steps
-                                ));
-#endif                                                                // GMX_GPU == GMX_GPU_CUDA
+INSTANTIATE_TEST_CASE_P(WithParameters, LeapFrogTest,
+                            ::testing::ValuesIn(parametersSets));
 
-}                                                                     // namespace test
-}                                                                     // namespace gmx
+}   // namespace
+}   // namespace test
+}   // namespace gmx

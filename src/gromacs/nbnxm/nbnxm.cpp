@@ -46,9 +46,9 @@
 #include "nbnxm.h"
 
 #include "gromacs/domdec/domdec_struct.h"
-#include "gromacs/nbnxm/atomdata.h"
 #include "gromacs/timing/wallcycle.h"
 
+#include "atomdata.h"
 #include "pairlistsets.h"
 #include "pairsearch.h"
 
@@ -56,20 +56,19 @@
 
 void nbnxn_put_on_grid(nonbonded_verlet_t             *nb_verlet,
                        const matrix                    box,
-                       int                             ddZone,
+                       int                             gridIndex,
                        const rvec                      lowerCorner,
                        const rvec                      upperCorner,
                        const gmx::UpdateGroupsCog     *updateGroupsCog,
-                       int                             atomStart,
-                       int                             atomEnd,
+                       gmx::Range<int>                 atomRange,
                        real                            atomDensity,
                        gmx::ArrayRef<const int>        atomInfo,
                        gmx::ArrayRef<const gmx::RVec>  x,
                        int                             numAtomsMoved,
                        const int                      *move)
 {
-    nb_verlet->pairSearch_->putOnGrid(box, ddZone, lowerCorner, upperCorner,
-                                      updateGroupsCog, atomStart, atomEnd, atomDensity,
+    nb_verlet->pairSearch_->putOnGrid(box, gridIndex, lowerCorner, upperCorner,
+                                      updateGroupsCog, atomRange, atomDensity,
                                       atomInfo, x, numAtomsMoved, move,
                                       nb_verlet->nbat.get());
 }
@@ -92,8 +91,7 @@ void nbnxn_put_on_grid_nonlocal(nonbonded_verlet_t              *nbv,
         nbnxn_put_on_grid(nbv, nullptr,
                           zone, c0, c1,
                           nullptr,
-                          zones->cg_range[zone],
-                          zones->cg_range[zone+1],
+                          { zones->cg_range[zone], zones->cg_range[zone+1] },
                           -1,
                           atomInfo,
                           x,
@@ -132,22 +130,33 @@ void nonbonded_verlet_t::setAtomProperties(const t_mdatoms          &mdatoms,
     nbnxn_atomdata_set(nbat.get(), pairSearch_->gridSet(), &mdatoms, atomInfo.data());
 }
 
-void nonbonded_verlet_t::setCoordinates(const Nbnxm::AtomLocality       locality,
-                                        const bool                      fillLocal,
-                                        gmx::ArrayRef<const gmx::RVec>  x,
-                                        BufferOpsUseGpu                 useGpu,
-                                        void                           *xPmeDevicePtr)
+void nonbonded_verlet_t::convertCoordinates(const gmx::AtomLocality         locality,
+                                            const bool                      fillLocal,
+                                            gmx::ArrayRef<const gmx::RVec>  coordinates)
 {
     wallcycle_start(wcycle_, ewcNB_XF_BUF_OPS);
     wallcycle_sub_start(wcycle_, ewcsNB_X_BUF_OPS);
 
-    auto fnPtr = (useGpu == BufferOpsUseGpu::True) ?
-        nbnxn_atomdata_copy_x_to_nbat_x<true> :
-        nbnxn_atomdata_copy_x_to_nbat_x<false>;
+    nbnxn_atomdata_copy_x_to_nbat_x(pairSearch_->gridSet(), locality, fillLocal,
+                                    as_rvec_array(coordinates.data()),
+                                    nbat.get());
 
-    fnPtr(pairSearch_->gridSet(), locality, fillLocal,
-          as_rvec_array(x.data()),
-          nbat.get(), gpu_nbv, xPmeDevicePtr);
+    wallcycle_sub_stop(wcycle_, ewcsNB_X_BUF_OPS);
+    wallcycle_stop(wcycle_, ewcNB_XF_BUF_OPS);
+}
+
+void nonbonded_verlet_t::convertCoordinatesGpu(const gmx::AtomLocality          locality,
+                                               const bool                       fillLocal,
+                                               DeviceBuffer<float>              d_x,
+                                               GpuEventSynchronizer            *xReadyOnDevice)
+{
+    wallcycle_start(wcycle_, ewcNB_XF_BUF_OPS);
+    wallcycle_sub_start(wcycle_, ewcsNB_X_BUF_OPS);
+
+    nbnxn_atomdata_x_to_nbat_x_gpu(pairSearch_->gridSet(), locality, fillLocal,
+                                   gpu_nbv,
+                                   d_x,
+                                   xReadyOnDevice);
 
     wallcycle_sub_stop(wcycle_, ewcsNB_X_BUF_OPS);
     wallcycle_stop(wcycle_, ewcNB_XF_BUF_OPS);
@@ -159,15 +168,9 @@ gmx::ArrayRef<const int> nonbonded_verlet_t::getGridIndices() const
 }
 
 void
-nonbonded_verlet_t::atomdata_add_nbat_f_to_f(const Nbnxm::AtomLocality           locality,
-                                             rvec                               *f,
-                                             BufferOpsUseGpu                     useGpu,
-                                             GpuBufferOpsAccumulateForce         accumulateForce)
+nonbonded_verlet_t::atomdata_add_nbat_f_to_f(const gmx::AtomLocality  locality,
+                                             gmx::ArrayRef<gmx::RVec> force)
 {
-
-    GMX_ASSERT(!((useGpu == BufferOpsUseGpu::False) &&
-                 (accumulateForce == GpuBufferOpsAccumulateForce::True)),
-               "Accumulatation of force is only valid when GPU buffer ops are active");
 
     /* Skip the reduction if there was no short-range GPU work to do
      * (either NB or both NB and bonded work). */
@@ -179,15 +182,42 @@ nonbonded_verlet_t::atomdata_add_nbat_f_to_f(const Nbnxm::AtomLocality          
     wallcycle_start(wcycle_, ewcNB_XF_BUF_OPS);
     wallcycle_sub_start(wcycle_, ewcsNB_F_BUF_OPS);
 
-    auto fn = useGpu == BufferOpsUseGpu::True ? reduceForces<true> : reduceForces<false>;
-    fn(nbat.get(), locality, pairSearch_->gridSet(), f, gpu_nbv, accumulateForce);
+    reduceForces(nbat.get(), locality, pairSearch_->gridSet(), as_rvec_array(force.data()));
 
     wallcycle_sub_stop(wcycle_, ewcsNB_F_BUF_OPS);
     wallcycle_stop(wcycle_, ewcNB_XF_BUF_OPS);
 }
 
 void
-nonbonded_verlet_t::atomdata_init_add_nbat_f_to_f_gpu()
+nonbonded_verlet_t::atomdata_add_nbat_f_to_f_gpu(const gmx::AtomLocality                     locality,
+                                                 DeviceBuffer<float>                         totalForcesDevice,
+                                                 void                                       *forcesPmeDevice,
+                                                 gmx::ArrayRef<GpuEventSynchronizer* const>  dependencyList,
+                                                 bool                                        useGpuFPmeReduction,
+                                                 bool                                        accumulateForce)
+{
+
+    GMX_ASSERT((useGpuFPmeReduction == (forcesPmeDevice != nullptr)),
+               "GPU PME force reduction is only valid when a non-null GPU PME force pointer is available");
+
+    /* Skip the reduction if there was no short-range GPU work to do
+     * (either NB or both NB and bonded work). */
+    if (!pairlistIsSimple() && !haveGpuShortRangeWork(locality))
+    {
+        return;
+    }
+
+    wallcycle_start(wcycle_, ewcNB_XF_BUF_OPS);
+    wallcycle_sub_start(wcycle_, ewcsNB_F_BUF_OPS);
+
+    reduceForcesGpu(locality, totalForcesDevice, pairSearch_->gridSet(), forcesPmeDevice, dependencyList, gpu_nbv, useGpuFPmeReduction, accumulateForce);
+
+    wallcycle_sub_stop(wcycle_, ewcsNB_F_BUF_OPS);
+    wallcycle_stop(wcycle_, ewcNB_XF_BUF_OPS);
+}
+
+void
+nonbonded_verlet_t::atomdata_init_add_nbat_f_to_f_gpu(GpuEventSynchronizer* const localReductionDone)
 {
 
     wallcycle_start(wcycle_, ewcNB_XF_BUF_OPS);
@@ -197,7 +227,8 @@ nonbonded_verlet_t::atomdata_init_add_nbat_f_to_f_gpu()
 
     Nbnxm::nbnxn_gpu_init_add_nbat_f_to_f(gridSet.cells().data(),
                                           gpu_nbv,
-                                          gridSet.numRealAtomsTotal());
+                                          gridSet.numRealAtomsTotal(),
+                                          localReductionDone);
 
     wallcycle_sub_stop(wcycle_, ewcsNB_F_BUF_OPS);
     wallcycle_stop(wcycle_, ewcNB_XF_BUF_OPS);
@@ -225,30 +256,24 @@ nonbonded_verlet_t::atomdata_init_copy_x_to_nbat_x_gpu()
     Nbnxm::nbnxn_gpu_init_x_to_nbat_x(pairSearch_->gridSet(), gpu_nbv);
 }
 
-void nonbonded_verlet_t::insertNonlocalGpuDependency(const Nbnxm::InteractionLocality interactionLocality)
+void nonbonded_verlet_t::insertNonlocalGpuDependency(const gmx::InteractionLocality interactionLocality)
 {
     Nbnxm::nbnxnInsertNonlocalGpuDependency(gpu_nbv, interactionLocality);
 }
 
-void nonbonded_verlet_t::launch_copy_f_to_gpu(rvec *f, const Nbnxm::AtomLocality locality)
+void* nonbonded_verlet_t::get_x_on_device_event()
 {
-    nbnxn_launch_copy_f_to_gpu(locality,
-                               pairSearch_->gridSet(),
-                               gpu_nbv,
-                               f);
+    return Nbnxm::nbnxn_get_x_on_device_event(gpu_nbv);
 }
 
-void nonbonded_verlet_t::launch_copy_f_from_gpu(rvec *f, const Nbnxm::AtomLocality locality)
+void nonbonded_verlet_t::wait_nonlocal_x_copy_D2H_done()
 {
-    nbnxn_launch_copy_f_from_gpu(locality,
-                                 pairSearch_->gridSet(),
-                                 gpu_nbv,
-                                 f);
+    Nbnxm::nbnxn_wait_nonlocal_x_copy_D2H_done(gpu_nbv);
 }
 
-void nonbonded_verlet_t::wait_for_gpu_force_reduction(const Nbnxm::AtomLocality locality)
+void nonbonded_verlet_t::stream_local_wait_for_nonlocal()
 {
-    nbnxn_wait_for_gpu_force_reduction(locality, gpu_nbv);
+    Nbnxm::nbnxn_stream_local_wait_for_nonlocal(gpu_nbv);
 }
 
 /*! \endcond */

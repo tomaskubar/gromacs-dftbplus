@@ -46,26 +46,97 @@ import logging
 import os
 import pytest
 
-# Configure the `logging` module before and non-built-in packages start to use it.
-logging.getLogger().setLevel(logging.DEBUG)
-# create console handler
-ch = logging.StreamHandler()
-ch.setLevel(logging.DEBUG)
-# create formatter and add it to the handler
-formatter = logging.Formatter('%(asctime)s:%(name)s:%(levelname)s: %(message)s')
-ch.setFormatter(formatter)
-# add the handlers to the logger
-logging.getLogger().addHandler(ch)
+import gmxapi as gmx
+from gmxapi.testsupport import withmpi_only
 
-from gmxapi import _gmxapi
+# Configure the `logging` module before proceeding any further.
+gmx.logger.setLevel(logging.WARNING)
 
-from pytesthelpers import withmpi_only
+try:
+    from mpi4py import MPI
+    rank_number = MPI.COMM_WORLD.Get_rank()
+except ImportError:
+    rank_number = 0
+    rank_tag = ''
+    MPI = None
+else:
+    rank_tag = 'rank{}:'.format(rank_number)
+
+# Use this formatter to improve the caplog log records.
+formatter = logging.Formatter(rank_tag + '%(name)s:%(levelname)s: %(message)s')
+
+# For additional console logging, create and attach a stream handler.
+# For example:
+#    ch = logging.StreamHandler()
+#    ch.setFormatter(formatter)
+#    logging.getLogger().addHandler(ch)
+
 
 @pytest.mark.usefixtures('cleandir')
 def test_run_from_tpr(spc_water_box):
     assert os.path.exists(spc_water_box)
-    filename = os.path.abspath(spc_water_box)
-    system = _gmxapi.from_tpr(filename)
-    context = _gmxapi.Context()
-    md = system.launch(context)
+
+    md = gmx.mdrun(spc_water_box)
     md.run()
+    # TODO: better handling of output on unused MPI ranks.
+
+
+@withmpi_only
+@pytest.mark.usefixtures('cleandir')
+def test_run_trivial_ensemble(spc_water_box, caplog):
+    from mpi4py import MPI
+    current_rank = MPI.COMM_WORLD.Get_rank()
+    with caplog.at_level(logging.DEBUG):
+        caplog.handler.setFormatter(formatter)
+        with caplog.at_level(logging.WARNING, 'gmxapi'), \
+                caplog.at_level(logging.DEBUG, 'gmxapi.mdrun'), \
+                caplog.at_level(logging.DEBUG, 'gmxapi.modify_input'), \
+                caplog.at_level(logging.DEBUG, 'gmxapi.read_tpr'), \
+                caplog.at_level(logging.DEBUG, 'gmxapi.simulation'):
+
+            tpr_filename = spc_water_box
+            ensemble_width = 2
+            simulation_input = gmx.read_tpr([tpr_filename] * ensemble_width)
+            assert simulation_input.output.ensemble_width == ensemble_width
+            assert len(simulation_input.output._simulation_input.result()) == ensemble_width
+            md = gmx.mdrun(simulation_input)
+            assert md.output.ensemble_width == ensemble_width
+            md.run()
+
+            output_directory = md.output._work_dir.result()
+            logging.info('output_directory result: {}'.format(str(output_directory)))
+            assert len(output_directory) == 2
+
+            # Note that the 'cleandir' test fixture will clean up the output directory on
+            # other ranks, so only check the current rank. Generally, our behavior
+            # is undefined if the client removes the working directory while the job
+            # is in progress. We can consider adding some sort of synchronization at
+            # the end of the job if running in temporary directories becomes an
+            # important use case outside of testing.
+            assert output_directory[0] != output_directory[1]
+            assert os.path.exists(output_directory[current_rank])
+            assert os.path.exists(md.output.trajectory.result()[current_rank])
+
+
+@pytest.mark.usefixtures('cleandir')
+def test_run_from_read_tpr_op(spc_water_box, caplog):
+    with caplog.at_level(logging.DEBUG):
+        caplog.handler.setFormatter(formatter)
+        with caplog.at_level(logging.DEBUG, 'gmxapi'):
+            simulation_input = gmx.read_tpr(spc_water_box)
+            md = gmx.mdrun(input=simulation_input)
+
+            md.run()
+            if rank_number == 0:
+                assert os.path.exists(md.output.trajectory.result())
+
+
+@pytest.mark.usefixtures('cleandir')
+def test_run_from_modify_input_op(spc_water_box, caplog):
+    with caplog.at_level(logging.DEBUG):
+
+        simulation_input = gmx.read_tpr(spc_water_box)
+        modified_input = gmx.modify_input(input=simulation_input, parameters={'nsteps': 4})
+        md = gmx.mdrun(input=modified_input)
+
+        md.run()

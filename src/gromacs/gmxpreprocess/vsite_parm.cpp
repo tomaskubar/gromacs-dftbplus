@@ -1019,7 +1019,7 @@ static void clean_vsite_bonds(gmx::ArrayRef<InteractionsOfType> plist,
                                  (pindex[atom].functionType() == F_VSITE4FD ) ||
                                  (pindex[atom].functionType() == F_VSITE4FDN ) );
                 bool bThisOUT = ( (pindex[atom].functionType() == F_VSITE3OUT) &&
-                                  ((interaction_function[cftype].flags & IF_CONSTRAINT) != 0u) );
+                                  ((interaction_function[cftype].flags & IF_CONSTRAINT) != 0U) );
                 bAllFD = bAllFD && bThisFD;
                 if (bThisFD || bThisOUT)
                 {
@@ -1521,7 +1521,7 @@ void clean_vsite_bondeds(gmx::ArrayRef<InteractionsOfType> plist, int natoms, bo
             if ((interaction_function[ftype].flags & IF_VSITE) &&
                 ftype != F_VSITEN)
             {
-                for (int interactionIndex = 0;
+                for (gmx::index interactionIndex = 0;
                      interactionIndex < gmx::ssize(plist[ftype]);
                      interactionIndex++)
                 {

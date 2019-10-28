@@ -43,8 +43,8 @@
 #include "gromacs/math/functions.h"
 #include "gromacs/math/utilities.h"
 #include "gromacs/math/vec.h"
-#include "gromacs/mdlib/force_flags.h"
 #include "gromacs/mdtypes/md_enums.h"
+#include "gromacs/mdtypes/simulation_workload.h"
 #include "gromacs/nbnxm/atomdata.h"
 #include "gromacs/nbnxm/nbnxm.h"
 #include "gromacs/nbnxm/pairlist.h"
@@ -59,14 +59,13 @@ nbnxn_kernel_gpu_ref(const NbnxnPairlistGpu     *nbl,
                      const nbnxn_atomdata_t     *nbat,
                      const interaction_const_t  *iconst,
                      rvec                       *shift_vec,
-                     int                         force_flags,
+                     const gmx::StepWorkload    &stepWork,
                      int                         clearF,
                      gmx::ArrayRef<real>         f,
                      real  *                     fshift,
                      real  *                     Vc,
                      real  *                     Vvdw)
 {
-    gmx_bool            bEner;
     gmx_bool            bEwald;
     const real         *Ftab = nullptr;
     real                rcut2, rvdw2, rlist2;
@@ -93,7 +92,7 @@ nbnxn_kernel_gpu_ref(const NbnxnPairlistGpu     *nbl,
     real                ix, iy, iz, fix, fiy, fiz;
     real                jx, jy, jz;
     real                dx, dy, dz, rsq, rinv;
-    int                 int_bit;
+    real                int_bit;
     real                fexcl;
     real                c6, c12;
     const nbnxn_excl_t *excl[2];
@@ -113,8 +112,6 @@ nbnxn_kernel_gpu_ref(const NbnxnPairlistGpu     *nbl,
             elem = 0;
         }
     }
-
-    bEner = ((force_flags & GMX_FORCE_ENERGY) != 0);
 
     bEwald = EEL_FULL(iconst->eeltype);
     if (bEwald)
@@ -227,8 +224,8 @@ nbnxn_kernel_gpu_ref(const NbnxnPairlistGpu     *nbl,
                                 }
 
                                 constexpr int clusterPerSplit = c_nbnxnGpuClusterSize/c_nbnxnGpuClusterpairSplit;
-                                int_bit = ((excl[jc/clusterPerSplit]->pair[(jc & (clusterPerSplit - 1))*c_clSize + ic]
-                                            >> (jm*c_numClPerSupercl + im)) & 1);
+                                int_bit = static_cast<real>((excl[jc/clusterPerSplit]->pair[(jc & (clusterPerSplit - 1))*c_clSize + ic]
+                                                             >> (jm*c_numClPerSupercl + im)) & 1);
 
                                 js               = ja*nbat->xstride;
                                 jfs              = ja*nbat->fstride;
@@ -265,7 +262,7 @@ nbnxn_kernel_gpu_ref(const NbnxnPairlistGpu     *nbl,
                                     /* Reaction-field */
                                     krsq  = iconst->k_rf*rsq;
                                     fscal = qq*(int_bit*rinv - 2*krsq)*rinvsq;
-                                    if (bEner)
+                                    if (stepWork.computeEnergy)
                                     {
                                         vcoul = qq*(int_bit*rinv + krsq - iconst->c_rf);
                                     }
@@ -275,13 +272,13 @@ nbnxn_kernel_gpu_ref(const NbnxnPairlistGpu     *nbl,
                                     r     = rsq*rinv;
                                     rt    = r*iconst->coulombEwaldTables->scale;
                                     n0    = static_cast<int>(rt);
-                                    eps   = rt - n0;
+                                    eps   = rt - static_cast<real>(n0);
 
                                     fexcl = (1 - eps)*Ftab[n0] + eps*Ftab[n0+1];
 
                                     fscal = qq*(int_bit*rinvsq - fexcl)*rinv;
 
-                                    if (bEner)
+                                    if (stepWork.computeEnergy)
                                     {
                                         vcoul = qq*((int_bit - std::erf(iconst->ewaldcoeff_q*r))*rinv - int_bit*iconst->sh_ewald);
                                     }
@@ -300,7 +297,7 @@ nbnxn_kernel_gpu_ref(const NbnxnPairlistGpu     *nbl,
                                     Vvdw_rep  = c12*rinvsix*rinvsix;
                                     fscal    += (Vvdw_rep - Vvdw_disp)*rinvsq;
 
-                                    if (bEner)
+                                    if (stepWork.computeEnergy)
                                     {
                                         vctot   += vcoul;
 
@@ -350,7 +347,7 @@ nbnxn_kernel_gpu_ref(const NbnxnPairlistGpu     *nbl,
             }
         }
 
-        if (bEner)
+        if (stepWork.computeEnergy)
         {
             ggid             = 0;
             Vc[ggid]         = Vc[ggid]   + vctot;
