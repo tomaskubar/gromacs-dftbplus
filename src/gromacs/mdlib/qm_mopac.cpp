@@ -57,15 +57,16 @@
 #include "gromacs/utility/fatalerror.h"
 #include "gromacs/utility/smalloc.h"
 
-
 // When not built in a configuration with QMMM support, much of this
 // code is unreachable by design. Tell clang not to warn about it.
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wmissing-noreturn"
 
 #if GMX_QMMM_MOPAC
-/* mopac interface routines */
-void F77_FUNC(domldt, DOMLDT)(int* nrqmat, int labels[], char keywords[]);
+// MOPAC interface routines
+void F77_FUNC(domldt, DOMLDT)(int* nrqmat,
+                              int  labels[],
+                              char keywords[]);
 
 void F77_FUNC(domop, DOMOP)(int*    nrqmat,
                             double  qmcrd[],
@@ -77,40 +78,42 @@ void F77_FUNC(domop, DOMOP)(int*    nrqmat,
                             double* energy,
                             double  qmcharges[]);
 
-#else /* GMX_QMMM_MOPAC */
-// Stub definitions to make compilation succeed when not configured
-// for MOPAC support. In that case, the module gives a fatal error
-// when the initialization function is called, so there is no need to
-// issue fatal errors here, because that introduces problems with
-// tools suggesting and prohibiting noreturn attributes.
+#else // GMX_QMMM_MOPAC
 
-static void F77_FUNC(domldt, DOMLDT)(int* /*unused*/, int /*unused*/[], char /*unused*/[]) {}
+// Stub definitions to make compilation succeed when not configured for MOPAC support.
+// In that case, the module gives a fatal error when the initialization function is called,
+//   so there is no need to issue fatal errors here,
+//   because that introduces problems with tools suggesting and prohibiting noreturn attributes.
 
-static void F77_FUNC(domop, DOMOP)(int* /*unused*/,
-                                   double /*unused*/[],
-                                   int* /*unused*/,
-                                   double /*unused*/[],
-                                   double /*unused*/[],
-                                   double /*unused*/[],
-                                   double /*unused*/[],
-                                   double* /*unused*/,
-                                   double /*unused*/[])
-{
-}
+static void F77_FUNC(domldt, DOMLDT)(int*,
+                                     int[],
+                                     char[])
+{ }
+
+static void F77_FUNC(domop, DOMOP)(int*,
+                                   double[],
+                                   int*,
+                                   double[],
+                                   double[],
+                                   double[],
+                                   double[],
+                                   double*,
+                                   double[])
+{ }
 
 #endif
 
 
 void init_mopac(QMMM_QMrec& qm)
 {
-    /* initializes the mopac routines ans sets up the semiempirical
-     * computation by calling moldat(). The inline mopac routines can
-     * only perform gradient operations. If one would like to optimize a
-     * structure or find a transition state at PM3 level, gaussian is
-     * used instead.
-     */
+    // Initializes the MOPAC routines and sets up the computation by calling moldat().
+    // The inline MOPAC routines can only perform gradient operations.
+    // If one would like to optimize a structure or find a transition state at PM3 level,
+    //   gaussian is used instead.
+
     char* keywords;
-    int nrQMatoms, *atomicnumberQM;
+    int   nrQMatoms;
+    int*  atomicnumberQM;
 
     if (!GMX_QMMM_MOPAC)
     {
@@ -134,14 +137,12 @@ void init_mopac(QMMM_QMrec& qm)
     fprintf(stderr, "keywords are: %s\n", keywords);
     free(keywords);
 
-} /* init_mopac */
+} // init_mopac
 
 real call_mopac(QMMM_QMrec& qm, QMMM_MMrec& mm, rvec f[], rvec fshift[])
 {
-    /* do the actual QMMM calculation using directly linked mopac subroutines
-     */
-    double /* always double as the MOPAC routines are always compiled in
-              double precission! */
+    // Do the actual QMMM calculation using directly linked MOPAC subroutines
+    double // always double as the MOPAC routines are always compiled in double precission!
             *qmcrd = nullptr, *qmchrg = nullptr,
             *mmcrd = nullptr, *mmchrg = nullptr,
             *qmgrad,
@@ -150,9 +151,8 @@ real call_mopac(QMMM_QMrec& qm, QMMM_MMrec& mm, rvec f[], rvec fshift[])
     real QMener = 0.0;
     snew(qmcrd, 3 * qm.nrQMatoms_get());
     snew(qmgrad, 3 * qm.nrQMatoms_get());
-    /* copy the data from qr into the arrays that are going to be used
-     * in the fortran routines of MOPAC
-     */
+    // copy the data from qr into the arrays that are going to be used
+    // in the fortran routines of MOPAC
     for (int i = 0; i < qm.nrQMatoms_get(); i++)
     {
         for (int j = 0; j < DIM; j++)
@@ -162,26 +162,22 @@ real call_mopac(QMMM_QMrec& qm, QMMM_MMrec& mm, rvec f[], rvec fshift[])
     }
     if (mm.nrMMatoms)
     {
-        /* later we will add the point charges here. There are some
-         * conceptual problems with semi-empirical QM in combination with
-         * point charges that we need to solve first....
-         */
+        // later we will add the point charges here. There are some
+        // conceptual problems with semi-empirical QM in combination with
+        // point charges that we need to solve first....
         gmx_fatal(FARGS,
                   "At present only ONIOM is allowed in combination"
                   " with MOPAC QM subroutines\n");
     }
     else
     {
-        /* now compute the energy and the gradients.
-         */
-
+        // now compute the energy and the gradients.
         int nrQMatoms = qm.nrQMatoms_get();
         snew(qmchrg, qm.nrQMatoms_get());
         F77_FUNC(domop, DOMOP)(&nrQMatoms, qmcrd, &mm.nrMMatoms,
                                mmchrg, mmcrd, qmgrad, mmgrad, &energy, qmchrg);
-        /* add the gradients to the f[] array, and also to the fshift[].
-         * the mopac gradients are in kCal/angstrom.
-         */
+        // add the gradients to the f[] array, and also to the fshift[].
+        // the mopac gradients are in kCal/angstrom.
         for (int i = 0; i < qm.nrQMatoms_get(); i++)
         {
             for (int j = 0; j < DIM; j++)
@@ -191,7 +187,7 @@ real call_mopac(QMMM_QMrec& qm, QMMM_MMrec& mm, rvec f[], rvec fshift[])
             }
         }
         QMener = static_cast<real> CAL2JOULE * energy;
-        /* do we do something with the mulliken charges?? */
+        // do we do something with the mulliken charges??
 
         free(qmchrg);
     }

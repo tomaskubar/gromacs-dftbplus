@@ -64,17 +64,13 @@
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wmissing-noreturn"
 
-/* TODO: this should be made thread-safe */
+// TODO: this should be made thread-safe 
 
-/* Gaussian interface routines */
+// Gaussian interface routines
 
-//void QMMM_QMgaussian::init_gaussian(QMMM_QMrec& qm)
-void QMMM_QMgaussian::init_gaussian(int QMbasis)
+void QMMM_QMgaussian::init_gaussian()
 {
-    ivec  basissets[eQMbasisNR] = { { 0, 3, 0 }, { 0, 3, 0 }, /*added for double sto-3g entry in names.c*/
-                                   { 5, 0, 0 }, { 5, 0, 1 }, { 5, 0, 11 }, { 5, 6, 0 },
-                                   { 1, 6, 0 }, { 1, 6, 1 }, { 1, 6, 11 }, { 4, 6, 0 } };
-    char* buf                   = nullptr;
+    char* buf = nullptr;
     int   i;
 
     if (!GMX_QMMM_GAUSSIAN)
@@ -84,26 +80,12 @@ void QMMM_QMgaussian::init_gaussian(int QMbasis)
                   "-DGMX_QMMM_PROGRAM=GAUSSIAN, and ensure that linking will work correctly.");
     }
 
-    /* using the ivec above to convert the basis read form the mdp file
-     * in a human readable format into some numbers for the gaussian
-     * route. This is necessary as we are using non standard routes to
-     * do SH. TODO -- since we have no SurfaceHopping now, this may not be needed?
-     */
+    // Per layer, we make a new subdir for integral file, checkpoint files and such.
+    // These dirs are stored in the QMrec for convenience.
 
-    /* per layer we make a new subdir for integral file, checkpoint
-     * files and such. These dirs are stored in the QMrec for
-     * convenience
-     */
-
-
-    if (!nQMcpus) /* this we do only once per layer
-                       * as we call g01 externally
-                       */
-
+    if (!nQMcpus) // this we do only once per layer as we call g01 externally
     {
-        /* we read the number of cpus and environment from the environment
-         * if set.
-         */
+        // Read the number of cpus and environment from the environment if set.
         buf = getenv("GMX_QM_GAUSSIAN_NCPUS");
         if (buf)
         {
@@ -153,12 +135,10 @@ void QMMM_QMgaussian::init_gaussian(int QMbasis)
         {
             fprintf(stderr, "NOT using cp-mcscf in l1003\n");
         }
-        /* we read the number of cpus and environment from the environment
-         * if set.
-         */
-        /* gaussian settings on the system */
-        buf = getenv("GMX_QM_GAUSS_DIR");
 
+        // Gaussian settings on the system
+
+        buf = getenv("GMX_QM_GAUSS_DIR");
         if (buf)
         {
             gauss_dir = gmx_strdup(buf);
@@ -188,12 +168,13 @@ void QMMM_QMgaussian::init_gaussian(int QMbasis)
                       "no $GMX_QM_MODIFIED_LINKS_DIR, this is were the modified links reside.\n");
         }
 
-        /*  if(fr->bRF){*/
-        /* reactionfield, file is needed using gaussian */
-        /*    rffile=fopen("rf.dat","w");*/
-        /*   fprintf(rffile,"%f %f\n",fr->epsilon_r,fr->rcoulomb/BOHR2NM);*/
-        /* fclose(rffile);*/
-        /*  }*/
+        //  // reactionfield, file is needed using gaussian 
+        //  if (fr->bRF)
+        //  {
+        //    rffile = fopen("rf.dat","w");
+        //    fprintf(rffile,"%f %f\n",fr->epsilon_r,fr->rcoulomb/BOHR2NM);
+        //    fclose(rffile);
+        //  }
     }
     fprintf(stderr, "gaussian initialised...\n");
 }
@@ -203,7 +184,7 @@ static void write_gaussian_input(int step, QMMM_QMrec& qm, QMMM_MMrec& mm)
 {
     FILE* out = fopen("input.com", "w");
 
-    /* write the route */
+    // write the route
     if (qm.QMmethod_get() >= eQMmethodRHF)
     {
         fprintf(out, "%s", "%chk=input\n");
@@ -240,8 +221,7 @@ static void write_gaussian_input(int step, QMMM_QMrec& qm, QMMM_MMrec& mm)
         {
             if (qm.QMmethod_get() == eQMmethodCASSCF)
             {
-                /* in case of cas, how many electrons and orbitals do we need?
-                 */
+                // in case of cas, how many electrons and orbitals do we need?
                 fprintf(out, "(%d,%d)", qm.CASelectrons_get(), qm.CASorbitals_get());
             }
             fprintf(out, "/%s", eQMbasis_names[qm.QMbasis_get()]);
@@ -253,7 +233,7 @@ static void write_gaussian_input(int step, QMMM_QMrec& qm, QMMM_MMrec& mm)
     }
     if (step || qm.QMmethod_get() == eQMmethodCASSCF)
     {
-        /* fetch guess from checkpoint file, always for CASSCF */
+        // fetch guess from checkpoint file, always for CASSCF
         fprintf(out, "%s", " guess=read");
     }
     fprintf(out, "\nNosymm units=bohr\n");
@@ -268,7 +248,7 @@ static void write_gaussian_input(int step, QMMM_QMrec& qm, QMMM_MMrec& mm)
                 qm.xQM_get(i, XX) / BOHR2NM, qm.xQM_get(i, YY) / BOHR2NM, qm.xQM_get(i, ZZ) / BOHR2NM);
     }
 
-    /* Pseudo Potential and ECP are included here if selected (MEthod suffix LAN) */
+    // Pseudo Potential and ECP are included here if selected (MEthod suffix LAN)
     if (qm.QMmethod_get() == eQMmethodB3LYPLAN)
     {
         fprintf(out, "\n");
@@ -300,8 +280,7 @@ static void write_gaussian_input(int step, QMMM_QMrec& qm, QMMM_MMrec& mm)
         fprintf(out, "\n%s\n", "lanl2dz");
     }
 
-
-    /* MM point charge data */
+    // MM point charge data
     if (mm.nrMMatoms)
     {
         fprintf(stderr, "nr mm atoms in gaussian.c = %d\n", mm.nrMMatoms);
@@ -314,10 +293,9 @@ static void write_gaussian_input(int step, QMMM_QMrec& qm, QMMM_MMrec& mm)
     }
     fprintf(out, "\n");
 
-
     fclose(out);
 
-} /* write_gaussian_input */
+} // write_gaussian_input
 
 static real read_gaussian_output(rvec QMgrad[], rvec MMgrad[], QMMM_QMrec& qm, QMMM_MMrec& mm)
 {
@@ -325,13 +303,12 @@ static real read_gaussian_output(rvec QMgrad[], rvec MMgrad[], QMMM_QMrec& qm, Q
     real  QMener;
     FILE* in = fopen("fort.7", "r");
 
-    /* (There was additional content in the file in case
-     *    of QM optimizations / transition state search,
-     *    which was removed.
-     */
-    /* the next line is the energy and in the case of CAS, the energy
-     * difference between the two states.
-     */
+    // (There was additional content in the file in case
+    //    of QM optimizations / transition state search,
+    //    which was removed.
+    //
+    // the next line is the energy and in the case of CAS, the energy
+    // difference between the two states.
     if (nullptr == fgets(buf, 300, in))
     {
         gmx_fatal(FARGS, "Error reading Gaussian output");
@@ -342,7 +319,7 @@ static real read_gaussian_output(rvec QMgrad[], rvec MMgrad[], QMMM_QMrec& qm, Q
 #else
     sscanf(buf, "%f\n", &QMener);
 #endif
-    /* next lines contain the gradients of the QM atoms */
+    // next lines contain the gradients of the QM atoms
     for (int i = 0; i < qm.nrQMatoms_get(); i++)
     {
         if (nullptr == fgets(buf, 300, in))
@@ -355,7 +332,7 @@ static real read_gaussian_output(rvec QMgrad[], rvec MMgrad[], QMMM_QMrec& qm, Q
         sscanf(buf, "%f %f %f\n", &QMgrad[i][XX], &QMgrad[i][YY], &QMgrad[i][ZZ]);
 #endif
     }
-    /* the next lines are the gradients of the MM atoms */
+    // the next lines are the gradients of the MM atoms
     if (qm.QMmethod_get() >= eQMmethodRHF)
     {
         for (int i = 0; i < mm.nrMMatoms; i++)
@@ -379,11 +356,10 @@ static void do_gaussian(int step, char* exe)
 {
     char buf[STRLEN];
 
-    /* make the call to the gaussian binary through system()
-     * The location of the binary will be picked up from the
-     * environment using getenv().
-     */
-    if (step) /* hack to prevent long inputfiles */
+    // make the call to the gaussian binary through system()
+    // The location of the binary will be picked up from the
+    // environment using getenv().
+    if (step) // hack to prevent long inputfiles
     {
         sprintf(buf, "%s < %s > %s", exe, "input.com", "input.log");
     }
@@ -400,7 +376,6 @@ static void do_gaussian(int step, char* exe)
 
 real QMMM_QMgaussian::call_gaussian(QMMM_QMrec& qm, QMMM_MMrec& mm, rvec f[], rvec fshift[])
 {
-    /* normal gaussian jobs */
     static int step = 0;
     real       QMener = 0.0;
     rvec      *QMgrad, *MMgrad;
@@ -414,8 +389,8 @@ real QMMM_QMgaussian::call_gaussian(QMMM_QMrec& qm, QMMM_MMrec& mm, rvec f[], rv
     write_gaussian_input(step, qm, mm);
     do_gaussian(step, exe);
     QMener = read_gaussian_output(QMgrad, MMgrad, qm, mm);
-    /* put the QMMM forces in the force array and to the fshift
-     */
+
+    // put the QMMM forces in the force array and to the fshift
     for (int i = 0; i < qm.nrQMatoms_get(); i++)
     {
         for (int j = 0; j < DIM; j++)
@@ -437,6 +412,6 @@ real QMMM_QMgaussian::call_gaussian(QMMM_QMrec& qm, QMMM_MMrec& mm, rvec f[], rv
     free(exe);
     return (QMener);
 
-} /* call_gaussian */
+} // call_gaussian
 
 #pragma GCC diagnostic pop
