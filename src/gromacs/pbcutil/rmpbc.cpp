@@ -3,7 +3,8 @@
  *
  * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
  * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2016,2017,2018, by the GROMACS development team, led by
+ * Copyright (c) 2013,2014,2015,2016,2017 by the GROMACS development team.
+ * Copyright (c) 2018,2019,2020, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -53,28 +54,29 @@
 #include "gromacs/utility/futil.h"
 #include "gromacs/utility/smalloc.h"
 
-typedef struct {
+typedef struct
+{
     int      natoms;
-    t_graph *gr;
+    t_graph* gr;
 } rmpbc_graph_t;
 
-struct gmx_rmpbc {
-    const t_idef  *idef;
-    int            natoms_init;
-    int            ePBC;
-    int            ngraph;
-    rmpbc_graph_t *graph;
+struct gmx_rmpbc
+{
+    const InteractionDefinitions* interactionDefinitions;
+    const t_idef*                 idef;
+    int                           natoms_init;
+    PbcType                       pbcType;
+    int                           ePBC;
+    int                           ngraph;
+    rmpbc_graph_t*                graph;
 };
 
-static t_graph *gmx_rmpbc_get_graph(gmx_rmpbc_t gpbc, int ePBC, int natoms)
+static t_graph* gmx_rmpbc_get_graph(gmx_rmpbc_t gpbc, PbcType pbcType, int natoms)
 {
     int            i;
-    rmpbc_graph_t *gr;
+    rmpbc_graph_t* gr;
 
-    if (ePBC == epbcNONE
-        || nullptr == gpbc
-        || nullptr == gpbc->idef
-        || gpbc->idef->ntypes <= 0)
+    if (pbcType == PbcType::No || nullptr == gpbc || nullptr == gpbc->idef || gpbc->idef->ntypes <= 0)
     {
         return nullptr;
     }
@@ -96,19 +98,28 @@ static t_graph *gmx_rmpbc_get_graph(gmx_rmpbc_t gpbc, int ePBC, int natoms)
          */
         if (natoms > gpbc->natoms_init)
         {
-            gmx_fatal(FARGS, "Structure or trajectory file has more atoms (%d) than the topology (%d)", natoms, gpbc->natoms_init);
+            gmx_fatal(FARGS,
+                      "Structure or trajectory file has more atoms (%d) than the topology (%d)",
+                      natoms, gpbc->natoms_init);
         }
         gpbc->ngraph++;
         srenew(gpbc->graph, gpbc->ngraph);
-        gr         = &gpbc->graph[gpbc->ngraph-1];
+        gr         = &gpbc->graph[gpbc->ngraph - 1];
         gr->natoms = natoms;
-        gr->gr     = mk_graph(nullptr, gpbc->idef, 0, natoms, FALSE, FALSE);
+        if (gpbc->interactionDefinitions)
+        {
+            gr->gr = mk_graph(nullptr, *gpbc->interactionDefinitions, 0, natoms, FALSE, FALSE);
+        }
+        else
+        {
+            gr->gr = mk_graph(nullptr, gpbc->idef, 0, natoms, FALSE, FALSE);
+        }
     }
 
     return gr->gr;
 }
 
-gmx_rmpbc_t gmx_rmpbc_init(const t_idef *idef, int ePBC, int natoms)
+gmx_rmpbc_t gmx_rmpbc_init(const InteractionDefinitions& idef, PbcType pbcType, int natoms)
 {
     gmx_rmpbc_t gpbc;
 
@@ -119,7 +130,25 @@ gmx_rmpbc_t gmx_rmpbc_init(const t_idef *idef, int ePBC, int natoms)
     /* This sets pbc when we now it,
      * otherwise we guess it from the instantaneous box in the trajectory.
      */
-    gpbc->ePBC = ePBC;
+    gpbc->pbcType = pbcType;
+
+    gpbc->interactionDefinitions = &idef;
+
+    return gpbc;
+}
+
+gmx_rmpbc_t gmx_rmpbc_init(const t_idef* idef, PbcType pbcType, int natoms)
+{
+    gmx_rmpbc_t gpbc;
+
+    snew(gpbc, 1);
+
+    gpbc->natoms_init = natoms;
+
+    /* This sets pbc when we now it,
+     * otherwise we guess it from the instantaneous box in the trajectory.
+     */
+    gpbc->pbcType = pbcType;
 
     gpbc->idef = idef;
     if (gpbc->idef->ntypes <= 0)
@@ -154,43 +183,43 @@ void gmx_rmpbc_done(gmx_rmpbc_t gpbc)
     }
 }
 
-static int gmx_rmpbc_ePBC(gmx_rmpbc_t gpbc, const matrix box)
+static PbcType gmx_rmpbc_ePBC(gmx_rmpbc_t gpbc, const matrix box)
 {
-    if (nullptr != gpbc && gpbc->ePBC >= 0)
+    if (nullptr != gpbc && gpbc->pbcType != PbcType::Unset)
     {
-        return gpbc->ePBC;
+        return gpbc->pbcType;
     }
     else
     {
-        return guess_ePBC(box);
+        return guessPbcType(box);
     }
 }
 
 void gmx_rmpbc(gmx_rmpbc_t gpbc, int natoms, const matrix box, rvec x[])
 {
-    int      ePBC;
-    t_graph *gr;
+    PbcType  pbcType;
+    t_graph* gr;
 
-    ePBC = gmx_rmpbc_ePBC(gpbc, box);
-    gr   = gmx_rmpbc_get_graph(gpbc, ePBC, natoms);
+    pbcType = gmx_rmpbc_ePBC(gpbc, box);
+    gr      = gmx_rmpbc_get_graph(gpbc, pbcType, natoms);
     if (gr != nullptr)
     {
-        mk_mshift(stdout, gr, ePBC, box, x);
+        mk_mshift(stdout, gr, pbcType, box, x);
         shift_self(gr, box, x);
     }
 }
 
 void gmx_rmpbc_copy(gmx_rmpbc_t gpbc, int natoms, const matrix box, rvec x[], rvec x_s[])
 {
-    int      ePBC;
-    t_graph *gr;
+    PbcType  pbcType;
+    t_graph* gr;
     int      i;
 
-    ePBC = gmx_rmpbc_ePBC(gpbc, box);
-    gr   = gmx_rmpbc_get_graph(gpbc, ePBC, natoms);
+    pbcType = gmx_rmpbc_ePBC(gpbc, box);
+    gr      = gmx_rmpbc_get_graph(gpbc, pbcType, natoms);
     if (gr != nullptr)
     {
-        mk_mshift(stdout, gr, ePBC, box, x);
+        mk_mshift(stdout, gr, pbcType, box, x);
         shift_x(gr, box, x, x_s);
     }
     else
@@ -202,24 +231,24 @@ void gmx_rmpbc_copy(gmx_rmpbc_t gpbc, int natoms, const matrix box, rvec x[], rv
     }
 }
 
-void gmx_rmpbc_trxfr(gmx_rmpbc_t gpbc, t_trxframe *fr)
+void gmx_rmpbc_trxfr(gmx_rmpbc_t gpbc, t_trxframe* fr)
 {
-    int      ePBC;
-    t_graph *gr;
+    PbcType  pbcType;
+    t_graph* gr;
 
     if (fr->bX && fr->bBox)
     {
-        ePBC = gmx_rmpbc_ePBC(gpbc, fr->box);
-        gr   = gmx_rmpbc_get_graph(gpbc, ePBC, fr->natoms);
+        pbcType = gmx_rmpbc_ePBC(gpbc, fr->box);
+        gr      = gmx_rmpbc_get_graph(gpbc, pbcType, fr->natoms);
         if (gr != nullptr)
         {
-            mk_mshift(stdout, gr, ePBC, fr->box, fr->x);
+            mk_mshift(stdout, gr, pbcType, fr->box, fr->x);
             shift_self(gr, fr->box, fr->x);
         }
     }
 }
 
-void rm_gropbc(const t_atoms *atoms, rvec x[], const matrix box)
+void rm_gropbc(const t_atoms* atoms, rvec x[], const matrix box)
 {
     real dist;
     int  n, m, d;
@@ -227,12 +256,12 @@ void rm_gropbc(const t_atoms *atoms, rvec x[], const matrix box)
     /* check periodic boundary */
     for (n = 1; (n < atoms->nr); n++)
     {
-        for (m = DIM-1; m >= 0; m--)
+        for (m = DIM - 1; m >= 0; m--)
         {
-            dist = x[n][m]-x[n-1][m];
-            if (std::abs(dist) > 0.9*box[m][m])
+            dist = x[n][m] - x[n - 1][m];
+            if (std::abs(dist) > 0.9 * box[m][m])
             {
-                if (dist >  0)
+                if (dist > 0)
                 {
                     for (d = 0; d <= m; d++)
                     {

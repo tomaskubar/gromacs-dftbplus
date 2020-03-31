@@ -1,7 +1,8 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2014,2015,2016,2017,2018,2019, by the GROMACS development team, led by
+ * Copyright (c) 2014,2015,2016,2017,2018 by the GROMACS development team.
+ * Copyright (c) 2019,2020, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -52,12 +53,10 @@
  *
  * \todo This function could go away when idef is not a big bucket of
  * everything. */
-static bool
-ftype_is_bonded_potential(int ftype)
+static bool ftype_is_bonded_potential(int ftype)
 {
-    return
-        ((interaction_function[ftype].flags & IF_BOND) != 0U) &&
-        !(ftype == F_CONNBONDS || ftype == F_POSRES || ftype == F_FBPOSRES);
+    return ((interaction_function[ftype].flags & IF_BOND) != 0U)
+           && !(ftype == F_CONNBONDS || ftype == F_POSRES || ftype == F_FBPOSRES);
 }
 
 #endif

@@ -1,7 +1,7 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2019, by the GROMACS development team, led by
+ * Copyright (c) 2019,2020, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -47,6 +47,7 @@
 #include <utility>
 
 #include "gromacs/coordinateio/outputadapters/setatoms.h"
+#include "gromacs/fileio/trxio.h"
 #include "gromacs/trajectory/trajectoryframe.h"
 #include "gromacs/trajectoryanalysis/topologyinformation.h"
 
@@ -64,45 +65,42 @@ namespace test
  */
 class SetAtomsTest : public gmx::test::CommandLineTestBase
 {
-    public:
-        //! Prepare test fixture topology to have atoms available.
-        SetAtomsTest()
-        {
-            topology_.fillFromInputFile(TestFileManager::getInputFilePath("lysozyme.pdb"));
-        }
+public:
+    //! Prepare test fixture topology to have atoms available.
+    SetAtomsTest()
+    {
+        topology_.fillFromInputFile(TestFileManager::getInputFilePath("lysozyme.pdb"));
+    }
 
-        /*! \brief
-         * Get access to the method for changing atom information.
-         *
-         * \param[in] type Type to use for setting up method.
-         * \param[in] haveAtomsAvailable Decide if method shouöd have atoms stored or not.
-         */
-        SetAtoms *setAtoms(ChangeAtomsType type, bool haveAtomsAvailable)
+    /*! \brief
+     * Get access to the method for changing atom information.
+     *
+     * \param[in] type Type to use for setting up method.
+     * \param[in] haveAtomsAvailable Decide if method shouöd have atoms stored or not.
+     */
+    SetAtoms* setAtoms(ChangeAtomsType type, bool haveAtomsAvailable)
+    {
+        if (!setAtoms_)
         {
-            if (!setAtoms_)
+            if (haveAtomsAvailable)
             {
-                if (haveAtomsAvailable)
-                {
-                    setAtoms_ = std::make_unique<SetAtoms>(type, topology_.copyAtoms());
-                }
-                else
-                {
-                    setAtoms_ = std::make_unique<SetAtoms>(type,  nullptr);
-                }
+                setAtoms_ = std::make_unique<SetAtoms>(type, topology_.copyAtoms());
             }
-            return setAtoms_.get();
+            else
+            {
+                setAtoms_ = std::make_unique<SetAtoms>(type, nullptr);
+            }
         }
-        //! Get access to a t_atoms struct to use in the dummy t_trxframe.
-        t_atoms *getAtomsCopy()
-        {
-            return const_cast<t_atoms *>(topology_.atoms());
-        }
+        return setAtoms_.get();
+    }
+    //! Get access to a t_atoms struct to use in the dummy t_trxframe.
+    t_atoms* getAtomsCopy() { return const_cast<t_atoms*>(topology_.atoms()); }
 
-    private:
-        //! Object to use for tests
-        SetAtomsPointer     setAtoms_;
-        //! Local topology to get atoms from
-        TopologyInformation topology_;
+private:
+    //! Object to use for tests
+    SetAtomsPointer setAtoms_;
+    //! Local topology to get atoms from
+    TopologyInformation topology_;
 };
 
 TEST_F(SetAtomsTest, RemovesExistingAtoms)
@@ -115,7 +113,7 @@ TEST_F(SetAtomsTest, RemovesExistingAtoms)
 
     EXPECT_NE(frame.atoms, nullptr);
 
-    SetAtoms *method = setAtoms(ChangeAtomsType::Never, true);
+    SetAtoms* method = setAtoms(ChangeAtomsType::Never, true);
     EXPECT_NO_THROW(method->processFrame(0, &frame));
 
     EXPECT_FALSE(frame.bAtoms);
@@ -130,7 +128,7 @@ TEST_F(SetAtomsTest, AddsNewAtoms)
     frame.bAtoms = false;
     frame.atoms  = nullptr;
 
-    SetAtoms *method = setAtoms(ChangeAtomsType::AlwaysFromStructure, true);
+    SetAtoms* method = setAtoms(ChangeAtomsType::AlwaysFromStructure, true);
     EXPECT_NO_THROW(method->processFrame(0, &frame));
 
     EXPECT_TRUE(frame.bAtoms);
@@ -145,7 +143,7 @@ TEST_F(SetAtomsTest, ThrowsOnRequiredAtomsNotAvailable)
     frame.bAtoms = false;
     frame.atoms  = nullptr;
 
-    SetAtoms *method = setAtoms(ChangeAtomsType::Always, false);
+    SetAtoms* method = setAtoms(ChangeAtomsType::Always, false);
     EXPECT_THROW(method->processFrame(0, &frame), InconsistentInputError);
 }
 
@@ -159,7 +157,7 @@ TEST_F(SetAtomsTest, WillUseOldAtomsWhenNoNewAvailable)
 
     EXPECT_NE(frame.atoms, nullptr);
 
-    SetAtoms *method = setAtoms(ChangeAtomsType::Always, false);
+    SetAtoms* method = setAtoms(ChangeAtomsType::Always, false);
     EXPECT_NO_THROW(method->processFrame(0, &frame));
 }
 
@@ -173,7 +171,7 @@ TEST_F(SetAtomsTest, ThrowsWhenUserAtomReplacementNotPossible)
 
     EXPECT_NE(frame.atoms, nullptr);
 
-    SetAtoms *method = setAtoms(ChangeAtomsType::AlwaysFromStructure, false);
+    SetAtoms* method = setAtoms(ChangeAtomsType::AlwaysFromStructure, false);
     EXPECT_THROW(method->processFrame(0, &frame), InconsistentInputError);
 }
 

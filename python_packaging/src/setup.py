@@ -1,7 +1,7 @@
 #
 # This file is part of the GROMACS molecular simulation package.
 #
-# Copyright (c) 2019, by the GROMACS development team, led by
+# Copyright (c) 2019,2020, by the GROMACS development team, led by
 # Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
 # and including many others, as listed in the AUTHORS file in the
 # top-level source directory and at http://www.gromacs.org.
@@ -49,10 +49,8 @@
 # directory with some artifacts.
 
 import os
-import sys
 
 from skbuild import setup
-import cmake
 
 usage = """
 The `gmxapi` package requires an existing GROMACS installation, version 2020 or higher.
@@ -82,16 +80,6 @@ to the gmxapi support library.
 
 If specifying GMXTOOLCHAINDIR and gmxapi_DIR, the tool chain directory must be 
 located within a subdirectory of gmxapi_DIR.
-
-NOTE TO OS X USERS:
-Refer to https://redmine.gromacs.org/issues/3085 for the status of a bug with
-the toolchain file on OS X. Until the bug is resolved, OS X users are advised
-to manually specify (via the CXX environment variable) the C++ compiler used
-when building GROMACS, and to set gmxapi_DIR instead of GMXTOOLCHAINDIR.
-
-Example:
-
-    gmxapi_DIR=/path/to/gromacs pip install gmxapi
 
 Refer to project web site for complete documentation.
 
@@ -152,41 +140,19 @@ if gmxapi_DIR != os.path.commonpath([gmxapi_DIR, gmx_toolchain]):
         gmxapi_DIR
     ))
 
-if sys.platform == 'darwin':
-    # TODO: Reconcile with cross-compilation CMake toolchain.
-    # In some cases, compatibility settings are more relevant to libpython, and
-    # in others libgmxapi. It is not completely clear where they can or should
-    # be determined and set.
-    cmake_platform_hints = ['-DCMAKE_OSX_DEPLOYMENT_TARGET:STRING=10.9',
-                            '-DCMAKE_OSX_ARCHITECTURES:STRING=x86_64']
-else:
-    # TODO: (Issue 3085) Can toolchain be used on OS X builds?
-    cmake_platform_hints = ['-DCMAKE_TOOLCHAIN_FILE={}'.format(gmx_toolchain)]
-
-# TODO: Use package-specific hinting variable.
-# We want to be sure that we find a <package>-config.cmake associated with the
-# toolchains file, but we want to preempt most of the normal CMake
-# [search procedure](https://cmake.org/cmake/help/latest/command/find_package.html#id5),
-# which could lead to hard-to-diagnose build problems.
+cmake_platform_hints = '-DCMAKE_TOOLCHAIN_FILE={}'.format(gmx_toolchain)
 # Note that <package>_ROOT is not standard until CMake 3.12
 # Reference https://cmake.org/cmake/help/latest/policy/CMP0074.html#policy:CMP0074
-_cmake_major, _cmake_minor = cmake.__version__.split('.')[0:2]
-if int(_cmake_major) >= 3 and int(_cmake_minor) >= 12:
-    cmake_gmxapi_hint = '-Dgmxapi_ROOT={}'
-else:
-    cmake_gmxapi_hint = '-DCMAKE_PREFIX_PATH={}'
-cmake_gmxapi_hint = cmake_gmxapi_hint.format(gmxapi_DIR)
-
-cmake_args = list(cmake_platform_hints)
-cmake_args.append(cmake_gmxapi_hint)
+cmake_gmxapi_hint = '-Dgmxapi_ROOT={}'.format(gmxapi_DIR)
+cmake_args = [cmake_platform_hints, cmake_gmxapi_hint]
 
 setup(
     name='gmxapi',
 
-    # TODO: (pending infrastructure and further discussion) Replace with CMake variables from GMXAPI version.
-    version='0.1.0b2',
-    python_requires='>=3.5, <4',
-    setup_requires=['cmake>=3.9.6',
+    # TODO: single-source version information (currently repeated in gmxapi/version.py)
+    version='0.2.0b1',
+    python_requires='>=3.5, <3.9',
+    setup_requires=['cmake>=3.12',
                     'setuptools>=28',
                     'scikit-build>=0.7'],
 

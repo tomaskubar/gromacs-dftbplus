@@ -1,7 +1,8 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2014,2015,2016,2017,2018,2019, by the GROMACS development team, led by
+ * Copyright (c) 2014,2015,2016,2017,2018 by the GROMACS development team.
+ * Copyright (c) 2019,2020, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -49,32 +50,33 @@ struct PmeOutput;
  * this function. Upon return it will point at
  * an array of work structures.
  */
-void pme_init_all_work(struct pme_solve_work_t **work, int nthread, int nkx);
+void pme_init_all_work(struct pme_solve_work_t** work, int nthread, int nkx);
 
 /*! \brief Frees array of work structures
  *
  * Frees work and sets it to NULL. */
-void pme_free_all_work(struct pme_solve_work_t **work, int nthread);
+void pme_free_all_work(struct pme_solve_work_t** work, int nthread);
 
 /*! \brief Get energy and virial for electrostatics
  *
  * Note that work is an array of work structures
  */
-void get_pme_ener_vir_q(pme_solve_work_t *work, int nthread, PmeOutput *output);
+void get_pme_ener_vir_q(pme_solve_work_t* work, int nthread, PmeOutput* output);
 
 /*! \brief Get energy and virial for L-J
  *
  * Note that work is an array of work structures
  */
-void get_pme_ener_vir_lj(pme_solve_work_t *work, int nthread, PmeOutput *output);
+void get_pme_ener_vir_lj(pme_solve_work_t* work, int nthread, PmeOutput* output);
 
-int solve_pme_yzx(const gmx_pme_t *pme, t_complex *grid,
-                  real vol,
-                  gmx_bool bEnerVir,
-                  int nthread, int thread);
+int solve_pme_yzx(const gmx_pme_t* pme, t_complex* grid, real vol, bool computeEnergyAndVirial, int nthread, int thread);
 
-int solve_pme_lj_yzx(const gmx_pme_t *pme, t_complex **grid, gmx_bool bLB,
-                     real vol,
-                     gmx_bool bEnerVir, int nthread, int thread);
+int solve_pme_lj_yzx(const gmx_pme_t* pme,
+                     t_complex**      grid,
+                     gmx_bool         bLB,
+                     real             vol,
+                     bool             computeEnergyAndVirial,
+                     int              nthread,
+                     int              thread);
 
 #endif

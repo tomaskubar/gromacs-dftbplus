@@ -1,7 +1,7 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2018,2019, by the GROMACS development team, led by
+ * Copyright (c) 2018,2019,2020, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -47,20 +47,26 @@
 
 #if GMX_GPU == GMX_GPU_CUDA
 
-#include "gromacs/gpu_utils/gputraits.cuh"
+#    include "gromacs/gpu_utils/gputraits.cuh"
 
 #elif GMX_GPU == GMX_GPU_OPENCL
 
-#include "gromacs/gpu_utils/gputraits_ocl.h"
+#    include "gromacs/gpu_utils/gputraits_ocl.h"
 
 #else
 
+//! Stub for device information.
+struct DeviceInformation
+{
+    // No member needed
+};
+
 //! \brief GPU command stream
-using CommandStream = void *;
+using CommandStream = void*;
 //! \brief Single GPU call timing event
-using CommandEvent  = void *;
+using CommandEvent = void*;
 //! \brief GPU context
-using DeviceContext = void *;
+using DeviceContext = void*;
 
 #endif // GMX_GPU
 

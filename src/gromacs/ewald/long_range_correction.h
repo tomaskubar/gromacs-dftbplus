@@ -3,7 +3,8 @@
  *
  * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
  * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2016,2017,2018,2019, by the GROMACS development team, led by
+ * Copyright (c) 2013,2014,2015,2016,2017 by the GROMACS development team.
+ * Copyright (c) 2018,2019,2020, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -63,20 +64,21 @@ struct t_inputrec;
  *
  * Calculate correction for electrostatic surface dipole terms.
  */
-void
-ewald_LRcorrection(int numAtomsLocal,
-                   const t_commrec *cr,
-                   int numThreads, int thread,
-                   const t_forcerec &fr,
-                   const t_inputrec &ir,
-                   const real *chargeA, const real *chargeB,
-                   gmx_bool bHaveChargePerturbed,
-                   const rvec x[],
-                   const matrix box,
-                   const rvec mu_tot[],
-                   rvec *f,
-                   real *Vcorr_q,
-                   real lambda_q,
-                   real *dvdlambda_q);
+void ewald_LRcorrection(int               numAtomsLocal,
+                        const t_commrec*  cr,
+                        int               numThreads,
+                        int               thread,
+                        const t_forcerec& fr,
+                        const t_inputrec& ir,
+                        const real*       chargeA,
+                        const real*       chargeB,
+                        gmx_bool          bHaveChargePerturbed,
+                        const rvec        x[],
+                        const matrix      box,
+                        const rvec        mu_tot[],
+                        rvec*             f,
+                        real*             Vcorr_q,
+                        real              lambda_q,
+                        real*             dvdlambda_q);
 
 #endif

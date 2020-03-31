@@ -1,7 +1,8 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2009,2010,2012,2013,2014,2017,2019, by the GROMACS development team, led by
+ * Copyright (c) 2009,2010,2012,2013,2014 by the GROMACS development team.
+ * Copyright (c) 2017,2019,2020, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -49,16 +50,14 @@
 
 #include "position.h"
 
-void
-_gmx_selvalue_clear(gmx_ana_selvalue_t *val)
+void _gmx_selvalue_clear(gmx_ana_selvalue_t* val)
 {
     val->nr     = 0;
     val->u.ptr  = nullptr;
     val->nalloc = 0;
 }
 
-void
-_gmx_selvalue_free(gmx_ana_selvalue_t *val)
+void _gmx_selvalue_free(gmx_ana_selvalue_t* val)
 {
     if (val->nalloc > 0)
     {
@@ -76,10 +75,9 @@ _gmx_selvalue_free(gmx_ana_selvalue_t *val)
     val->nalloc = 0;
 }
 
-void
-_gmx_selvalue_reserve(gmx_ana_selvalue_t *val, int n)
+void _gmx_selvalue_reserve(gmx_ana_selvalue_t* val, int n)
 {
-    int  i;
+    int i;
 
     if (val->nalloc == -1)
     {
@@ -90,8 +88,8 @@ _gmx_selvalue_reserve(gmx_ana_selvalue_t *val, int n)
     {
         switch (val->type)
         {
-            case INT_VALUE:   srenew(val->u.i, n); break;
-            case REAL_VALUE:  srenew(val->u.r, n); break;
+            case INT_VALUE: srenew(val->u.i, n); break;
+            case REAL_VALUE: srenew(val->u.r, n); break;
             case STR_VALUE:
                 srenew(val->u.s, n);
                 for (i = val->nalloc; i < n; ++i)
@@ -111,14 +109,13 @@ _gmx_selvalue_reserve(gmx_ana_selvalue_t *val, int n)
                     gmx_ana_index_clear(&val->u.g[i]);
                 }
                 break;
-            case NO_VALUE:    break;
+            case NO_VALUE: break;
         }
         val->nalloc = n;
     }
 }
 
-void
-_gmx_selvalue_getstore_and_release(gmx_ana_selvalue_t *val, void **ptr, int *nalloc)
+void _gmx_selvalue_getstore_and_release(gmx_ana_selvalue_t* val, void** ptr, int* nalloc)
 {
     *ptr        = val->u.ptr;
     *nalloc     = val->nalloc;
@@ -126,17 +123,14 @@ _gmx_selvalue_getstore_and_release(gmx_ana_selvalue_t *val, void **ptr, int *nal
     val->nalloc = 0;
 }
 
-void
-_gmx_selvalue_setstore(gmx_ana_selvalue_t *val, void *ptr)
+void _gmx_selvalue_setstore(gmx_ana_selvalue_t* val, void* ptr)
 {
-    GMX_ASSERT(val->nalloc <= 0,
-               "Memory leak from discarding an existing value");
+    GMX_ASSERT(val->nalloc <= 0, "Memory leak from discarding an existing value");
     val->u.ptr  = ptr;
     val->nalloc = (ptr ? -1 : 0);
 }
 
-void
-_gmx_selvalue_setstore_alloc(gmx_ana_selvalue_t *val, void *ptr, int nalloc)
+void _gmx_selvalue_setstore_alloc(gmx_ana_selvalue_t* val, void* ptr, int nalloc)
 {
     GMX_ASSERT(val->nalloc <= 0 || (ptr == val->u.ptr && nalloc == val->nalloc),
                "Memory leak from discarding an existing value");

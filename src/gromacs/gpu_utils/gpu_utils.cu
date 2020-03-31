@@ -1,7 +1,8 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2010,2011,2012,2013,2014,2015,2016,2017,2018,2019, by the GROMACS development team, led by
+ * Copyright (c) 2010,2011,2012,2013,2014,2015,2016, The GROMACS development team.
+ * Copyright (c) 2017,2018,2019,2020, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -67,51 +68,43 @@
  *
  * In reality it is 16 with CUDA <=v5.0, but let's stay on the safe side.
  */
-static int  cuda_max_device_count = 32;
+static int cuda_max_device_count = 32;
 
-static bool cudaProfilerRun      = ((getenv("NVPROF_ID") != nullptr));
+static bool cudaProfilerRun = ((getenv("NVPROF_ID") != nullptr));
 
 /** Dummy kernel used for sanity checking. */
-static __global__ void k_dummy_test(void)
-{
-}
+static __global__ void k_dummy_test(void) {}
 
-static void checkCompiledTargetCompatibility(int                   deviceId,
-                                             const cudaDeviceProp &deviceProp)
+static cudaError_t checkCompiledTargetCompatibility(int deviceId, const cudaDeviceProp& deviceProp)
 {
     cudaFuncAttributes attributes;
     cudaError_t        stat = cudaFuncGetAttributes(&attributes, k_dummy_test);
 
     if (cudaErrorInvalidDeviceFunction == stat)
     {
-        gmx_fatal(FARGS,
-                  "The %s binary does not include support for the CUDA architecture of a "
-                  "detected GPU: %s, ID #%d (compute capability %d.%d). "
-                  "By default, GROMACS supports all architectures of compute "
-                  "capability >= 3.0, so your GPU "
-                  "might be rare, or some architectures were disabled in the build. "
-                  "Consult the install guide for how to use the GMX_CUDA_TARGET_SM and "
-                  "GMX_CUDA_TARGET_COMPUTE CMake variables to add this architecture. "
-                  "To work around this error, use the CUDA_VISIBLE_DEVICES environment"
-                  "variable to pass a list of GPUs that excludes the ID %d.",
-                  gmx::getProgramContext().displayName(), deviceProp.name, deviceId,
-                  deviceProp.major, deviceProp.minor, deviceId);
+        fprintf(stderr,
+                "\nWARNING: The %s binary does not include support for the CUDA architecture of "
+                "the GPU ID #%d (compute capability %d.%d) detected during detection. "
+                "By default, GROMACS supports all architectures of compute "
+                "capability >= 3.0, so your GPU "
+                "might be rare, or some architectures were disabled in the build. \n"
+                "Consult the install guide for how to use the GMX_CUDA_TARGET_SM and "
+                "GMX_CUDA_TARGET_COMPUTE CMake variables to add this architecture. \n",
+                gmx::getProgramContext().displayName(), deviceId, deviceProp.major, deviceProp.minor);
     }
 
-    CU_RET_ERR(stat, "cudaFuncGetAttributes failed");
+    return stat;
 }
 
-bool isHostMemoryPinned(const void *h_ptr)
+bool isHostMemoryPinned(const void* h_ptr)
 {
     cudaPointerAttributes memoryAttributes;
     cudaError_t           stat = cudaPointerGetAttributes(&memoryAttributes, h_ptr);
 
-    bool                  result = false;
+    bool result = false;
     switch (stat)
     {
-        case cudaSuccess:
-            result = true;
-            break;
+        case cudaSuccess: result = true; break;
 
         case cudaErrorInvalidValue:
             // If the buffer was not pinned, then it will not be recognized by CUDA at all
@@ -120,8 +113,7 @@ bool isHostMemoryPinned(const void *h_ptr)
             cudaGetLastError();
             break;
 
-        default:
-            CU_RET_ERR(stat, "Unexpected CUDA error");
+        default: CU_RET_ERR(stat, "Unexpected CUDA error");
     }
     return result;
 }
@@ -134,11 +126,11 @@ bool isHostMemoryPinned(const void *h_ptr)
  *
  * \param[in]  dev_id      the device ID of the GPU or -1 if the device has already been initialized
  * \param[in]  dev_prop    The device properties structure
- * \returns                0 if the device looks OK
+ * \returns                0 if the device looks OK, -1 if it sanity checks failed, and -2 if the device is busy
  *
  * TODO: introduce errors codes and handle errors more smoothly.
  */
-static int do_sanity_checks(int dev_id, const cudaDeviceProp &dev_prop)
+static int do_sanity_checks(int dev_id, const cudaDeviceProp& dev_prop)
 {
     cudaError_t cu_err;
     int         dev_count, id;
@@ -146,8 +138,7 @@ static int do_sanity_checks(int dev_id, const cudaDeviceProp &dev_prop)
     cu_err = cudaGetDeviceCount(&dev_count);
     if (cu_err != cudaSuccess)
     {
-        fprintf(stderr, "Error %d while querying device count: %s\n", cu_err,
-                cudaGetErrorString(cu_err));
+        fprintf(stderr, "Error %d while querying device count: %s\n", cu_err, cudaGetErrorString(cu_err));
         return -1;
     }
 
@@ -168,8 +159,7 @@ static int do_sanity_checks(int dev_id, const cudaDeviceProp &dev_prop)
         cu_err = cudaGetDevice(&id);
         if (cu_err != cudaSuccess)
         {
-            fprintf(stderr, "Error %d while querying device id: %s\n", cu_err,
-                    cudaGetErrorString(cu_err));
+            fprintf(stderr, "Error %d while querying device id: %s\n", cu_err, cudaGetErrorString(cu_err));
             return -1;
         }
     }
@@ -178,7 +168,8 @@ static int do_sanity_checks(int dev_id, const cudaDeviceProp &dev_prop)
         id = dev_id;
         if (id > dev_count - 1) /* pfff there's no such device */
         {
-            fprintf(stderr, "The requested device with id %d does not seem to exist (device count=%d)\n",
+            fprintf(stderr,
+                    "The requested device with id %d does not seem to exist (device count=%d)\n",
                     dev_id, dev_count);
             return -1;
         }
@@ -200,19 +191,42 @@ static int do_sanity_checks(int dev_id, const cudaDeviceProp &dev_prop)
         cu_err = cudaSetDevice(id);
         if (cu_err != cudaSuccess)
         {
-            fprintf(stderr, "Error %d while switching to device #%d: %s\n",
-                    cu_err, id, cudaGetErrorString(cu_err));
+            fprintf(stderr, "Error %d while switching to device #%d: %s\n", cu_err, id,
+                    cudaGetErrorString(cu_err));
             return -1;
         }
     }
 
-    /* try to execute a dummy kernel */
-    checkCompiledTargetCompatibility(dev_id, dev_prop);
+    cu_err = checkCompiledTargetCompatibility(dev_id, dev_prop);
+    // Avoid triggering an error if GPU devices are in exclusive or prohibited mode;
+    // it is enough to check for cudaErrorDevicesUnavailable only here because
+    // if we encounter it that will happen in cudaFuncGetAttributes in the above function.
+    if (cu_err == cudaErrorDevicesUnavailable)
+    {
+        return -2;
+    }
+    else if (cu_err != cudaSuccess)
+    {
+        return -1;
+    }
 
-    KernelLaunchConfig config;
-    config.blockSize[0] = 512;
-    const auto         dummyArguments = prepareGpuKernelArguments(k_dummy_test, config);
-    launchGpuKernel(k_dummy_test, config, nullptr, "Dummy kernel", dummyArguments);
+    /* try to execute a dummy kernel */
+    try
+    {
+        KernelLaunchConfig config;
+        config.blockSize[0]       = 512;
+        const auto dummyArguments = prepareGpuKernelArguments(k_dummy_test, config);
+        launchGpuKernel(k_dummy_test, config, nullptr, "Dummy kernel", dummyArguments);
+    }
+    catch (gmx::GromacsException& ex)
+    {
+        // launchGpuKernel error is not fatal and should continue with marking the device bad
+        fprintf(stderr,
+                "Error occurred while running dummy kernel sanity check on device #%d:\n %s\n", id,
+                formatExceptionMessageToString(ex).c_str());
+        return -1;
+    }
+
     if (cudaDeviceSynchronize() != cudaSuccess)
     {
         return -1;
@@ -228,7 +242,7 @@ static int do_sanity_checks(int dev_id, const cudaDeviceProp &dev_prop)
     return 0;
 }
 
-void init_gpu(const gmx_device_info_t *deviceInfo)
+void init_gpu(const DeviceInformation* deviceInfo)
 {
     cudaError_t stat;
 
@@ -247,7 +261,7 @@ void init_gpu(const gmx_device_info_t *deviceInfo)
     }
 }
 
-void free_gpu(const gmx_device_info_t *deviceInfo)
+void free_gpu(const DeviceInformation* deviceInfo)
 {
     // One should only attempt to clear the device context when
     // it has been used, but currently the only way to know that a GPU
@@ -257,7 +271,7 @@ void free_gpu(const gmx_device_info_t *deviceInfo)
         return;
     }
 
-    cudaError_t  stat;
+    cudaError_t stat;
 
     if (debug)
     {
@@ -274,14 +288,13 @@ void free_gpu(const gmx_device_info_t *deviceInfo)
     }
 }
 
-gmx_device_info_t *getDeviceInfo(const gmx_gpu_info_t &gpu_info,
-                                 int                   deviceId)
+DeviceInformation* getDeviceInfo(const gmx_gpu_info_t& gpu_info, int deviceId)
 {
     if (deviceId < 0 || deviceId >= gpu_info.n_dev)
     {
         gmx_incons("Invalid GPU deviceId requested");
     }
-    return &gpu_info.gpu_dev[deviceId];
+    return &gpu_info.deviceInfo[deviceId];
 }
 
 /*! \brief Returns true if the gpu characterized by the device properties is
@@ -291,7 +304,7 @@ gmx_device_info_t *getDeviceInfo(const gmx_gpu_info_t &gpu_info,
  * \returns             true if the GPU properties passed indicate a compatible
  *                      GPU, otherwise false.
  */
-static bool is_gmx_supported_gpu(const cudaDeviceProp &dev_prop)
+static bool is_gmx_supported_gpu(const cudaDeviceProp& dev_prop)
 {
     return (dev_prop.major >= 3);
 }
@@ -310,8 +323,7 @@ static bool is_gmx_supported_gpu(const cudaDeviceProp &dev_prop)
  *  \param[in]  deviceProp the CUDA device properties of the device checked.
  *  \returns               the status of the requested device
  */
-static int is_gmx_supported_gpu_id(int                   deviceId,
-                                   const cudaDeviceProp &deviceProp)
+static int is_gmx_supported_gpu_id(int deviceId, const cudaDeviceProp& deviceProp)
 {
     if (!is_gmx_supported_gpu(deviceProp))
     {
@@ -323,23 +335,30 @@ static int is_gmx_supported_gpu_id(int                   deviceId,
      * the dummy test kernel fails to execute with a "device busy message" we
      * should appropriately report that the device is busy instead of insane.
      */
-    if (do_sanity_checks(deviceId, deviceProp) != 0)
+    const int checkResult = do_sanity_checks(deviceId, deviceProp);
+    switch (checkResult)
     {
-        return egpuInsane;
+        case 0: return egpuCompatible;
+        case -1: return egpuInsane;
+        case -2: return egpuUnavailable;
+        default:
+            GMX_RELEASE_ASSERT(false, "Invalid do_sanity_checks() return value");
+            return egpuCompatible;
     }
-
-    return egpuCompatible;
 }
 
-bool isGpuDetectionFunctional(std::string *errorMessage)
+bool isGpuDetectionFunctional(std::string* errorMessage)
 {
-    cudaError_t        stat;
-    int                driverVersion = -1;
-    stat = cudaDriverGetVersion(&driverVersion);
-    GMX_ASSERT(stat != cudaErrorInvalidValue, "An impossible null pointer was passed to cudaDriverGetVersion");
-    GMX_RELEASE_ASSERT(stat == cudaSuccess,
-                       gmx::formatString("An unexpected value was returned from cudaDriverGetVersion %s: %s",
-                                         cudaGetErrorName(stat), cudaGetErrorString(stat)).c_str());
+    cudaError_t stat;
+    int         driverVersion = -1;
+    stat                      = cudaDriverGetVersion(&driverVersion);
+    GMX_ASSERT(stat != cudaErrorInvalidValue,
+               "An impossible null pointer was passed to cudaDriverGetVersion");
+    GMX_RELEASE_ASSERT(
+            stat == cudaSuccess,
+            gmx::formatString("An unexpected value was returned from cudaDriverGetVersion %s: %s",
+                              cudaGetErrorName(stat), cudaGetErrorString(stat))
+                    .c_str());
     bool foundDriver = (driverVersion > 0);
     if (!foundDriver)
     {
@@ -383,7 +402,7 @@ bool isGpuDetectionFunctional(std::string *errorMessage)
     return true;
 }
 
-void findGpus(gmx_gpu_info_t *gpu_info)
+void findGpus(gmx_gpu_info_t* gpu_info)
 {
     assert(gpu_info);
 
@@ -393,14 +412,15 @@ void findGpus(gmx_gpu_info_t *gpu_info)
     cudaError_t stat = cudaGetDeviceCount(&ndev);
     if (stat != cudaSuccess)
     {
-        GMX_THROW(gmx::InternalError("Invalid call of findGpus() when CUDA API returned an error, perhaps "
-                                     "canDetectGpus() was not called appropriately beforehand."));
+        GMX_THROW(gmx::InternalError(
+                "Invalid call of findGpus() when CUDA API returned an error, perhaps "
+                "canDetectGpus() was not called appropriately beforehand."));
     }
 
     // We expect to start device support/sanity checks with a clean runtime error state
     gmx::ensureNoPendingCudaError("");
 
-    gmx_device_info_t *devs;
+    DeviceInformation* devs;
     snew(devs, ndev);
     for (int i = 0; i < ndev; i++)
     {
@@ -449,14 +469,16 @@ void findGpus(gmx_gpu_info_t *gpu_info)
 
     stat = cudaPeekAtLastError();
     GMX_RELEASE_ASSERT(stat == cudaSuccess,
-                       gmx::formatString("We promise to return with clean CUDA state, but non-success state encountered: %s: %s",
-                                         cudaGetErrorName(stat), cudaGetErrorString(stat)).c_str());
+                       gmx::formatString("We promise to return with clean CUDA state, but "
+                                         "non-success state encountered: %s: %s",
+                                         cudaGetErrorName(stat), cudaGetErrorString(stat))
+                               .c_str());
 
-    gpu_info->n_dev   = ndev;
-    gpu_info->gpu_dev = devs;
+    gpu_info->n_dev      = ndev;
+    gpu_info->deviceInfo = devs;
 }
 
-void get_gpu_device_info_string(char *s, const gmx_gpu_info_t &gpu_info, int index)
+void get_gpu_device_info_string(char* s, const gmx_gpu_info_t& gpu_info, int index)
 {
     assert(s);
 
@@ -465,24 +487,19 @@ void get_gpu_device_info_string(char *s, const gmx_gpu_info_t &gpu_info, int ind
         return;
     }
 
-    gmx_device_info_t *dinfo = &gpu_info.gpu_dev[index];
+    DeviceInformation* dinfo = &gpu_info.deviceInfo[index];
 
-    bool               bGpuExists = (dinfo->stat != egpuNonexistent &&
-                                     dinfo->stat != egpuInsane);
+    bool bGpuExists = (dinfo->stat != egpuNonexistent && dinfo->stat != egpuInsane);
 
     if (!bGpuExists)
     {
-        sprintf(s, "#%d: %s, stat: %s",
-                dinfo->id, "N/A",
-                gpu_detect_res_str[dinfo->stat]);
+        sprintf(s, "#%d: %s, stat: %s", dinfo->id, "N/A", gpu_detect_res_str[dinfo->stat]);
     }
     else
     {
-        sprintf(s, "#%d: NVIDIA %s, compute cap.: %d.%d, ECC: %3s, stat: %s",
-                dinfo->id, dinfo->prop.name,
-                dinfo->prop.major, dinfo->prop.minor,
-                dinfo->prop.ECCEnabled ? "yes" : " no",
-                gpu_detect_res_str[dinfo->stat]);
+        sprintf(s, "#%d: NVIDIA %s, compute cap.: %d.%d, ECC: %3s, stat: %s", dinfo->id,
+                dinfo->prop.name, dinfo->prop.major, dinfo->prop.minor,
+                dinfo->prop.ECCEnabled ? "yes" : " no", gpu_detect_res_str[dinfo->stat]);
     }
 }
 
@@ -496,7 +513,7 @@ int get_current_cuda_gpu_device_id(void)
 
 size_t sizeof_gpu_dev_info(void)
 {
-    return sizeof(gmx_device_info_t);
+    return sizeof(DeviceInformation);
 }
 
 void startGpuProfiler(void)
@@ -542,9 +559,9 @@ void resetGpuProfiler(void)
     }
 }
 
-int gpu_info_get_stat(const gmx_gpu_info_t &info, int index)
+int gpu_info_get_stat(const gmx_gpu_info_t& info, int index)
 {
-    return info.gpu_dev[index].stat;
+    return info.deviceInfo[index].stat;
 }
 
 /*! \brief Check status returned from peer access CUDA call, and error out or warn appropriately
@@ -554,21 +571,30 @@ int gpu_info_get_stat(const gmx_gpu_info_t &info, int index)
  * \param[in] mdlog          Logger object
  * \param[in] cudaCallName   name of CUDA peer access call
  */
-static void peerAccessCheckStat(const cudaError_t stat, const int gpuA, const int gpuB, const gmx::MDLogger &mdlog, const char *cudaCallName)
+static void peerAccessCheckStat(const cudaError_t    stat,
+                                const int            gpuA,
+                                const int            gpuB,
+                                const gmx::MDLogger& mdlog,
+                                const char*          cudaCallName)
 {
     if ((stat == cudaErrorInvalidDevice) || (stat == cudaErrorInvalidValue))
     {
-        std::string errorString = gmx::formatString("%s from GPU %d to GPU %d failed", cudaCallName, gpuA, gpuB);
+        std::string errorString =
+                gmx::formatString("%s from GPU %d to GPU %d failed", cudaCallName, gpuA, gpuB);
         CU_RET_ERR(stat, errorString.c_str());
     }
     if (stat != cudaSuccess)
     {
-        GMX_LOG(mdlog.warning).asParagraph().appendTextFormatted("GPU peer access not enabled between GPUs %d and %d due to unexpected return value from %s: %s",
-                                                                 gpuA, gpuB, cudaCallName, cudaGetErrorString(stat));
+        GMX_LOG(mdlog.warning)
+                .asParagraph()
+                .appendTextFormatted(
+                        "GPU peer access not enabled between GPUs %d and %d due to unexpected "
+                        "return value from %s: %s",
+                        gpuA, gpuB, cudaCallName, cudaGetErrorString(stat));
     }
 }
 
-void setupGpuDevicePeerAccess(const std::vector<int> &gpuIdsToUse, const gmx::MDLogger &mdlog)
+void setupGpuDevicePeerAccess(const std::vector<int>& gpuIdsToUse, const gmx::MDLogger& mdlog)
 {
     cudaError_t stat;
 
@@ -577,16 +603,22 @@ void setupGpuDevicePeerAccess(const std::vector<int> &gpuIdsToUse, const gmx::MD
     stat = cudaGetDevice(&currentGpu);
     CU_RET_ERR(stat, "cudaGetDevice in setupGpuDevicePeerAccess failed");
 
-    std::string message           = gmx::formatString("Note: Peer access enabled between the following GPU pairs in the node:\n ");
-    bool        peerAccessEnabled = false;
+    std::string message = gmx::formatString(
+            "Note: Peer access enabled between the following GPU pairs in the node:\n ");
+    bool peerAccessEnabled = false;
 
     for (unsigned int i = 0; i < gpuIdsToUse.size(); i++)
     {
         int gpuA = gpuIdsToUse[i];
-        stat = cudaSetDevice(gpuA);
+        stat     = cudaSetDevice(gpuA);
         if (stat != cudaSuccess)
         {
-            GMX_LOG(mdlog.warning).asParagraph().appendTextFormatted("GPU peer access not enabled due to unexpected return value from cudaSetDevice(%d): %s", gpuA, cudaGetErrorString(stat));
+            GMX_LOG(mdlog.warning)
+                    .asParagraph()
+                    .appendTextFormatted(
+                            "GPU peer access not enabled due to unexpected return value from "
+                            "cudaSetDevice(%d): %s",
+                            gpuA, cudaGetErrorString(stat));
             return;
         }
         for (unsigned int j = 0; j < gpuIdsToUse.size(); j++)
@@ -595,7 +627,7 @@ void setupGpuDevicePeerAccess(const std::vector<int> &gpuIdsToUse, const gmx::MD
             {
                 int gpuB          = gpuIdsToUse[j];
                 int canAccessPeer = 0;
-                stat = cudaDeviceCanAccessPeer(&canAccessPeer, gpuA, gpuB);
+                stat              = cudaDeviceCanAccessPeer(&canAccessPeer, gpuA, gpuB);
                 peerAccessCheckStat(stat, gpuA, gpuB, mdlog, "cudaDeviceCanAccessPeer");
 
                 if (canAccessPeer)
@@ -610,7 +642,7 @@ void setupGpuDevicePeerAccess(const std::vector<int> &gpuIdsToUse, const gmx::MD
         }
     }
 
-    //re-set GPU to that originally set
+    // re-set GPU to that originally set
     stat = cudaSetDevice(currentGpu);
     if (stat != cudaSuccess)
     {

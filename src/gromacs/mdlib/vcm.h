@@ -3,7 +3,8 @@
  *
  * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
  * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2016,2017,2018,2019, by the GROMACS development team, led by
+ * Copyright (c) 2013,2014,2015,2016,2017 by the GROMACS development team.
+ * Copyright (c) 2018,2019,2020, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -42,7 +43,6 @@
 #include <vector>
 
 #include "gromacs/math/vectypes.h"
-#include "gromacs/mdtypes/mdatom.h"
 #include "gromacs/utility/basedefinitions.h"
 #include "gromacs/utility/real.h"
 
@@ -50,71 +50,79 @@ struct SimulationGroups;
 struct t_inputrec;
 struct t_mdatoms;
 
+namespace gmx
+{
+template<typename T>
+class ArrayRef;
+}
+
 struct t_vcm_thread
 {
     //! Linear momentum
-    rvec      p    = {0};
+    rvec p = { 0 };
     //! Center of mass
-    rvec      x    = {0};
+    rvec x = { 0 };
     //! Angular momentum
-    rvec      j    = {0};
+    rvec j = { 0 };
     //! Moment of inertia
-    tensor    i    = {{0}};
+    tensor i = { { 0 } };
     //! Mass
-    real      mass = 0;
+    real mass = 0;
 };
 
 struct t_vcm
 {
     //! Number of groups
-    int                       nr = 0;
+    int nr = 0;
     //! Size of group arrays
-    int                       size = 0;
+    int size = 0;
     //! Stride for thread data
-    int                       stride = 0;
+    int stride = 0;
     //! One of the enums above
-    int                       mode = 0;
+    int mode = 0;
     //! The number of dimensions for corr.
-    int                       ndim = 0;
+    int ndim = 0;
     //! The time step for COMM removal
-    real                      timeStep = 0;
+    real timeStep = 0;
     //! Number of degrees of freedom
-    std::vector<real>         group_ndf;
+    std::vector<real> group_ndf;
     //! Mass per group
-    std::vector<real>         group_mass;
+    std::vector<real> group_mass;
     //! Linear momentum per group
-    std::vector<gmx::RVec>    group_p;
+    std::vector<gmx::RVec> group_p;
     //! Linear velocity per group
-    std::vector<gmx::RVec>    group_v;
+    std::vector<gmx::RVec> group_v;
     //! Center of mass per group
-    std::vector<gmx::RVec>    group_x;
+    std::vector<gmx::RVec> group_x;
     //! Angular momentum per group
-    std::vector<gmx::RVec>    group_j;
+    std::vector<gmx::RVec> group_j;
     //! Angular velocity (omega)
-    std::vector<gmx::RVec>    group_w;
+    std::vector<gmx::RVec> group_w;
     //! Moment of inertia per group
-    tensor                   *group_i = nullptr;
+    tensor* group_i = nullptr;
     //! These two are copies to pointers in
-    std::vector<char *>       group_name;
+    std::vector<char*> group_name;
     //! Tells whether dimensions are frozen per freeze group
-    ivec                     *nFreeze = nullptr;
+    ivec* nFreeze = nullptr;
     //! Temporary data per thread and group
     std::vector<t_vcm_thread> thread_vcm;
 
     //! Tell whether the integrator conserves momentum
     bool integratorConservesMomentum = false;
 
-    t_vcm(const SimulationGroups &groups, const t_inputrec &ir);
+    t_vcm(const SimulationGroups& groups, const t_inputrec& ir);
     ~t_vcm();
 };
 
 /* print COM removal info to log */
-void reportComRemovalInfo(FILE * fp, const t_vcm &vcm);
+void reportComRemovalInfo(FILE* fp, const t_vcm& vcm);
 
 
 /* Do a per group center of mass things */
-void calc_vcm_grp(const t_mdatoms &md,
-                  const rvec x[], const rvec v[], t_vcm *vcm);
+void calc_vcm_grp(const t_mdatoms&               md,
+                  gmx::ArrayRef<const gmx::RVec> x,
+                  gmx::ArrayRef<const gmx::RVec> v,
+                  t_vcm*                         vcm);
 
 /* Set the COM velocity to zero and potentially correct the COM position.
  *
@@ -124,7 +132,10 @@ void calc_vcm_grp(const t_mdatoms &md,
  * and a pointer to the coordinates at normal MD steps.
  * When fplog != nullptr, a warning is printed to fplog with high COM velocity.
  */
-void process_and_stopcm_grp(FILE *fplog, t_vcm *vcm, const t_mdatoms &mdatoms,
-                            rvec x[], rvec v[]);
+void process_and_stopcm_grp(FILE*                    fplog,
+                            t_vcm*                   vcm,
+                            const t_mdatoms&         mdatoms,
+                            gmx::ArrayRef<gmx::RVec> x,
+                            gmx::ArrayRef<gmx::RVec> v);
 
 #endif

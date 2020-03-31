@@ -1,7 +1,7 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2019, by the GROMACS development team, led by
+ * Copyright (c) 2019,2020, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -32,7 +32,7 @@
  * To help us fund GROMACS development, we humbly ask that you cite
  * the research papers on the package. Check out http://www.gromacs.org.
  */
-/*! \libinternal
+/*! \internal \file
  * \brief Defines the topology class for the modular simulator
  *
  * \author Pascal Merz <pascal.merz@me.com>
@@ -50,50 +50,46 @@
 
 namespace gmx
 {
-TopologyHolder::TopologyHolder(
-        const gmx_mtop_t &globalTopology,
-        const t_commrec  *cr,
-        const t_inputrec *inputrec,
-        t_forcerec       *fr,
-        MDAtoms          *mdAtoms,
-        Constraints      *constr,
-        gmx_vsite_t      *vsite) :
+TopologyHolder::TopologyHolder(const gmx_mtop_t& globalTopology,
+                               const t_commrec*  cr,
+                               const t_inputrec* inputrec,
+                               t_forcerec*       fr,
+                               MDAtoms*          mdAtoms,
+                               Constraints*      constr,
+                               gmx_vsite_t*      vsite) :
     globalTopology_(globalTopology),
-    localTopology_(std::make_unique<gmx_localtop_t>())
+    localTopology_(std::make_unique<gmx_localtop_t>(globalTopology.ffparams))
 {
-    if (DOMAINDECOMP(cr))
+    if (!DOMAINDECOMP(cr))
     {
-        dd_init_local_top(globalTopology, localTopology_.get());
-    }
-    else
-    {
+        t_graph* graph = nullptr;
         // Generate and initialize new topology
         // Note that most of the data needed for the constructor is used here -
         // this function should probably be simplified sooner or later.
-        mdAlgorithmsSetupAtomData(
-                cr, inputrec, globalTopology, localTopology_.get(),
-                fr, nullptr, mdAtoms, constr, vsite, nullptr);
+        mdAlgorithmsSetupAtomData(cr, inputrec, globalTopology, localTopology_.get(), fr, &graph,
+                                  mdAtoms, constr, vsite, nullptr);
+        GMX_RELEASE_ASSERT(graph == nullptr, "Graph is not implemented for the modular simulator.");
     }
 }
 
-const gmx_mtop_t &TopologyHolder::globalTopology() const
+const gmx_mtop_t& TopologyHolder::globalTopology() const
 {
     return globalTopology_;
 }
 
 void TopologyHolder::updateLocalTopology()
 {
-    for (auto &client : clients_)
+    for (auto& client : clients_)
     {
         client->setTopology(localTopology_.get());
     }
 }
 
-void TopologyHolder::registerClient(ITopologyHolderClient *client)
+void TopologyHolder::registerClient(ITopologyHolderClient* client)
 {
     // Register client
     clients_.emplace_back(client);
     // Send copy of current topology
     client->setTopology(localTopology_.get());
 }
-}
+} // namespace gmx

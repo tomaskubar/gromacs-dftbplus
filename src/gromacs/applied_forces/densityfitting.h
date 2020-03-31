@@ -1,7 +1,7 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2019, by the GROMACS development team, led by
+ * Copyright (c) 2019,2020, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -38,6 +38,8 @@
 #include <memory>
 #include <string>
 
+enum class PbcType : int;
+
 namespace gmx
 {
 
@@ -56,9 +58,9 @@ struct DensityFittingModuleInfo
      * Fitting an all-atom structure into an experimental cryo-EM density map is a
      * typical application.
      */
-    static std::unique_ptr<IMDModule> create(MdModulesNotifier * notifier);
+    static std::unique_ptr<IMDModule> create();
     //! The name of the module
-    static const std::string          name_;
+    static const std::string name_;
 };
 
 } // namespace gmx

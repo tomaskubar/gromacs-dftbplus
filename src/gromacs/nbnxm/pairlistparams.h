@@ -1,7 +1,7 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2019, by the GROMACS development team, led by
+ * Copyright (c) 2019,2020, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -73,7 +73,8 @@ static constexpr int c_gpuNumClusterPerCellY = 2;
 //! The number of clusters along X in a pair-search grid cell for GPU lists
 static constexpr int c_gpuNumClusterPerCellX = 2;
 //! The number of clusters in a pair-search grid cell for GPU lists
-static constexpr int c_gpuNumClusterPerCell  = c_gpuNumClusterPerCellZ*c_gpuNumClusterPerCellY*c_gpuNumClusterPerCellX;
+static constexpr int c_gpuNumClusterPerCell =
+        c_gpuNumClusterPerCellZ * c_gpuNumClusterPerCellY * c_gpuNumClusterPerCellX;
 
 
 /*! \brief The number of sub-parts used for data storage for a GPU cluster pair
@@ -84,7 +85,8 @@ static constexpr int c_gpuNumClusterPerCell  = c_gpuNumClusterPerCellZ*c_gpuNumC
 static constexpr int c_nbnxnGpuClusterpairSplit = 2;
 
 //! The fixed size of the exclusion mask array for a half GPU cluster pair
-static constexpr int c_nbnxnGpuExclSize = c_nbnxnGpuClusterSize*c_nbnxnGpuClusterSize/c_nbnxnGpuClusterpairSplit;
+static constexpr int c_nbnxnGpuExclSize =
+        c_nbnxnGpuClusterSize * c_nbnxnGpuClusterSize / c_nbnxnGpuClusterpairSplit;
 
 //! The available pair list types
 enum class PairlistType : int
@@ -97,21 +99,13 @@ enum class PairlistType : int
 };
 
 //! Gives the i-cluster size for each pairlist type
-static constexpr gmx::EnumerationArray<PairlistType, int> IClusterSizePerListType =
-{ {
-      c_nbnxnCpuIClusterSize,
-      c_nbnxnCpuIClusterSize,
-      c_nbnxnCpuIClusterSize,
-      c_nbnxnGpuClusterSize
-  } };
+static constexpr gmx::EnumerationArray<PairlistType, int> IClusterSizePerListType = {
+    { c_nbnxnCpuIClusterSize, c_nbnxnCpuIClusterSize, c_nbnxnCpuIClusterSize, c_nbnxnGpuClusterSize }
+};
 //! Gives the j-cluster size for each pairlist type
-static constexpr gmx::EnumerationArray<PairlistType, int> JClusterSizePerListType =
-{ {
-      2,
-      4,
-      8,
-      c_nbnxnGpuClusterSize
-  } };
+static constexpr gmx::EnumerationArray<PairlistType, int> JClusterSizePerListType = {
+    { 2, 4, 8, c_nbnxnGpuClusterSize }
+};
 
 /*! \internal
  * \brief The setup for generating and pruning the nbnxn pair list.
@@ -122,20 +116,26 @@ struct PairlistParams
 {
     /*! \brief Constructor producing a struct with dynamic pruning disabled
      */
-    PairlistParams(Nbnxm::KernelType kernelType,
-                   bool              haveFep,
-                   real              rlist,
-                   bool              haveMultipleDomains);
+    PairlistParams(Nbnxm::KernelType kernelType, bool haveFep, real rlist, bool haveMultipleDomains);
 
-    PairlistType pairlistType;           //!< The type of cluster-pair list
-    bool         haveFep;                //!< Tells whether we have perturbed interactions
-    real         rlistOuter;             //!< Cut-off of the larger, outer pair-list
-    real         rlistInner;             //!< Cut-off of the smaller, inner pair-list
-    bool         haveMultipleDomains;    //!< True when using DD with multiple domains
-    bool         useDynamicPruning;      //!< Are we using dynamic pair-list pruning
-    int          nstlistPrune;           //!< Pair-list dynamic pruning interval
-    int          numRollingPruningParts; //!< The number parts to divide the pair-list into for rolling pruning, a value of 1 gives no rolling pruning
-    int          lifetime;               //!< Lifetime in steps of the pair-list
+    //! The type of cluster-pair list
+    PairlistType pairlistType;
+    //! Tells whether we have perturbed interactions
+    bool haveFep;
+    //! Cut-off of the larger, outer pair-list
+    real rlistOuter;
+    //! Cut-off of the smaller, inner pair-list
+    real rlistInner;
+    //! True when using DD with multiple domains
+    bool haveMultipleDomains;
+    //! Are we using dynamic pair-list pruning
+    bool useDynamicPruning;
+    //! Pair-list dynamic pruning interval
+    int nstlistPrune;
+    //! The number parts to divide the pair-list into for rolling pruning, a value of 1 gives no rolling pruning
+    int numRollingPruningParts;
+    //! Lifetime in steps of the pair-list
+    int lifetime;
 };
 
 #endif

@@ -3,7 +3,8 @@
  *
  * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
  * Copyright (c) 2001-2008, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2017,2018,2019, by the GROMACS development team, led by
+ * Copyright (c) 2013,2014,2015,2017,2018 by the GROMACS development team.
+ * Copyright (c) 2019,2020, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -56,8 +57,10 @@
 #define GMX_QMMM (GMX_QMMM_MOPAC || GMX_QMMM_GAMESS || GMX_QMMM_GAUSSIAN || GMX_QMMM_ORCA || GMX_QMMM_DFTBPLUS)
 
 struct t_nrnb;
+struct nonbonded_verlet_t;
 
 struct gmx_pme_t;
+enum class PbcType : int;
 
 struct DftbPlus;
 struct Context;
@@ -144,8 +147,7 @@ public:
  * \param[in] qm QM forcerec.
  */
 //void init_gaussian(QMMM_QMrec& qm);
-void init_gaussian(QMMM_QMsurfaceHopping &surfaceHopping,
-                   int QMbasis);
+void init_gaussian(QMMM_QMsurfaceHopping &surfaceHopping, int QMbasis);
 
 /*! \brief
  * Call gaussian to do qm calculation.
@@ -156,7 +158,7 @@ void init_gaussian(QMMM_QMsurfaceHopping &surfaceHopping,
  * \param[in] f  force vector.
  * \param[in] fshift shift of force vector.
  */
-real call_gaussian(const t_forcerec *fr, QMMM_QMrec& qm, QMMM_MMrec& mm, rvec f[], rvec fshift[]);
+real call_gaussian(QMMM_QMrec& qm, QMMM_MMrec& mm, rvec f[], rvec fshift[]);
 
 /*! \brief
  * Call gaussian SH(?) to do qm calculation.
@@ -167,7 +169,7 @@ real call_gaussian(const t_forcerec *fr, QMMM_QMrec& qm, QMMM_MMrec& mm, rvec f[
  * \param[in] f  force vector.
  * \param[in] fshift shift of force vector.
  */
-real call_gaussian_SH(const t_forcerec *fr, QMMM_QMrec& qm, QMMM_MMrec& mm, rvec f[], rvec fshift[]);
+real call_gaussian_SH(QMMM_QMrec& qm, QMMM_MMrec& mm, rvec f[], rvec fshift[]);
 
 } ;
 
@@ -211,8 +213,6 @@ private:
     real               rcoulomb;
     real               ewaldcoeff_q;
     real               epsilon_r;
-    DftbPlus          *dpcalc;        /* DFTB+ calculator */
-    Context           *dftbContext;   /* some data for DFTB+, referenced to by DFTB through *dpcalc */
     double            *pot_qmmm;      /* electric potential induced by the MM atoms */
     double            *pot_qmqm;      /* el. pot. induced by the periodic images of the QM atoms */
 
@@ -234,6 +234,9 @@ private:
 		           t_nrnb *nrnb,         gmx_wallcycle_t wcycle);
 
 public:
+    DftbPlus          *dpcalc;        /* DFTB+ calculator */
+    Context           *dftbContext;   /* some data for DFTB+, referenced to by DFTB through *dpcalc */
+
 //  /* Gaussian specific stuff */
     QMMM_QMgaussian    gaussian;
 //  int                nQMcpus;        /* no. of CPUs used for the QM calc. */
@@ -316,7 +319,7 @@ public:
     std::vector<real> MMcharges_full;
     std::vector<int>  shiftMM_full;
 
-   /* the following seem to be unused in the new version of the QM/MM interface */
+   /* the following seems to be unused in the new version of the QM/MM interface */
  // int           *MMatomtype;  /* only important for semi-emp.      */
 
     void init_MMrec(real scalefactor_in,
@@ -333,90 +336,92 @@ public:
 
  // int             QMMMscheme; /* ONIOM (multi-layer) or normal          */
  // int             nrQMlayers; /* number of QM layers (total layers +1 (MM)) */
-    std::vector<QMMM_QMrec>  qm;         /* atoms and run params for each QM group */
-    std::vector<QMMM_MMrec>  mm;         /* there can only be one MM subsystem !   */
-    std::vector<QMMM_PME>    pme;        /* [0] == pme_full, [1] == pme_qmonly */
+    std::vector<QMMM_QMrec> qm;         /* atoms and run params for each QM group */
+    std::vector<QMMM_MMrec> mm;         /* there can only be one MM subsystem !   */
+    std::vector<QMMM_PME>   pme;        /* [0] == pme_full, [1] == pme_qmonly */
+    PbcType                 pbcType;
+    struct gmx_pme_t* const* pmedata;
  // gmx_pme_t    *pmedata_full;
  // gmx_pme_t    *pmedata_qmonly;
  // std::vector<QMMM_QMgaussian>       gaussian;
  // std::vector<gmx_bool>              bSH;
  // std::vector<QMMM_QMsurfaceHopping> surfaceHopping;
 
+    QMMM_rec(const t_commrec*                 cr,
+             const gmx_mtop_t*                mtop,
+             const t_inputrec*                ir,
+             const t_forcerec*                fr,
+             const gmx_wallcycle_t gmx_unused wcycle);
     /* From topology->atoms.atomname and topology->atoms.atomtype
      * the atom names and types are read;
      * from inputrec->QMcharge resp. inputrec->QMmult the nelecs and multiplicity are determined
      * and md->cQMMM gives numbers of the MM and QM atoms
      */
-    QMMM_rec(const t_commrec  *cr,
-             const gmx_mtop_t *mtop,
-             const t_inputrec *ir,
-             const t_forcerec *fr,
-             const gmx_wallcycle_t gmx_unused wcycle);
 
     /*
-    void update_QMMMrec(const t_commrec  *cr,
-                        const t_forcerec *fr,
-                        const rvec       *x,
-                        const t_mdatoms  *md,
+    void update_QMMMrec(const t_commrec*  cr,
+                        const t_forcerec* fr,
+                        const rvec*       x,
+                        const t_mdatoms*  md,
                         const matrix      box);
     */
 
     /* update_QMMMrec fills the MM stuff in QMMMrec. The MM atoms are
-     * taken froom the neighbourlists of the QM atoms. In a QMMM run this
+     * taken from the neighbourlists of the QM atoms. In a QMMM run this
      * routine should be called at every step, since it updates the MM
      * elements of the t_QMMMrec struct.
      * CORRECTION: only call it in every NS step, to process the newly
      * created neighborlists!
      */
 
-    void update_QMMMrec_verlet_ns(const t_commrec      *cr,
-                                        t_forcerec     *fr,
-                                  const rvec            x[],
-                                  const t_mdatoms      *md,
-                                  const matrix          box);
+    void update_QMMMrec_verlet_ns(const t_commrec*    cr,
+                                  nonbonded_verlet_t* nbv,
+                              //        t_forcerec*   fr,
+                                  const rvec          x[],
+                                  const t_mdatoms*    md,
+                                  const matrix        box);
     
-    void update_QMMMrec_dftb(const t_commrec      *cr,
-                                   t_forcerec     *fr,
-                             const rvec            x[],
-                             const t_mdatoms      *md,
-                             const matrix          box);
+    void update_QMMMrec_dftb(const t_commrec*  cr,
+                             rvec*             shift_vec,
+                             const rvec        x[],
+                             const t_mdatoms*  md,
+                             const matrix      box);
     
-    void update_QMMM_coord(const t_commrec  *cr,
-                                 t_forcerec *fr,
+    void update_QMMM_coord(const t_commrec*  cr,
+                           rvec*             shift_vec,
                            const rvec        x[],
-                           const t_mdatoms  *md,
+                           const t_mdatoms*  md,
                            const matrix      box);
     
     /* New routines for QM/MM interactions */
     
-    void calculate_SR_QM_MM(int variant,
-                            real *pot);
+    void calculate_SR_QM_MM(int   variant,
+                            real* pot);
     
-    void calculate_LR_QM_MM(const t_commrec *cr,
-                            t_nrnb *nrnb,
-                            gmx_wallcycle_t wcycle,
-                            struct gmx_pme_t *pmedata,
-                            real *pot);
+    void calculate_LR_QM_MM(const t_commrec*  cr,
+                            t_nrnb*           nrnb,
+                            gmx_wallcycle_t   wcycle,
+                            struct gmx_pme_t* pmedata,
+                            real*             pot);
     
-    void calculate_complete_QM_QM(const t_commrec *cr,
-                                  t_nrnb *nrnb,
-                                  gmx_wallcycle_t wcycle,
-                                  struct gmx_pme_t *pmedata,
-                                  real *pot);
+    void calculate_complete_QM_QM(const t_commrec*  cr,
+                                  t_nrnb*           nrnb,
+                                  gmx_wallcycle_t   wcycle,
+                                  struct gmx_pme_t* pmedata,
+                                  real*             pot);
     
-    void gradient_QM_MM(const t_commrec *cr,
-                        t_nrnb *nrnb,
-                        gmx_wallcycle_t wcycle,
-                        struct gmx_pme_t *pmedata,
-                        int variant,
-                        rvec *partgrad,
-                        rvec *MMgrad,
-                        rvec *MMgrad_full);
+    void gradient_QM_MM(const t_commrec*  cr,
+                        t_nrnb*           nrnb,
+                        gmx_wallcycle_t   wcycle,
+                        struct gmx_pme_t* pmedata,
+                        int               variant,
+                        rvec*             partgrad,
+                        rvec*             MMgrad,
+                        rvec*             MMgrad_full);
 
-    real calculate_QMMM(const t_commrec           *cr,
-                        gmx::ForceWithShiftForces *forceWithShiftForces,
-                        const t_forcerec          *fr,
-                              t_nrnb              *nrnb,
+    real calculate_QMMM(const t_commrec*           cr,
+                        gmx::ForceWithShiftForces* forceWithShiftForces,
+                              t_nrnb*              nrnb,
                         const gmx_wallcycle_t      wcycle);
 
     /* QMMM computes the QM forces. This routine makes either function
@@ -444,7 +449,7 @@ void atomic_number(int nr, char ***atomtype, int *nucnum);
  * \param[in] ir   Inputrec used in simulation.
  * \returns Vector of atoms.
  */
-std::vector<int> qmmmAtomIndices(const t_inputrec &ir, const gmx_mtop_t &mtop);
+std::vector<int> qmmmAtomIndices(const t_inputrec& ir, const gmx_mtop_t& mtop);
 
 /*! \brief
  * Remove charges from QMMM atoms.
@@ -452,6 +457,6 @@ std::vector<int> qmmmAtomIndices(const t_inputrec &ir, const gmx_mtop_t &mtop);
  * \param[in] mtop Topology used for removing atoms.
  * \param[in] qmmmAtoms ArrayRef to vector conatining qmmm atom indices.
  */
-void removeQmmmAtomCharges(gmx_mtop_t *mtop, gmx::ArrayRef<const int> qmmmAtoms);
+void removeQmmmAtomCharges(gmx_mtop_t* mtop, gmx::ArrayRef<const int> qmmmAtoms);
 
 #endif

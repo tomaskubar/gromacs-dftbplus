@@ -1,7 +1,7 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2019, by the GROMACS development team, led by
+ * Copyright (c) 2019,2020, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -38,27 +38,40 @@
 struct t_topology;
 struct t_block;
 struct t_atom;
+enum class PbcType : int;
 
 #include "gmxpre.h"
 
 #include "gromacs/math/vec.h"
 
-enum {
-    euSel, euRect, euTric, euCompact, euNR
+enum
+{
+    euSel,
+    euRect,
+    euTric,
+    euCompact,
+    euNR
 };
 
-void calc_pbc_cluster(int ecenter, int nrefat, t_topology *top, int ePBC,
-                      rvec x[], const int index[], matrix box);
+void calc_pbc_cluster(int ecenter, int nrefat, t_topology* top, PbcType pbcType, rvec x[], const int index[], matrix box);
 
 
-void put_molecule_com_in_box(int unitcell_enum, int ecenter,
-                             t_block *mols,
-                             int natoms, t_atom atom[],
-                             int ePBC, matrix box, rvec x[]);
+void put_molecule_com_in_box(int      unitcell_enum,
+                             int      ecenter,
+                             t_block* mols,
+                             int      natoms,
+                             t_atom   atom[],
+                             PbcType  pbcType,
+                             matrix   box,
+                             rvec     x[]);
 
-void put_residue_com_in_box(int unitcell_enum, int ecenter,
-                            int natoms, t_atom atom[],
-                            int ePBC, matrix box, rvec x[]);
+void put_residue_com_in_box(int     unitcell_enum,
+                            int     ecenter,
+                            int     natoms,
+                            t_atom  atom[],
+                            PbcType pbcType,
+                            matrix  box,
+                            rvec    x[]);
 
 void center_x(int ecenter, rvec x[], matrix box, int n, int nc, const int ci[]);
 

@@ -1,7 +1,7 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2017,2018,2019, by the GROMACS development team, led by
+ * Copyright (c) 2017,2018,2019,2020, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -50,6 +50,7 @@
 
 #include "gromacs/ewald/pme_gpu_program.h"
 #include "gromacs/hardware/gpu_hw_info.h"
+#include "gromacs/utility/gmxassert.h"
 
 struct gmx_hw_info_t;
 
@@ -65,7 +66,7 @@ enum class CodePath
 };
 
 //! Return a string useful for human-readable messages describing a \c codePath.
-const char *codePathToString(CodePath codePath);
+const char* codePathToString(CodePath codePath);
 
 /*! \internal \brief
  * A structure to describe a hardware context  that persists over the lifetime
@@ -74,60 +75,67 @@ const char *codePathToString(CodePath codePath);
 struct TestHardwareContext
 {
     //! Hardware path for the code being tested.
-    CodePath                  codePath_;
+    CodePath codePath_;
     //! Readable description
-    std::string               description_;
+    std::string description_;
     //! Device information pointer
-    const gmx_device_info_t  *deviceInfo_;
+    const DeviceInformation* deviceInfo_;
     //! Persistent compiled GPU kernels for PME.
-    PmeGpuProgramStorage      program_;
+    PmeGpuProgramStorage program_;
 
-    public:
-        //! Retuns the code path for this context.
-        CodePath getCodePath() const { return codePath_; }
-        //! Returns a human-readable context description line
-        std::string              getDescription() const{return description_; }
-        //! Returns the device info pointer
-        const gmx_device_info_t *getDeviceInfo() const{return deviceInfo_; }
-        //! Returns the persistent PME GPU kernels
-        PmeGpuProgramHandle      getPmeGpuProgram() const{return program_.get(); }
-        //! Constructs the context
-        TestHardwareContext(CodePath codePath, const char *description, const gmx_device_info_t *deviceInfo) :
-            codePath_(codePath), description_(description), deviceInfo_(deviceInfo),
-            program_(buildPmeGpuProgram(deviceInfo_)) {}
-        ~TestHardwareContext();
+public:
+    //! Retuns the code path for this context.
+    CodePath getCodePath() const { return codePath_; }
+    //! Returns a human-readable context description line
+    std::string getDescription() const { return description_; }
+    //! Returns the device info pointer
+    const DeviceInformation* getDeviceInfo() const { return deviceInfo_; }
+    //! Returns the persistent PME GPU kernels
+    const PmeGpuProgram* getPmeGpuProgram() const { return program_.get(); }
+    //! Constructs the context
+    TestHardwareContext(CodePath codePath, const char* description, const DeviceInformation* deviceInfo) :
+        codePath_(codePath),
+        description_(description),
+        deviceInfo_(deviceInfo)
+    {
+        if (codePath == CodePath::GPU)
+        {
+            program_ = buildPmeGpuProgram(deviceInfo_);
+        }
+    }
+    ~TestHardwareContext();
 };
 
 //! A container of handles to hardware contexts
-typedef std::vector < std::unique_ptr < TestHardwareContext>> TestHardwareContexts;
+typedef std::vector<std::unique_ptr<TestHardwareContext>> TestHardwareContexts;
 
 /*! \internal \brief
  * This class performs one-time test initialization (enumerating the hardware)
  */
 class PmeTestEnvironment : public ::testing::Environment
 {
-    private:
-        //! General hardware info
-        gmx_hw_info_t       *hardwareInfo_;
-        //! Storage of hardware contexts
-        TestHardwareContexts hardwareContexts_;
+private:
+    //! General hardware info
+    gmx_hw_info_t* hardwareInfo_;
+    //! Storage of hardware contexts
+    TestHardwareContexts hardwareContexts_;
 
-    public:
-        //! This is called by GTest framework once to query the hardware
-        void SetUp() override;
-        //! Get available hardware contexts.
-        const TestHardwareContexts &getHardwareContexts() const {return hardwareContexts_; }
-        //! Get available hardware information.
-        const gmx_hw_info_t *hwinfo() const { return hardwareInfo_; }
+public:
+    //! This is called by GTest framework once to query the hardware
+    void SetUp() override;
+    //! Get available hardware contexts.
+    const TestHardwareContexts& getHardwareContexts() const { return hardwareContexts_; }
+    //! Get available hardware information.
+    const gmx_hw_info_t* hwinfo() const { return hardwareInfo_; }
 };
 
 //! Get the test environment
-const PmeTestEnvironment *getPmeTestEnv();
+const PmeTestEnvironment* getPmeTestEnv();
 
 /*! \brief This constructs the test environment during setup of the
  * unit test so that they can use the hardware context. */
 void callAddGlobalTestEnvironment();
 
-}  // namespace test
-}  // namespace gmx
+} // namespace test
+} // namespace gmx
 #endif

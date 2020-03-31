@@ -3,7 +3,8 @@
  *
  * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
  * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2017,2018,2019, by the GROMACS development team, led by
+ * Copyright (c) 2013,2014,2015,2017,2018 by the GROMACS development team.
+ * Copyright (c) 2019,2020, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -64,13 +65,17 @@
 
 #if GMX_QMMM_MOPAC
 /* mopac interface routines */
-void
-    F77_FUNC(domldt, DOMLDT) (int *nrqmat, int labels[], char keywords[]);
+void F77_FUNC(domldt, DOMLDT)(int* nrqmat, int labels[], char keywords[]);
 
-void
-    F77_FUNC(domop, DOMOP) (int *nrqmat, double qmcrd[], int *nrmmat,
-                            double mmchrg[], double mmcrd[], double qmgrad[],
-                            double mmgrad[], double *energy, double qmcharges[]);
+void F77_FUNC(domop, DOMOP)(int*    nrqmat,
+                            double  qmcrd[],
+                            int*    nrmmat,
+                            double  mmchrg[],
+                            double  mmcrd[],
+                            double  qmgrad[],
+                            double  mmgrad[],
+                            double* energy,
+                            double  qmcharges[]);
 
 #else /* GMX_QMMM_MOPAC */
 // Stub definitions to make compilation succeed when not configured
@@ -79,13 +84,17 @@ void
 // issue fatal errors here, because that introduces problems with
 // tools suggesting and prohibiting noreturn attributes.
 
-static void F77_FUNC(domldt, DOMLDT) (int * /*unused*/, int  /*unused*/[], char  /*unused*/[])
-{
-}
+static void F77_FUNC(domldt, DOMLDT)(int* /*unused*/, int /*unused*/[], char /*unused*/[]) {}
 
-static void F77_FUNC(domop, DOMOP) (int * /*unused*/, double  /*unused*/[], int * /*unused*/,
-                                    double  /*unused*/[], double  /*unused*/[], double  /*unused*/[],
-                                    double  /*unused*/[], double * /*unused*/, double  /*unused*/[])
+static void F77_FUNC(domop, DOMOP)(int* /*unused*/,
+                                   double /*unused*/[],
+                                   int* /*unused*/,
+                                   double /*unused*/[],
+                                   double /*unused*/[],
+                                   double /*unused*/[],
+                                   double /*unused*/[],
+                                   double* /*unused*/,
+                                   double /*unused*/[])
 {
 }
 
@@ -100,14 +109,14 @@ void init_mopac(QMMM_QMrec& qm)
      * structure or find a transition state at PM3 level, gaussian is
      * used instead.
      */
-    char
-    *keywords;
-    int
-    nrQMatoms, *atomicnumberQM;
+    char* keywords;
+    int nrQMatoms, *atomicnumberQM;
 
     if (!GMX_QMMM_MOPAC)
     {
-        gmx_fatal(FARGS, "Cannot call MOPAC unless linked against it. Use cmake -DGMX_QMMM_PROGRAM=MOPAC, and ensure that linking will work correctly.");
+        gmx_fatal(FARGS,
+                  "Cannot call MOPAC unless linked against it. Use cmake -DGMX_QMMM_PROGRAM=MOPAC, "
+                  "and ensure that linking will work correctly.");
     }
 
     snew(keywords, 240);
@@ -115,15 +124,13 @@ void init_mopac(QMMM_QMrec& qm)
     if (!qm.bSH)  /* if rerun then grad should not be done! */
     {
         sprintf(keywords, "PRECISE GEO-OK CHARGE=%d GRAD MMOK ANALYT %s\n",
-                qm.QMcharge_get(),
-                eQMmethod_names[qm.QMmethod_get()]);
+                qm.QMcharge_get(), eQMmethod_names[qm.QMmethod_get()]);
     }
     else
     {
         sprintf(keywords, "PRECISE GEO-OK CHARGE=%d SINGLET GRAD %s C.I.=(%d,%d) root=2 MECI \n",
-                qm.QMcharge_get(),
-                eQMmethod_names[qm.QMmethod_get()],
-                qm.surfaceHopping.CASorbitals, qm.surfaceHopping.CASelectrons/2);
+                qm.QMcharge_get(), eQMmethod_names[qm.QMmethod_get()],
+                qm.surfaceHopping.CASorbitals, qm.surfaceHopping.CASelectrons / 2);
     }
     nrQMatoms = qm.nrQMatoms_get();
     snew(atomicnumberQM, nrQMatoms);
@@ -144,22 +151,22 @@ real call_mopac(QMMM_QMrec& qm, QMMM_MMrec& mm, rvec f[], rvec fshift[])
      */
     double /* always double as the MOPAC routines are always compiled in
               double precission! */
-    *qmcrd = nullptr, *qmchrg = nullptr, *mmcrd = nullptr, *mmchrg = nullptr,
-    *qmgrad, *mmgrad = nullptr, energy = 0;
-    int
-        i, j;
-    real
-        QMener = 0.0;
-    snew(qmcrd, 3*(qm.nrQMatoms_get()));
-    snew(qmgrad, 3*(qm.nrQMatoms_get()));
+            *qmcrd = nullptr, *qmchrg = nullptr,
+            *mmcrd = nullptr, *mmchrg = nullptr,
+            *qmgrad,
+            *mmgrad = nullptr,
+            energy = 0;
+    real QMener = 0.0;
+    snew(qmcrd, 3 * qm.nrQMatoms_get());
+    snew(qmgrad, 3 * qm.nrQMatoms_get());
     /* copy the data from qr into the arrays that are going to be used
      * in the fortran routines of MOPAC
      */
-    for (i = 0; i < qm.nrQMatoms_get(); i++)
+    for (int i = 0; i < qm.nrQMatoms_get(); i++)
     {
-        for (j = 0; j < DIM; j++)
+        for (int j = 0; j < DIM; j++)
         {
-            qmcrd[3*i+j] = static_cast<double>(qm.xQM_get(i, j))*10;
+            qmcrd[3 * i + j] = static_cast<double>(qm.xQM_get(i, j)) * 10;
         }
     }
     if (mm.nrMMatoms)
@@ -168,7 +175,8 @@ real call_mopac(QMMM_QMrec& qm, QMMM_MMrec& mm, rvec f[], rvec fshift[])
          * conceptual problems with semi-empirical QM in combination with
          * point charges that we need to solve first....
          */
-        gmx_fatal(FARGS, "At present only ONIOM is allowed in combination"
+        gmx_fatal(FARGS,
+                  "At present only ONIOM is allowed in combination"
                   " with MOPAC QM subroutines\n");
     }
     else
@@ -178,20 +186,20 @@ real call_mopac(QMMM_QMrec& qm, QMMM_MMrec& mm, rvec f[], rvec fshift[])
 
         int nrQMatoms = qm.nrQMatoms_get();
         snew(qmchrg, qm.nrQMatoms_get());
-        F77_FUNC(domop, DOMOP) (&nrQMatoms, qmcrd, &mm.nrMMatoms,
-                                mmchrg, mmcrd, qmgrad, mmgrad, &energy, qmchrg);
+        F77_FUNC(domop, DOMOP)(&nrQMatoms, qmcrd, &mm.nrMMatoms,
+                               mmchrg, mmcrd, qmgrad, mmgrad, &energy, qmchrg);
         /* add the gradients to the f[] array, and also to the fshift[].
          * the mopac gradients are in kCal/angstrom.
          */
-        for (i = 0; i < qm.nrQMatoms_get(); i++)
+        for (int i = 0; i < qm.nrQMatoms_get(); i++)
         {
-            for (j = 0; j < DIM; j++)
+            for (int j = 0; j < DIM; j++)
             {
-                f[i][j]       = static_cast<real>(10)*CAL2JOULE*qmgrad[3*i+j];
-                fshift[i][j]  = static_cast<real>(10)*CAL2JOULE*qmgrad[3*i+j];
+                f[i][j]      = static_cast<real>(10) * CAL2JOULE * qmgrad[3 * i + j];
+                fshift[i][j] = static_cast<real>(10) * CAL2JOULE * qmgrad[3 * i + j];
             }
         }
-        QMener = static_cast<real>CAL2JOULE*energy;
+        QMener = static_cast<real> CAL2JOULE * energy;
         /* do we do something with the mulliken charges?? */
 
         free(qmchrg);
@@ -208,23 +216,23 @@ real call_mopac_SH(QMMM_QMrec& qm, QMMM_MMrec& mm, rvec f[], rvec fshift[])
 
     double /* always double as the MOPAC routines are always compiled in
               double precission! */
-    *qmcrd = nullptr, *qmchrg = nullptr, *mmcrd = nullptr, *mmchrg = nullptr,
-    *qmgrad, *mmgrad = nullptr, energy = 0;
-    int
-        i, j;
-    real
-        QMener = 0.0;
+            *qmcrd = nullptr, *qmchrg = nullptr,
+            *mmcrd = nullptr, *mmchrg = nullptr,
+            *qmgrad,
+            *mmgrad = nullptr,
+            energy = 0;
+    real QMener = 0.0;
 
-    snew(qmcrd, 3*(qm.nrQMatoms_get()));
-    snew(qmgrad, 3*(qm.nrQMatoms_get()));
+    snew(qmcrd, 3 * qm.nrQMatoms_get());
+    snew(qmgrad, 3 * qm.nrQMatoms_get());
     /* copy the data from qr into the arrays that are going to be used
      * in the fortran routines of MOPAC
      */
-    for (i = 0; i < qm.nrQMatoms_get(); i++)
+    for (int i = 0; i < qm.nrQMatoms_get(); i++)
     {
-        for (j = 0; j < DIM; j++)
+        for (int j = 0; j < DIM; j++)
         {
-            qmcrd[3*i+j] = static_cast<double>(qm.xQM_get(i, j))*10;
+            qmcrd[3 * i + j] = static_cast<double>(qm.xQM_get(i, j)) * 10;
         }
     }
     if (mm.nrMMatoms)
@@ -242,20 +250,20 @@ real call_mopac_SH(QMMM_QMrec& qm, QMMM_MMrec& mm, rvec f[], rvec fshift[])
         int nrQMatoms = qm.nrQMatoms_get();
         snew(qmchrg, qm.nrQMatoms_get());
 
-        F77_FUNC(domop, DOMOP) (&nrQMatoms, qmcrd, &mm.nrMMatoms,
-                                mmchrg, mmcrd, qmgrad, mmgrad, &energy, qmchrg);
+        F77_FUNC(domop, DOMOP)(&nrQMatoms, qmcrd, &mm.nrMMatoms,
+                               mmchrg, mmcrd, qmgrad, mmgrad, &energy, qmchrg);
         /* add the gradients to the f[] array, and also to the fshift[].
          * the mopac gradients are in kCal/angstrom.
          */
-        for (i = 0; i < qm.nrQMatoms_get(); i++)
+        for (int i = 0; i < qm.nrQMatoms_get(); i++)
         {
-            for (j = 0; j < DIM; j++)
+            for (int j = 0; j < DIM; j++)
             {
-                f[i][j]      = static_cast<real>(10)*CAL2JOULE*qmgrad[3*i+j];
-                fshift[i][j] = static_cast<real>(10)*CAL2JOULE*qmgrad[3*i+j];
+                f[i][j]      = static_cast<real>(10) * CAL2JOULE * qmgrad[3 * i + j];
+                fshift[i][j] = static_cast<real>(10) * CAL2JOULE * qmgrad[3 * i + j];
             }
         }
-        QMener = static_cast<real>CAL2JOULE*energy;
+        QMener = static_cast<real> CAL2JOULE * energy;
     }
     free(qmgrad);
     free(qmcrd);

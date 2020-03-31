@@ -1,7 +1,8 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2013,2014,2015,2016,2018,2019, by the GROMACS development team, led by
+ * Copyright (c) 2013,2014,2015,2016,2018 by the GROMACS development team.
+ * Copyright (c) 2019,2020, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -51,22 +52,17 @@ namespace gmx
 namespace test
 {
 
-class ImdTestFixture : public MdrunTestFixture,
-                       public ::testing::WithParamInterface <const char *>
+class ImdTestFixture : public MdrunTestFixture, public ::testing::WithParamInterface<const char*>
 {
-    protected:
-        ImdTestFixture();
-        ~ImdTestFixture() override;
+protected:
+    ImdTestFixture();
+    ~ImdTestFixture() override;
 };
 
 
-ImdTestFixture::ImdTestFixture()
-{
-}
+ImdTestFixture::ImdTestFixture() {}
 
-ImdTestFixture::~ImdTestFixture()
-{
-}
+ImdTestFixture::~ImdTestFixture() {}
 
 
 //! Test fixture for mdrun with IMD settings
@@ -104,7 +100,7 @@ TEST_P(ImdTest, ImdCanRun)
     ::gmx::test::CommandLine imdCaller;
     imdCaller.addOption("-imdport", 0); // automatically assign a free port
     imdCaller.append("-imdpull");
-    imdCaller.append("-noimdwait");     // cannot use -imdwait: then mdrun would not return control ...
+    imdCaller.append("-noimdwait"); // cannot use -imdwait: then mdrun would not return control ...
     imdCaller.append("-noimdterm");
 
     // Do an mdrun with IMD enabled
@@ -113,8 +109,7 @@ TEST_P(ImdTest, ImdCanRun)
 
 // Check a dynamical integrator and an energy minimizer. No need to
 // cover the whole space.
-INSTANTIATE_TEST_CASE_P(WithIntegrator, ImdTest,
-                            ::testing::Values("md", "steep"));
+INSTANTIATE_TEST_CASE_P(WithIntegrator, ImdTest, ::testing::Values("md", "steep"));
 
 } // namespace test
 } // namespace gmx

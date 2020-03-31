@@ -3,23 +3,28 @@
 
 .. _releng-workflow-release:
 
-releng repository (missing)
-===========================
+Release engineering with Gitlab
+===============================
 
 .. toctree::
    :hidden:
 
-   jenkins-howto
-   jenkins-ui
+We are currently switching our build and testing system to use Gitlab
+CI pipelines run on GitLab Runner. This section is going to be extended
+with individual build information as it comes available. For now we are
+using a combination of building with the previous system on Jenkins
+and post-submit verification on Gitlab.
 
-This documentation was built without releng documentation.
-If you want to see this documentation, set ``RELENG_PATH`` CMake variable to
-point to the root of a checkout from the releng repository.
+.. seealso:: :doc:`../infrastructure`
 
 .. _releng-triggering-builds:
 
-Triggering builds (missing)
+Triggering builds on Gitlab
 ---------------------------
 
-This information is available when building the documentation
-with releng, as indicated above.
+Pipelines can be triggered through the web interface, with different
+pipelines available through the use of specified environment variables
+in the trigger interface.
+
+This section is going to be extended with information for how to trigger
+different builds and their individual behaviour.

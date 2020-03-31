@@ -1,7 +1,7 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2019, by the GROMACS development team, led by
+ * Copyright (c) 2019,2020, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -75,52 +75,50 @@ namespace
 
 class DensityFittingTest : public ::testing::Test
 {
-    public:
+public:
+    void addMdpOptionDensityFittingActive()
+    {
+        mdpValueBuilder_.rootObject().addValue("density-guided-simulation-active",
+                                               std::string("yes"));
+    }
 
-        void addMdpOptionDensityFittingActive()
-        {
-            mdpValueBuilder_.rootObject().addValue("density-guided-simulation-active", std::string("yes"));
-        }
+    void addMdpOptionReferenceDensity()
+    {
+        mdpValueBuilder_.rootObject().addValue(
+                "density-guided-simulation-reference-density-filename",
+                std::string(test::TestFileManager::getInputFilePath("ellipsoid-density.mrc")));
+    }
 
-        void addMdpOptionReferenceDensity()
-        {
-            mdpValueBuilder_.rootObject().addValue(
-                    "density-guided-simulation-reference-density-filename",
-                    std::string(test::TestFileManager::getInputFilePath("ellipsoid-density.mrc")));
-        }
+    //! build an mdp options tree that sets the options for the density fitting module
+    void makeDensityFittingModuleWithSetOptions()
+    {
+        KeyValueTreeObject mdpOptionsTree = mdpValueBuilder_.build();
 
-        //! build an mdp options tree that sets the options for the density fitting module
-        void makeDensityFittingModuleWithSetOptions()
-        {
-            KeyValueTreeObject mdpOptionsTree = mdpValueBuilder_.build();
+        densityFittingModule_ = DensityFittingModuleInfo::create();
 
-            densityFittingModule_ = DensityFittingModuleInfo::create(&notifier_);
+        // set up options
+        Options densityFittingModuleOptions;
+        densityFittingModule_->mdpOptionProvider()->initMdpOptions(&densityFittingModuleOptions);
 
-            // set up options
-            Options densityFittingModuleOptions;
-            densityFittingModule_->mdpOptionProvider()->initMdpOptions(&densityFittingModuleOptions);
+        // Add rules to transform mdp inputs to densityFittingModule data
+        KeyValueTreeTransformer transform;
+        transform.rules()->addRule().keyMatchType("/", StringCompareType::CaseAndDashInsensitive);
+        densityFittingModule_->mdpOptionProvider()->initMdpTransform(transform.rules());
 
-            // Add rules to transform mdp inputs to densityFittingModule data
-            KeyValueTreeTransformer transform;
-            transform.rules()->addRule().keyMatchType("/", StringCompareType::CaseAndDashInsensitive);
-            densityFittingModule_->mdpOptionProvider()->initMdpTransform(transform.rules());
+        // Execute the transform on the mdpValues
+        auto transformedMdpValues = transform.transform(mdpOptionsTree, nullptr);
+        assignOptionsFromKeyValueTree(&densityFittingModuleOptions, transformedMdpValues.object(), nullptr);
+    }
 
-            // Execute the transform on the mdpValues
-            auto transformedMdpValues = transform.transform(mdpOptionsTree, nullptr);
-            assignOptionsFromKeyValueTree(&densityFittingModuleOptions, transformedMdpValues.object(), nullptr);
-        }
+    void intializeForceProviders()
+    {
+        densityFittingModule_->initForceProviders(&densityFittingForces_);
+    }
 
-        void intializeForceProviders()
-        {
-            densityFittingModule_->initForceProviders(&densityFittingForces_);
-        }
-
-    protected:
-
-        KeyValueTreeBuilder        mdpValueBuilder_;
-        MdModulesNotifier          notifier_;
-        ForceProviders             densityFittingForces_;
-        std::unique_ptr<IMDModule> densityFittingModule_;
+protected:
+    KeyValueTreeBuilder        mdpValueBuilder_;
+    ForceProviders             densityFittingForces_;
+    std::unique_ptr<IMDModule> densityFittingModule_;
 };
 
 TEST_F(DensityFittingTest, ForceProviderLackingInputThrows)

@@ -32,7 +32,7 @@
  * To help us fund GROMACS development, we humbly ask that you cite
  * the research papers on the package. Check out http://www.gromacs.org.
  */
-/*! \libinternal
+/*! \libinternal \file
  * \brief Declares the topology class for the modular simulator
  *
  * \author Pascal Merz <pascal.merz@me.com>
@@ -59,10 +59,8 @@ namespace gmx
 class Constraints;
 class MDAtoms;
 
-//! \addtogroup module_modularsimulator
-//! \{
-
 /*! \libinternal
+ * \ingroup module_modularsimulator
  * \brief Object holding the topology
  *
  * Clients can register to get an updated local topology whenever there
@@ -70,40 +68,38 @@ class MDAtoms;
  */
 class TopologyHolder final
 {
-    public:
-        //! Constructor
-        TopologyHolder(
-            const gmx_mtop_t &globalTopology,
-            const t_commrec  *cr,
-            const t_inputrec *inputrec,
-            t_forcerec       *fr,
-            MDAtoms          *mdAtoms,
-            Constraints      *constr,
-            gmx_vsite_t      *vsite);
+public:
+    //! Constructor
+    TopologyHolder(const gmx_mtop_t& globalTopology,
+                   const t_commrec*  cr,
+                   const t_inputrec* inputrec,
+                   t_forcerec*       fr,
+                   MDAtoms*          mdAtoms,
+                   Constraints*      constr,
+                   gmx_vsite_t*      vsite);
 
-        //! Get global topology
-        const gmx_mtop_t &globalTopology() const;
+    //! Get global topology
+    const gmx_mtop_t& globalTopology() const;
 
-        //! Register topology client
-        void registerClient(ITopologyHolderClient *client);
+    //! Register topology client
+    void registerClient(ITopologyHolderClient* client);
 
-        //! Allow domdec to update local topology
-        friend class DomDecHelper;
+    //! Allow domdec to update local topology
+    friend class DomDecHelper;
 
-    private:
-        //! Constant reference to the global topolgy
-        const gmx_mtop_t               &globalTopology_;
-        //! Pointer to the currently valid local topology
-        std::unique_ptr<gmx_localtop_t> localTopology_;
+private:
+    //! Constant reference to the global topolgy
+    const gmx_mtop_t& globalTopology_;
+    //! Pointer to the currently valid local topology
+    std::unique_ptr<gmx_localtop_t> localTopology_;
 
-        //! List of clients to be updated if local topology changes
-        std::vector<ITopologyHolderClient*> clients_;
+    //! List of clients to be updated if local topology changes
+    std::vector<ITopologyHolderClient*> clients_;
 
-        //! Update local topology
-        void updateLocalTopology();
+    //! Update local topology
+    void updateLocalTopology();
 };
 
-//! /}
-}      // namespace gmx
+} // namespace gmx
 
 #endif // GMX_MODULARSIMULATOR_TOPOLOGYHOLDER_H

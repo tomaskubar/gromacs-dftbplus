@@ -1,7 +1,8 @@
 #
 # This file is part of the GROMACS molecular simulation package.
 #
-# Copyright (c) 2015,2016,2017,2018,2019, by the GROMACS development team, led by
+# Copyright (c) 2015,2016,2017,2018,2019,2020, The GROMACS development team.
+# Copyright (c) 2020, by the GROMACS development team, led by
 # Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
 # and including many others, as listed in the AUTHORS file in the
 # top-level source directory and at http://www.gromacs.org.
@@ -183,9 +184,8 @@ def do_build(context):
         context.env.set_env_var('GMX_GPU_DD_COMMS', "1")
         context.env.set_env_var('GMX_GPU_PME_PP_COMMS', "1")
 
-    # GPU update flag enables GPU update+constraints as well as buffer ops (dependency)
+    # GPU update flag changes the default for '-update auto' to GPU
     if context.opts.gpuupdate:
-        context.env.set_env_var('GMX_USE_GPU_BUFFER_OPS', "1")
         context.env.set_env_var('GMX_FORCE_UPDATE_DEFAULT_GPU', "1")
 
     regressiontests_path = context.workspace.get_project_dir(Project.REGRESSIONTESTS)
@@ -245,6 +245,11 @@ def do_build(context):
         # TODO: Generalize the machinery here such that it can easily be used
         # also for non-release builds.
     else:
+        # run OpenCL offline compile tests on clang tidy builds
+        if (context.opts.tidy and context.opts.opencl):
+            context.build_target(target='ocl_nbnxm_kernels')
+            context.build_target(target='ocl_pme_kernels')
+
         context.build_target(target='tests', keep_going=True)
 
         context.run_ctest(args=['--output-on-failure', '--label-exclude', 'SlowTest'], memcheck=context.opts.asan)

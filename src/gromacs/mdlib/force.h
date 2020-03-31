@@ -3,7 +3,8 @@
  *
  * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
  * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2016,2017,2018,2019, by the GROMACS development team, led by
+ * Copyright (c) 2013,2014,2015,2016,2017 by the GROMACS development team.
+ * Copyright (c) 2018,2019,2020, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -39,7 +40,6 @@
 
 #include "gromacs/math/arrayrefwithpadding.h"
 #include "gromacs/math/vectypes.h"
-#include "gromacs/mdtypes/forceoutput.h"
 #include "gromacs/utility/arrayref.h"
 
 class DDBalanceRegionHandler;
@@ -52,12 +52,12 @@ struct gmx_multisim_t;
 struct gmx_vsite_t;
 struct gmx_wallcycle;
 class history_t;
+class InteractionDefinitions;
 struct pull_t;
 struct t_commrec;
 struct t_fcdata;
 struct t_forcerec;
 struct t_graph;
-struct t_idef;
 struct t_inputrec;
 struct t_lambda;
 struct t_mdatoms;
@@ -66,43 +66,44 @@ struct t_nrnb;
 namespace gmx
 {
 class Awh;
+class ForceOutputs;
 class ForceWithVirial;
 class ImdSession;
 class MdrunScheduleWorkload;
 class MDLogger;
 class StepWorkload;
-}
+} // namespace gmx
 
-void do_force(FILE                                     *log,
-              const t_commrec                          *cr,
-              const gmx_multisim_t                     *ms,
-              const t_inputrec                         *inputrec,
-              gmx::Awh                                 *awh,
-              gmx_enfrot                               *enforcedRotation,
-              gmx::ImdSession                          *imdSession,
-              pull_t                                   *pull_work,
-              int64_t                                   step,
-              t_nrnb                                   *nrnb,
-              gmx_wallcycle                            *wcycle,
-              const gmx_localtop_t                     *top,
-              const matrix                              box,
-              gmx::ArrayRefWithPadding<gmx::RVec>       coordinates,
-              history_t                                *hist,
-              gmx::ArrayRefWithPadding<gmx::RVec>       force,
-              tensor                                    vir_force,
-              const t_mdatoms                          *mdatoms,
-              gmx_enerdata_t                           *enerd,
-              t_fcdata                                 *fcd,
-              gmx::ArrayRef<real>                       lambda,
-              t_graph                                  *graph,
-              t_forcerec                               *fr,
-              gmx::MdrunScheduleWorkload               *runScheduleWork,
-              const gmx_vsite_t                        *vsite,
-              rvec                                      mu_tot,
-              double                                    t,
-              gmx_edsam                                *ed,
-              int                                       legacyFlags,
-              const DDBalanceRegionHandler             &ddBalanceRegionHandler);
+void do_force(FILE*                               log,
+              const t_commrec*                    cr,
+              const gmx_multisim_t*               ms,
+              const t_inputrec*                   inputrec,
+              gmx::Awh*                           awh,
+              gmx_enfrot*                         enforcedRotation,
+              gmx::ImdSession*                    imdSession,
+              pull_t*                             pull_work,
+              int64_t                             step,
+              t_nrnb*                             nrnb,
+              gmx_wallcycle*                      wcycle,
+              const gmx_localtop_t*               top,
+              const matrix                        box,
+              gmx::ArrayRefWithPadding<gmx::RVec> coordinates,
+              history_t*                          hist,
+              gmx::ArrayRefWithPadding<gmx::RVec> force,
+              tensor                              vir_force,
+              const t_mdatoms*                    mdatoms,
+              gmx_enerdata_t*                     enerd,
+              t_fcdata*                           fcd,
+              gmx::ArrayRef<real>                 lambda,
+              t_graph*                            graph,
+              t_forcerec*                         fr,
+              gmx::MdrunScheduleWorkload*         runScheduleWork,
+              const gmx_vsite_t*                  vsite,
+              rvec                                mu_tot,
+              double                              t,
+              gmx_edsam*                          ed,
+              int                                 legacyFlags,
+              const DDBalanceRegionHandler&       ddBalanceRegionHandler);
 
 /* Communicate coordinates (if parallel).
  * Do neighbor searching (if necessary).
@@ -114,26 +115,25 @@ void do_force(FILE                                     *log,
  */
 
 
-void
-do_force_lowlevel(t_forcerec                               *fr,
-                  const t_inputrec                         *ir,
-                  const t_idef                             *idef,
-                  const t_commrec                          *cr,
-                  const gmx_multisim_t                     *ms,
-                  t_nrnb                                   *nrnb,
-                  gmx_wallcycle                            *wcycle,
-                  const t_mdatoms                          *md,
-                  gmx::ArrayRefWithPadding<gmx::RVec>       coordinates,
-                  history_t                                *hist,
-                  gmx::ForceOutputs                        *forceOutputs,
-                  gmx_enerdata_t                           *enerd,
-                  t_fcdata                                 *fcd,
-                  const matrix                              box,
-                  const real                               *lambda,
-                  const t_graph                            *graph,
-                  const rvec                               *mu_tot,
-                  const gmx::StepWorkload                  &stepWork,
-                  const DDBalanceRegionHandler             &ddBalanceRegionHandler);
+void do_force_lowlevel(t_forcerec*                         fr,
+                       const t_inputrec*                   ir,
+                       const InteractionDefinitions&       idef,
+                       const t_commrec*                    cr,
+                       const gmx_multisim_t*               ms,
+                       t_nrnb*                             nrnb,
+                       gmx_wallcycle*                      wcycle,
+                       const t_mdatoms*                    md,
+                       gmx::ArrayRefWithPadding<gmx::RVec> coordinates,
+                       history_t*                          hist,
+                       gmx::ForceOutputs*                  forceOutputs,
+                       gmx_enerdata_t*                     enerd,
+                       t_fcdata*                           fcd,
+                       const matrix                        box,
+                       const real*                         lambda,
+                       const t_graph*                      graph,
+                       const rvec*                         mu_tot,
+                       const gmx::StepWorkload&            stepWork,
+                       const DDBalanceRegionHandler&       ddBalanceRegionHandler);
 /* Call all the force routines */
 
 #endif

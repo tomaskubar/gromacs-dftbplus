@@ -1,7 +1,7 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2018,2019, by the GROMACS development team, led by
+ * Copyright (c) 2018,2019,2020, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -52,37 +52,34 @@ namespace test
 {
 
 //! Initialization overload for non-BasicVector
-template <typename T>
-void fillInputContents(ArrayRef<T> inputRef,
-                       int         scaleFactor)
+template<typename T>
+void fillInputContents(ArrayRef<T> inputRef, int scaleFactor)
 {
     inputRef[0] = 1;
     inputRef[1] = 2;
     inputRef[2] = 3;
-    for (auto &element : inputRef)
+    for (auto& element : inputRef)
     {
         element *= scaleFactor;
     }
 }
 
 //! Initialization overload for BasicVector
-template <typename T>
-void fillInputContents(ArrayRef < BasicVector < T>> inputRef,
-                       int                          scaleFactor)
+template<typename T>
+void fillInputContents(ArrayRef<BasicVector<T>> inputRef, int scaleFactor)
 {
-    inputRef[0] = {1, 2, 3};
-    inputRef[1] = {4, 5, 6};
-    inputRef[2] = {7, 8, 9};
-    for (auto &element : inputRef)
+    inputRef[0] = { 1, 2, 3 };
+    inputRef[1] = { 4, 5, 6 };
+    inputRef[2] = { 7, 8, 9 };
+    for (auto& element : inputRef)
     {
         element *= scaleFactor;
     }
 }
 
 //! Dispatcher function for filling.
-template <typename PaddedVectorOfT>
-void fillInput(PaddedVectorOfT *input,
-               int              scaleFactor)
+template<typename PaddedVectorOfT>
+void fillInput(PaddedVectorOfT* input, int scaleFactor)
 {
     // Use a size for the vector in tests that is prime enough to
     // expose problems where they exist.
@@ -93,9 +90,20 @@ void fillInput(PaddedVectorOfT *input,
 }
 
 //! Comparison overload for non-BasicVector
-template <typename T>
-void compareViews(ArrayRef<T> input,
-                  ArrayRef<T> output)
+template<typename T>
+void compareViews(ArrayRef<T> input, ArrayRef<T> output)
+{
+    ASSERT_EQ(input.size(), output.size());
+    for (index i = 0; i != input.ssize(); ++i)
+    {
+        EXPECT_EQ(input[i], output[i]) << "for index " << i;
+    }
+}
+
+//! Comparison for non-BasicVector ignoring const qualifiers
+template<typename T, typename U>
+typename std::enable_if<std::is_same<typename std::remove_const<T>::type, typename std::remove_const<U>::type>::value, void>::type
+compareViewsIgnoreConst(ArrayRef<T> input, ArrayRef<U> output)
 {
     ASSERT_EQ(input.size(), output.size());
     for (index i = 0; i != input.ssize(); ++i)
@@ -105,9 +113,8 @@ void compareViews(ArrayRef<T> input,
 }
 
 //! Comparison overload for BasicVector<T>
-template <typename T>
-void compareViews(ArrayRef < BasicVector < T>> input,
-                  ArrayRef < BasicVector < T>> output)
+template<typename T>
+void compareViews(ArrayRef<BasicVector<T>> input, ArrayRef<BasicVector<T>> output)
 {
     ASSERT_EQ(input.size(), output.size());
     for (index i = 0; i != input.ssize(); ++i)

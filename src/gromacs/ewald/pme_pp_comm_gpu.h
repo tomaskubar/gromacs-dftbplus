@@ -45,6 +45,8 @@
 #include "gromacs/utility/classhelpers.h"
 #include "gromacs/utility/gmxmpi.h"
 
+class GpuEventSynchronizer;
+
 namespace gmx
 {
 
@@ -55,51 +57,53 @@ namespace gmx
 class PmePpCommGpu
 {
 
-    public:
-        /*! \brief Creates PME-PP GPU communication object
-         * \param[in] comm            Communicator used for simulation
-         * \param[in] pmeRank         Rank of PME task
-         * \param[in] coordinatesOnDeviceEvent Event recorded when coordinates are available on device
-         */
-        PmePpCommGpu(MPI_Comm comm, int pmeRank, void* coordinatesOnDeviceEvent);
-        ~PmePpCommGpu();
+public:
+    /*! \brief Creates PME-PP GPU communication object
+     * \param[in] comm            Communicator used for simulation
+     * \param[in] pmeRank         Rank of PME task
+     */
+    PmePpCommGpu(MPI_Comm comm, int pmeRank);
+    ~PmePpCommGpu();
 
-        /*! \brief Perform steps required when buffer size changes
-         * \param[in]  size   Number of elements in buffer
-         */
-        void reinit(int size);
+    /*! \brief Perform steps required when buffer size changes
+     * \param[in]  size   Number of elements in buffer
+     */
+    void reinit(int size);
 
-        /*! \brief
-         * Pull data from PME GPU directly using CUDA Memory copy.
-         * \param[out] recvPtr  Buffer to receive PME force data
-         * \param[in]  recvSize Number of elements to receive
-         * \param[in] recvPmeForceToGpu Whether receive is to GPU, otherwise CPU
-         */
-        void receiveForceFromPmeCudaDirect(void *recvPtr, int recvSize, bool recvPmeForceToGpu);
+    /*! \brief
+     * Pull data from PME GPU directly using CUDA Memory copy.
+     * \param[out] recvPtr  Buffer to receive PME force data
+     * \param[in]  recvSize Number of elements to receive
+     * \param[in] recvPmeForceToGpu Whether receive is to GPU, otherwise CPU
+     */
+    void receiveForceFromPmeCudaDirect(void* recvPtr, int recvSize, bool recvPmeForceToGpu);
 
-        /*! \brief Push coordinates buffer directly to GPU memory on PME task
-         * \param[in] sendPtr Buffer with coordinate data
-         * \param[in] sendSize Number of elements to send
-         * \param[in] sendPmeCoordinatesFromGpu Whether send is from GPU, otherwise CPU
-         */
-        void sendCoordinatesToPmeCudaDirect(void *sendPtr, int sendSize, bool sendPmeCoordinatesFromGpu);
+    /*! \brief Push coordinates buffer directly to GPU memory on PME task
+     * \param[in] sendPtr Buffer with coordinate data
+     * \param[in] sendSize Number of elements to send
+     * \param[in] sendPmeCoordinatesFromGpu Whether send is from GPU, otherwise CPU
+     * \param[in] coordinatesReadyOnDeviceEvent Event recorded when coordinates are available on device
+     */
+    void sendCoordinatesToPmeCudaDirect(void*                 sendPtr,
+                                        int                   sendSize,
+                                        bool                  sendPmeCoordinatesFromGpu,
+                                        GpuEventSynchronizer* coordinatesReadyOnDeviceEvent);
 
-        /*! \brief
-         * Return pointer to buffer used for staging PME force on GPU
-         */
-        void* getGpuForceStagingPtr();
+    /*! \brief
+     * Return pointer to buffer used for staging PME force on GPU
+     */
+    void* getGpuForceStagingPtr();
 
-        /*! \brief
-         * Return pointer to event recorded when forces are ready
-         */
-        void* getForcesReadySynchronizer();
+    /*! \brief
+     * Return pointer to event recorded when forces are ready
+     */
+    void* getForcesReadySynchronizer();
 
-    private:
-        class Impl;
-        gmx::PrivateImplPointer<Impl> impl_;
-
+private:
+    class Impl;
+    gmx::PrivateImplPointer<Impl> impl_;
 };
 
-} //namespace gmx
+} // namespace gmx
 
 #endif

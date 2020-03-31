@@ -1,7 +1,7 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2019, by the GROMACS development team, led by
+ * Copyright (c) 2019,2020, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -48,15 +48,14 @@
 
 #include "gromacs/mdlib/gmx_omp_nthreads.h"
 #include "gromacs/mdlib/updategroupscog.h"
+#include "gromacs/nbnxm/atomdata.h"
 #include "gromacs/utility/fatalerror.h"
-
-#include "atomdata.h"
 
 namespace Nbnxm
 {
 
 //! Returns the number of search grids
-static int numGrids(const GridSet::DomainSetup &domainSetup)
+static int numGrids(const GridSet::DomainSetup& domainSetup)
 {
     int numGrids;
     if (domainSetup.doTestParticleInsertion)
@@ -78,11 +77,11 @@ static int numGrids(const GridSet::DomainSetup &domainSetup)
     return numGrids;
 }
 
-GridSet::DomainSetup::DomainSetup(const int                 ePBC,
+GridSet::DomainSetup::DomainSetup(const PbcType             pbcType,
                                   const bool                doTestParticleInsertion,
-                                  const ivec               *numDDCells,
-                                  const gmx_domdec_zones_t *ddZones) :
-    ePBC(ePBC),
+                                  const ivec*               numDDCells,
+                                  const gmx_domdec_zones_t* ddZones) :
+    pbcType(pbcType),
     doTestParticleInsertion(doTestParticleInsertion),
     haveMultipleDomains(numDDCells != nullptr),
     zones(ddZones)
@@ -93,15 +92,15 @@ GridSet::DomainSetup::DomainSetup(const int                 ePBC,
     }
 }
 
-GridSet::GridSet(const int                 ePBC,
+GridSet::GridSet(const PbcType             pbcType,
                  const bool                doTestParticleInsertion,
-                 const ivec               *numDDCells,
-                 const gmx_domdec_zones_t *ddZones,
+                 const ivec*               numDDCells,
+                 const gmx_domdec_zones_t* ddZones,
                  const PairlistType        pairlistType,
                  const bool                haveFep,
                  const int                 numThreads,
                  gmx::PinningPolicy        pinningPolicy) :
-    domainSetup_(ePBC, doTestParticleInsertion, numDDCells, ddZones),
+    domainSetup_(pbcType, doTestParticleInsertion, numDDCells, ddZones),
     grids_(numGrids(domainSetup_), Grid(pairlistType, haveFep_)),
     haveFep_(haveFep),
     numRealAtomsLocal_(0),
@@ -116,13 +115,13 @@ GridSet::GridSet(const int                 ePBC,
 void GridSet::setLocalAtomOrder()
 {
     /* Set the atom order for the home cell (index 0) */
-    const Nbnxm::Grid &grid = grids_[0];
+    const Nbnxm::Grid& grid = grids_[0];
 
-    int                atomIndex = 0;
+    int atomIndex = 0;
     for (int cxy = 0; cxy < grid.numColumns(); cxy++)
     {
         const int numAtoms  = grid.numAtomsInColumn(cxy);
-        int       cellIndex = grid.firstCellInColumn(cxy)*grid.geometry().numAtomsPerCell;
+        int       cellIndex = grid.firstCellInColumn(cxy) * grid.geometry().numAtomsPerCell;
         for (int i = 0; i < numAtoms; i++)
         {
             gridSetData_.atomIndices[cellIndex] = atomIndex;
@@ -133,35 +132,35 @@ void GridSet::setLocalAtomOrder()
     }
 }
 
-void GridSet::putOnGrid(const matrix                    box,
-                        const int                       gridIndex,
-                        const rvec                      lowerCorner,
-                        const rvec                      upperCorner,
-                        const gmx::UpdateGroupsCog     *updateGroupsCog,
-                        const gmx::Range<int>           atomRange,
-                        real                            atomDensity,
-                        gmx::ArrayRef<const int>        atomInfo,
-                        gmx::ArrayRef<const gmx::RVec>  x,
-                        const int                       numAtomsMoved,
-                        const int                      *move,
-                        nbnxn_atomdata_t               *nbat)
+void GridSet::putOnGrid(const matrix                   box,
+                        const int                      gridIndex,
+                        const rvec                     lowerCorner,
+                        const rvec                     upperCorner,
+                        const gmx::UpdateGroupsCog*    updateGroupsCog,
+                        const gmx::Range<int>          atomRange,
+                        real                           atomDensity,
+                        gmx::ArrayRef<const int>       atomInfo,
+                        gmx::ArrayRef<const gmx::RVec> x,
+                        const int                      numAtomsMoved,
+                        const int*                     move,
+                        nbnxn_atomdata_t*              nbat)
 {
-    Nbnxm::Grid  &grid = grids_[gridIndex];
+    Nbnxm::Grid& grid = grids_[gridIndex];
 
-    int           cellOffset;
+    int cellOffset;
     if (gridIndex == 0)
     {
         cellOffset = 0;
     }
     else
     {
-        const Nbnxm::Grid &previousGrid = grids_[gridIndex - 1];
-        cellOffset = previousGrid.atomIndexEnd()/previousGrid.geometry().numAtomsPerCell;
+        const Nbnxm::Grid& previousGrid = grids_[gridIndex - 1];
+        cellOffset = previousGrid.atomIndexEnd() / previousGrid.geometry().numAtomsPerCell;
     }
 
     const int n = atomRange.size();
 
-    real      maxAtomGroupRadius;
+    real maxAtomGroupRadius;
     if (gridIndex == 0)
     {
         copy_mat(box, box_);
@@ -176,15 +175,14 @@ void GridSet::putOnGrid(const matrix                    box,
 
         if (debug)
         {
-            fprintf(debug, "natoms_local = %5d atom_density = %5.1f\n",
-                    numRealAtomsLocal_, atomDensity);
+            fprintf(debug, "natoms_local = %5d atom_density = %5.1f\n", numRealAtomsLocal_, atomDensity);
         }
     }
     else
     {
-        const Nbnxm::Grid::Dimensions &dimsGrid0 = grids_[0].dimensions();
-        atomDensity        = dimsGrid0.atomDensity;
-        maxAtomGroupRadius = dimsGrid0.maxAtomGroupRadius;
+        const Nbnxm::Grid::Dimensions& dimsGrid0 = grids_[0].dimensions();
+        atomDensity                              = dimsGrid0.atomDensity;
+        maxAtomGroupRadius                       = dimsGrid0.maxAtomGroupRadius;
 
         numRealAtomsTotal_ = std::max(numRealAtomsTotal_, *atomRange.end());
     }
@@ -194,15 +192,11 @@ void GridSet::putOnGrid(const matrix                    box,
      */
     const int ddZone = (domainSetup_.doTestParticleInsertion ? 0 : gridIndex);
     // grid data used in GPU transfers inherits the gridset pinning policy
-    auto      pinPolicy = gridSetData_.cells.get_allocator().pinningPolicy();
-    grid.setDimensions(ddZone, n - numAtomsMoved,
-                       lowerCorner, upperCorner,
-                       atomDensity,
-                       maxAtomGroupRadius,
-                       haveFep_,
-                       pinPolicy);
+    auto pinPolicy = gridSetData_.cells.get_allocator().pinningPolicy();
+    grid.setDimensions(ddZone, n - numAtomsMoved, lowerCorner, upperCorner, atomDensity,
+                       maxAtomGroupRadius, haveFep_, pinPolicy);
 
-    for (GridWork &work : gridWork_)
+    for (GridWork& work : gridWork_)
     {
         work.numAtomsPerColumn.resize(grid.numColumns() + 1);
     }
@@ -218,19 +212,15 @@ void GridSet::putOnGrid(const matrix                    box,
     {
         try
         {
-            Grid::calcColumnIndices(grid.dimensions(),
-                                    updateGroupsCog,
-                                    atomRange, x,
-                                    ddZone, move, thread, nthread,
-                                    gridSetData_.cells,
-                                    gridWork_[thread].numAtomsPerColumn);
+            Grid::calcColumnIndices(grid.dimensions(), updateGroupsCog, atomRange, x, ddZone, move, thread,
+                                    nthread, gridSetData_.cells, gridWork_[thread].numAtomsPerColumn);
         }
-        GMX_CATCH_ALL_AND_EXIT_WITH_FATAL_ERROR;
+        GMX_CATCH_ALL_AND_EXIT_WITH_FATAL_ERROR
     }
 
     /* Copy the already computed cell indices to the grid and sort, when needed */
-    grid.setCellIndices(ddZone, cellOffset, &gridSetData_, gridWork_,
-                        atomRange, atomInfo.data(), x, numAtomsMoved, nbat);
+    grid.setCellIndices(ddZone, cellOffset, &gridSetData_, gridWork_, atomRange, atomInfo.data(), x,
+                        numAtomsMoved, nbat);
 
     if (gridIndex == 0)
     {

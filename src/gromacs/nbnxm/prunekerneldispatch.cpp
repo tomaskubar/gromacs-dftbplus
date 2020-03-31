@@ -1,7 +1,7 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2016,2017,2018,2019, by the GROMACS development team, led by
+ * Copyright (c) 2016,2017,2018,2019,2020, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -41,23 +41,21 @@
 #include "gromacs/utility/gmxassert.h"
 
 #include "clusterdistancekerneltype.h"
+#include "nbnxm_gpu.h"
 #include "pairlistset.h"
 #include "pairlistsets.h"
 #include "kernels_reference/kernel_ref_prune.h"
 #include "kernels_simd_2xmm/kernel_prune.h"
 #include "kernels_simd_4xm/kernel_prune.h"
 
-void
-PairlistSets::dispatchPruneKernel(const gmx::InteractionLocality  iLocality,
-                                  const nbnxn_atomdata_t         *nbat,
-                                  const rvec                     *shift_vec)
+void PairlistSets::dispatchPruneKernel(const gmx::InteractionLocality iLocality,
+                                       const nbnxn_atomdata_t*        nbat,
+                                       const rvec*                    shift_vec)
 {
     pairlistSet(iLocality).dispatchPruneKernel(nbat, shift_vec);
 }
 
-void
-PairlistSet::dispatchPruneKernel(const nbnxn_atomdata_t  *nbat,
-                                 const rvec              *shift_vec)
+void PairlistSet::dispatchPruneKernel(const nbnxn_atomdata_t* nbat, const rvec* shift_vec)
 {
     const real rlistInner = params_.rlistInner;
 
@@ -70,7 +68,7 @@ PairlistSet::dispatchPruneKernel(const nbnxn_atomdata_t  *nbat,
 #pragma omp parallel for schedule(static) num_threads(nthreads)
     for (int i = 0; i < nthreads; i++)
     {
-        NbnxnPairlistCpu *nbl = &cpuLists_[i];
+        NbnxnPairlistCpu* nbl = &cpuLists_[i];
 
         switch (getClusterDistanceKernelType(params_.pairlistType, *nbat))
         {
@@ -83,15 +81,12 @@ PairlistSet::dispatchPruneKernel(const nbnxn_atomdata_t  *nbat,
             case ClusterDistanceKernelType::CpuPlainC:
                 nbnxn_kernel_prune_ref(nbl, nbat, shift_vec, rlistInner);
                 break;
-            default:
-                GMX_RELEASE_ASSERT(false, "kernel type not handled (yet)");
+            default: GMX_RELEASE_ASSERT(false, "kernel type not handled (yet)");
         }
     }
 }
 
-void
-nonbonded_verlet_t::dispatchPruneKernelCpu(const gmx::InteractionLocality  iLocality,
-                                           const rvec                     *shift_vec)
+void nonbonded_verlet_t::dispatchPruneKernelCpu(const gmx::InteractionLocality iLocality, const rvec* shift_vec)
 {
     pairlistSets_->dispatchPruneKernel(iLocality, nbat.get(), shift_vec);
 }
@@ -103,9 +98,9 @@ void nonbonded_verlet_t::dispatchPruneKernelGpu(int64_t step)
 
     const bool stepIsEven = (pairlistSets().numStepsWithPairlist(step) % 2 == 0);
 
-    Nbnxm::gpu_launch_kernel_pruneonly(gpu_nbv,
-                                       stepIsEven ? gmx::InteractionLocality::Local : gmx::InteractionLocality::NonLocal,
-                                       pairlistSets().params().numRollingPruningParts);
+    Nbnxm::gpu_launch_kernel_pruneonly(
+            gpu_nbv, stepIsEven ? gmx::InteractionLocality::Local : gmx::InteractionLocality::NonLocal,
+            pairlistSets().params().numRollingPruningParts);
 
     wallcycle_sub_stop(wcycle_, ewcsLAUNCH_GPU_NONBONDED);
     wallcycle_stop(wcycle_, ewcLAUNCH_GPU);

@@ -1,7 +1,7 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2019, by the GROMACS development team, led by
+ * Copyright (c) 2019,2020, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -54,44 +54,44 @@
 #include "grid.h"
 #include "pairlist.h"
 
-/* Working data for the actual i-supercell during pair search */
+//! Working data for the actual i-supercell during pair search \internal
 struct NbnxnPairlistCpuWork
 {
-    // Struct for storing coordinats and bounding box for an i-entry during search
+    //! Struct for storing coordinats and bounding box for an i-entry during search \internal
     struct IClusterData
     {
         IClusterData() :
             bb(1),
-            x(c_nbnxnCpuIClusterSize*DIM),
-            xSimd(c_nbnxnCpuIClusterSize*DIM*GMX_REAL_MAX_SIMD_WIDTH)
+            x(c_nbnxnCpuIClusterSize * DIM),
+            xSimd(c_nbnxnCpuIClusterSize * DIM * GMX_REAL_MAX_SIMD_WIDTH)
         {
         }
 
-        // The bounding boxes, pbc shifted, for each cluster
+        //! The bounding boxes, pbc shifted, for each cluster
         AlignedVector<Nbnxm::BoundingBox> bb;
-        // The coordinates, pbc shifted, for each atom
-        std::vector<real>                 x;
-        // Aligned list for storing 4*DIM*GMX_SIMD_REAL_WIDTH reals
-        AlignedVector<real>               xSimd;
+        //! The coordinates, pbc shifted, for each atom
+        std::vector<real> x;
+        //! Aligned list for storing 4*DIM*GMX_SIMD_REAL_WIDTH reals
+        AlignedVector<real> xSimd;
     };
 
-    // Protect data from cache pollution between threads
-    gmx_cache_protect_t       cp0;
+    //! Protect data from cache pollution between threads
+    gmx_cache_protect_t cp0;
 
-    // Work data for generating an IEntry in the pairlist
-    IClusterData              iClusterData;
-    // The current cj_ind index for the current list
-    int                       cj_ind;
-    // Temporary j-cluster list, used for sorting on exclusions
-    std::vector<nbnxn_cj_t>   cj;
+    //! Work data for generating an IEntry in the pairlist
+    IClusterData iClusterData;
+    //! The current cj_ind index for the current list
+    int cj_ind;
+    //! Temporary j-cluster list, used for sorting on exclusions
+    std::vector<nbnxn_cj_t> cj;
 
-    // Nr. of cluster pairs without Coulomb for flop counting
-    int                       ncj_noq;
-    // Nr. of cluster pairs with 1/2 LJ for flop count
-    int                       ncj_hlj;
+    //! Nr. of cluster pairs without Coulomb for flop counting
+    int ncj_noq;
+    //! Nr. of cluster pairs with 1/2 LJ for flop count
+    int ncj_hlj;
 
-    // Protect data from cache pollution between threads
-    gmx_cache_protect_t       cp1;
+    //! Protect data from cache pollution between threads
+    gmx_cache_protect_t cp1;
 };
 
 /* Working data for the actual i-supercell during pair search */
@@ -102,47 +102,47 @@ struct NbnxnPairlistGpuWork
         ISuperClusterData() :
             bb(c_gpuNumClusterPerCell),
 #if NBNXN_SEARCH_BB_SIMD4
-            bbPacked(c_gpuNumClusterPerCell/c_packedBoundingBoxesDimSize*c_packedBoundingBoxesSize),
+            bbPacked(c_gpuNumClusterPerCell / c_packedBoundingBoxesDimSize * c_packedBoundingBoxesSize),
 #endif
-            x(c_gpuNumClusterPerCell*c_nbnxnGpuClusterSize*DIM),
-            xSimd(c_gpuNumClusterPerCell*c_nbnxnGpuClusterSize*DIM)
+            x(c_gpuNumClusterPerCell * c_nbnxnGpuClusterSize * DIM),
+            xSimd(c_gpuNumClusterPerCell * c_nbnxnGpuClusterSize * DIM)
         {
         }
 
-        // The bounding boxes, pbc shifted, for each cluster
+        //! The bounding boxes, pbc shifted, for each cluster
         AlignedVector<Nbnxm::BoundingBox> bb;
-        // As bb, but in packed xxxx format
-        AlignedVector<float>              bbPacked;
-        // The coordinates, pbc shifted, for each atom
-        AlignedVector<real>               x;
-        // Aligned coordinate list used for 4*DIM*GMX_SIMD_REAL_WIDTH floats
-        AlignedVector<real>               xSimd;
+        //! As bb, but in packed xxxx format
+        AlignedVector<float> bbPacked;
+        //! The coordinates, pbc shifted, for each atom
+        AlignedVector<real> x;
+        //! Aligned coordinate list used for 4*DIM*GMX_SIMD_REAL_WIDTH floats
+        AlignedVector<real> xSimd;
     };
 
     NbnxnPairlistGpuWork() :
         distanceBuffer(c_gpuNumClusterPerCell),
-        sci_sort({}, {gmx::PinningPolicy::PinnedIfSupported})
+        sci_sort({}, { gmx::PinningPolicy::PinnedIfSupported })
     {
     }
 
-    // Protect data from cache pollution between threads
-    gmx_cache_protect_t       cp0;
+    //! Protect data from cache pollution between threads
+    gmx_cache_protect_t cp0;
 
-    // Work data for generating an i-entry in the pairlist
-    ISuperClusterData         iSuperClusterData;
-    // The current j-cluster index for the current list
-    int                       cj_ind;
-    // Bounding box distance work array
-    AlignedVector<float>      distanceBuffer;
+    //! Work data for generating an i-entry in the pairlist
+    ISuperClusterData iSuperClusterData;
+    //! The current j-cluster index for the current list
+    int cj_ind;
+    //! Bounding box distance work array
+    AlignedVector<float> distanceBuffer;
 
-    // Buffer for sorting list entries
-    std::vector<int>          sortBuffer;
+    //! Buffer for sorting list entries
+    std::vector<int> sortBuffer;
 
-    // Second sci array, for sorting
+    //! Second sci array, for sorting
     gmx::HostVector<nbnxn_sci_t> sci_sort;
 
-    // Protect data from cache pollution between threads
-    gmx_cache_protect_t       cp1;
+    //! Protect data from cache pollution between threads
+    gmx_cache_protect_t cp1;
 };
 
 #endif

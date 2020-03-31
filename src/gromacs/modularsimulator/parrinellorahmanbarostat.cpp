@@ -1,7 +1,7 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2019, by the GROMACS development team, led by
+ * Copyright (c) 2019,2020, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -32,7 +32,7 @@
  * To help us fund GROMACS development, we humbly ask that you cite
  * the research papers on the package. Check out http://www.gromacs.org.
  */
-/*! \libinternal
+/*! \internal \file
  * \brief Defines the Parrinello-Rahman barostat for the modular simulator
  *
  * \author Pascal Merz <pascal.merz@me.com>
@@ -50,6 +50,7 @@
 #include "gromacs/mdlib/update.h"
 #include "gromacs/mdtypes/commrec.h"
 #include "gromacs/mdtypes/inputrec.h"
+#include "gromacs/mdtypes/mdatom.h"
 #include "gromacs/mdtypes/state.h"
 #include "gromacs/pbcutil/boxutilities.h"
 
@@ -59,26 +60,24 @@
 namespace gmx
 {
 
-ParrinelloRahmanBarostat::ParrinelloRahmanBarostat(
-        int                   nstpcouple,
-        int                   offset,
-        real                  couplingTimeStep,
-        Step                  initStep,
-        ArrayRef<rvec>        scalingTensor,
-        PropagatorCallbackPtr propagatorCallback,
-        StatePropagatorData  *statePropagatorData,
-        EnergyElement        *energyElement,
-        FILE                 *fplog,
-        const t_inputrec     *inputrec,
-        const MDAtoms        *mdAtoms,
-        const t_state        *globalState,
-        t_commrec            *cr,
-        bool                  isRestart) :
+ParrinelloRahmanBarostat::ParrinelloRahmanBarostat(int                   nstpcouple,
+                                                   int                   offset,
+                                                   real                  couplingTimeStep,
+                                                   Step                  initStep,
+                                                   ArrayRef<rvec>        scalingTensor,
+                                                   PropagatorCallbackPtr propagatorCallback,
+                                                   StatePropagatorData*  statePropagatorData,
+                                                   EnergyElement*        energyElement,
+                                                   FILE*                 fplog,
+                                                   const t_inputrec*     inputrec,
+                                                   const MDAtoms*        mdAtoms,
+                                                   const t_state*        globalState,
+                                                   t_commrec*            cr,
+                                                   bool                  isRestart) :
     nstpcouple_(nstpcouple),
     offset_(offset),
     couplingTimeStep_(couplingTimeStep),
     initStep_(initStep),
-    isInitStep_(true),
     scalingTensor_(scalingTensor),
     propagatorCallback_(std::move(propagatorCallback)),
     statePropagatorData_(statePropagatorData),
@@ -108,9 +107,9 @@ ParrinelloRahmanBarostat::ParrinelloRahmanBarostat(
     }
 }
 
-void ParrinelloRahmanBarostat::scheduleTask(
-        gmx::Step step, gmx::Time gmx_unused time,
-        const gmx::RegisterRunFunctionPtr &registerRunFunction)
+void ParrinelloRahmanBarostat::scheduleTask(gmx::Step step,
+                                            gmx::Time gmx_unused               time,
+                                            const gmx::RegisterRunFunctionPtr& registerRunFunction)
 {
     const bool scaleOnNextStep = do_per_step(step + nstpcouple_ + offset_ + 1, nstpcouple_);
     const bool scaleOnThisStep = do_per_step(step + nstpcouple_ + offset_, nstpcouple_);
@@ -118,26 +117,22 @@ void ParrinelloRahmanBarostat::scheduleTask(
     if (scaleOnThisStep)
     {
         (*registerRunFunction)(
-                std::make_unique<SimulatorRunFunction>(
-                        [this](){ scaleBoxAndPositions(); }));
+                std::make_unique<SimulatorRunFunction>([this]() { scaleBoxAndPositions(); }));
     }
     if (scaleOnNextStep)
     {
-        (*registerRunFunction)(
-                std::make_unique<SimulatorRunFunction>(
-                        [this, step](){ integrateBoxVelocityEquations(step); }));
+        (*registerRunFunction)(std::make_unique<SimulatorRunFunction>(
+                [this, step]() { integrateBoxVelocityEquations(step); }));
         // let propagator know that it will have to scale on next step
-        (*propagatorCallback_)(step+1);
+        (*propagatorCallback_)(step + 1);
     }
 }
 
 void ParrinelloRahmanBarostat::integrateBoxVelocityEquations(Step step)
 {
     auto box = statePropagatorData_->constBox();
-    parrinellorahman_pcoupl(
-            fplog_, step, inputrec_, couplingTimeStep_, energyElement_->pressure(step),
-            box, boxRel_, boxVelocity_,
-            scalingTensor_.data(), mu_, isInitStep_);
+    parrinellorahman_pcoupl(fplog_, step, inputrec_, couplingTimeStep_, energyElement_->pressure(step),
+                            box, boxRel_, boxVelocity_, scalingTensor_.data(), mu_, false);
     // multiply matrix by the coupling time step to avoid having the propagator needing to know about that
     msmul(scalingTensor_.data(), couplingTimeStep_, scalingTensor_.data());
 }
@@ -150,7 +145,7 @@ void ParrinelloRahmanBarostat::scaleBoxAndPositions()
     {
         for (int m = 0; m <= i; m++)
         {
-            box[i][m] += couplingTimeStep_*boxVelocity_[i][m];
+            box[i][m] += couplingTimeStep_ * boxVelocity_[i][m];
         }
     }
     preserve_box_shape(inputrec_, boxRel_, box);
@@ -177,10 +172,22 @@ void ParrinelloRahmanBarostat::elementSetup()
     const bool scaleOnInitStep = do_per_step(initStep_ + nstpcouple_ + offset_, nstpcouple_);
     if (scaleOnInitStep)
     {
-        integrateBoxVelocityEquations(initStep_);
-        (*propagatorCallback_)(initStep_+1);
+        // If we need to scale on the first step, we need to set the scaling matrix using the current
+        // box velocity. If this is a fresh start, we will hence not move the box (this does currently
+        // never happen as the offset is set to -1 in all cases). If this is a restart, we will use
+        // the saved box velocity which we would have updated right before checkpointing.
+        // Setting bFirstStep = true in parrinellorahman_pcoupl (last argument) makes sure that only
+        // the scaling matrix is calculated, without updating the box velocities.
+        // The call to parrinellorahman_pcoupl is using nullptr for fplog (since we don't expect any
+        // output here) and for the pressure (since it might not be calculated yet, and we don't need it).
+        auto box = statePropagatorData_->constBox();
+        parrinellorahman_pcoupl(nullptr, initStep_, inputrec_, couplingTimeStep_, nullptr, box,
+                                boxRel_, boxVelocity_, scalingTensor_.data(), mu_, true);
+        // multiply matrix by the coupling time step to avoid having the propagator needing to know about that
+        msmul(scalingTensor_.data(), couplingTimeStep_, scalingTensor_.data());
+
+        (*propagatorCallback_)(initStep_);
     }
-    isInitStep_ = false;
 }
 
 const rvec* ParrinelloRahmanBarostat::boxVelocities() const
@@ -188,12 +195,12 @@ const rvec* ParrinelloRahmanBarostat::boxVelocities() const
     return boxVelocity_;
 }
 
-void ParrinelloRahmanBarostat::writeCheckpoint(t_state *localState, t_state gmx_unused *globalState)
+void ParrinelloRahmanBarostat::writeCheckpoint(t_state* localState, t_state gmx_unused* globalState)
 {
     copy_mat(boxVelocity_, localState->boxv);
     copy_mat(boxRel_, localState->box_rel);
-    localState->flags |= (1u << estBOXV) | (1u << estBOX_REL);
+    localState->flags |= (1U << estBOXV) | (1U << estBOX_REL);
 }
 
 
-}  // namespace gmx
+} // namespace gmx

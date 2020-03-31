@@ -1,7 +1,8 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2010,2011,2012,2014,2015,2019, by the GROMACS development team, led by
+ * Copyright (c) 2010,2011,2012,2014,2015 by the GROMACS development team.
+ * Copyright (c) 2019,2020, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -60,30 +61,34 @@ class ICommandLineOptionsModuleSettings;
  */
 class TrajectoryAnalysisSettings::Impl
 {
-    public:
-        //! Initializes the default values for the settings object.
-        Impl()
-            : timeUnit(TimeUnit_Default), flags(0), frflags(0),
-              bRmPBC(true), bPBC(true), optionsModuleSettings_(nullptr)
-        {
-        }
+public:
+    //! Initializes the default values for the settings object.
+    Impl() :
+        timeUnit(TimeUnit_Default),
+        flags(0),
+        frflags(0),
+        bRmPBC(true),
+        bPBC(true),
+        optionsModuleSettings_(nullptr)
+    {
+    }
 
-        //! Global time unit setting for the analysis module.
-        TimeUnit                 timeUnit;
-        //! Global plotting settings for the analysis module.
-        AnalysisDataPlotSettings plotSettings;
-        //! Flags for the analysis module.
-        unsigned long            flags;
-        //! Frame reading flags for the analysis module.
-        int                      frflags;
+    //! Global time unit setting for the analysis module.
+    TimeUnit timeUnit;
+    //! Global plotting settings for the analysis module.
+    AnalysisDataPlotSettings plotSettings;
+    //! Flags for the analysis module.
+    unsigned long flags;
+    //! Frame reading flags for the analysis module.
+    int frflags;
 
-        //! Whether to make molecules whole for each frame.
-        bool                 bRmPBC;
-        //! Whether to pass PBC information to the analysis module.
-        bool                 bPBC;
+    //! Whether to make molecules whole for each frame.
+    bool bRmPBC;
+    //! Whether to pass PBC information to the analysis module.
+    bool bPBC;
 
-        //! Lower-level settings object wrapped by these settings.
-        ICommandLineOptionsModuleSettings  *optionsModuleSettings_;
+    //! Lower-level settings object wrapped by these settings.
+    ICommandLineOptionsModuleSettings* optionsModuleSettings_;
 };
 
 } // namespace gmx

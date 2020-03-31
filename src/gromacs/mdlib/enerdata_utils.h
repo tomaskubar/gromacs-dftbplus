@@ -3,7 +3,8 @@
  *
  * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
  * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2016,2017,2018,2019, by the GROMACS development team, led by
+ * Copyright (c) 2013,2014,2015,2016,2017 by the GROMACS development team.
+ * Copyright (c) 2018,2019,2020, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -46,16 +47,19 @@ struct gmx_enerdata_t;
 struct gmx_grppairener_t;
 struct t_lambda;
 
-void reset_foreign_enerdata(gmx_enerdata_t *enerd);
+void reset_foreign_enerdata(gmx_enerdata_t* enerd);
 /* Resets only the foreign energy data */
 
-void reset_enerdata(gmx_enerdata_t *enerd);
+void reset_dvdl_enerdata(gmx_enerdata_t* enerd);
+/* Resets only the dvdl energy data */
+
+void reset_enerdata(gmx_enerdata_t* enerd);
 /* Resets the energy data */
 
-void sum_epot(gmx_grppairener_t *grpp, real *epot);
+void sum_epot(gmx_grppairener_t* grpp, real* epot);
 /* Locally sum the non-bonded potential energy terms */
 
-void sum_dhdl(gmx_enerdata_t *enerd, gmx::ArrayRef<const real> lambda, const t_lambda &fepvals);
+void sum_dhdl(gmx_enerdata_t* enerd, gmx::ArrayRef<const real> lambda, const t_lambda& fepvals);
 /* Sum the free energy contributions */
 
 #endif

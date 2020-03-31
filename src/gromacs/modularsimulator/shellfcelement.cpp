@@ -1,7 +1,7 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2019, by the GROMACS development team, led by
+ * Copyright (c) 2019,2020, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -32,7 +32,7 @@
  * To help us fund GROMACS development, we humbly ask that you cite
  * the research papers on the package. Check out http://www.gromacs.org.
  */
-/*! \libinternal
+/*! \internal \file
  * \brief Defines the shell / flex constraints element for the modular simulator
  *
  * \author Pascal Merz <pascal.merz@me.com>
@@ -51,7 +51,10 @@
 #include "gromacs/mdlib/mdatoms.h"
 #include "gromacs/mdrun/shellfc.h"
 #include "gromacs/mdtypes/inputrec.h"
+#include "gromacs/mdtypes/mdatom.h"
+#include "gromacs/pbcutil/pbc.h"
 #include "gromacs/topology/atoms.h"
+#include "gromacs/topology/mtop_util.h"
 
 #include "energyelement.h"
 #include "freeenergyperturbationelement.h"
@@ -65,37 +68,36 @@ struct t_graph;
 
 namespace gmx
 {
-bool ShellFCElement::doShellsOrFlexConstraints(
-        const gmx_mtop_t *mtop, int nflexcon)
+bool ShellFCElement::doShellsOrFlexConstraints(const gmx_mtop_t& mtop, int nflexcon)
 {
     if (nflexcon != 0)
     {
         return true;
     }
-    std::array<int, eptNR> n = countPtypes(nullptr, mtop);
+    std::array<int, eptNR> n = gmx_mtop_particletype_count(mtop);
     return n[eptShell] != 0;
 }
 
-ShellFCElement::ShellFCElement(
-        StatePropagatorData           *statePropagatorData,
-        EnergyElement                 *energyElement,
-        FreeEnergyPerturbationElement *freeEnergyPerturbationElement,
-        bool                           isVerbose,
-        bool                           isDynamicBox,
-        FILE                          *fplog,
-        const t_commrec               *cr,
-        const t_inputrec              *inputrec,
-        const MDAtoms                 *mdAtoms,
-        t_nrnb                        *nrnb,
-        t_forcerec                    *fr,
-        t_fcdata                      *fcd,
-        gmx_wallcycle                 *wcycle,
-        MdrunScheduleWorkload         *runScheduleWork,
-        gmx_vsite_t                   *vsite,
-        ImdSession                    *imdSession,
-        pull_t                        *pull_work,
-        Constraints                   *constr,
-        const gmx_mtop_t              *globalTopology) :
+ShellFCElement::ShellFCElement(StatePropagatorData*           statePropagatorData,
+                               EnergyElement*                 energyElement,
+                               FreeEnergyPerturbationElement* freeEnergyPerturbationElement,
+                               bool                           isVerbose,
+                               bool                           isDynamicBox,
+                               FILE*                          fplog,
+                               const t_commrec*               cr,
+                               const t_inputrec*              inputrec,
+                               const MDAtoms*                 mdAtoms,
+                               t_nrnb*                        nrnb,
+                               t_forcerec*                    fr,
+                               t_fcdata*                      fcd,
+                               gmx_wallcycle*                 wcycle,
+                               MdrunScheduleWorkload*         runScheduleWork,
+                               gmx_vsite_t*                   vsite,
+                               ImdSession*                    imdSession,
+                               pull_t*                        pull_work,
+                               Constraints*                   constr,
+                               const gmx_mtop_t*              globalTopology,
+                               gmx_enfrot*                    enforcedRotation) :
     nextNSStep_(-1),
     nextEnergyCalculationStep_(-1),
     nextVirialCalculationStep_(-1),
@@ -120,14 +122,13 @@ ShellFCElement::ShellFCElement(
     pull_work_(pull_work),
     fcd_(fcd),
     runScheduleWork_(runScheduleWork),
-    constr_(constr)
+    constr_(constr),
+    enforcedRotation_(enforcedRotation)
 {
     lambda_.fill(0);
 
-    shellfc_ = init_shell_flexcon(
-                fplog, globalTopology,
-                constr_ ? constr_->numFlexibleConstraints() : 0,
-                inputrec->nstcalcenergy, DOMAINDECOMP(cr));
+    shellfc_ = init_shell_flexcon(fplog, globalTopology, constr_ ? constr_->numFlexibleConstraints() : 0,
+                                  inputrec->nstcalcenergy, DOMAINDECOMP(cr));
 
     GMX_ASSERT(shellfc_, "ShellFCElement built, but init_shell_flexcon returned a nullptr");
 
@@ -139,59 +140,55 @@ ShellFCElement::ShellFCElement(
     }
 }
 
-void ShellFCElement::scheduleTask(
-        Step step, Time time,
-        const RegisterRunFunctionPtr &registerRunFunction)
+void ShellFCElement::scheduleTask(Step step, Time time, const RegisterRunFunctionPtr& registerRunFunction)
 {
-    unsigned int flags = (
-            GMX_FORCE_STATECHANGED |
-            GMX_FORCE_ALLFORCES |
-            (isDynamicBox_ ? GMX_FORCE_DYNAMICBOX : 0) |
-            (nextVirialCalculationStep_ == step ? GMX_FORCE_VIRIAL : 0) |
-            (nextEnergyCalculationStep_ == step ? GMX_FORCE_ENERGY : 0) |
-            (nextFreeEnergyCalculationStep_ == step ? GMX_FORCE_DHDL : 0));
+    unsigned int flags =
+            (GMX_FORCE_STATECHANGED | GMX_FORCE_ALLFORCES | (isDynamicBox_ ? GMX_FORCE_DYNAMICBOX : 0)
+             | (nextVirialCalculationStep_ == step ? GMX_FORCE_VIRIAL : 0)
+             | (nextEnergyCalculationStep_ == step ? GMX_FORCE_ENERGY : 0)
+             | (nextFreeEnergyCalculationStep_ == step ? GMX_FORCE_DHDL : 0));
 
-    (*registerRunFunction)(
-            std::make_unique<SimulatorRunFunction>(
-                    [this, step, time, flags]()
-                    {run(step, time, flags); }));
+    const bool isNSStep = (step == nextNSStep_);
+    (*registerRunFunction)(std::make_unique<SimulatorRunFunction>(
+            [this, step, time, flags, isNSStep]() { run(step, time, isNSStep, flags); }));
     nSteps_++;
 }
 
 void ShellFCElement::elementSetup()
 {
     GMX_ASSERT(localTopology_, "Setup called before local topology was set.");
-
 }
 
-void ShellFCElement::run(Step step, Time time, unsigned int flags)
+void ShellFCElement::run(Step step, Time time, bool isNSStep, unsigned int flags)
 {
     // Disabled functionality
-    gmx_multisim_t *ms               = nullptr;
-    gmx_enfrot     *enforcedRotation = nullptr;
-    t_graph        *graph            = nullptr;
+    gmx_multisim_t* ms    = nullptr;
+    t_graph*        graph = nullptr;
 
-    auto            x      = statePropagatorData_->positionsView();
-    auto            v      = statePropagatorData_->velocitiesView();
-    auto            forces = statePropagatorData_->forcesView();
-    auto            box    = statePropagatorData_->constBox();
-    history_t      *hist   = nullptr;              // disabled
+    if (!DOMAINDECOMP(cr_) && isNSStep && inputrecDynamicBox(inputrec_))
+    {
+        // TODO: Correcting the box is done in DomDecHelper (if using DD) or here (non-DD simulations).
+        //       Think about unifying this responsibility, could this be done in one place?
+        auto box = statePropagatorData_->box();
+        correct_box(fplog_, step, box, graph);
+    }
 
-    tensor          force_vir = {{0}};
+    auto       x      = statePropagatorData_->positionsView();
+    auto       v      = statePropagatorData_->velocitiesView();
+    auto       forces = statePropagatorData_->forcesView();
+    auto       box    = statePropagatorData_->constBox();
+    history_t* hist   = nullptr; // disabled
+
+    tensor force_vir = { { 0 } };
     // TODO: Make lambda const (needs some adjustments in lower force routines)
-    ArrayRef<real>  lambda = freeEnergyPerturbationElement_ ?
-        freeEnergyPerturbationElement_->lambdaView() : lambda_;
-    relax_shell_flexcon(fplog_, cr_, ms, isVerbose_,
-                        enforcedRotation, step,
-                        inputrec_, imdSession_, pull_work_, step == nextNSStep_,
-                        static_cast<int>(flags), localTopology_,
-                        constr_, energyElement_->enerdata(), fcd_,
-                        statePropagatorData_->localNumAtoms(),
-                        x, v, box, lambda, hist, forces, force_vir,
-                        mdAtoms_->mdatoms(), nrnb_, wcycle_, graph,
-                        shellfc_, fr_, runScheduleWork_, time,
-                        energyElement_->muTot(), vsite_,
-                        ddBalanceRegionHandler_);
+    ArrayRef<real> lambda =
+            freeEnergyPerturbationElement_ ? freeEnergyPerturbationElement_->lambdaView() : lambda_;
+    relax_shell_flexcon(fplog_, cr_, ms, isVerbose_, enforcedRotation_, step, inputrec_, imdSession_,
+                        pull_work_, isNSStep, static_cast<int>(flags), localTopology_, constr_,
+                        energyElement_->enerdata(), fcd_, statePropagatorData_->localNumAtoms(), x,
+                        v, box, lambda, hist, forces, force_vir, mdAtoms_->mdatoms(), nrnb_,
+                        wcycle_, graph, shellfc_, fr_, runScheduleWork_, time,
+                        energyElement_->muTot(), vsite_, ddBalanceRegionHandler_);
     energyElement_->addToForceVirial(force_vir, step);
 }
 
@@ -200,7 +197,7 @@ void ShellFCElement::elementTeardown()
     done_shellfc(fplog_, shellfc_, nSteps_);
 }
 
-void ShellFCElement::setTopology(const gmx_localtop_t *top)
+void ShellFCElement::setTopology(const gmx_localtop_t* top)
 {
     localTopology_ = top;
 }
@@ -208,29 +205,26 @@ void ShellFCElement::setTopology(const gmx_localtop_t *top)
 SignallerCallbackPtr ShellFCElement::registerNSCallback()
 {
     return std::make_unique<SignallerCallback>(
-            [this](Step step, Time gmx_unused time)
-            {this->nextNSStep_ = step; });
+            [this](Step step, Time gmx_unused time) { this->nextNSStep_ = step; });
 }
 
-SignallerCallbackPtr ShellFCElement::
-    registerEnergyCallback(EnergySignallerEvent event)
+SignallerCallbackPtr ShellFCElement::registerEnergyCallback(EnergySignallerEvent event)
 {
     if (event == EnergySignallerEvent::EnergyCalculationStep)
     {
         return std::make_unique<SignallerCallback>(
-                [this](Step step, Time)
-                {nextEnergyCalculationStep_ = step; });
+                [this](Step step, Time /*unused*/) { nextEnergyCalculationStep_ = step; });
     }
     if (event == EnergySignallerEvent::VirialCalculationStep)
     {
         return std::make_unique<SignallerCallback>(
-                [this](Step step, Time){nextVirialCalculationStep_ = step; });
+                [this](Step step, Time /*unused*/) { nextVirialCalculationStep_ = step; });
     }
     if (event == EnergySignallerEvent::FreeEnergyCalculationStep)
     {
         return std::make_unique<SignallerCallback>(
-                [this](Step step, Time){nextFreeEnergyCalculationStep_ = step; });
+                [this](Step step, Time /*unused*/) { nextFreeEnergyCalculationStep_ = step; });
     }
     return nullptr;
 }
-}  // namespace std
+} // namespace gmx

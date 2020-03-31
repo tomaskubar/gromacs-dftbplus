@@ -1,7 +1,7 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2016,2017,2018,2019, by the GROMACS development team, led by
+ * Copyright (c) 2016,2017,2018,2019,2020, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -91,92 +91,107 @@ struct MdModulesNotifier;
  */
 class MDModules
 {
-    public:
-        MDModules();
-        ~MDModules();
+public:
+    MDModules();
+    ~MDModules();
 
-        /*! \brief
-         * Initializes a transform from mdp values to sectioned options.
-         *
-         * \see IMdpOptionProvider::initMdpTransform()
-         *
-         * Initializes the combined transform from all modules.
-         */
-        void initMdpTransform(IKeyValueTreeTransformRules *rules);
+    /*! \brief
+     * Initializes a transform from mdp values to sectioned options.
+     *
+     * \see IMdpOptionProvider::initMdpTransform()
+     *
+     * Initializes the combined transform from all modules.
+     */
+    void initMdpTransform(IKeyValueTreeTransformRules* rules);
 
-        /*! \brief Initializes a builder of flat mdp-style key-value pairs
-         * suitable for output.
-         *
-         * If used as input to initMdpTransform(), the key-value pairs
-         * resulting from this function would leave the module
-         * settings unchanged.
-         *
-         * Once the transition from mdp to key-value input is
-         * complete, this method will probably not exist.
-         */
-        void buildMdpOutput(KeyValueTreeObjectBuilder *builder);
+    /*! \brief Initializes a builder of flat mdp-style key-value pairs
+     * suitable for output.
+     *
+     * If used as input to initMdpTransform(), the key-value pairs
+     * resulting from this function would leave the module
+     * settings unchanged.
+     *
+     * Once the transition from mdp to key-value input is
+     * complete, this method will probably not exist.
+     */
+    void buildMdpOutput(KeyValueTreeObjectBuilder* builder);
 
-        /*! \brief
-         * Sets input parameters from `params` for each module.
-         *
-         * \param[in]  params  Contains keys and values from user
-         *     input (and defaults) to configure modules that have
-         *     registered options with those keys.
-         * \param[out] errorHandler  Called to report errors.
-         */
-        void assignOptionsToModules(const KeyValueTreeObject  &params,
-                                    IKeyValueTreeErrorHandler *errorHandler);
+    /*! \brief
+     * Sets input parameters from `params` for each module.
+     *
+     * \param[in]  params  Contains keys and values from user
+     *     input (and defaults) to configure modules that have
+     *     registered options with those keys.
+     * \param[out] errorHandler  Called to report errors.
+     */
+    void assignOptionsToModules(const KeyValueTreeObject& params, IKeyValueTreeErrorHandler* errorHandler);
 
-        /*! \brief
-         * Normalizes inputrec parameters to match current code version.
-         *
-         * This orders the parameters in `ir->param` to match the current code
-         * and adds any missing defaults.  It also throws an error if the
-         * inputrec contains parameters that are not recognized by any module.
-         */
-        void adjustInputrecBasedOnModules(t_inputrec *ir);
+    /*! \brief
+     * Normalizes inputrec parameters to match current code version.
+     *
+     * This orders the parameters in `ir->param` to match the current code
+     * and adds any missing defaults.  It also throws an error if the
+     * inputrec contains parameters that are not recognized by any module.
+     */
+    void adjustInputrecBasedOnModules(t_inputrec* ir);
 
-        /*! \brief
-         * Returns an interface for initializing and finalizing output for modules.
-         */
-        IMDOutputProvider *outputProvider();
-        /*! \brief
-         * Returns an object for computing forces from the modules.
-         */
-        ForceProviders *initForceProviders();
+    /*! \brief
+     * Returns an interface for initializing and finalizing output for modules.
+     */
+    IMDOutputProvider* outputProvider();
+    /*! \brief
+     * Returns an object for computing forces from the modules.
+     */
+    ForceProviders* initForceProviders();
 
-        /*!
-         * \brief Add a module to the container.
-         *
-         * An object may be added by a client to the bound MD Modules at run time.
-         * Both the client and the MDModules object may need to extend the life
-         * of the provided object. However, the MDModules container guarantees
-         * to extend the life of a provided object for as long as its consumers
-         * may attempt to use its the interfaces accessible through IMDModule
-         * methods.
-         *
-         * \param module implements some sort of modular functionality for MD.
-         *
-         * \note: There is not yet a way to add a IMDModule object between
-         * creation of the MDModules container and the execution of the various
-         * initialization protocols it supports.
-         *
-         * \internal
-         * Adding a module at an arbitrary point in the MDModules life breaks
-         * some assumptions in the protocol of the other member functions. If
-         * MDModules should not change after some point, we should move this
-         * to a builder class.
-         */
-        void add(std::shared_ptr<IMDModule> module);
+    /*! \brief Subscribe MdModules to simulation setup notifications.
+     *
+     * Allows MdModules to subscribe to notifications that are called back
+     * during the set up of an MD simulation, after the options were
+     * assigned to the modules.
+     */
+    void subscribeToSimulationSetupNotifications();
 
-        /*! \brief Return a handle to the callbacks.
-         */
-        const MdModulesNotifier &notifier();
+    /*! \brief Subscribe MdModules to notifications during pre-processing.
+     *
+     * Allows MdModules to subscribe to notifications that are called back
+     * during pre processing an MD simulation, after the options were
+     * assigned to the modules.
+     */
+    void subscribeToPreProcessingNotifications();
 
-    private:
-        class Impl;
+    /*!
+     * \brief Add a module to the container.
+     *
+     * An object may be added by a client to the bound MD Modules at run time.
+     * Both the client and the MDModules object may need to extend the life
+     * of the provided object. However, the MDModules container guarantees
+     * to extend the life of a provided object for as long as its consumers
+     * may attempt to use its the interfaces accessible through IMDModule
+     * methods.
+     *
+     * \param module implements some sort of modular functionality for MD.
+     *
+     * \note: There is not yet a way to add a IMDModule object between
+     * creation of the MDModules container and the execution of the various
+     * initialization protocols it supports.
+     *
+     * \internal
+     * Adding a module at an arbitrary point in the MDModules life breaks
+     * some assumptions in the protocol of the other member functions. If
+     * MDModules should not change after some point, we should move this
+     * to a builder class.
+     */
+    void add(std::shared_ptr<IMDModule> module);
 
-        PrivateImplPointer<Impl> impl_;
+    /*! \brief Return a handle to the callbacks.
+     */
+    const MdModulesNotifier& notifier();
+
+private:
+    class Impl;
+
+    PrivateImplPointer<Impl> impl_;
 };
 
 } // namespace gmx

@@ -1,7 +1,8 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2012,2013,2014,2015,2016,2019, by the GROMACS development team, led by
+ * Copyright (c) 2012,2013,2014,2015,2016 by the GROMACS development team.
+ * Copyright (c) 2019,2020, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -44,18 +45,18 @@
 #include "nbnxm_ocl_types.h"
 
 #ifndef NBNXN_OCL_INTERNAL_H
-#define NBNXN_OCL_INTERNAL_H
+#    define NBNXN_OCL_INTERNAL_H
 
 namespace Nbnxm
 {
 
 /*! \brief Returns true if LJ combination rules are used in the non-bonded kernels.
  *
- *  \param[in] vdwType The VdW interaction/implementation type as defined by evdwOcl in nbnxn_ocl_types.h.
- *  \returns           True if combination rules are used by the run
+ *  \param[in] vdwType The VdW interaction/implementation type as defined by evdwOcl in
+ * nbnxn_ocl_types.h. \returns           True if combination rules are used by the run
  */
 bool useLjCombRule(int vdwType);
 
-}      // namespace Nbnxm
+} // namespace Nbnxm
 
 #endif /* NBNXN_OCL_INTERNAL_H */

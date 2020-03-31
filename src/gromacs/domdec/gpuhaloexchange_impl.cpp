@@ -1,7 +1,7 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2019, by the GROMACS development team, led by
+ * Copyright (c) 2019,2020, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -60,37 +60,51 @@ class GpuHaloExchange::Impl
 };
 
 /*!\brief Constructor stub. */
-GpuHaloExchange::GpuHaloExchange(gmx_domdec_t * /* dd */,
-                                 MPI_Comm       /* mpi_comm_mysim */,
-                                 void         * /*streamLocal */,
-                                 void         * /*streamNonLocal */,
-                                 void         * /*coordinatesOnDeviceEvent*/)
-    : impl_(nullptr)
+GpuHaloExchange::GpuHaloExchange(gmx_domdec_t* /* dd */,
+                                 MPI_Comm /* mpi_comm_mysim */,
+                                 void* /*streamLocal */,
+                                 void* /*streamNonLocal */,
+                                 int /*pulse */) :
+    impl_(nullptr)
 {
-    GMX_ASSERT(false, "A CPU stub for GPU Halo Exchange was called insted of the correct implementation.");
+    GMX_ASSERT(false,
+               "A CPU stub for GPU Halo Exchange was called insted of the correct implementation.");
 }
 
 GpuHaloExchange::~GpuHaloExchange() = default;
 
 /*!\brief init halo exhange stub. */
-void GpuHaloExchange::reinitHalo(DeviceBuffer<float> /* d_coordinatesBuffer */,
-                                 DeviceBuffer<float> /* d_forcesBuffer */)
+void GpuHaloExchange::reinitHalo(DeviceBuffer<RVec> /* d_coordinatesBuffer */,
+                                 DeviceBuffer<RVec> /* d_forcesBuffer */)
 {
-    GMX_ASSERT(false, "A CPU stub for GPU Halo Exchange was called insted of the correct implementation.");
+    GMX_ASSERT(false,
+               "A CPU stub for GPU Halo Exchange was called insted of the correct implementation.");
 }
 
 /*!\brief apply X halo exchange stub. */
-void GpuHaloExchange::communicateHaloCoordinates(const matrix /* box */)
+void GpuHaloExchange::communicateHaloCoordinates(const matrix /* box */,
+                                                 GpuEventSynchronizer* /*coordinatesOnDeviceEvent*/)
 {
-    GMX_ASSERT(false, "A CPU stub for GPU Halo Exchange exchange was called insted of the correct implementation.");
+    GMX_ASSERT(false,
+               "A CPU stub for GPU Halo Exchange exchange was called insted of the correct "
+               "implementation.");
 }
 
 /*!\brief apply F halo exchange stub. */
 void GpuHaloExchange::communicateHaloForces(bool gmx_unused accumulateForces)
 {
-    GMX_ASSERT(false, "A CPU stub for GPU Halo Exchange was called insted of the correct implementation.");
+    GMX_ASSERT(false,
+               "A CPU stub for GPU Halo Exchange was called insted of the correct implementation.");
 }
 
-}      // namespace gmx
+/*!\brief get forces ready on device event stub. */
+GpuEventSynchronizer* GpuHaloExchange::getForcesReadyOnDeviceEvent()
+{
+    GMX_ASSERT(false,
+               "A CPU stub for GPU Halo Exchange was called insted of the correct implementation.");
+    return nullptr;
+}
+
+} // namespace gmx
 
 #endif /* GMX_GPU != GMX_GPU_CUDA */

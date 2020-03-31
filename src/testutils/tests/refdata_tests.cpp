@@ -1,7 +1,8 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2011,2012,2013,2014,2015,2016,2017,2019, by the GROMACS development team, led by
+ * Copyright (c) 2011,2012,2013,2014,2015 by the GROMACS development team.
+ * Copyright (c) 2016,2017,2019,2020, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -59,8 +60,8 @@
 namespace
 {
 
-using gmx::test::TestReferenceData;
 using gmx::test::TestReferenceChecker;
+using gmx::test::TestReferenceData;
 
 TEST(ReferenceDataTest, HandlesSimpleData)
 {
@@ -69,10 +70,10 @@ TEST(ReferenceDataTest, HandlesSimpleData)
         TestReferenceChecker checker(data.rootChecker());
         checker.checkBoolean(true, "bool");
         checker.checkInteger(1, "int");
-        checker.checkInt32(1ULL<<12, "int32");
-        checker.checkUInt32(1ULL<<12, "uint32");
-        checker.checkInt64(1ULL<<42, "int64");
-        checker.checkUInt64(1ULL<<42, "uint64");
+        checker.checkInt32(1ULL << 12, "int32");
+        checker.checkUInt32(1ULL << 12, "uint32");
+        checker.checkInt64(1ULL << 42, "int64");
+        checker.checkUInt64(1ULL << 42, "uint64");
         checker.checkDouble(0.5, "real");
         checker.checkString("Test", "string");
     }
@@ -81,10 +82,10 @@ TEST(ReferenceDataTest, HandlesSimpleData)
         TestReferenceChecker checker(data.rootChecker());
         checker.checkBoolean(true, "bool");
         checker.checkInteger(1, "int");
-        checker.checkInt32(1ULL<<12, "int32");
-        checker.checkUInt32(1ULL<<12, "uint32");
-        checker.checkInt64(1ULL<<42, "int64");
-        checker.checkUInt64(1ULL<<42, "uint64");
+        checker.checkInt32(1ULL << 12, "int32");
+        checker.checkUInt32(1ULL << 12, "uint32");
+        checker.checkInt64(1ULL << 42, "int64");
+        checker.checkUInt64(1ULL << 42, "uint64");
         checker.checkDouble(0.5, "real");
         checker.checkString("Test", "string");
     }
@@ -92,8 +93,8 @@ TEST(ReferenceDataTest, HandlesSimpleData)
 
 TEST(ReferenceDataTest, HandlesFloatingPointData)
 {
-    const float  floatValue  = 4.0F/3.0F;
-    const double doubleValue = 4.0/3.0;
+    const float  floatValue  = 4.0F / 3.0F;
+    const double doubleValue = 4.0 / 3.0;
 
     {
         TestReferenceData    data(gmx::test::erefdataUpdateAll);
@@ -125,7 +126,7 @@ TEST(ReferenceDataTest, HandlesPresenceChecks)
         TestReferenceData    data(gmx::test::erefdataCompare);
         TestReferenceChecker checker(data.rootChecker());
         // Assigned to avoid warnings about potentially uninitialized value.
-        bool                 bRet = true;
+        bool bRet = true;
         EXPECT_TRUE(checker.checkPresent(true, "present"));
         checker.checkInteger(1, "present");
         EXPECT_NONFATAL_FAILURE(bRet = checker.checkPresent(false, "present"), "");
@@ -197,14 +198,14 @@ TEST(ReferenceDataTest, HandlesSequenceData)
 //! Helper typedef
 typedef double dvec[3];
 //! Helper function for HandlesSequenceOfCustomData
-void checkCustomVector(TestReferenceChecker *checker, const dvec &value)
+void checkCustomVector(TestReferenceChecker* checker, const dvec& value)
 {
     checker->checkVector(value, nullptr);
 }
 
 TEST(ReferenceDataTest, HandlesSequenceOfCustomData)
 {
-    const dvec seq[] = { {-3, 4, 5}, {-2.3, 5, 0} };
+    const dvec seq[] = { { -3, 4, 5 }, { -2.3, 5, 0 } };
 
     {
         TestReferenceData    data(gmx::test::erefdataUpdateAll);
@@ -380,7 +381,7 @@ gmx::KeyValueTreeObject buildKeyValueTree(bool full)
     {
         obj.addValue<std::string>("s", "x");
     }
-    auto arr  = root.addUniformArray<int>("a");
+    auto arr = root.addUniformArray<int>("a");
     arr.addValue(2);
     arr.addValue(3);
     root.addValue<std::string>("s", "y");
@@ -414,7 +415,8 @@ TEST(ReferenceDataTest, HandlesKeyValueTreeExtraKey)
     {
         TestReferenceData    data(gmx::test::erefdataCompare);
         TestReferenceChecker checker(data.rootChecker());
-        EXPECT_NONFATAL_FAILURE(checker.checkKeyValueTreeObject(buildKeyValueTree(true), "tree"), "");
+        EXPECT_NONFATAL_FAILURE(checker.checkKeyValueTreeObject(buildKeyValueTree(true), "tree"),
+                                "");
     }
 }
 
@@ -429,7 +431,8 @@ TEST(ReferenceDataTest, HandlesKeyValueTreeMissingKey)
     {
         TestReferenceData    data(gmx::test::erefdataCompare);
         TestReferenceChecker checker(data.rootChecker());
-        EXPECT_NONFATAL_FAILURE(checker.checkKeyValueTreeObject(buildKeyValueTree(false), "tree"), "");
+        EXPECT_NONFATAL_FAILURE(checker.checkKeyValueTreeObject(buildKeyValueTree(false), "tree"),
+                                "");
     }
 }
 
@@ -480,14 +483,16 @@ TEST(ReferenceDataTest, HandlesMissingReferenceDataFile)
 {
     const int seq[5] = { -1, 3, 5, 2, 4 };
 
-    EXPECT_NONFATAL_FAILURE({
-                                TestReferenceData data(gmx::test::erefdataCompare);
-                                TestReferenceChecker checker(data.rootChecker());
-                                checker.checkInteger(1, "int");
-                                checker.checkDouble(0.5, "real");
-                                checker.checkString("Test", "string");
-                                checker.checkSequenceArray(5, seq, "seq");
-                            }, "");
+    EXPECT_NONFATAL_FAILURE(
+            {
+                TestReferenceData    data(gmx::test::erefdataCompare);
+                TestReferenceChecker checker(data.rootChecker());
+                checker.checkInteger(1, "int");
+                checker.checkDouble(0.5, "real");
+                checker.checkString("Test", "string");
+                checker.checkSequenceArray(5, seq, "seq");
+            },
+            "");
 }
 
 
@@ -512,11 +517,12 @@ TEST(ReferenceDataTest, HandlesSpecialCharactersInStrings)
 
 TEST(ReferenceDataTest, HandlesStringsWithTextAndWhitespace)
 {
-    const char *strings[] = { "  test", "test  ", "  test  ", "the test", "\ntest", "\n\ntest", "test\n", "test\n\n" };
+    const char* strings[] = { "  test", "test  ",   "  test  ", "the test",
+                              "\ntest", "\n\ntest", "test\n",   "test\n\n" };
     {
         TestReferenceData    data(gmx::test::erefdataUpdateAll);
         TestReferenceChecker checker(data.rootChecker());
-        for (const auto &s : strings)
+        for (const auto& s : strings)
         {
             checker.checkString(s, nullptr);
             checker.checkTextBlock(s, nullptr);
@@ -525,7 +531,7 @@ TEST(ReferenceDataTest, HandlesStringsWithTextAndWhitespace)
     {
         TestReferenceData    data(gmx::test::erefdataCompare);
         TestReferenceChecker checker(data.rootChecker());
-        for (const auto &s : strings)
+        for (const auto& s : strings)
         {
             checker.checkString(s, nullptr);
             checker.checkTextBlock(s, nullptr);

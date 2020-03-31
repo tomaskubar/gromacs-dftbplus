@@ -1,7 +1,7 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2019, by the GROMACS development team, led by
+ * Copyright (c) 2019,2020, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -45,10 +45,10 @@
 #ifndef GMX_NBNXM_CLUSTERDISTANCEKERNELTYPE_H
 #define GMX_NBNXM_CLUSTERDISTANCEKERNELTYPE_H
 
+#include "gromacs/nbnxm/atomdata.h"
 #include "gromacs/simd/simd.h"
 #include "gromacs/utility/gmxassert.h"
 
-#include "atomdata.h"
 #include "pairlistparams.h"
 
 //! The types of kernel for calculating the distance between pairs of atom clusters
@@ -61,9 +61,8 @@ enum class ClusterDistanceKernelType : int
 };
 
 //! Return the cluster distance kernel type given the pairlist type and atomdata
-static inline ClusterDistanceKernelType
-getClusterDistanceKernelType(const PairlistType      pairlistType,
-                             const nbnxn_atomdata_t &atomdata)
+static inline ClusterDistanceKernelType getClusterDistanceKernelType(const PairlistType pairlistType,
+                                                                     const nbnxn_atomdata_t& atomdata)
 {
     if (pairlistType == PairlistType::HierarchicalNxN)
     {
@@ -88,7 +87,8 @@ getClusterDistanceKernelType(const PairlistType      pairlistType,
 #elif GMX_SIMD && GMX_SIMD_REAL_WIDTH == 8
         return ClusterDistanceKernelType::CpuSimd_2xMM;
 #else
-        GMX_RELEASE_ASSERT(false, "Expect 4-wide or 8-wide SIMD with 4x4 list and nbat SIMD layout");
+        GMX_RELEASE_ASSERT(false,
+                           "Expect 4-wide or 8-wide SIMD with 4x4 list and nbat SIMD layout");
 #endif
     }
     else
@@ -99,7 +99,8 @@ getClusterDistanceKernelType(const PairlistType      pairlistType,
 #elif GMX_SIMD && GMX_SIMD_REAL_WIDTH == 16
         return ClusterDistanceKernelType::CpuSimd_2xMM;
 #else
-        GMX_RELEASE_ASSERT(false, "Expect 8-wide or 16-wide SIMD with 4x4 list and nbat SIMD layout");
+        GMX_RELEASE_ASSERT(false,
+                           "Expect 8-wide or 16-wide SIMD with 4x4 list and nbat SIMD layout");
 #endif
     }
 

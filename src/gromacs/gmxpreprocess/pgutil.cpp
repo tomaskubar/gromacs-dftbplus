@@ -3,7 +3,8 @@
  *
  * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
  * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2012,2014,2015,2017,2018,2019, by the GROMACS development team, led by
+ * Copyright (c) 2012,2014,2015,2017,2018 by the GROMACS development team.
+ * Copyright (c) 2019,2020, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -48,10 +49,14 @@
 #include "gromacs/utility/snprintf.h"
 
 #define BUFSIZE 1024
-static void atom_not_found(int fatal_errno, const char *file, int line,
-                           const char *atomname, int resind,
-                           const char *resname,
-                           const char *bondtype, bool bAllowMissing)
+static void atom_not_found(int         fatal_errno,
+                           const char* file,
+                           int         line,
+                           const char* atomname,
+                           int         resind,
+                           const char* resname,
+                           const char* bondtype,
+                           bool        bAllowMissing)
 {
     char message_buffer[BUFSIZE];
     if (strcmp(bondtype, "check") != 0)
@@ -64,7 +69,7 @@ static void atom_not_found(int fatal_errno, const char *file, int line,
                      "an interaction of type %s in that entry is not found in the\n"
                      "input file. Perhaps your atom and/or residue naming needs to be\n"
                      "fixed.\n",
-                     resind+1, resname, atomname, bondtype);
+                     resind + 1, resname, atomname, bondtype);
         }
         else
         {
@@ -73,7 +78,7 @@ static void atom_not_found(int fatal_errno, const char *file, int line,
                      "to an entry in the topology database, but the atom %s used in\n"
                      "that entry is not found in the input file. Perhaps your atom\n"
                      "and/or residue naming needs to be fixed.\n",
-                     resind+1, resname, atomname);
+                     resind + 1, resname, atomname);
         }
         if (bAllowMissing)
         {
@@ -86,15 +91,13 @@ static void atom_not_found(int fatal_errno, const char *file, int line,
     }
 }
 
-int search_atom(const char *type, int start,
-                const t_atoms *atoms,
-                const char *bondtype, bool bAllowMissing)
+int search_atom(const char* type, int start, const t_atoms* atoms, const char* bondtype, bool bAllowMissing)
 {
-    int             i, resind = -1;
-    bool            bPrevious, bNext;
-    int             natoms = atoms->nr;
-    t_atom         *at     = atoms->atom;
-    char ** const * anm    = atoms->atomname;
+    int           i, resind = -1;
+    bool          bPrevious, bNext;
+    int           natoms = atoms->nr;
+    t_atom*       at     = atoms->atom;
+    char** const* anm    = atoms->atomname;
 
     bPrevious = (strchr(type, '-') != nullptr);
     bNext     = (strchr(type, '+') != nullptr);
@@ -123,9 +126,10 @@ int search_atom(const char *type, int start,
                 return i;
             }
         }
-        if (!(bNext && at[start].resind == at[natoms-1].resind))
+        if (!(bNext && at[start].resind == at[natoms - 1].resind))
         {
-            atom_not_found(FARGS, type, at[start].resind, *atoms->resinfo[resind].name, bondtype, bAllowMissing);
+            atom_not_found(FARGS, type, at[start].resind, *atoms->resinfo[resind].name, bondtype,
+                           bAllowMissing);
         }
     }
     else
@@ -134,9 +138,9 @@ int search_atom(const char *type, int start,
         type++;
         if (start > 0)
         {
-            resind = at[start-1].resind;
+            resind = at[start - 1].resind;
         }
-        for (i = start-1; (i >= 0) /*&& (at[i].resind == resind)*/; i--)
+        for (i = start - 1; (i >= 0) /*&& (at[i].resind == resind)*/; i--)
         {
             if (gmx_strcasecmp(type, *(anm[i])) == 0)
             {
@@ -145,16 +149,14 @@ int search_atom(const char *type, int start,
         }
         if (start > 0)
         {
-            atom_not_found(FARGS, type, at[start].resind, *atoms->resinfo[resind].name, bondtype, bAllowMissing);
+            atom_not_found(FARGS, type, at[start].resind, *atoms->resinfo[resind].name, bondtype,
+                           bAllowMissing);
         }
     }
     return -1;
 }
 
-int
-search_res_atom(const char *type, int resind,
-                const t_atoms *atoms,
-                const char *bondtype, bool bAllowMissing)
+int search_res_atom(const char* type, int resind, const t_atoms* atoms, const char* bondtype, bool bAllowMissing)
 {
     int i;
 

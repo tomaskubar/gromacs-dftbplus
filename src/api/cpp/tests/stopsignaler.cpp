@@ -34,11 +34,11 @@
  */
 #include <memory>
 
+#include "gromacs/compat/optional.h"
 #include "gromacs/math/functions.h"
 #include "gromacs/math/vectypes.h"
 #include "gromacs/restraint/restraintpotential.h"
-#include "gromacs/utility/arrayref.h"
-#include "gromacs/utility/classhelpers.h"
+#include "gromacs/utility.h"
 
 #include "gmxapi/context.h"
 #include "gmxapi/md.h"
@@ -65,85 +65,71 @@ namespace
  */
 class StopSignalIssuer : public gmx::IRestraintPotential
 {
-    public:
-        /*!
-         * \brief Construct a restraint that does nothing.
-         */
-        StopSignalIssuer() :
-            StopSignalIssuer(false)
-        {}
+public:
+    /*!
+     * \brief Construct a restraint that does nothing.
+     */
+    StopSignalIssuer() : StopSignalIssuer(false) {}
 
-        /*!
-         * \brief Choose whether or not to issue stop signal when called.
-         *
-         * \param sendStopSignal If true, issue stop signal at every opportunity.
-         */
-        explicit StopSignalIssuer(bool sendStopSignal) :
-            sendStopSignal_ {sendStopSignal}
-        {}
+    /*!
+     * \brief Choose whether or not to issue stop signal when called.
+     *
+     * \param sendStopSignal If true, issue stop signal at every opportunity.
+     */
+    explicit StopSignalIssuer(bool sendStopSignal) : sendStopSignal_{ sendStopSignal } {}
 
-        /*! \cond Implement IRestraintPotential */
-        gmx::PotentialPointData evaluate(gmx::       Vector /* r_site */,
-                                         gmx::       Vector /*  r_ref */,
-                                         double      t) override
+    /*! \cond Implement IRestraintPotential */
+    gmx::PotentialPointData evaluate(gmx::Vector /* r_site */, gmx::Vector /*  r_ref */, double t) override
+    {
+        // Note that evaluate gets called once for each site,
+        // which is twice per time step for a pair restraint.
+        // The following initialization logic is not atomic, but it is sufficient.
+        if (!isInitialized())
         {
-            // Note that evaluate gets called once for each site,
-            // which is twice per time step for a pair restraint.
-            // The following initialization logic is not atomic, but it is sufficient.
-            if (!isInitialized_)
-            {
-                // Force is also calculated for initial step.
-                simulationStartTime_ = t;
-                isInitialized_       = true;
-            }
-            lastSimulationTime_ = t;
+            // Force is also calculated for initial step.
+            simulationStartTime_ = t;
+        }
+        lastSimulationTime_ = t;
 
-            if (sendStopSignal_)
-            {
-                auto signalSender = gmxapi::getMdrunnerSignal(resources_,
-                                                              gmxapi::md::signals::STOP);
-                signalSender();
-            }
-
-            return {{0., 0., 0.}, 0.};
+        if (sendStopSignal_)
+        {
+            auto signalSender = gmxapi::getMdrunnerSignal(resources_, gmxapi::md::signals::STOP);
+            signalSender();
         }
 
-        std::vector<int> sites() const override
-        {
-            return {{0, 1}};
-        }
+        return { { 0., 0., 0. }, 0. };
+    }
 
-        void bindSession(gmxapi::SessionResources* resources) override
-        {
-            resources_ = resources;
-        }
-        //! \endcond
+    std::vector<int> sites() const override { return { { 0, 1 } }; }
 
-        /*!
-         * \brief Note simulation start time when called on the zeroeth step.
-         */
-        double simulationStartTime_ = 0.;
+    void bindSession(gmxapi::SessionResources* resources) override { resources_ = resources; }
+    //! \endcond
 
-        /*!
-         * \brief Record the simulation time at the last step active.
-         */
-        double lastSimulationTime_ = 0.;
+    /*!
+     * \brief Note simulation start time when called on the zeroeth step.
+     */
+    double simulationStartTime_ = 0.;
 
-    private:
-        /*!
-         * \brief Whether to consider current simulation time to be the start time.
-         */
-        bool isInitialized_ = false;
+    /*!
+     * \brief Record the simulation time at the last step active.
+     */
+    gmx::compat::optional<double> lastSimulationTime_;
 
-        /*!
-         * \brief Handle through which to get signalling resources.
-         */
-        gmxapi::SessionResources* resources_ = nullptr;
+    /*!
+     * \brief Whether restraint was ever used
+     */
+    bool isInitialized() const { return lastSimulationTime_.has_value(); }
 
-        /*!
-         * \brief Whether to issue stop signal when called.
-         */
-        bool sendStopSignal_ = false;
+private:
+    /*!
+     * \brief Handle through which to get signalling resources.
+     */
+    gmxapi::SessionResources* resources_ = nullptr;
+
+    /*!
+     * \brief Whether to issue stop signal when called.
+     */
+    bool sendStopSignal_ = false;
 };
 
 /*!
@@ -151,46 +137,39 @@ class StopSignalIssuer : public gmx::IRestraintPotential
  */
 class SimpleSignalingClient : public gmxapi::MDModule
 {
-    public:
-        /*! \cond
-         * Implement gmxapi::MDModule interface.
-         */
-        SimpleSignalingClient() :
-            restraint_(std::make_shared<StopSignalIssuer>())
-        {}
+public:
+    /*! \cond
+     * Implement gmxapi::MDModule interface.
+     */
+    SimpleSignalingClient() : restraint_(std::make_shared<StopSignalIssuer>()) {}
 
-        explicit SimpleSignalingClient(bool sendStopSignal) :
-            restraint_(std::make_shared<StopSignalIssuer>(sendStopSignal))
-        {}
+    explicit SimpleSignalingClient(bool sendStopSignal) :
+        restraint_(std::make_shared<StopSignalIssuer>(sendStopSignal))
+    {
+    }
 
-        const char *name() const override
+    const char* name() const override { return "SimpleSignalingClient"; }
+
+    std::shared_ptr<gmx::IRestraintPotential> getRestraint() override { return restraint_; }
+    //! \endcond
+
+    /*!
+     * \brief Last time this restraint was active, minus the simulation start time.
+     *
+     * \return Time elapsed since start.
+     */
+    double timeElapsedSinceStart() const
+    {
+        if (!restraint_->isInitialized())
         {
-            return "SimpleSignalingClient";
+            GMX_THROW(gmx::InternalError("timeElapsedSinceStart called before restraint was used"));
         }
+        return restraint_->lastSimulationTime_.value() - restraint_->simulationStartTime_;
+    }
 
-        std::shared_ptr<gmx::IRestraintPotential> getRestraint() override
-        {
-            return restraint_;
-        }
-        //! \endcond
-
-        /*!
-         * \brief Number of steps in which this restraint was active.
-         *
-         * \return Number of MD time steps.
-         */
-        int numberOfTimesCalled() const
-        {
-            const auto timeElapsed =
-                restraint_->lastSimulationTime_ - restraint_->simulationStartTime_;
-
-            const auto numSteps    = timeElapsed / getTestStepSize();
-            return gmx::roundToInt(numSteps);
-        }
-
-    private:
-        //! restraint to provide to client or MD simulator.
-        std::shared_ptr<StopSignalIssuer> restraint_;
+private:
+    //! restraint to provide to client or MD simulator.
+    std::shared_ptr<StopSignalIssuer> restraint_;
 };
 
 /*!
@@ -198,30 +177,32 @@ class SimpleSignalingClient : public gmxapi::MDModule
  */
 TEST_F(GmxApiTest, ApiRunnerStopSignalClient)
 {
-    makeTprFile(3);
+    const int nsteps = 1;
+    makeTprFile(nsteps);
     auto system  = gmxapi::fromTprFile(runner_.tprFileName_);
     auto context = std::make_shared<gmxapi::Context>();
 
     // Check assumptions about basic simulation behavior.
     {
+        const int      nstlist = 1;
         gmxapi::MDArgs args    = makeMdArgs();
         args.emplace_back("-nstlist");
-        args.emplace_back("1");
+        args.emplace_back(std::to_string(nstlist));
 
         context->setMDArgs(args);
 
-        auto           restraint = std::make_shared<SimpleSignalingClient>();
+        auto restraint = std::make_shared<SimpleSignalingClient>();
 
-        auto           session = system.launch(context);
+        auto session = system.launch(context);
         EXPECT_TRUE(session);
 
         gmxapi::addSessionRestraint(session.get(), restraint);
-        EXPECT_EQ(0, restraint->numberOfTimesCalled());
+        EXPECT_THROW(restraint->timeElapsedSinceStart(), gmx::InternalError);
 
         gmxapi::Status status;
         ASSERT_NO_THROW(status = session->run());
         EXPECT_TRUE(status.success());
-        EXPECT_EQ(3, restraint->numberOfTimesCalled());
+        EXPECT_EQ(nsteps, gmx::roundToInt(restraint->timeElapsedSinceStart() / getTestStepSize()));
 
         status = session->close();
         EXPECT_TRUE(status.success());
@@ -229,28 +210,37 @@ TEST_F(GmxApiTest, ApiRunnerStopSignalClient)
 
     // Make sure that stop signal shortens simulation.
     {
+        const int      nstlist = 1;
         gmxapi::MDArgs args    = makeMdArgs();
         args.emplace_back("-nstlist");
-        args.emplace_back("1");
-        // TODO should use api functionality to extend simulation instead
+        args.emplace_back(std::to_string(nstlist));
+        // TODO (Ref #3256) use api functionality to extend simulation instead
         args.emplace_back("-nsteps");
-        args.emplace_back("6");
+        args.emplace_back(std::to_string(nsteps * 2));
 
         context->setMDArgs(args);
 
         const bool issueImmediateStopSignal = true;
-        auto       restraint                = std::make_shared<SimpleSignalingClient>(issueImmediateStopSignal);
+        auto       restraint = std::make_shared<SimpleSignalingClient>(issueImmediateStopSignal);
 
-        auto       session = system.launch(context);
+        auto session = system.launch(context);
         EXPECT_TRUE(session);
 
         gmxapi::addSessionRestraint(session.get(), restraint);
-        EXPECT_EQ(0, restraint->numberOfTimesCalled());
+        EXPECT_THROW(restraint->timeElapsedSinceStart(), gmx::InternalError);
 
         gmxapi::Status status;
         ASSERT_NO_THROW(status = session->run());
         EXPECT_TRUE(status.success());
-        EXPECT_EQ(1, restraint->numberOfTimesCalled());
+        /* StopHandler promises to stop a simulation at the next NS step after the signal got communicated.
+         * We don't know the communication interval, but we know that it is at most nstlist. We cannot assume
+         * that the signal gets communicated on the step it is set, even if that step is a communication step.
+         * As the signal is set on the first step, we know that the restraint will be called at
+         * most 2*nstlist + 1 times.
+         * Since the time elapsed after the first step is 0, however, we expect the elapsed time
+         * divided by the step size to be at most 2*nstlist.
+         */
+        EXPECT_LE(gmx::roundToInt(restraint->timeElapsedSinceStart() / getTestStepSize()), 2 * nstlist);
 
         status = session->close();
         EXPECT_TRUE(status.success());

@@ -1,7 +1,7 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2012,2015,2016,2019, by the GROMACS development team, led by
+ * Copyright (c) 2012,2015,2016,2019,2020, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -45,7 +45,7 @@ __forceinline__ __host__ __device__ float3 make_float3(float4 a)
 {
     return make_float3(a.x, a.y, a.z);
 }
-__forceinline__ __host__ __device__ float3 operator-(float3 &a)
+__forceinline__ __host__ __device__ float3 operator-(float3& a)
 {
     return make_float3(-a.x, -a.y, -a.z);
 }
@@ -65,17 +65,23 @@ __forceinline__ __host__ __device__ float3 operator*(float k, float3 a)
 {
     return make_float3(k * a.x, k * a.y, k * a.z);
 }
-__forceinline__ __host__ __device__ void operator += (float3 &a, float3 b)
+__forceinline__ __host__ __device__ void operator+=(float3& a, float3 b)
 {
-    a.x += b.x; a.y += b.y; a.z += b.z;
+    a.x += b.x;
+    a.y += b.y;
+    a.z += b.z;
 }
-__forceinline__ __host__ __device__ void operator += (float3 &a, float4 b)
+__forceinline__ __host__ __device__ void operator+=(float3& a, float4 b)
 {
-    a.x += b.x; a.y += b.y; a.z += b.z;
+    a.x += b.x;
+    a.y += b.y;
+    a.z += b.z;
 }
-__forceinline__ __host__ __device__ void operator -= (float3 &a, float3 b)
+__forceinline__ __host__ __device__ void operator-=(float3& a, float3 b)
 {
-    a.x -= b.x; a.y -= b.y; a.z -= b.z;
+    a.x -= b.x;
+    a.y -= b.y;
+    a.z -= b.z;
 }
 __forceinline__ __host__ __device__ float norm(float3 a)
 {
@@ -93,15 +99,19 @@ __forceinline__ __host__ __device__ float3 operator*(float3 a, float3 b)
 {
     return make_float3(a.x * b.x, a.y * b.y, a.z * b.z);
 }
-__forceinline__ __host__ __device__ void operator *= (float3 &a, float3 b)
+__forceinline__ __host__ __device__ void operator*=(float3& a, float3 b)
 {
-    a.x *= b.x; a.y *= b.y; a.z *= b.z;
+    a.x *= b.x;
+    a.y *= b.y;
+    a.z *= b.z;
 }
-__forceinline__ __host__ __device__ void operator *= (float3 &a, float b)
+__forceinline__ __host__ __device__ void operator*=(float3& a, float b)
 {
-    a.x *= b; a.y *= b; a.z *= b;
+    a.x *= b;
+    a.y *= b;
+    a.z *= b;
 }
-__forceinline__ __device__ void atomicAdd(float3 *addr, float3 val)
+__forceinline__ __device__ void atomicAdd(float3* addr, float3 val)
 {
     atomicAdd(&addr->x, val.x);
     atomicAdd(&addr->y, val.y);
@@ -134,17 +144,24 @@ __forceinline__ __host__ __device__ float4 operator*(float4 a, float k)
 {
     return make_float4(k * a.x, k * a.y, k * a.z, k * a.w);
 }
-__forceinline__ __host__ __device__ void operator += (float4 &a, float4 b)
+__forceinline__ __host__ __device__ void operator+=(float4& a, float4 b)
 {
-    a.x += b.x; a.y += b.y; a.z += b.z; a.w += b.w;
+    a.x += b.x;
+    a.y += b.y;
+    a.z += b.z;
+    a.w += b.w;
 }
-__forceinline__ __host__ __device__ void operator += (float4 &a, float3 b)
+__forceinline__ __host__ __device__ void operator+=(float4& a, float3 b)
 {
-    a.x += b.x; a.y += b.y; a.z += b.z;
+    a.x += b.x;
+    a.y += b.y;
+    a.z += b.z;
 }
-__forceinline__ __host__ __device__ void operator -= (float4 &a, float3 b)
+__forceinline__ __host__ __device__ void operator-=(float4& a, float3 b)
 {
-    a.x -= b.x; a.y -= b.y; a.z -= b.z;
+    a.x -= b.x;
+    a.y -= b.y;
+    a.z -= b.z;
 }
 
 __forceinline__ __host__ __device__ float norm(float4 a)
@@ -155,6 +172,108 @@ __forceinline__ __host__ __device__ float norm(float4 a)
 __forceinline__ __host__ __device__ float dist3(float4 a, float4 b)
 {
     return norm(b - a);
+}
+
+/* \brief Compute the scalar product of two vectors.
+ *
+ * \param[in] a  First vector.
+ * \param[in] b  Second vector.
+ * \returns Scalar product.
+ */
+__forceinline__ __device__ float iprod(const float3 a, const float3 b)
+{
+    return a.x * b.x + a.y * b.y + a.z * b.z;
+}
+
+/* \brief Compute the vector product of two vectors.
+ *
+ * \param[in] a  First vector.
+ * \param[in] b  Second vector.
+ * \returns Vector product.
+ */
+__forceinline__ __device__ float3 cprod(const float3 a, const float3 b)
+{
+    float3 c;
+    c.x = a.y * b.z - a.z * b.y;
+    c.y = a.z * b.x - a.x * b.z;
+    c.z = a.x * b.y - a.y * b.x;
+    return c;
+}
+
+/* \brief Cosine of an angle between two vectors.
+ *
+ * Computes cosine using the following formula:
+ *
+ *                  ax*bx + ay*by + az*bz
+ * cos-vec (a,b) =  ---------------------
+ *                      ||a|| * ||b||
+ *
+ * This function also makes sure that the cosine does not leave the [-1, 1]
+ * interval, which can happen due to numerical errors.
+ *
+ * \param[in] a  First vector.
+ * \param[in] b  Second vector.
+ * \returns Cosine between a and b.
+ */
+__forceinline__ __device__ float cos_angle(const float3 a, const float3 b)
+{
+    float cosval;
+
+    float ipa  = norm2(a);
+    float ipb  = norm2(b);
+    float ip   = iprod(a, b);
+    float ipab = ipa * ipb;
+    if (ipab > 0.0f)
+    {
+        cosval = ip * rsqrt(ipab);
+    }
+    else
+    {
+        cosval = 1.0f;
+    }
+    if (cosval > 1.0f)
+    {
+        return 1.0f;
+    }
+    if (cosval < -1.0f)
+    {
+        return -1.0f;
+    }
+
+    return cosval;
+}
+
+/* \brief Compute the angle between two vectors.
+ *
+ * Uses atan( |axb| / a.b ) formula.
+ *
+ * \param[in] a  First vector.
+ * \param[in] b  Second vector.
+ * \returns Angle between vectors in radians.
+ */
+__forceinline__ __device__ float gmx_angle(const float3 a, const float3 b)
+{
+    float3 w = cprod(a, b);
+
+    float wlen = norm(w);
+    float s    = iprod(a, b);
+
+    return atan2f(wlen, s); // requires float
+}
+
+/* \brief Atomically add components of the vector.
+ *
+ * Executes atomicAdd one-by-one on all components of the float3 vector.
+ *
+ * \param[in] a  First vector.
+ * \param[in] b  Second vector.
+ * \returns Angle between vectors.
+ */
+__forceinline__ __device__ void atomicAdd(float3& a, const float3 b)
+{
+    atomicAdd(&a.x, b.x);
+    atomicAdd(&a.y, b.y);
+    atomicAdd(&a.z, b.z);
 }
 
 #endif /* VECTYPE_OPS_CUH */

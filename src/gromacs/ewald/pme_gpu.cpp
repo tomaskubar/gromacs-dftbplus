@@ -1,7 +1,7 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2016,2017,2018,2019, by the GROMACS development team, led by
+ * Copyright (c) 2016,2017,2018,2019,2020, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -54,17 +54,36 @@
 #include "gromacs/mdtypes/enerdata.h"
 #include "gromacs/mdtypes/forceoutput.h"
 #include "gromacs/mdtypes/inputrec.h"
+#include "gromacs/mdtypes/simulation_workload.h"
 #include "gromacs/utility/exceptions.h"
 #include "gromacs/utility/fatalerror.h"
 #include "gromacs/utility/gmxassert.h"
 #include "gromacs/utility/stringutil.h"
 
 #include "pme_gpu_internal.h"
+#include "pme_gpu_settings.h"
+#include "pme_gpu_timings.h"
+#include "pme_gpu_types_host.h"
 #include "pme_grid.h"
 #include "pme_internal.h"
 #include "pme_solve.h"
 
-void pme_gpu_reset_timings(const gmx_pme_t *pme)
+/*! \brief
+ * Finds out if PME is currently running on GPU.
+ *
+ * \todo The GPU module should not be constructed (or at least called)
+ * when it is not active, so there should be no need to check whether
+ * it is active. An assertion that this is true makes sense.
+ *
+ * \param[in] pme  The PME structure.
+ * \returns        True if PME runs on GPU currently, false otherwise.
+ */
+static inline bool pme_gpu_active(const gmx_pme_t* pme)
+{
+    return (pme != nullptr) && (pme->runMode != PmeRunMode::CPU);
+}
+
+void pme_gpu_reset_timings(const gmx_pme_t* pme)
 {
     if (pme_gpu_active(pme))
     {
@@ -72,7 +91,7 @@ void pme_gpu_reset_timings(const gmx_pme_t *pme)
     }
 }
 
-void pme_gpu_get_timings(const gmx_pme_t *pme, gmx_wallclock_gpu_pme_t *timings)
+void pme_gpu_get_timings(const gmx_pme_t* pme, gmx_wallclock_gpu_pme_t* timings)
 {
     if (pme_gpu_active(pme))
     {
@@ -80,7 +99,7 @@ void pme_gpu_get_timings(const gmx_pme_t *pme, gmx_wallclock_gpu_pme_t *timings)
     }
 }
 
-int pme_gpu_get_padding_size(const gmx_pme_t *pme)
+int pme_gpu_get_padding_size(const gmx_pme_t* pme)
 {
 
     if (!pme || !pme_gpu_active(pme))
@@ -101,13 +120,13 @@ int pme_gpu_get_padding_size(const gmx_pme_t *pme)
  * \param[in] dir            The FFT direction enum.
  * \param[in] wcycle         The wallclock counter.
  */
-void inline parallel_3dfft_execute_gpu_wrapper(gmx_pme_t              *pme,
-                                               const int               gridIndex,
-                                               enum gmx_fft_direction  dir,
-                                               gmx_wallcycle_t         wcycle)
+void inline parallel_3dfft_execute_gpu_wrapper(gmx_pme_t*             pme,
+                                               const int              gridIndex,
+                                               enum gmx_fft_direction dir,
+                                               gmx_wallcycle_t        wcycle)
 {
     GMX_ASSERT(gridIndex == 0, "Only single grid supported");
-    if (pme_gpu_performs_FFT(pme->gpu))
+    if (pme_gpu_settings(pme->gpu).performGPUFFT)
     {
         wallcycle_start_nocount(wcycle, ewcLAUNCH_GPU);
         wallcycle_sub_start_nocount(wcycle, ewcsLAUNCH_GPU_PME);
@@ -129,33 +148,30 @@ void inline parallel_3dfft_execute_gpu_wrapper(gmx_pme_t              *pme,
 
 /* The PME computation code split into a few separate functions. */
 
-void pme_gpu_prepare_computation(gmx_pme_t            *pme,
-                                 bool                  needToUpdateBox,
-                                 const matrix          box,
-                                 gmx_wallcycle        *wcycle,
-                                 int                   flags,
-                                 bool                  useGpuForceReduction)
+void pme_gpu_prepare_computation(gmx_pme_t*               pme,
+                                 const matrix             box,
+                                 gmx_wallcycle*           wcycle,
+                                 const gmx::StepWorkload& stepWork)
 {
     GMX_ASSERT(pme_gpu_active(pme), "This should be a GPU run of PME but it is not enabled.");
     GMX_ASSERT(pme->nnodes > 0, "");
     GMX_ASSERT(pme->nnodes == 1 || pme->ndecompdim > 0, "");
 
-    PmeGpu *pmeGpu = pme->gpu;
-    pmeGpu->settings.currentFlags         = flags;
+    PmeGpu* pmeGpu = pme->gpu;
     // TODO these flags are only here to honor the CPU PME code, and probably should be removed
-    pmeGpu->settings.useGpuForceReduction = useGpuForceReduction;
+    pmeGpu->settings.useGpuForceReduction = stepWork.useGpuPmeFReduction;
 
     bool shouldUpdateBox = false;
     for (int i = 0; i < DIM; ++i)
     {
         for (int j = 0; j <= i; ++j)
         {
-            shouldUpdateBox                  |= (pmeGpu->common->previousBox[i][j] != box[i][j]);
+            shouldUpdateBox |= (pmeGpu->common->previousBox[i][j] != box[i][j]);
             pmeGpu->common->previousBox[i][j] = box[i][j];
         }
     }
 
-    if (needToUpdateBox || shouldUpdateBox) // || is to make the first computation always update
+    if (stepWork.haveDynamicBox || shouldUpdateBox) // || is to make the first computation always update
     {
         wallcycle_start_nocount(wcycle, ewcLAUNCH_GPU);
         wallcycle_sub_start_nocount(wcycle, ewcsLAUNCH_GPU_PME);
@@ -163,7 +179,7 @@ void pme_gpu_prepare_computation(gmx_pme_t            *pme,
         wallcycle_sub_stop(wcycle, ewcsLAUNCH_GPU_PME);
         wallcycle_stop(wcycle, ewcLAUNCH_GPU);
 
-        if (!pme_gpu_performs_solve(pmeGpu))
+        if (!pme_gpu_settings(pmeGpu).performGPUSolve)
         {
             // TODO remove code duplication and add test coverage
             matrix scaledBox;
@@ -174,111 +190,95 @@ void pme_gpu_prepare_computation(gmx_pme_t            *pme,
     }
 }
 
-void pme_gpu_launch_spread(gmx_pme_t            *pme,
-                           GpuEventSynchronizer *xReadyOnDevice,
-                           gmx_wallcycle        *wcycle)
+void pme_gpu_launch_spread(gmx_pme_t* pme, GpuEventSynchronizer* xReadyOnDevice, gmx_wallcycle* wcycle)
 {
     GMX_ASSERT(pme_gpu_active(pme), "This should be a GPU run of PME but it is not enabled.");
-    GMX_ASSERT(xReadyOnDevice || !pme->bPPnode || (GMX_GPU != GMX_GPU_CUDA), "Need a valid xReadyOnDevice on PP+PME ranks with CUDA.");
+    GMX_ASSERT(xReadyOnDevice || !pme->bPPnode || (GMX_GPU != GMX_GPU_CUDA),
+               "Need a valid xReadyOnDevice on PP+PME ranks with CUDA.");
 
-    PmeGpu            *pmeGpu = pme->gpu;
+    PmeGpu* pmeGpu = pme->gpu;
 
-    const unsigned int gridIndex  = 0;
-    real              *fftgrid    = pme->fftgrid[gridIndex];
-    if (pmeGpu->settings.currentFlags & GMX_PME_SPREAD)
-    {
-        /* Spread the coefficients on a grid */
-        const bool computeSplines = true;
-        const bool spreadCharges  = true;
-        wallcycle_start_nocount(wcycle, ewcLAUNCH_GPU);
-        wallcycle_sub_start_nocount(wcycle, ewcsLAUNCH_GPU_PME);
-        pme_gpu_spread(pmeGpu, xReadyOnDevice, gridIndex, fftgrid, computeSplines, spreadCharges);
-        wallcycle_sub_stop(wcycle, ewcsLAUNCH_GPU_PME);
-        wallcycle_stop(wcycle, ewcLAUNCH_GPU);
-    }
+    const unsigned int gridIndex = 0;
+    real*              fftgrid   = pme->fftgrid[gridIndex];
+    /* Spread the coefficients on a grid */
+    const bool computeSplines = true;
+    const bool spreadCharges  = true;
+    wallcycle_start_nocount(wcycle, ewcLAUNCH_GPU);
+    wallcycle_sub_start_nocount(wcycle, ewcsLAUNCH_GPU_PME);
+    pme_gpu_spread(pmeGpu, xReadyOnDevice, gridIndex, fftgrid, computeSplines, spreadCharges);
+    wallcycle_sub_stop(wcycle, ewcsLAUNCH_GPU_PME);
+    wallcycle_stop(wcycle, ewcLAUNCH_GPU);
 }
 
-void pme_gpu_launch_complex_transforms(gmx_pme_t      *pme,
-                                       gmx_wallcycle  *wcycle)
+void pme_gpu_launch_complex_transforms(gmx_pme_t* pme, gmx_wallcycle* wcycle, const gmx::StepWorkload& stepWork)
 {
-    PmeGpu            *pmeGpu                 = pme->gpu;
-    const bool         computeEnergyAndVirial = (pmeGpu->settings.currentFlags & GMX_PME_CALC_ENER_VIR) != 0;
-    const bool         performBackFFT         = (pmeGpu->settings.currentFlags & (GMX_PME_CALC_F | GMX_PME_CALC_POT)) != 0;
-    const unsigned int gridIndex              = 0;
-    t_complex         *cfftgrid               = pme->cfftgrid[gridIndex];
-
-    if (pmeGpu->settings.currentFlags & GMX_PME_SPREAD)
+    PmeGpu*            pmeGpu    = pme->gpu;
+    const auto&        settings  = pmeGpu->settings;
+    const unsigned int gridIndex = 0;
+    t_complex*         cfftgrid  = pme->cfftgrid[gridIndex];
+    // There's no support for computing energy without virial, or vice versa
+    const bool computeEnergyAndVirial = stepWork.computeEnergy || stepWork.computeVirial;
+    if (!settings.performGPUFFT)
     {
-        if (!pme_gpu_performs_FFT(pmeGpu))
-        {
-            wallcycle_start(wcycle, ewcWAIT_GPU_PME_SPREAD);
-            pme_gpu_sync_spread_grid(pme->gpu);
-            wallcycle_stop(wcycle, ewcWAIT_GPU_PME_SPREAD);
-        }
+        wallcycle_start(wcycle, ewcWAIT_GPU_PME_SPREAD);
+        pme_gpu_sync_spread_grid(pme->gpu);
+        wallcycle_stop(wcycle, ewcWAIT_GPU_PME_SPREAD);
     }
 
     try
     {
-        if (pmeGpu->settings.currentFlags & GMX_PME_SOLVE)
-        {
-            /* do R2C 3D-FFT */
-            parallel_3dfft_execute_gpu_wrapper(pme, gridIndex, GMX_FFT_REAL_TO_COMPLEX, wcycle);
+        /* do R2C 3D-FFT */
+        parallel_3dfft_execute_gpu_wrapper(pme, gridIndex, GMX_FFT_REAL_TO_COMPLEX, wcycle);
 
-            /* solve in k-space for our local cells */
-            if (pme_gpu_performs_solve(pmeGpu))
-            {
-                const auto gridOrdering = pme_gpu_uses_dd(pmeGpu) ? GridOrdering::YZX : GridOrdering::XYZ;
-                wallcycle_start_nocount(wcycle, ewcLAUNCH_GPU);
-                wallcycle_sub_start_nocount(wcycle, ewcsLAUNCH_GPU_PME);
-                pme_gpu_solve(pmeGpu, cfftgrid, gridOrdering, computeEnergyAndVirial);
-                wallcycle_sub_stop(wcycle, ewcsLAUNCH_GPU_PME);
-                wallcycle_stop(wcycle, ewcLAUNCH_GPU);
-            }
-            else
-            {
-                wallcycle_start(wcycle, ewcPME_SOLVE_MIXED_MODE);
+        /* solve in k-space for our local cells */
+        if (settings.performGPUSolve)
+        {
+            // TODO grid ordering should be set up at pme init time.
+            const auto gridOrdering = settings.useDecomposition ? GridOrdering::YZX : GridOrdering::XYZ;
+            wallcycle_start_nocount(wcycle, ewcLAUNCH_GPU);
+            wallcycle_sub_start_nocount(wcycle, ewcsLAUNCH_GPU_PME);
+            pme_gpu_solve(pmeGpu, cfftgrid, gridOrdering, computeEnergyAndVirial);
+            wallcycle_sub_stop(wcycle, ewcsLAUNCH_GPU_PME);
+            wallcycle_stop(wcycle, ewcLAUNCH_GPU);
+        }
+        else
+        {
+            wallcycle_start(wcycle, ewcPME_SOLVE_MIXED_MODE);
 #pragma omp parallel for num_threads(pme->nthread) schedule(static)
-                for (int thread = 0; thread < pme->nthread; thread++)
-                {
-                    solve_pme_yzx(pme, cfftgrid, pme->boxVolume,
-                                  computeEnergyAndVirial, pme->nthread, thread);
-                }
-                wallcycle_stop(wcycle, ewcPME_SOLVE_MIXED_MODE);
+            for (int thread = 0; thread < pme->nthread; thread++)
+            {
+                solve_pme_yzx(pme, cfftgrid, pme->boxVolume, computeEnergyAndVirial, pme->nthread, thread);
             }
+            wallcycle_stop(wcycle, ewcPME_SOLVE_MIXED_MODE);
         }
 
-        if (performBackFFT)
-        {
-            parallel_3dfft_execute_gpu_wrapper(pme, gridIndex, GMX_FFT_COMPLEX_TO_REAL, wcycle);
-        }
-    } GMX_CATCH_ALL_AND_EXIT_WITH_FATAL_ERROR;
+        parallel_3dfft_execute_gpu_wrapper(pme, gridIndex, GMX_FFT_COMPLEX_TO_REAL, wcycle);
+    }
+    GMX_CATCH_ALL_AND_EXIT_WITH_FATAL_ERROR;
 }
 
-void pme_gpu_launch_gather(const gmx_pme_t                 *pme,
-                           gmx_wallcycle gmx_unused        *wcycle,
-                           PmeForceOutputHandling           forceTreatment)
+void pme_gpu_launch_gather(const gmx_pme_t* pme, gmx_wallcycle gmx_unused* wcycle)
 {
     GMX_ASSERT(pme_gpu_active(pme), "This should be a GPU run of PME but it is not enabled.");
 
-    if (!pme_gpu_performs_gather(pme->gpu))
+    if (!pme_gpu_settings(pme->gpu).performGPUGather)
     {
         return;
     }
 
     wallcycle_start_nocount(wcycle, ewcLAUNCH_GPU);
     wallcycle_sub_start_nocount(wcycle, ewcsLAUNCH_GPU_PME);
-    const unsigned int gridIndex  = 0;
-    real              *fftgrid    = pme->fftgrid[gridIndex];
-    pme_gpu_gather(pme->gpu, forceTreatment, reinterpret_cast<float *>(fftgrid));
+    const unsigned int gridIndex = 0;
+    real*              fftgrid   = pme->fftgrid[gridIndex];
+    pme_gpu_gather(pme->gpu, reinterpret_cast<float*>(fftgrid));
     wallcycle_sub_stop(wcycle, ewcsLAUNCH_GPU_PME);
     wallcycle_stop(wcycle, ewcLAUNCH_GPU);
 }
 
 //! Accumulate the \c forcesToAdd to \c f, using the available threads.
-static void sum_forces(gmx::ArrayRef<gmx::RVec>       f,
-                       gmx::ArrayRef<const gmx::RVec> forceToAdd)
+static void sum_forces(gmx::ArrayRef<gmx::RVec> f, gmx::ArrayRef<const gmx::RVec> forceToAdd)
 {
-    const int      end = forceToAdd.size();
+    const int end = forceToAdd.size();
 
     int gmx_unused nt = gmx_omp_nthreads_get(emntPME);
 #pragma omp parallel for num_threads(nt) schedule(static)
@@ -289,17 +289,16 @@ static void sum_forces(gmx::ArrayRef<gmx::RVec>       f,
 }
 
 //! Reduce quantities from \c output to \c forceWithVirial and \c enerd.
-static void pme_gpu_reduce_outputs(const int             flags,
-                                   const PmeOutput      &output,
-                                   gmx_wallcycle        *wcycle,
-                                   gmx::ForceWithVirial *forceWithVirial,
-                                   gmx_enerdata_t       *enerd)
+static void pme_gpu_reduce_outputs(const bool            computeEnergyAndVirial,
+                                   const PmeOutput&      output,
+                                   gmx_wallcycle*        wcycle,
+                                   gmx::ForceWithVirial* forceWithVirial,
+                                   gmx_enerdata_t*       enerd)
 {
     wallcycle_start(wcycle, ewcPME_GPU_F_REDUCTION);
     GMX_ASSERT(forceWithVirial, "Invalid force pointer");
 
-    const bool haveComputedEnergyAndVirial = (flags & GMX_PME_CALC_ENER_VIR) != 0;
-    if (haveComputedEnergyAndVirial)
+    if (computeEnergyAndVirial)
     {
         GMX_ASSERT(enerd, "Invalid energy output manager");
         forceWithVirial->addVirialContribution(output.coulombVirial_);
@@ -312,15 +311,16 @@ static void pme_gpu_reduce_outputs(const int             flags,
     wallcycle_stop(wcycle, ewcPME_GPU_F_REDUCTION);
 }
 
-bool pme_gpu_try_finish_task(gmx_pme_t            *pme,
-                             const int             flags,
-                             gmx_wallcycle        *wcycle,
-                             gmx::ForceWithVirial *forceWithVirial,
-                             gmx_enerdata_t       *enerd,
-                             GpuTaskCompletion     completionKind)
+bool pme_gpu_try_finish_task(gmx_pme_t*               pme,
+                             const gmx::StepWorkload& stepWork,
+                             gmx_wallcycle*           wcycle,
+                             gmx::ForceWithVirial*    forceWithVirial,
+                             gmx_enerdata_t*          enerd,
+                             GpuTaskCompletion        completionKind)
 {
     GMX_ASSERT(pme_gpu_active(pme), "This should be a GPU run of PME but it is not enabled.");
-    GMX_ASSERT(!pme->gpu->settings.useGpuForceReduction, "GPU force reduction should not be active on the pme_gpu_try_finish_task() path");
+    GMX_ASSERT(!pme->gpu->settings.useGpuForceReduction,
+               "GPU force reduction should not be active on the pme_gpu_try_finish_task() path");
 
     // First, if possible, check whether all tasks on the stream have
     // completed, and return fast if not. Accumulate to wcycle the
@@ -353,19 +353,20 @@ bool pme_gpu_try_finish_task(gmx_pme_t            *pme,
         pme_gpu_synchronize(pme->gpu);
     }
     pme_gpu_update_timings(pme->gpu);
-    PmeOutput output = pme_gpu_getOutput(*pme, flags);
+    // There's no support for computing energy without virial, or vice versa
+    const bool computeEnergyAndVirial = stepWork.computeEnergy || stepWork.computeVirial;
+    PmeOutput  output                 = pme_gpu_getOutput(*pme, computeEnergyAndVirial);
     wallcycle_stop(wcycle, ewcWAIT_GPU_PME_GATHER);
 
-    GMX_ASSERT(pme->gpu->settings.useGpuForceReduction == !output.haveForceOutput_, "When forces are reduced on the CPU, there needs to be force output");
-    pme_gpu_reduce_outputs(flags, output, wcycle, forceWithVirial, enerd);
+    GMX_ASSERT(pme->gpu->settings.useGpuForceReduction == !output.haveForceOutput_,
+               "When forces are reduced on the CPU, there needs to be force output");
+    pme_gpu_reduce_outputs(computeEnergyAndVirial, output, wcycle, forceWithVirial, enerd);
 
     return true;
 }
 
 // This is used by PME-only ranks
-PmeOutput pme_gpu_wait_finish_task(gmx_pme_t     *pme,
-                                   const int      flags,
-                                   gmx_wallcycle *wcycle)
+PmeOutput pme_gpu_wait_finish_task(gmx_pme_t* pme, const bool computeEnergyAndVirial, gmx_wallcycle* wcycle)
 {
     GMX_ASSERT(pme_gpu_active(pme), "This should be a GPU run of PME but it is not enabled.");
 
@@ -374,31 +375,32 @@ PmeOutput pme_gpu_wait_finish_task(gmx_pme_t     *pme,
     // Synchronize the whole PME stream at once, including D2H result transfers
     // if there are outputs we need to wait for at this step; we still call getOutputs
     // for uniformity and because it sets the PmeOutput.haveForceOutput_.
-    const bool haveComputedEnergyAndVirial = (flags & GMX_PME_CALC_ENER_VIR) != 0;
-    if (!pme->gpu->settings.useGpuForceReduction || haveComputedEnergyAndVirial)
+    if (!pme->gpu->settings.useGpuForceReduction || computeEnergyAndVirial)
     {
         pme_gpu_synchronize(pme->gpu);
     }
 
-    PmeOutput output = pme_gpu_getOutput(*pme, flags);
+    PmeOutput output = pme_gpu_getOutput(*pme, computeEnergyAndVirial);
     wallcycle_stop(wcycle, ewcWAIT_GPU_PME_GATHER);
     return output;
 }
 
 // This is used when not using the alternate-waiting reduction
-void pme_gpu_wait_and_reduce(gmx_pme_t            *pme,
-                             const int             flags,
-                             gmx_wallcycle        *wcycle,
-                             gmx::ForceWithVirial *forceWithVirial,
-                             gmx_enerdata_t       *enerd)
+void pme_gpu_wait_and_reduce(gmx_pme_t*               pme,
+                             const gmx::StepWorkload& stepWork,
+                             gmx_wallcycle*           wcycle,
+                             gmx::ForceWithVirial*    forceWithVirial,
+                             gmx_enerdata_t*          enerd)
 {
-    PmeOutput output = pme_gpu_wait_finish_task(pme, flags, wcycle);
-    GMX_ASSERT(pme->gpu->settings.useGpuForceReduction == !output.haveForceOutput_, "When forces are reduced on the CPU, there needs to be force output");
-    pme_gpu_reduce_outputs(flags, output, wcycle, forceWithVirial, enerd);
+    // There's no support for computing energy without virial, or vice versa
+    const bool computeEnergyAndVirial = stepWork.computeEnergy || stepWork.computeVirial;
+    PmeOutput  output = pme_gpu_wait_finish_task(pme, computeEnergyAndVirial, wcycle);
+    GMX_ASSERT(pme->gpu->settings.useGpuForceReduction == !output.haveForceOutput_,
+               "When forces are reduced on the CPU, there needs to be force output");
+    pme_gpu_reduce_outputs(computeEnergyAndVirial, output, wcycle, forceWithVirial, enerd);
 }
 
-void pme_gpu_reinit_computation(const gmx_pme_t *pme,
-                                gmx_wallcycle   *wcycle)
+void pme_gpu_reinit_computation(const gmx_pme_t* pme, gmx_wallcycle* wcycle)
 {
     GMX_ASSERT(pme_gpu_active(pme), "This should be a GPU run of PME but it is not enabled.");
 
@@ -414,13 +416,7 @@ void pme_gpu_reinit_computation(const gmx_pme_t *pme,
     wallcycle_stop(wcycle, ewcLAUNCH_GPU);
 }
 
-DeviceBuffer<float> pme_gpu_get_device_x(const gmx_pme_t *pme)
-{
-    GMX_ASSERT((pme && pme_gpu_active(pme)), "PME GPU coordinates buffer was requested from uninitialized PME module");
-    return pme_gpu_get_kernelparam_coordinates(pme->gpu);
-}
-
-void *pme_gpu_get_device_f(const gmx_pme_t *pme)
+void* pme_gpu_get_device_f(const gmx_pme_t* pme)
 {
     if (!pme || !pme_gpu_active(pme))
     {
@@ -429,8 +425,7 @@ void *pme_gpu_get_device_f(const gmx_pme_t *pme)
     return pme_gpu_get_kernelparam_forces(pme->gpu);
 }
 
-void pme_gpu_set_device_x(const gmx_pme_t     *pme,
-                          DeviceBuffer<float>  d_x)
+void pme_gpu_set_device_x(const gmx_pme_t* pme, DeviceBuffer<gmx::RVec> d_x)
 {
     GMX_ASSERT(pme != nullptr, "Null pointer is passed as a PME to the set coordinates function.");
     GMX_ASSERT(pme_gpu_active(pme), "This should be a GPU run of PME but it is not enabled.");
@@ -438,7 +433,7 @@ void pme_gpu_set_device_x(const gmx_pme_t     *pme,
     pme_gpu_set_kernelparam_coordinates(pme->gpu, d_x);
 }
 
-void *pme_gpu_get_device_stream(const gmx_pme_t *pme)
+void* pme_gpu_get_device_stream(const gmx_pme_t* pme)
 {
     if (!pme || !pme_gpu_active(pme))
     {
@@ -447,7 +442,7 @@ void *pme_gpu_get_device_stream(const gmx_pme_t *pme)
     return pme_gpu_get_stream(pme->gpu);
 }
 
-void *pme_gpu_get_device_context(const gmx_pme_t *pme)
+void* pme_gpu_get_device_context(const gmx_pme_t* pme)
 {
     if (!pme || !pme_gpu_active(pme))
     {
@@ -456,7 +451,7 @@ void *pme_gpu_get_device_context(const gmx_pme_t *pme)
     return pme_gpu_get_context(pme->gpu);
 }
 
-GpuEventSynchronizer * pme_gpu_get_f_ready_synchronizer(const gmx_pme_t *pme)
+GpuEventSynchronizer* pme_gpu_get_f_ready_synchronizer(const gmx_pme_t* pme)
 {
     if (!pme || !pme_gpu_active(pme))
     {

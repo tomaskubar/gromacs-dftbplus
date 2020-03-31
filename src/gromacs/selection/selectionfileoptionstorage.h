@@ -1,7 +1,8 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2012,2013,2014,2016,2018,2019, by the GROMACS development team, led by
+ * Copyright (c) 2012,2013,2014,2016,2018 by the GROMACS development team.
+ * Copyright (c) 2019,2020, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -58,33 +59,34 @@ class SelectionOptionManager;
  */
 class SelectionFileOptionStorage : public AbstractOptionStorage
 {
-    public:
-        /*! \brief
-         * Initializes the storage from option settings.
-         *
-         * \param[in] settings   Storage settings.
-         * \param     manager    Manager for this object.
-         */
-        SelectionFileOptionStorage(const SelectionFileOption &settings,
-                                   SelectionOptionManager    *manager);
+public:
+    /*! \brief
+     * Initializes the storage from option settings.
+     *
+     * \param[in] settings   Storage settings.
+     * \param     manager    Manager for this object.
+     */
+    SelectionFileOptionStorage(const SelectionFileOption& settings, SelectionOptionManager* manager);
 
-        OptionInfo &optionInfo() override { return info_; }
-        std::string typeString() const override { return "file"; }
-        int valueCount() const override { return 0; }
-        std::vector<Any> defaultValues() const override { return {}; }
-        std::vector<std::string> defaultValuesAsStrings() const override { return {}; }
-        std::vector<Any>
-        normalizeValues(const std::vector<Any> &values) const override { return values; }
+    OptionInfo&              optionInfo() override { return info_; }
+    std::string              typeString() const override { return "file"; }
+    int                      valueCount() const override { return 0; }
+    std::vector<Any>         defaultValues() const override { return {}; }
+    std::vector<std::string> defaultValuesAsStrings() const override { return {}; }
+    std::vector<Any>         normalizeValues(const std::vector<Any>& values) const override
+    {
+        return values;
+    }
 
-    private:
-        void clearSet() override;
-        void convertValue(const Any &value) override;
-        void processSet() override;
-        void processAll() override {}
+private:
+    void clearSet() override;
+    void convertValue(const Any& value) override;
+    void processSet() override;
+    void processAll() override {}
 
-        SelectionFileOptionInfo  info_;
-        SelectionOptionManager  &manager_;
-        bool                     bValueParsed_;
+    SelectionFileOptionInfo info_;
+    SelectionOptionManager& manager_;
+    bool                    bValueParsed_;
 };
 
 } // namespace gmx

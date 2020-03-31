@@ -1,7 +1,7 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2019, by the GROMACS development team, led by
+ * Copyright (c) 2019,2020, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -44,7 +44,10 @@
 
 #include <vector>
 
+#include "gromacs/mdtypes/inputrec.h"
 #include "gromacs/mdtypes/simulation_workload.h"
+
+enum class PmeRunMode;
 
 namespace gmx
 {
@@ -53,28 +56,27 @@ namespace gmx
  * Build datastructure that contains decisions whether to run different workload
  * task on GPUs.
  *
- * \param[in] useGpuForNonbonded If we have short-range nonbonded interactions
+ * \param[in] inputrec           The input record
+ * \param[in] useGpuForNonbonded Whether we have short-range nonbonded interactions
  *                               calculations on GPU(s).
- * \param[in] useGpuForPme       If long range PME interactions are calculated on GPU(s).
- * \param[in] useGpuForPmeFft    If FFT solving for PME is done on the GPU.
- * \param[in] useGpuForBonded    If bonded interactions are calculated on GPU(s).
- * \param[in] useGpuForUpdateConstraints If coordinate update and constraint solving is performed on
- *                                       GPU(s).
- * \param[in] useGpuForBufferOps If buffer ops / reduction are calculated on GPU(s).
- * \param[in] useGpuHaloExchange If GPU direct communication is used in halo exchange.
- * \param[in] useGpuPmePpComm    If GPu direct communication is used in PME-PP communication.
+ * \param[in] pmeRunMode         Run mode indicating what resource is PME execured on.
+ * \param[in] useGpuForBonded    Whether bonded interactions are calculated on GPU(s).
+ * \param[in] useGpuForUpdate    Whether coordinate update and constraint solving is performed on
+ *                               GPU(s).
+ * \param[in] useGpuForBufferOps Whether buffer ops / reduction are calculated on GPU(s).
+ * \param[in] useGpuHaloExchange Whether GPU direct communication is used in halo exchange.
+ * \param[in] useGpuPmePpComm    Whether GPU direct communication is used in PME-PP communication.
  * \returns Simulation lifetime constant workload description.
  */
-SimulationWorkload createSimulationWorkload(bool useGpuForNonbonded,
-                                            bool useGpuForPme,
-                                            bool useGpuForPmeFft,
-                                            bool useGpuForBonded,
-                                            bool useGpuForUpdateConstraints,
-                                            bool useGpuForBufferOps,
-                                            bool useGpuHaloExchange,
-                                            bool useGpuPmePpComm);
+SimulationWorkload createSimulationWorkload(const t_inputrec& inputrec,
+                                            bool              useGpuForNonbonded,
+                                            PmeRunMode        pmeRunMode,
+                                            bool              useGpuForBonded,
+                                            bool              useGpuForUpdate,
+                                            bool              useGpuForBufferOps,
+                                            bool              useGpuHaloExchange,
+                                            bool              useGpuPmePpComm);
 
-
-}  // namespace gmx
+} // namespace gmx
 
 #endif

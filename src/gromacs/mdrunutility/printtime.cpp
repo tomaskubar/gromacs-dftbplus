@@ -3,7 +3,8 @@
  *
  * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
  * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2016,2017,2018,2019, by the GROMACS development team, led by
+ * Copyright (c) 2013,2014,2015,2016,2017 by the GROMACS development team.
+ * Copyright (c) 2018,2019,2020, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -47,11 +48,11 @@
 #include "gromacs/utility/strconvert.h"
 #include "gromacs/utility/sysinfo.h"
 
-void print_time(FILE                     *out,
+void print_time(FILE*                     out,
                 gmx_walltime_accounting_t walltime_accounting,
                 int64_t                   step,
-                const t_inputrec         *ir,
-                const t_commrec          *cr)
+                const t_inputrec*         ir,
+                const t_commrec*          cr)
 {
     time_t finish;
     double dt, elapsed_seconds, time_per_step;
@@ -69,15 +70,16 @@ void print_time(FILE                     *out,
     if ((step >= ir->nstlist))
     {
         double seconds_since_epoch = gmx_gettime();
-        elapsed_seconds = seconds_since_epoch - walltime_accounting_get_start_time_stamp(walltime_accounting);
-        time_per_step   = elapsed_seconds/(step - ir->init_step + 1);
-        dt              = (ir->nsteps + ir->init_step - step) * time_per_step;
+        elapsed_seconds =
+                seconds_since_epoch - walltime_accounting_get_start_time_stamp(walltime_accounting);
+        time_per_step = elapsed_seconds / (step - ir->init_step + 1);
+        dt            = (ir->nsteps + ir->init_step - step) * time_per_step;
 
         if (ir->nsteps >= 0)
         {
             if (dt >= 300)
             {
-                finish = static_cast<time_t>(seconds_since_epoch + dt);
+                finish       = static_cast<time_t>(seconds_since_epoch + dt);
                 auto timebuf = gmx_ctime_r(&finish);
                 timebuf.erase(timebuf.find_first_of('\n'));
                 fputs(", will finish ", out);
@@ -90,8 +92,7 @@ void print_time(FILE                     *out,
         }
         else
         {
-            fprintf(out, " performance: %.1f ns/day    ",
-                    ir->delta_t/1000*24*60*60/time_per_step);
+            fprintf(out, " performance: %.1f ns/day    ", ir->delta_t / 1000 * 24 * 60 * 60 / time_per_step);
         }
     }
 #if !GMX_THREAD_MPI
@@ -106,8 +107,7 @@ void print_time(FILE                     *out,
     fflush(out);
 }
 
-void print_date_and_time(FILE *fplog, int nodeid, const char *title,
-                         double the_time)
+void print_date_and_time(FILE* fplog, int nodeid, const char* title, double the_time)
 {
     if (!fplog)
     {
@@ -116,14 +116,12 @@ void print_date_and_time(FILE *fplog, int nodeid, const char *title,
 
     time_t temp_time = static_cast<time_t>(the_time);
 
-    auto   timebuf = gmx_ctime_r(&temp_time);
+    auto timebuf = gmx_ctime_r(&temp_time);
 
     fprintf(fplog, "%s on rank %d %s\n", title, nodeid, timebuf.c_str());
 }
 
-void print_start(FILE *fplog, const t_commrec *cr,
-                 gmx_walltime_accounting_t walltime_accounting,
-                 const char *name)
+void print_start(FILE* fplog, const t_commrec* cr, gmx_walltime_accounting_t walltime_accounting, const char* name)
 {
     char buf[STRLEN];
 

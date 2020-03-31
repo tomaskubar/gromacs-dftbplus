@@ -1,7 +1,8 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2012,2013,2014,2015,2016,2017,2018,2019, by the GROMACS development team, led by
+ * Copyright (c) 2012,2013,2014,2015,2016 by the GROMACS development team.
+ * Copyright (c) 2017,2018,2019,2020, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -55,12 +56,12 @@
 
 #include "gromacs/domdec/domdec.h"
 #include "gromacs/math/vectypes.h"
+#include "gromacs/nbnxm/atomdata.h"
 #include "gromacs/timing/cyclecounter.h"
 #include "gromacs/utility/alignedallocator.h"
 #include "gromacs/utility/arrayref.h"
 #include "gromacs/utility/real.h"
 
-#include "atomdata.h"
 #include "gridset.h"
 #include "pairlist.h"
 
@@ -69,51 +70,54 @@ struct PairsearchWork;
 
 
 /*! \brief Convenience declaration for an std::vector with aligned memory */
-template <class T>
-using AlignedVector = std::vector < T, gmx::AlignedAllocator < T>>;
+template<class T>
+using AlignedVector = std::vector<T, gmx::AlignedAllocator<T>>;
 
 
-/* Local cycle count struct for profiling */
+//! Local cycle count struct for profiling \internal
 class nbnxn_cycle_t
 {
-    public:
-        void start()
-        {
-            start_ = gmx_cycles_read();
-        }
+public:
+    //! Start counting cycles
+    void start() { start_ = gmx_cycles_read(); }
+    //! Stop counting cycles
+    void stop()
+    {
+        cycles_ += gmx_cycles_read() - start_;
+        count_++;
+    }
+    //! Return the number of periods of cycle counting
+    int count() const { return count_; }
 
-        void stop()
+    //! Return the average number of million cycles per counting period
+    double averageMCycles() const
+    {
+        if (count_ > 0)
         {
-            cycles_ += gmx_cycles_read() - start_;
-            count_++;
+            return static_cast<double>(cycles_) * 1e-6 / count_;
         }
-
-        int count() const
+        else
         {
-            return count_;
+            return 0;
         }
+    }
 
-        double averageMCycles() const
-        {
-            if (count_ > 0)
-            {
-                return static_cast<double>(cycles_)*1e-6/count_;
-            }
-            else
-            {
-                return 0;
-            }
-        }
-
-    private:
-        int          count_  = 0;
-        gmx_cycles_t cycles_ = 0;
-        gmx_cycles_t start_  = 0;
+private:
+    //! Number of counting periods
+    int count_ = 0;
+    //! Total cycles in all counting periods
+    gmx_cycles_t cycles_ = 0;
+    //! Cycle count at the most recent start
+    gmx_cycles_t start_ = 0;
 };
 
 //! Local cycle count enum for profiling different parts of search
-enum {
-    enbsCCgrid, enbsCCsearch, enbsCCcombine, enbsCCnr
+enum
+{
+    enbsCCgrid,
+    enbsCCsearch,
+    enbsCCcombine,
+    enbsCCnr
 };
 
 /*! \internal
@@ -122,131 +126,121 @@ enum {
 struct SearchCycleCounting
 {
     //! Start a pair search cycle counter
-    void start(const int enbsCC)
-    {
-        cc_[enbsCC].start();
-    }
+    void start(const int enbsCC) { cc_[enbsCC].start(); }
 
     //! Stop a pair search cycle counter
-    void stop(const int enbsCC)
-    {
-        cc_[enbsCC].stop();
-    }
+    void stop(const int enbsCC) { cc_[enbsCC].stop(); }
 
     //! Print the cycle counts to \p fp
-    void printCycles(FILE                               *fp,
-                     gmx::ArrayRef<const PairsearchWork> work) const;
+    void printCycles(FILE* fp, gmx::ArrayRef<const PairsearchWork> work) const;
 
     //! Tells whether we record cycles
-    bool          recordCycles_ = false;
+    bool recordCycles_ = false;
     //! The number of times pairsearching has been performed, local+non-local count as 1
-    int           searchCount_  = 0;
+    int searchCount_ = 0;
     //! The set of cycle counters
     nbnxn_cycle_t cc_[enbsCCnr];
 };
 
 // TODO: Move nbnxn_search_work_t definition to its own file
 
-/* Thread-local work struct, contains working data for Grid */
+//! Thread-local work struct, contains working data for Grid \internal
 struct PairsearchWork
 {
     PairsearchWork();
 
     ~PairsearchWork();
 
-    gmx_cache_protect_t       cp0;          /* Buffer to avoid cache polution */
+    //! Buffer to avoid cache polution
+    gmx_cache_protect_t cp0;
 
-    std::vector<int>          sortBuffer;   /* Temporary buffer for sorting atoms within a grid column */
+    //! Temporary buffer for sorting atoms within a grid column
+    std::vector<int> sortBuffer;
 
-    nbnxn_buffer_flags_t      buffer_flags; /* Flags for force buffer access */
+    //! Flags for force buffer access
+    nbnxn_buffer_flags_t buffer_flags;
 
-    int                       ndistc;       /* Number of distance checks for flop counting */
+    //! Number of distance checks for flop counting
+    int ndistc;
 
 
-    std::unique_ptr<t_nblist> nbl_fep;      /* Temporary FEP list for load balancing */
+    //! Temporary FEP list for load balancing
+    std::unique_ptr<t_nblist> nbl_fep;
 
-    nbnxn_cycle_t             cycleCounter; /* Counter for thread-local cycles */
+    //! Counter for thread-local cycles
+    nbnxn_cycle_t cycleCounter;
 
-    gmx_cache_protect_t       cp1;          /* Buffer to avoid cache polution */
+    //! Buffer to avoid cache polution
+    gmx_cache_protect_t cp1;
 };
 
-/* Main pair-search struct, contains the grid(s), not the pair-list(s) */
+//! Main pair-search struct, contains the grid(s), not the pair-list(s) \internal
 class PairSearch
 {
-    public:
-        //! Puts the atoms in \p ddZone on the grid and copies the coordinates to \p nbat
-        void putOnGrid(const matrix                    box,
-                       int                             ddZone,
-                       const rvec                      lowerCorner,
-                       const rvec                      upperCorner,
-                       const gmx::UpdateGroupsCog     *updateGroupsCog,
-                       gmx::Range<int>                 atomRange,
-                       real                            atomDensity,
-                       gmx::ArrayRef<const int>        atomInfo,
-                       gmx::ArrayRef<const gmx::RVec>  x,
-                       int                             numAtomsMoved,
-                       const int                      *move,
-                       nbnxn_atomdata_t               *nbat)
-        {
-            cycleCounting_.start(enbsCCgrid);
+public:
+    //! Puts the atoms in \p ddZone on the grid and copies the coordinates to \p nbat
+    void putOnGrid(const matrix                   box,
+                   int                            ddZone,
+                   const rvec                     lowerCorner,
+                   const rvec                     upperCorner,
+                   const gmx::UpdateGroupsCog*    updateGroupsCog,
+                   gmx::Range<int>                atomRange,
+                   real                           atomDensity,
+                   gmx::ArrayRef<const int>       atomInfo,
+                   gmx::ArrayRef<const gmx::RVec> x,
+                   int                            numAtomsMoved,
+                   const int*                     move,
+                   nbnxn_atomdata_t*              nbat)
+    {
+        cycleCounting_.start(enbsCCgrid);
 
-            gridSet_.putOnGrid(box, ddZone, lowerCorner, upperCorner,
-                               updateGroupsCog, atomRange, atomDensity,
-                               atomInfo, x, numAtomsMoved, move, nbat);
+        gridSet_.putOnGrid(box, ddZone, lowerCorner, upperCorner, updateGroupsCog, atomRange,
+                           atomDensity, atomInfo, x, numAtomsMoved, move, nbat);
 
-            cycleCounting_.stop(enbsCCgrid);
-        }
+        cycleCounting_.stop(enbsCCgrid);
+    }
 
-        /* \brief Constructor
-         *
-         * \param[in] ePBC            The periodic boundary conditions
-         * \param[in] numDDCells      The number of domain decomposition cells per dimension, without DD nullptr should be passed
-         * \param[in] zones           The domain decomposition zone setup, without DD nullptr should be passed
-         * \param[in] haveFep         Tells whether non-bonded interactions are perturbed
-         * \param[in] maxNumThreads   The maximum number of threads used in the search
-         */
-        PairSearch(int                       ePBC,
-                   bool                      doTestParticleInsertion,
-                   const ivec               *numDDCells,
-                   const gmx_domdec_zones_t *zones,
-                   PairlistType              pairlistType,
-                   bool                      haveFep,
-                   int                       maxNumthreads,
-                   gmx::PinningPolicy        pinningPolicy);
+    /*! \brief Constructor
+     *
+     * \param[in] pbcType                  The periodic boundary conditions
+     * \param[in] doTestParticleInsertion  Whether test-particle insertion is active
+     * \param[in] numDDCells               The number of domain decomposition cells per dimension, without DD nullptr should be passed
+     * \param[in] zones                    The domain decomposition zone setup, without DD nullptr should be passed
+     * \param[in] pairlistType             The type of tte pair list
+     * \param[in] haveFep                  Tells whether non-bonded interactions are perturbed
+     * \param[in] maxNumThreads            The maximum number of threads used in the search
+     * \param[in] pinningPolicy            Sets the pinning policy for all buffers used on the GPU
+     */
+    PairSearch(PbcType                   pbcType,
+               bool                      doTestParticleInsertion,
+               const ivec*               numDDCells,
+               const gmx_domdec_zones_t* zones,
+               PairlistType              pairlistType,
+               bool                      haveFep,
+               int                       maxNumThreads,
+               gmx::PinningPolicy        pinningPolicy);
 
-        //! Sets the order of the local atoms to the order grid atom ordering
-        void setLocalAtomOrder()
-        {
-            gridSet_.setLocalAtomOrder();
-        }
+    //! Sets the order of the local atoms to the order grid atom ordering
+    void setLocalAtomOrder() { gridSet_.setLocalAtomOrder(); }
 
-        //! Returns the set of search grids
-        const Nbnxm::GridSet &gridSet() const
-        {
-            return gridSet_;
-        }
+    //! Returns the set of search grids
+    const Nbnxm::GridSet& gridSet() const { return gridSet_; }
 
-        //! Returns the list of thread-local work objects
-        gmx::ArrayRef<const PairsearchWork> work() const
-        {
-            return work_;
-        }
+    //! Returns the list of thread-local work objects
+    gmx::ArrayRef<const PairsearchWork> work() const { return work_; }
 
-        //! Returns the list of thread-local work objects
-        gmx::ArrayRef<PairsearchWork> work()
-        {
-            return work_;
-        }
+    //! Returns the list of thread-local work objects
+    gmx::ArrayRef<PairsearchWork> work() { return work_; }
 
-    private:
-        //! The set of search grids
-        Nbnxm::GridSet              gridSet_;
-        //! Work objects, one entry for each thread
-        std::vector<PairsearchWork> work_;
+private:
+    //! The set of search grids
+    Nbnxm::GridSet gridSet_;
+    //! Work objects, one entry for each thread
+    std::vector<PairsearchWork> work_;
 
-    public:
-        //! Cycle counting for measuring components of the search
-        SearchCycleCounting         cycleCounting_;
+public:
+    //! Cycle counting for measuring components of the search
+    SearchCycleCounting cycleCounting_;
 };
 
 #endif

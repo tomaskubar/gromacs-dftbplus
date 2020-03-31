@@ -1,7 +1,7 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2016,2017,2018,2019, by the GROMACS development team, led by
+ * Copyright (c) 2016,2017,2018,2019,2020, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -75,49 +75,48 @@ typedef std::tuple<IVec, int, ModuliType> BSplineModuliInputParameters;
 /*! \brief Test fixture for testing PME B-spline moduli creation */
 class PmeBSplineModuliTest : public ::testing::TestWithParam<BSplineModuliInputParameters>
 {
-    public:
-        PmeBSplineModuliTest() = default;
-        //! The whole logic being tested is contained here
-        void runTest()
+public:
+    PmeBSplineModuliTest() = default;
+    //! The whole logic being tested is contained here
+    void runTest()
+    {
+        /* Getting the input */
+        const BSplineModuliInputParameters parameters = GetParam();
+        int                                pmeOrder;
+        IVec                               gridSize;
+        ModuliType                         moduliType;
+        std::tie(gridSize, pmeOrder, moduliType) = parameters;
+
+        /* Describing the test in case it fails */
+        SCOPED_TRACE(formatString(
+                "Testing B-spline moduli creation (%s) for PME order %d, grid size %d %d %d",
+                (moduliType == ModuliType::P3M) ? "P3M" : "plain", pmeOrder, gridSize[XX],
+                gridSize[YY], gridSize[ZZ]));
+
+        /* Storing the input where it's needed */
+        t_inputrec inputRec;
+        inputRec.nkx         = gridSize[XX];
+        inputRec.nky         = gridSize[YY];
+        inputRec.nkz         = gridSize[ZZ];
+        inputRec.coulombtype = (moduliType == ModuliType::P3M) ? eelP3M_AD : eelPME;
+        inputRec.pme_order   = pmeOrder;
+
+        /* PME initialization call which checks the inputs and computes the B-spline moduli according to the grid sizes. */
+        PmeSafePointer pme = pmeInitEmpty(&inputRec);
+
+        /* Setting up the checker */
+        TestReferenceData    refData;
+        TestReferenceChecker checker(refData.rootChecker());
+        checker.setDefaultTolerance(relativeToleranceAsPrecisionDependentUlp(
+                1.0, c_splineModuliSinglePrecisionUlps, getSplineModuliDoublePrecisionUlps(pmeOrder + 1)));
+
+        /* Perform a correctness check */
+        const char* dimString[] = { "X", "Y", "Z" };
+        for (int i = 0; i < DIM; i++)
         {
-            /* Getting the input */
-            const BSplineModuliInputParameters parameters = GetParam();
-            int         pmeOrder;
-            IVec        gridSize;
-            ModuliType  moduliType;
-            std::tie(gridSize, pmeOrder, moduliType) = parameters;
-
-            /* Describing the test in case it fails */
-            SCOPED_TRACE(formatString("Testing B-spline moduli creation (%s) for PME order %d, grid size %d %d %d",
-                                      (moduliType == ModuliType::P3M) ? "P3M" : "plain",
-                                      pmeOrder,
-                                      gridSize[XX], gridSize[YY], gridSize[ZZ]));
-
-            /* Storing the input where it's needed */
-            t_inputrec inputRec;
-            inputRec.nkx         = gridSize[XX];
-            inputRec.nky         = gridSize[YY];
-            inputRec.nkz         = gridSize[ZZ];
-            inputRec.coulombtype = (moduliType == ModuliType::P3M) ? eelP3M_AD : eelPME;
-            inputRec.pme_order   = pmeOrder;
-
-            /* PME initialization call which checks the inputs and computes the B-spline moduli according to the grid sizes. */
-            PmeSafePointer pme = pmeInitEmpty(&inputRec);
-
-            /* Setting up the checker */
-            TestReferenceData    refData;
-            TestReferenceChecker checker(refData.rootChecker());
-            checker.setDefaultTolerance(relativeToleranceAsPrecisionDependentUlp(1.0,
-                                                                                 c_splineModuliSinglePrecisionUlps,
-                                                                                 getSplineModuliDoublePrecisionUlps(pmeOrder+1)));
-
-            /* Perform a correctness check */
-            const char *dimString[] = { "X", "Y", "Z" };
-            for (int i = 0; i < DIM; i++)
-            {
-                checker.checkSequenceArray(gridSize[i], pme->bsp_mod[i], dimString[i]);
-            }
+            checker.checkSequenceArray(gridSize[i], pme->bsp_mod[i], dimString[i]);
         }
+    }
 };
 
 // Different aliases are needed to reuse the test class without instantiating tests more than once
@@ -125,47 +124,32 @@ class PmeBSplineModuliTest : public ::testing::TestWithParam<BSplineModuliInputP
 using PmeBSplineModuliFailureTest = PmeBSplineModuliTest;
 TEST_P(PmeBSplineModuliFailureTest, Throws)
 {
-    EXPECT_THROW(runTest(), InconsistentInputError);
+    EXPECT_THROW_GMX(runTest(), InconsistentInputError);
 }
 //! Correctness test alias
 using PmeBSplineModuliCorrectnessTest = PmeBSplineModuliTest;
 TEST_P(PmeBSplineModuliCorrectnessTest, ReproducesValues)
 {
-    EXPECT_NO_THROW(runTest());
+    EXPECT_NO_THROW_GMX(runTest());
 }
 
 /* Invalid input instances */
 
 //! Sane interpolation order
-const int       sanePmeOrder = 4;
+const int sanePmeOrder = 4;
 //! Sane grid size
-const IVec      saneGridSize = {32, 25, 47};
+const IVec saneGridSize = { 32, 25, 47 };
 /*! \brief Hand-picked invalid input for the exception tests */
-std::vector<BSplineModuliInputParameters> const invalidInputs
-{
+std::vector<BSplineModuliInputParameters> const invalidInputs{
     /* Invalid grid sizes */
-    BSplineModuliInputParameters {
-        IVec {
-            -1, 10, 10
-        }, sanePmeOrder, ModuliType::P3M
-    },
-    BSplineModuliInputParameters {
-        IVec {
-            40, 0, 20
-        }, sanePmeOrder, ModuliType::P3M
-    },
-    BSplineModuliInputParameters {
-        IVec {
-            64, 2, 64
-        }, sanePmeOrder, ModuliType::PME
-    },
+    BSplineModuliInputParameters{ IVec{ -1, 10, 10 }, sanePmeOrder, ModuliType::P3M },
+    BSplineModuliInputParameters{ IVec{ 40, 0, 20 }, sanePmeOrder, ModuliType::P3M },
+    BSplineModuliInputParameters{ IVec{ 64, 2, 64 }, sanePmeOrder, ModuliType::PME },
     /* Invalid interpolation orders */
-    BSplineModuliInputParameters {
-        saneGridSize, 8 + 1, ModuliType::P3M  // P3M only supports orders up to 8
+    BSplineModuliInputParameters{
+            saneGridSize, 8 + 1, ModuliType::P3M // P3M only supports orders up to 8
     },
-    BSplineModuliInputParameters {
-        saneGridSize, PME_ORDER_MAX + 1, ModuliType::PME
-    },
+    BSplineModuliInputParameters{ saneGridSize, PME_ORDER_MAX + 1, ModuliType::PME },
 };
 
 /*! \brief Instantiation of the PME B-spline moduli creation test with invalid input */
@@ -174,22 +158,14 @@ INSTANTIATE_TEST_CASE_P(InsaneInput, PmeBSplineModuliFailureTest, ::testing::Val
 /* Valid input instances */
 
 //! A couple of valid inputs for grid sizes. It is good to test both even and odd dimensions.
-std::vector<IVec> const sampleGridSizes
-{
-    IVec {
-        64, 32, 64
-    },
-    IVec {
-        57, 84, 29
-    }
-};
+std::vector<IVec> const sampleGridSizes{ IVec{ 64, 32, 64 }, IVec{ 57, 84, 29 } };
 
 /*! \brief Instantiation of the PME B-spline moduli creation test with valid input - up to order of 8 */
-INSTANTIATE_TEST_CASE_P(SaneInput1, PmeBSplineModuliCorrectnessTest, ::testing::Combine(
-                                    ::testing::ValuesIn(sampleGridSizes),
-                                    ::testing::Range(3, 8 + 1),
-                                    ::testing::Values(ModuliType::PME, ModuliType::P3M)
-                                ));
-}  // namespace
-}  // namespace test
-}  // namespace gmx
+INSTANTIATE_TEST_CASE_P(SaneInput1,
+                        PmeBSplineModuliCorrectnessTest,
+                        ::testing::Combine(::testing::ValuesIn(sampleGridSizes),
+                                           ::testing::Range(3, 8 + 1),
+                                           ::testing::Values(ModuliType::PME, ModuliType::P3M)));
+} // namespace
+} // namespace test
+} // namespace gmx

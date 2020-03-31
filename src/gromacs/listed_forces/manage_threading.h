@@ -3,7 +3,8 @@
  *
  * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
  * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2016,2018,2019, by the GROMACS development team, led by
+ * Copyright (c) 2013,2014,2015,2016,2018 by the GROMACS development team.
+ * Copyright (c) 2019,2020, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -47,7 +48,7 @@
 #include <cstdio>
 
 struct bonded_threading_t;
-struct t_idef;
+class InteractionDefinitions;
 
 /*! \brief Divide the listed interactions over the threads and GPU
  *
@@ -56,13 +57,13 @@ struct t_idef;
  * This should be called each time the bonded setup changes;
  * i.e. at start-up without domain decomposition and at DD.
  */
-void setup_bonded_threading(bonded_threading_t *bt,
-                            int                 numAtoms,
-                            bool                useGpuForBondes,
-                            const t_idef       &idef);
+void setup_bonded_threading(bonded_threading_t*           bt,
+                            int                           numAtoms,
+                            bool                          useGpuForBondes,
+                            const InteractionDefinitions& idef);
 
 //! Destructor.
-void tear_down_bonded_threading(bonded_threading_t *bt);
+void tear_down_bonded_threading(bonded_threading_t* bt);
 
 /*! \brief Initialize the bonded threading data structures
  *
@@ -71,7 +72,6 @@ void tear_down_bonded_threading(bonded_threading_t *bt);
  *
  * \todo Avoid explicit pointers by using Impl
  */
-bonded_threading_t *init_bonded_threading(FILE *fplog,
-                                          int   nenergrp);
+bonded_threading_t* init_bonded_threading(FILE* fplog, int nenergrp);
 
 #endif

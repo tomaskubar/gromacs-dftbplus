@@ -1,7 +1,7 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2018,2019, by the GROMACS development team, led by
+ * Copyright (c) 2018,2019,2020, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -47,7 +47,7 @@
 #include "gromacs/gpu_utils/gputraits.h"
 #include "gromacs/utility/classhelpers.h"
 
-struct gmx_device_info_t;
+struct DeviceInformation;
 
 /*! \internal
  * \brief
@@ -81,11 +81,11 @@ struct PmeGpuProgramImpl
 
     //! Conveniently all the PME kernels use the same single argument type
 #if GMX_GPU == GMX_GPU_CUDA
-    using PmeKernelHandle = void(*)(const struct PmeGpuCudaKernelParams);
+    using PmeKernelHandle = void (*)(const struct PmeGpuCudaKernelParams);
 #elif GMX_GPU == GMX_GPU_OPENCL
     using PmeKernelHandle = cl_kernel;
 #else
-    using PmeKernelHandle = void *;
+    using PmeKernelHandle = void*;
 #endif
 
     /*! \brief
@@ -99,31 +99,44 @@ struct PmeGpuProgramImpl
     //@{
     /**
      * Spread/spline kernels are compiled only for order of 4.
+     * There are multiple versions of each kernel, paramaretized according to
+     *   Number of threads per atom. Using either order(4) or order*order (16) threads per atom is
+     * supported If the spline data is written in the spline/spread kernel and loaded in the gather
+     *   or recalculated in the gather.
      * Spreading kernels also have hardcoded X/Y indices wrapping parameters,
      * as a placeholder for implementing 1/2D decomposition.
      */
-    size_t          spreadWorkGroupSize;
+    size_t spreadWorkGroupSize;
 
     PmeKernelHandle splineKernel;
+    PmeKernelHandle splineKernelThPerAtom4;
     PmeKernelHandle spreadKernel;
+    PmeKernelHandle spreadKernelThPerAtom4;
     PmeKernelHandle splineAndSpreadKernel;
+    PmeKernelHandle splineAndSpreadKernelThPerAtom4;
+    PmeKernelHandle splineAndSpreadKernelWriteSplines;
+    PmeKernelHandle splineAndSpreadKernelWriteSplinesThPerAtom4;
     //@}
 
     //@{
     /** Same for gather: hardcoded X/Y unwrap parameters, order of 4, plus
      * it can either reduce with previous forces in the host buffer, or ignore them.
+     * Also similarly to the gather we can use either order(4) or order*order (16) threads per atom
+     * and either recalculate the splines or read the ones written by the spread
      */
-    size_t          gatherWorkGroupSize;
+    size_t gatherWorkGroupSize;
 
-    PmeKernelHandle gatherReduceWithInputKernel;
     PmeKernelHandle gatherKernel;
+    PmeKernelHandle gatherKernelThPerAtom4;
+    PmeKernelHandle gatherKernelReadSplines;
+    PmeKernelHandle gatherKernelReadSplinesThPerAtom4;
     //@}
 
     //@{
     /** Solve kernel doesn't care about the interpolation order, but can optionally
      * compute energy and virial, and supports XYZ and YZX grid orderings.
      */
-    size_t          solveMaxWorkGroupSize;
+    size_t solveMaxWorkGroupSize;
 
     PmeKernelHandle solveYZXKernel;
     PmeKernelHandle solveXYZKernel;
@@ -133,13 +146,13 @@ struct PmeGpuProgramImpl
 
     PmeGpuProgramImpl() = delete;
     //! Constructor for the given device
-    explicit PmeGpuProgramImpl(const gmx_device_info_t *deviceInfo);
+    explicit PmeGpuProgramImpl(const DeviceInformation* deviceInfo);
     ~PmeGpuProgramImpl();
     GMX_DISALLOW_COPY_AND_ASSIGN(PmeGpuProgramImpl);
 
-    private:
-        // Compiles kernels, if supported. Called by the constructor.
-        void compileKernels(const gmx_device_info_t *deviceInfo);
+private:
+    // Compiles kernels, if supported. Called by the constructor.
+    void compileKernels(const DeviceInformation* deviceInfo);
 };
 
 #endif

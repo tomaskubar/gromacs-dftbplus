@@ -3,7 +3,7 @@
  *
  * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
  * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2010,2014,2015,2018,2019, by the GROMACS development team, led by
+ * Copyright (c) 2010,2014,2015,2018,2019,2020, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -48,6 +48,11 @@
 #include "gromacs/utility/arrayref.h"
 
 class PreprocessingAtomTypes;
+
+namespace gmx
+{
+class MDLogger;
+}
 struct PreprocessResidue;
 struct t_symtab;
 
@@ -60,9 +65,12 @@ struct t_symtab;
  *
  * \param[in] key The atomname to search for.
  * \param[in] rtpDBEntry Database with residue information.
+ * \param[in] logger Logging object.
  * \returns The rtp residue name.
  */
-std::string searchResidueDatabase(const std::string &key, gmx::ArrayRef<const PreprocessResidue> rtpDBEntry);
+std::string searchResidueDatabase(const std::string&                     key,
+                                  gmx::ArrayRef<const PreprocessResidue> rtpDBEntry,
+                                  const gmx::MDLogger&                   logger);
 
 /*! \brief
  * Returns matching entry in database.
@@ -72,7 +80,7 @@ std::string searchResidueDatabase(const std::string &key, gmx::ArrayRef<const Pr
  * \throws If the name can not be found in the database.
  */
 gmx::ArrayRef<const PreprocessResidue>::const_iterator
-getDatabaseEntry(const std::string &rtpname, gmx::ArrayRef<const PreprocessResidue> rtpDBEntry);
+getDatabaseEntry(const std::string& rtpname, gmx::ArrayRef<const PreprocessResidue> rtpDBEntry);
 
 /*! \brief
  * Read atom types into database.
@@ -81,7 +89,7 @@ getDatabaseEntry(const std::string &rtpname, gmx::ArrayRef<const PreprocessResid
  * \param[in] tab Symbol table for names.
  * \returns Atom type database.
  */
-PreprocessingAtomTypes read_atype(const char *ffdir, t_symtab *tab);
+PreprocessingAtomTypes read_atype(const char* ffdir, t_symtab* tab);
 
 /*! \brief
  * Read in database, append to exisiting.
@@ -90,13 +98,15 @@ PreprocessingAtomTypes read_atype(const char *ffdir, t_symtab *tab);
  * \param[inout] rtpDBEntry Database to populate.
  * \param[inout] atype Atomtype information.
  * \param[inout] tab Symbol table for names.
+ * \param[in] logger MDLogger interface.
  * \param[in] bAllowOverrideRTP If entries can be overwritten in the database.
  */
-void readResidueDatabase(const std::string               &resdb,
-                         std::vector<PreprocessResidue>  *rtpDBEntry,
-                         PreprocessingAtomTypes          *atype,
-                         t_symtab                        *tab,
-                         bool                             bAllowOverrideRTP);
+void readResidueDatabase(const std::string&              resdb,
+                         std::vector<PreprocessResidue>* rtpDBEntry,
+                         PreprocessingAtomTypes*         atype,
+                         t_symtab*                       tab,
+                         const gmx::MDLogger&            logger,
+                         bool                            bAllowOverrideRTP);
 
 /*! \brief
  * Print out database.
@@ -105,7 +115,8 @@ void readResidueDatabase(const std::string               &resdb,
  * \param[in] rtpDBEntry Database to write out.
  * \param[in] atype Atom type information.
  */
-void print_resall(FILE *out, gmx::ArrayRef<const PreprocessResidue> rtpDBEntry,
-                  const PreprocessingAtomTypes &atype);
+void print_resall(FILE*                                  out,
+                  gmx::ArrayRef<const PreprocessResidue> rtpDBEntry,
+                  const PreprocessingAtomTypes&          atype);
 
 #endif

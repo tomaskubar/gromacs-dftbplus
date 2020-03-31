@@ -1,7 +1,7 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2018,2019, by the GROMACS development team, led by
+ * Copyright (c) 2018,2019,2020, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -43,12 +43,28 @@
  * \ingroup module_gpu_utils
  */
 
+/*! \brief CUDA device information.
+ *
+ * The CUDA device information is queried and set at detection and contains
+ * both information about the device/hardware returned by the runtime as well
+ * as additional data like support status.
+ */
+struct DeviceInformation
+{
+    //! ID of the CUDA device.
+    int id;
+    //! CUDA device properties.
+    cudaDeviceProp prop;
+    //! Result of the device check.
+    int stat;
+};
+
 //! \brief GPU command stream
 using CommandStream = cudaStream_t;
 //! \brief Single GPU call timing event - meaningless in CUDA
-using CommandEvent  = void;
+using CommandEvent = void;
 //! \brief Context used explicitly in OpenCL, does nothing in CUDA
-using DeviceContext = void *;
+using DeviceContext = void*;
 
 /*! \internal \brief
  * GPU kernels scheduling description. This is same in OpenCL/CUDA.
@@ -57,10 +73,10 @@ using DeviceContext = void *;
  */
 struct KernelLaunchConfig
 {
-    size_t        gridSize[3]      = {1, 1, 1}; //!< Block counts
-    size_t        blockSize[3]     = {1, 1, 1}; //!< Per-block thread counts
-    size_t        sharedMemorySize = 0;         //!< Shared memory size in bytes
-    CommandStream stream           = nullptr;   //!< Stream to launch kernel in
+    size_t        gridSize[3]      = { 1, 1, 1 }; //!< Block counts
+    size_t        blockSize[3]     = { 1, 1, 1 }; //!< Per-block thread counts
+    size_t        sharedMemorySize = 0;           //!< Shared memory size in bytes
+    CommandStream stream           = nullptr;     //!< Stream to launch kernel in
 };
 
 //! Sets whether device code can use arrays that are embedded in structs.

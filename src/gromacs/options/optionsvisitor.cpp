@@ -1,7 +1,8 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2010,2012,2014,2015,2016,2018,2019, by the GROMACS development team, led by
+ * Copyright (c) 2010,2012,2014,2015,2016 by the GROMACS development team.
+ * Copyright (c) 2018,2019,2020, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -56,55 +57,51 @@ namespace
 {
 
 //! Helper function to call visitOptions() and handle correct indirection.
-void visitOption(OptionsVisitor *visitor, OptionInfo &optionInfo) //NOLINT(google-runtime-references)
+void visitOption(OptionsVisitor* visitor, OptionInfo& optionInfo) //NOLINT(google-runtime-references)
 {
     visitor->visitOption(optionInfo);
 }
 //! Helper function to call visitOptions() and handle correct indirection.
-void visitOption(OptionsModifyingVisitor *visitor, OptionInfo &optionInfo) //NOLINT(google-runtime-references)
+void visitOption(OptionsModifyingVisitor* visitor, OptionInfo& optionInfo) //NOLINT(google-runtime-references)
 {
     visitor->visitOption(&optionInfo);
 }
 
 //! Helper function to recursively visit all options in a group.
-template <class VisitorType>
-void acceptOptionsGroup(const internal::OptionSectionImpl::Group &group, VisitorType *visitor)
+template<class VisitorType>
+void acceptOptionsGroup(const internal::OptionSectionImpl::Group& group, VisitorType* visitor)
 {
-    for (const auto &option : group.options_)
+    for (const auto& option : group.options_)
     {
         visitOption(visitor, option->optionInfo());
     }
-    for (const auto &subgroup : group.subgroups_)
+    for (const auto& subgroup : group.subgroups_)
     {
         acceptOptionsGroup(subgroup, visitor);
     }
 }
 
-}   // namespace
+} // namespace
 
 /********************************************************************
  * OptionsIterator
  */
 
-OptionsIterator::OptionsIterator(const Options &options)
-    : section_(options.rootSection().section())
+OptionsIterator::OptionsIterator(const Options& options) : section_(options.rootSection().section())
 {
 }
 
-OptionsIterator::OptionsIterator(const OptionSectionInfo &section)
-    : section_(section.section())
-{
-}
+OptionsIterator::OptionsIterator(const OptionSectionInfo& section) : section_(section.section()) {}
 
-void OptionsIterator::acceptSections(OptionsVisitor *visitor) const
+void OptionsIterator::acceptSections(OptionsVisitor* visitor) const
 {
-    for (const auto &section : section_.subsections_)
+    for (const auto& section : section_.subsections_)
     {
         visitor->visitSection(section->info());
     }
 }
 
-void OptionsIterator::acceptOptions(OptionsVisitor *visitor) const
+void OptionsIterator::acceptOptions(OptionsVisitor* visitor) const
 {
     acceptOptionsGroup(section_.rootGroup_, visitor);
 }
@@ -113,25 +110,25 @@ void OptionsIterator::acceptOptions(OptionsVisitor *visitor) const
  * OptionsModifyingIterator
  */
 
-OptionsModifyingIterator::OptionsModifyingIterator(Options *options)
-    : section_(options->rootSection().section())
+OptionsModifyingIterator::OptionsModifyingIterator(Options* options) :
+    section_(options->rootSection().section())
 {
 }
 
-OptionsModifyingIterator::OptionsModifyingIterator(OptionSectionInfo *section)
-    : section_(section->section())
+OptionsModifyingIterator::OptionsModifyingIterator(OptionSectionInfo* section) :
+    section_(section->section())
 {
 }
 
-void OptionsModifyingIterator::acceptSections(OptionsModifyingVisitor *visitor) const
+void OptionsModifyingIterator::acceptSections(OptionsModifyingVisitor* visitor) const
 {
-    for (auto &section : section_.subsections_)
+    for (auto& section : section_.subsections_)
     {
         visitor->visitSection(&section->info());
     }
 }
 
-void OptionsModifyingIterator::acceptOptions(OptionsModifyingVisitor *visitor) const
+void OptionsModifyingIterator::acceptOptions(OptionsModifyingVisitor* visitor) const
 {
     acceptOptionsGroup(section_.rootGroup_, visitor);
 }

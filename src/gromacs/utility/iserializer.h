@@ -1,7 +1,7 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2016,2017,2018,2019, by the GROMACS development team, led by
+ * Copyright (c) 2016,2017,2018,2019,2020, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -46,6 +46,8 @@
 #ifndef GMX_UTILITY_ISERIALIZER_H
 #define GMX_UTILITY_ISERIALIZER_H
 
+#include <cstddef>
+
 #include <string>
 
 #include "gromacs/math/vectypes.h"
@@ -64,119 +66,119 @@ namespace gmx
  * conversion. */
 class ISerializer
 {
-    public:
-        virtual ~ISerializer() {}
-        /*! \brief Returns whether the serializer is reading or
-         * writing, because details like memory management vary
-         * accordingly. */
-        virtual bool reading() const = 0;
-        //! \brief Serialize values of different types.
-        ///@{
-        virtual void doBool(bool *value)             = 0;
-        virtual void doUChar(unsigned char *value)   = 0;
-        virtual void doChar(char *value)             = 0;
-        virtual void doUShort(unsigned short *value) = 0;
-        virtual void doInt(int *value)               = 0;
-        virtual void doInt32(int32_t *value)         = 0;
-        virtual void doInt64(int64_t *value)         = 0;
-        virtual void doFloat(float *value)           = 0;
-        virtual void doDouble(double *value)         = 0;
-        virtual void doReal(real *value)             = 0;
-        virtual void doIvec(ivec *value)             = 0;
-        virtual void doRvec(rvec *value)             = 0;
-        virtual void doString(std::string *value)    = 0;
-        ///@}
+public:
+    virtual ~ISerializer() {}
+    /*! \brief Returns whether the serializer is reading or
+     * writing, because details like memory management vary
+     * accordingly. */
+    virtual bool reading() const = 0;
+    //! \brief Serialize values of different types.
+    ///@{
+    virtual void doBool(bool* value)                    = 0;
+    virtual void doUChar(unsigned char* value)          = 0;
+    virtual void doChar(char* value)                    = 0;
+    virtual void doUShort(unsigned short* value)        = 0;
+    virtual void doInt(int* value)                      = 0;
+    virtual void doInt32(int32_t* value)                = 0;
+    virtual void doInt64(int64_t* value)                = 0;
+    virtual void doFloat(float* value)                  = 0;
+    virtual void doDouble(double* value)                = 0;
+    virtual void doReal(real* value)                    = 0;
+    virtual void doIvec(ivec* value)                    = 0;
+    virtual void doRvec(rvec* value)                    = 0;
+    virtual void doString(std::string* value)           = 0;
+    virtual void doOpaque(char* data, std::size_t size) = 0;
+    ///@}
 
-        //! \brief Serialize arrays of values of different types.
-        ///@{
-        void doBoolArray(bool *values, int elements)
+    //! \brief Serialize arrays of values of different types.
+    ///@{
+    void doBoolArray(bool* values, int elements)
+    {
+        for (int i = 0; i < elements; i++)
         {
-            for (int i = 0; i < elements; i++)
-            {
-                doBool(&(values[i]));
-            }
+            doBool(&(values[i]));
         }
-        // Char, UChar and RVec have vector specializations that can be
-        // used instead of the default looping.
-        virtual void doCharArray(char *values, int elements)
+    }
+    // Char, UChar and RVec have vector specializations that can be
+    // used instead of the default looping.
+    virtual void doCharArray(char* values, int elements)
+    {
+        for (int i = 0; i < elements; i++)
         {
-            for (int i = 0; i < elements; i++)
-            {
-                doChar(&(values[i]));
-            }
+            doChar(&(values[i]));
         }
-        virtual void doUCharArray(unsigned char *values, int elements)
+    }
+    virtual void doUCharArray(unsigned char* values, int elements)
+    {
+        for (int i = 0; i < elements; i++)
         {
-            for (int i = 0; i < elements; i++)
-            {
-                doUChar(&(values[i]));
-            }
+            doUChar(&(values[i]));
         }
-        void doUShortArray(unsigned short *values, int elements)
+    }
+    void doUShortArray(unsigned short* values, int elements)
+    {
+        for (int i = 0; i < elements; i++)
         {
-            for (int i = 0; i < elements; i++)
-            {
-                doUShort(&(values[i]));
-            }
+            doUShort(&(values[i]));
         }
-        void doIntArray(int *values, int elements)
+    }
+    void doIntArray(int* values, int elements)
+    {
+        for (int i = 0; i < elements; i++)
         {
-            for (int i = 0; i < elements; i++)
-            {
-                doInt(&(values[i]));
-            }
+            doInt(&(values[i]));
         }
-        void doInt32Array(int32_t *values, int elements)
+    }
+    void doInt32Array(int32_t* values, int elements)
+    {
+        for (int i = 0; i < elements; i++)
         {
-            for (int i = 0; i < elements; i++)
-            {
-                doInt32(&(values[i]));
-            }
+            doInt32(&(values[i]));
         }
-        void doInt64Array(int64_t *values, int elements)
+    }
+    void doInt64Array(int64_t* values, int elements)
+    {
+        for (int i = 0; i < elements; i++)
         {
-            for (int i = 0; i < elements; i++)
-            {
-                doInt64(&(values[i]));
-            }
+            doInt64(&(values[i]));
         }
-        void doFloatArray(float *values, int elements)
+    }
+    void doFloatArray(float* values, int elements)
+    {
+        for (int i = 0; i < elements; i++)
         {
-            for (int i = 0; i < elements; i++)
-            {
-                doFloat(&(values[i]));
-            }
+            doFloat(&(values[i]));
         }
-        void doDoubleArray(double *values, int elements)
+    }
+    void doDoubleArray(double* values, int elements)
+    {
+        for (int i = 0; i < elements; i++)
         {
-            for (int i = 0; i < elements; i++)
-            {
-                doDouble(&(values[i]));
-            }
+            doDouble(&(values[i]));
         }
-        void doRealArray(real *values, int elements)
+    }
+    void doRealArray(real* values, int elements)
+    {
+        for (int i = 0; i < elements; i++)
         {
-            for (int i = 0; i < elements; i++)
-            {
-                doReal(&(values[i]));
-            }
+            doReal(&(values[i]));
         }
-        void doIvecArray(ivec *values, int elements)
+    }
+    void doIvecArray(ivec* values, int elements)
+    {
+        for (int i = 0; i < elements; i++)
         {
-            for (int i = 0; i < elements; i++)
-            {
-                doIvec(&(values[i]));
-            }
+            doIvec(&(values[i]));
         }
-        virtual void doRvecArray(rvec *values, int elements)
+    }
+    virtual void doRvecArray(rvec* values, int elements)
+    {
+        for (int i = 0; i < elements; i++)
         {
-            for (int i = 0; i < elements; i++)
-            {
-                doRvec(&(values[i]));
-            }
+            doRvec(&(values[i]));
         }
-        ///@}
-
+    }
+    ///@}
 };
 
 } // namespace gmx

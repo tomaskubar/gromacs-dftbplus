@@ -39,16 +39,17 @@
 
 #include "pme_internal.h"
 
-void
-gather_f_bsplines(const struct gmx_pme_t *pme, const real *grid,
-                  gmx_bool bClearF, const PmeAtomComm *atc,
-                  const splinedata_t *spline,
-                  real scale,
-                  bool bForQMMM, int nrQMatoms, bool bMMforcesOnly);
+void gather_f_bsplines(const struct gmx_pme_t* pme,
+                       const real*             grid,
+                       gmx_bool                bClearF,
+                       const PmeAtomComm*      atc,
+                       const splinedata_t*     spline,
+                       real                    scale,
+                       bool                    bForQMMM,
+                       int                     nrQMatoms,
+                       bool                    bMMforcesOnly);
 
-real
-gather_energy_bsplines(struct gmx_pme_t *pme, const real *grid,
-                       PmeAtomComm *atc,
-                       int nrQMatoms, real *potential);
+real gather_energy_bsplines(struct gmx_pme_t* pme, const real* grid, PmeAtomComm* atc,
+                            int nrQMatoms, real *potential);
 
 #endif

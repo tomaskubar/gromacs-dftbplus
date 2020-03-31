@@ -1,7 +1,7 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2019, by the GROMACS development team, led by
+ * Copyright (c) 2019,2020, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -33,7 +33,8 @@
  * the research papers on the package. Check out http://www.gromacs.org.
  */
 
-/*! \internal \file
+/*! \file
+ * \internal
  *
  * \brief Declares constants and helper functions used when handling
  * bounding boxes for clusters of particles.
@@ -57,53 +58,53 @@ static constexpr int c_numBoundingBoxBounds1D = 2;
 
 #ifndef DOXYGEN
 
-/* Bounding box calculations are (currently) always in single precision, so
+/*! \brief Bounding box calculations are (currently) always in single precision, so
  * we only need to check for single precision support here.
  * This uses less (cache-)memory and SIMD is faster, at least on x86.
  */
-#if GMX_SIMD4_HAVE_FLOAT
-#    define NBNXN_SEARCH_BB_SIMD4      1
-#else
-#    define NBNXN_SEARCH_BB_SIMD4      0
-#endif
+#    if GMX_SIMD4_HAVE_FLOAT
+#        define NBNXN_SEARCH_BB_SIMD4 1
+#    else
+#        define NBNXN_SEARCH_BB_SIMD4 0
+#    endif
 
 
-#if NBNXN_SEARCH_BB_SIMD4
+#    if NBNXN_SEARCH_BB_SIMD4
 /* Always use 4-wide SIMD for bounding box calculations */
 
-#    if !GMX_DOUBLE
+#        if !GMX_DOUBLE
 /* Single precision BBs + coordinates, we can also load coordinates with SIMD */
-#        define NBNXN_SEARCH_SIMD4_FLOAT_X_BB  1
-#    else
-#        define NBNXN_SEARCH_SIMD4_FLOAT_X_BB  0
-#    endif
+#            define NBNXN_SEARCH_SIMD4_FLOAT_X_BB 1
+#        else
+#            define NBNXN_SEARCH_SIMD4_FLOAT_X_BB 0
+#        endif
 
 /* Store bounding boxes corners as quadruplets: xxxxyyyyzzzz
  *
  * The packed bounding box coordinate stride is always set to 4.
  * With AVX we could use 8, but that turns out not to be faster.
  */
-#    define NBNXN_BBXXXX  1
+#        define NBNXN_BBXXXX 1
 
 //! The number of bounding boxes in a pack, also the size of a pack along one dimension
 static constexpr int c_packedBoundingBoxesDimSize = GMX_SIMD4_WIDTH;
 
 //! Total number of corners (floats) in a pack of bounding boxes
-static constexpr int c_packedBoundingBoxesSize    =
-    c_packedBoundingBoxesDimSize*DIM*Nbnxm::c_numBoundingBoxBounds1D;
+static constexpr int c_packedBoundingBoxesSize =
+        c_packedBoundingBoxesDimSize * DIM * Nbnxm::c_numBoundingBoxBounds1D;
 
 //! Returns the starting index of the bounding box pack that contains the given cluster
 static constexpr inline int packedBoundingBoxesIndex(int clusterIndex)
 {
-    return (clusterIndex/c_packedBoundingBoxesDimSize)*c_packedBoundingBoxesSize;
+    return (clusterIndex / c_packedBoundingBoxesDimSize) * c_packedBoundingBoxesSize;
 }
 
-#else  /* NBNXN_SEARCH_BB_SIMD4 */
+#    else /* NBNXN_SEARCH_BB_SIMD4 */
 
-#    define NBNXN_SEARCH_SIMD4_FLOAT_X_BB  0
-#    define NBNXN_BBXXXX                   0
+#        define NBNXN_SEARCH_SIMD4_FLOAT_X_BB 0
+#        define NBNXN_BBXXXX 0
 
-#endif /* NBNXN_SEARCH_BB_SIMD4 */
+#    endif /* NBNXN_SEARCH_BB_SIMD4 */
 
 #endif // !DOXYGEN
 

@@ -3,7 +3,8 @@
  *
  * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
  * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2012,2014,2015,2017,2018,2019, by the GROMACS development team, led by
+ * Copyright (c) 2012,2014,2015,2017,2018 by the GROMACS development team.
+ * Copyright (c) 2019,2020, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -47,14 +48,19 @@
 #include "gromacs/math/vec.h"
 #include "gromacs/mdlib/gmx_omp_nthreads.h"
 
-void calc_mu(int start, int homenr, gmx::ArrayRef<gmx::RVec> x, const real q[], const real qB[],
-             int nChargePerturbed,
-             dvec mu, dvec mu_B)
+void calc_mu(int                      start,
+             int                      homenr,
+             gmx::ArrayRef<gmx::RVec> x,
+             const real               q[],
+             const real               qB[],
+             int                      nChargePerturbed,
+             dvec                     mu,
+             dvec                     mu_B)
 {
     int    end, m;
     double mu_x, mu_y, mu_z;
 
-    end   = start + homenr;
+    end = start + homenr;
 
     mu_x = mu_y = mu_z = 0.0;
 #pragma omp parallel for reduction(+: mu_x, mu_y, mu_z) schedule(static) \
@@ -62,9 +68,9 @@ void calc_mu(int start, int homenr, gmx::ArrayRef<gmx::RVec> x, const real q[], 
     for (int i = start; i < end; i++)
     {
         // Trivial OpenMP region that cannot throw
-        mu_x += q[i]*x[i][XX];
-        mu_y += q[i]*x[i][YY];
-        mu_z += q[i]*x[i][ZZ];
+        mu_x += q[i] * x[i][XX];
+        mu_y += q[i] * x[i][YY];
+        mu_z += q[i] * x[i][ZZ];
     }
     mu[XX] = mu_x;
     mu[YY] = mu_y;
@@ -83,9 +89,9 @@ void calc_mu(int start, int homenr, gmx::ArrayRef<gmx::RVec> x, const real q[], 
         for (int i = start; i < end; i++)
         {
             // Trivial OpenMP region that cannot throw
-            mu_x += qB[i]*x[i][XX];
-            mu_y += qB[i]*x[i][YY];
-            mu_z += qB[i]*x[i][ZZ];
+            mu_x += qB[i] * x[i][XX];
+            mu_y += qB[i] * x[i][YY];
+            mu_z += qB[i] * x[i][ZZ];
         }
         mu_B[XX] = mu_x * ENM2DEBYE;
         mu_B[YY] = mu_y * ENM2DEBYE;
@@ -97,12 +103,12 @@ void calc_mu(int start, int homenr, gmx::ArrayRef<gmx::RVec> x, const real q[], 
     }
 }
 
-gmx_bool read_mu(FILE *fp, rvec mu, real *vol)
+gmx_bool read_mu(FILE* fp, rvec mu, real* vol)
 {
     /* For backward compatibility */
     real mmm[4];
 
-    if (fread(mmm, static_cast<size_t>(4*sizeof(real)), 1, fp) != 1)
+    if (fread(mmm, static_cast<size_t>(4 * sizeof(real)), 1, fp) != 1)
     {
         return FALSE;
     }

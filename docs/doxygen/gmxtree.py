@@ -2,7 +2,8 @@
 #
 # This file is part of the GROMACS molecular simulation package.
 #
-# Copyright (c) 2014,2015,2016,2017,2018,2019, by the GROMACS development team, led by
+# Copyright (c) 2014,2015,2016,2017,2018 by the GROMACS development team.
+# Copyright (c) 2019,2020, by the GROMACS development team, led by
 # Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
 # and including many others, as listed in the AUTHORS file in the
 # top-level source directory and at http://www.gromacs.org.
@@ -263,7 +264,7 @@ class File(object):
 
     def should_includes_be_sorted(self):
         """Return whether the include directives in the file should be sorted."""
-        return self._filter in ('includesort', 'uncrustify')
+        return self._filter in ('includesort', 'complete_formatting')
 
     def is_documented(self):
         return self._rawdoc and self._rawdoc.is_documented()

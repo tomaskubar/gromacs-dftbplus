@@ -1,7 +1,8 @@
 #
 # This file is part of the GROMACS molecular simulation package.
 #
-# Copyright (c) 2013,2014,2015,2016,2017,2018,2019, by the GROMACS development team, led by
+# Copyright (c) 2013,2014,2015,2016,2017 The GROMACS development team.
+# Copyright (c) 2018,2019,2020, by the GROMACS development team, led by
 # Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
 # and including many others, as listed in the AUTHORS file in the
 # top-level source directory and at http://www.gromacs.org.
@@ -38,11 +39,11 @@ gmx_add_unit_test_library(mdrun_test_infrastructure
     energyreader.cpp
     energycomparison.cpp
     moduletest.cpp
-    mdmodulenotification.cpp
     terminationhelper.cpp
     trajectorycomparison.cpp
     trajectoryreader.cpp
     )
+target_include_directories(mdrun_test_infrastructure SYSTEM PRIVATE ${PROJECT_SOURCE_DIR}/src/external)
 
 set(testname "MdrunTests")
 set(exename "mdrun-test")
@@ -57,6 +58,8 @@ gmx_add_gtest_executable(
     helpwriting.cpp
     initialconstraints.cpp
     interactiveMD.cpp
+    outputfiles.cpp
+    orires.cpp
     pmetest.cpp
     simulator.cpp
     swapcoords.cpp
@@ -124,3 +127,24 @@ gmx_add_gtest_executable(
     )
 target_link_libraries(${exename} PRIVATE mdrun_test_infrastructure)
 gmx_register_gtest_test(${testname} ${exename} MPI_RANKS 2 OPENMP_THREADS 2 INTEGRATION_TEST)
+
+# Slow-running tests that target testing multiple-rank coordination behaviors
+set(exename "mdrun-mpi-coordination-test")
+gmx_add_gtest_executable(
+    ${exename} MPI
+    # files with code for tests
+    periodicactions.cpp
+    # pseudo-library for code for mdrun
+    $<TARGET_OBJECTS:mdrun_objlib>
+    )
+target_link_libraries(${exename} PRIVATE mdrun_test_infrastructure)
+
+# These tests are extremely slow without optimization or OpenMP, so only run them for
+# build types like Release or RelWithDebInfo and if the build has been configured
+# with OpenMP enabled.
+if (CMAKE_BUILD_TYPE MATCHES "Rel" AND GMX_OPENMP)
+    set(testname "MdrunMpiCoordinationTestsOneRank")
+    gmx_register_gtest_test(${testname} ${exename} MPI_RANKS 1 SLOW_TEST)
+    set(testname "MdrunMpiCoordinationTestsTwoRanks")
+    gmx_register_gtest_test(${testname} ${exename} MPI_RANKS 2 SLOW_TEST)
+endif()

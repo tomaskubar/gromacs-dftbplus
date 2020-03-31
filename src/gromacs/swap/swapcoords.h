@@ -2,7 +2,8 @@
  * This file is part of the GROMACS molecular simulation package.
  *
  * Copyright (c) 2013, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2016,2017,2018,2019, by the GROMACS development team, led by
+ * Copyright (c) 2013,2014,2015,2016,2017 by the GROMACS development team.
+ * Copyright (c) 2018,2019,2020, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -103,25 +104,24 @@ std::unique_ptr<IMDModule> createSwapCoordinatesModule();
  * \param[in] mdrunOptions  Options for mdrun.
  * \param[in] startingBehavior  Describes whether this is a restart appending to output files
  */
-t_swap *init_swapcoords(
-        FILE                     *fplog,
-        const t_inputrec         *ir,
-        const char               *fn,
-        gmx_mtop_t               *mtop,
-        const t_state            *globalState,
-        ObservablesHistory       *oh,
-        t_commrec                *cr,
-        gmx::LocalAtomSetManager *atomSets,
-        const gmx_output_env_t   *oenv,
-        const gmx::MdrunOptions  &mdrunOptions,
-        gmx::StartingBehavior     startingBehavior);
+t_swap* init_swapcoords(FILE*                     fplog,
+                        const t_inputrec*         ir,
+                        const char*               fn,
+                        gmx_mtop_t*               mtop,
+                        const t_state*            globalState,
+                        ObservablesHistory*       oh,
+                        t_commrec*                cr,
+                        gmx::LocalAtomSetManager* atomSets,
+                        const gmx_output_env_t*   oenv,
+                        const gmx::MdrunOptions&  mdrunOptions,
+                        gmx::StartingBehavior     startingBehavior);
 
 
 /*! \brief Finalizes ion / water position swapping, if it was active.
  *
  * \param[in] s             Pointer to swap data.
  */
-void finish_swapcoords(t_swap *s);
+void finish_swapcoords(t_swap* s);
 
 
 /*! \brief "Computational Electrophysiology" main routine within MD loop.
@@ -139,16 +139,15 @@ void finish_swapcoords(t_swap *s);
  *
  * \returns Whether at least one pair of molecules was swapped.
  */
-gmx_bool do_swapcoords(
-        t_commrec        *cr,
-        int64_t           step,
-        double            t,
-        t_inputrec       *ir,
-        t_swap           *s,
-        gmx_wallcycle    *wcycle,
-        rvec              x[],
-        matrix            box,
-        gmx_bool          bVerbose,
-        gmx_bool          bRerun);
+gmx_bool do_swapcoords(t_commrec*     cr,
+                       int64_t        step,
+                       double         t,
+                       t_inputrec*    ir,
+                       t_swap*        s,
+                       gmx_wallcycle* wcycle,
+                       rvec           x[],
+                       matrix         box,
+                       gmx_bool       bVerbose,
+                       gmx_bool       bRerun);
 
 #endif

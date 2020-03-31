@@ -1,7 +1,7 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2016,2017,2018,2019, by the GROMACS development team, led by
+ * Copyright (c) 2016,2017,2018,2019,2020, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -47,8 +47,7 @@
 #include "gromacs/utility/smalloc.h"
 #include "gromacs/utility/stringutil.h"
 
-void comp_frame(FILE *fp, t_trxframe *fr1, t_trxframe *fr2,
-                gmx_bool bRMSD, real ftol, real abstol)
+void comp_frame(FILE* fp, t_trxframe* fr1, t_trxframe* fr2, gmx_bool bRMSD, real ftol, real abstol)
 {
     fprintf(fp, "\n");
     cmp_int(fp, "not_ok", -1, fr1->not_ok, fr2->not_ok);
@@ -92,7 +91,7 @@ void comp_frame(FILE *fp, t_trxframe *fr1, t_trxframe *fr2,
     }
 }
 
-void done_frame(t_trxframe *frame)
+void done_frame(t_trxframe* frame)
 {
     if (frame->atoms)
     {
@@ -107,12 +106,11 @@ void done_frame(t_trxframe *frame)
 namespace gmx
 {
 
-TrajectoryFrame::TrajectoryFrame(const t_trxframe &frame)
-    : frame_(frame)
+TrajectoryFrame::TrajectoryFrame(const t_trxframe& frame) : frame_(frame)
 {
     // This would be nicer as an initializer, but once uncrustify is
     // happy, Doxygen can't parse it.
-    box_ = {{{{0}}}};
+    box_ = { { { { 0 } } } };
 
     if (!frame.bStep)
     {
@@ -149,17 +147,16 @@ double TrajectoryFrame::time() const
     return frame_.time;
 }
 
-int TrajectoryFrame::pbc() const
+PbcType TrajectoryFrame::pbc() const
 {
-    return frame_.ePBC;
+    return frame_.pbcType;
 }
 
 ArrayRef<const RVec> TrajectoryFrame::x() const
 {
     if (frame_.bX)
     {
-        return arrayRefFromArray(reinterpret_cast<RVec *>(frame_.x),
-                                 frame_.natoms);
+        return arrayRefFromArray(reinterpret_cast<RVec*>(frame_.x), frame_.natoms);
     }
     else
     {
@@ -171,8 +168,7 @@ ArrayRef<const RVec> TrajectoryFrame::v() const
 {
     if (frame_.bV)
     {
-        return arrayRefFromArray(reinterpret_cast<RVec *>(frame_.v),
-                                 frame_.natoms);
+        return arrayRefFromArray(reinterpret_cast<RVec*>(frame_.v), frame_.natoms);
     }
     else
     {
@@ -184,8 +180,7 @@ ArrayRef<const RVec> TrajectoryFrame::f() const
 {
     if (frame_.bF)
     {
-        return arrayRefFromArray(reinterpret_cast<RVec *>(frame_.f),
-                                 frame_.natoms);
+        return arrayRefFromArray(reinterpret_cast<RVec*>(frame_.f), frame_.natoms);
     }
     else
     {
@@ -198,7 +193,7 @@ bool TrajectoryFrame::hasBox() const
     return frame_.bBox;
 }
 
-const BoxMatrix &TrajectoryFrame::box() const
+const BoxMatrix& TrajectoryFrame::box() const
 {
     return box_;
 }

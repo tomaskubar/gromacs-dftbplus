@@ -1,7 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2009,2010,2011,2012,2013,2014,2015,2016,2017,2018,2019, by the GROMACS development team, led by
+ * Copyright (c) 2009,2010,2011,2012,2013 by the GROMACS development team.
+ * Copyright (c) 2014,2015,2016,2017,2018 by the GROMACS development team.
+ * Copyright (c) 2019,2020, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -63,18 +65,16 @@
  */
 struct t_methoddata_distance
 {
-    t_methoddata_distance() : cutoff(-1.0)
-    {
-    }
+    t_methoddata_distance() : cutoff(-1.0) {}
 
     /** Cutoff distance. */
-    real                             cutoff;
+    real cutoff;
     /** Positions of the reference points. */
-    gmx_ana_pos_t                    p;
+    gmx_ana_pos_t p;
     /** Neighborhood search data. */
-    gmx::AnalysisNeighborhood        nb;
+    gmx::AnalysisNeighborhood nb;
     /** Neighborhood search for an invididual frame. */
-    gmx::AnalysisNeighborhoodSearch  nbsearch;
+    gmx::AnalysisNeighborhoodSearch nbsearch;
 };
 
 /*! \brief
@@ -92,8 +92,7 @@ struct t_methoddata_distance
  *  - the second parameter defines the reference positions and the value is
  *    stored in \c t_methoddata_distance::p.
  */
-static void *
-init_data_common(int npar, gmx_ana_selparam_t *param);
+static void* init_data_common(int npar, gmx_ana_selparam_t* param);
 /*! \brief
  * Initializes a distance-based selection method.
  *
@@ -108,11 +107,9 @@ init_data_common(int npar, gmx_ana_selparam_t *param);
  * (\c t_methoddata_distance::nb).
  * Also checks that the cutoff is valid.
  */
-static void
-init_common(const gmx_mtop_t *top, int npar, gmx_ana_selparam_t *param, void *data);
+static void init_common(const gmx_mtop_t* top, int npar, gmx_ana_selparam_t* param, void* data);
 /** Frees the data allocated for a distance-based selection method. */
-static void
-free_data_common(void *data);
+static void free_data_common(void* data);
 /*! \brief
  * Initializes the evaluation of a distance-based within selection method for a
  * frame.
@@ -123,39 +120,40 @@ free_data_common(void *data);
  *
  * Initializes the neighborhood search for the current frame.
  */
-static void
-init_frame_common(const gmx::SelMethodEvalContext &context, void *data);
+static void init_frame_common(const gmx::SelMethodEvalContext& context, void* data);
 /** Evaluates the \p distance selection method. */
-static void
-evaluate_distance(const gmx::SelMethodEvalContext & /*context*/,
-                  gmx_ana_pos_t *pos, gmx_ana_selvalue_t *out, void *data);
+static void evaluate_distance(const gmx::SelMethodEvalContext& /*context*/,
+                              gmx_ana_pos_t*      pos,
+                              gmx_ana_selvalue_t* out,
+                              void*               data);
 /** Evaluates the \p within selection method. */
-static void
-evaluate_within(const gmx::SelMethodEvalContext & /*context*/,
-                gmx_ana_pos_t *pos, gmx_ana_selvalue_t *out, void *data);
+static void evaluate_within(const gmx::SelMethodEvalContext& /*context*/,
+                            gmx_ana_pos_t*      pos,
+                            gmx_ana_selvalue_t* out,
+                            void*               data);
 
 /** Parameters for the \p distance selection method. */
 static gmx_ana_selparam_t smparams_distance[] = {
-    {"cutoff", {REAL_VALUE, 1, {nullptr}}, nullptr, SPAR_OPTIONAL},
-    {"from",   {POS_VALUE,  1, {nullptr}}, nullptr, SPAR_DYNAMIC},
+    { "cutoff", { REAL_VALUE, 1, { nullptr } }, nullptr, SPAR_OPTIONAL },
+    { "from", { POS_VALUE, 1, { nullptr } }, nullptr, SPAR_DYNAMIC },
 };
 
 /** Parameters for the \p mindistance selection method. */
 static gmx_ana_selparam_t smparams_mindistance[] = {
-    {"cutoff", {REAL_VALUE, 1, {nullptr}}, nullptr, SPAR_OPTIONAL},
-    {"from",   {POS_VALUE, -1, {nullptr}}, nullptr, SPAR_DYNAMIC | SPAR_VARNUM},
+    { "cutoff", { REAL_VALUE, 1, { nullptr } }, nullptr, SPAR_OPTIONAL },
+    { "from", { POS_VALUE, -1, { nullptr } }, nullptr, SPAR_DYNAMIC | SPAR_VARNUM },
 };
 
 /** Parameters for the \p within selection method. */
 static gmx_ana_selparam_t smparams_within[] = {
-    {nullptr, {REAL_VALUE,  1, {nullptr}}, nullptr, 0},
-    {"of", {POS_VALUE,  -1, {nullptr}}, nullptr, SPAR_DYNAMIC | SPAR_VARNUM},
+    { nullptr, { REAL_VALUE, 1, { nullptr } }, nullptr, 0 },
+    { "of", { POS_VALUE, -1, { nullptr } }, nullptr, SPAR_DYNAMIC | SPAR_VARNUM },
 };
 
 //! Help title for distance selection methods.
-static const char        helptitle_distance[] = "Selecting based on distance";
+static const char helptitle_distance[] = "Selecting based on distance";
 //! Help text for distance selection methods.
-static const char *const help_distance[] = {
+static const char* const help_distance[] = {
     "::",
     "",
     "  distance from POS [cutoff REAL]",
@@ -177,8 +175,11 @@ static const char *const help_distance[] = {
 
 /** Selection method data for the \p distance method. */
 gmx_ana_selmethod_t sm_distance = {
-    "distance", REAL_VALUE, SMETH_DYNAMIC,
-    asize(smparams_distance), smparams_distance,
+    "distance",
+    REAL_VALUE,
+    SMETH_DYNAMIC,
+    asize(smparams_distance),
+    smparams_distance,
     &init_data_common,
     nullptr,
     &init_common,
@@ -187,14 +188,16 @@ gmx_ana_selmethod_t sm_distance = {
     &init_frame_common,
     nullptr,
     &evaluate_distance,
-    {"distance from POS [cutoff REAL]",
-     helptitle_distance, asize(help_distance), help_distance},
+    { "distance from POS [cutoff REAL]", helptitle_distance, asize(help_distance), help_distance },
 };
 
 /** Selection method data for the \p distance method. */
 gmx_ana_selmethod_t sm_mindistance = {
-    "mindistance", REAL_VALUE, SMETH_DYNAMIC,
-    asize(smparams_mindistance), smparams_mindistance,
+    "mindistance",
+    REAL_VALUE,
+    SMETH_DYNAMIC,
+    asize(smparams_mindistance),
+    smparams_mindistance,
     &init_data_common,
     nullptr,
     &init_common,
@@ -203,14 +206,16 @@ gmx_ana_selmethod_t sm_mindistance = {
     &init_frame_common,
     nullptr,
     &evaluate_distance,
-    {"mindistance from POS_EXPR [cutoff REAL]",
-     helptitle_distance, asize(help_distance), help_distance},
+    { "mindistance from POS_EXPR [cutoff REAL]", helptitle_distance, asize(help_distance), help_distance },
 };
 
 /** Selection method data for the \p within method. */
 gmx_ana_selmethod_t sm_within = {
-    "within", GROUP_VALUE, SMETH_DYNAMIC,
-    asize(smparams_within), smparams_within,
+    "within",
+    GROUP_VALUE,
+    SMETH_DYNAMIC,
+    asize(smparams_within),
+    smparams_within,
     &init_data_common,
     nullptr,
     &init_common,
@@ -219,23 +224,20 @@ gmx_ana_selmethod_t sm_within = {
     &init_frame_common,
     nullptr,
     &evaluate_within,
-    {"within REAL of POS_EXPR",
-     helptitle_distance, asize(help_distance), help_distance},
+    { "within REAL of POS_EXPR", helptitle_distance, asize(help_distance), help_distance },
 };
 
-static void *
-init_data_common(int /* npar */, gmx_ana_selparam_t *param)
+static void* init_data_common(int /* npar */, gmx_ana_selparam_t* param)
 {
-    t_methoddata_distance *data = new t_methoddata_distance();
-    param[0].val.u.r = &data->cutoff;
-    param[1].val.u.p = &data->p;
+    t_methoddata_distance* data = new t_methoddata_distance();
+    param[0].val.u.r            = &data->cutoff;
+    param[1].val.u.p            = &data->p;
     return data;
 }
 
-static void
-init_common(const gmx_mtop_t * /* top */, int /* npar */, gmx_ana_selparam_t *param, void *data)
+static void init_common(const gmx_mtop_t* /* top */, int /* npar */, gmx_ana_selparam_t* param, void* data)
 {
-    t_methoddata_distance *d = static_cast<t_methoddata_distance *>(data);
+    t_methoddata_distance* d = static_cast<t_methoddata_distance*>(data);
 
     if ((param[0].flags & SPAR_SET) && d->cutoff <= 0)
     {
@@ -250,16 +252,14 @@ init_common(const gmx_mtop_t * /* top */, int /* npar */, gmx_ana_selparam_t *pa
  * Frees the memory allocated for \c t_methoddata_distance::xref and
  * \c t_methoddata_distance::nb.
  */
-static void
-free_data_common(void *data)
+static void free_data_common(void* data)
 {
-    delete static_cast<t_methoddata_distance *>(data);
+    delete static_cast<t_methoddata_distance*>(data);
 }
 
-static void
-init_frame_common(const gmx::SelMethodEvalContext &context, void *data)
+static void init_frame_common(const gmx::SelMethodEvalContext& context, void* data)
 {
-    t_methoddata_distance *d = static_cast<t_methoddata_distance *>(data);
+    t_methoddata_distance* d = static_cast<t_methoddata_distance*>(data);
 
     d->nbsearch.reset();
     gmx::AnalysisNeighborhoodPositions pos(d->p.x, d->p.count());
@@ -273,11 +273,12 @@ init_frame_common(const gmx::SelMethodEvalContext &context, void *data)
  * Calculates the distance of each position from \c t_methoddata_distance::p
  * and puts them in \p out->u.r.
  */
-static void
-evaluate_distance(const gmx::SelMethodEvalContext & /*context*/,
-                  gmx_ana_pos_t *pos, gmx_ana_selvalue_t *out, void *data)
+static void evaluate_distance(const gmx::SelMethodEvalContext& /*context*/,
+                              gmx_ana_pos_t*      pos,
+                              gmx_ana_selvalue_t* out,
+                              void*               data)
 {
-    t_methoddata_distance *d = static_cast<t_methoddata_distance *>(data);
+    t_methoddata_distance* d = static_cast<t_methoddata_distance*>(data);
 
     out->nr = pos->count();
     for (int i = 0; i < pos->count(); ++i)
@@ -293,11 +294,12 @@ evaluate_distance(const gmx::SelMethodEvalContext & /*context*/,
  * Finds the atoms that are closer than the defined cutoff to
  * \c t_methoddata_distance::xref and puts them in \p out.g.
  */
-static void
-evaluate_within(const gmx::SelMethodEvalContext & /*context*/,
-                gmx_ana_pos_t *pos, gmx_ana_selvalue_t *out, void *data)
+static void evaluate_within(const gmx::SelMethodEvalContext& /*context*/,
+                            gmx_ana_pos_t*      pos,
+                            gmx_ana_selvalue_t* out,
+                            void*               data)
 {
-    t_methoddata_distance *d = static_cast<t_methoddata_distance *>(data);
+    t_methoddata_distance* d = static_cast<t_methoddata_distance*>(data);
 
     out->u.g->isize = 0;
     for (int b = 0; b < pos->count(); ++b)

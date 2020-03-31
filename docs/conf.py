@@ -1,7 +1,8 @@
 #
 # This file is part of the GROMACS molecular simulation package.
 #
-# Copyright (c) 2015,2016,2017,2018,2019, by the GROMACS development team, led by
+# Copyright (c) 2015,2016,2017,2018,2019 by the GROMACS development team.
+# Copyright (c) 2020, by the GROMACS development team, led by
 # Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
 # and including many others, as listed in the AUTHORS file in the
 # top-level source directory and at http://www.gromacs.org.
@@ -138,7 +139,7 @@ def setup(app):
 
 # The reST default role (used for this markup: `text`) to use for all
 # documents.
-#default_role = None
+default_role = 'any'
 
 # If true, '()' will be appended to :func: etc. cross-reference text.
 #add_function_parentheses = True
@@ -171,7 +172,7 @@ rst_epilog += """
 .. |gmx-source-package-ftp| replace:: As ftp ftp://ftp.gromacs.org/pub/gromacs/gromacs-{gmx_version_string}.tar.gz
 .. |gmx-source-package-http| replace:: As http http://ftp.gromacs.org/pub/gromacs/gromacs-{gmx_version_string}.tar.gz
 .. |gmx-regressiontests-package| replace:: http://gerrit.gromacs.org/download/regressiontests-{regressiontest_version}.tar.gz
-.. _up-to-date installation instructions: http://www.gromacs.org/Documentation/Installation_Instructions
+.. _up-to-date installation instructions: http://manual.gromacs.org/documentation/current/install-guide/index.html
 .. _CUDA: http://www.nvidia.com/object/cuda_home_new.html
 .. _OpenCL: https://www.khronos.org/opencl/
 .. _OpenMPI: http://www.open-mpi.org
@@ -387,3 +388,5 @@ numfig = True
 # -- Options for intersphinx extension ------------------------------------
 
 intersphinx_mapping = {'python': ('https://docs.python.org/3', None)}
+intersphinx_cache_limit = -1
+intersphinx_timeout = 10

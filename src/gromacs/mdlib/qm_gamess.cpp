@@ -3,7 +3,8 @@
  *
  * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
  * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2017,2018,2019, by the GROMACS development team, led by
+ * Copyright (c) 2013,2014,2015,2017,2018 by the GROMACS development team.
+ * Copyright (c) 2019,2020, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -53,7 +54,6 @@
 #include "gromacs/math/vec.h"
 #include "gromacs/mdlib/qmmm.h"
 #include "gromacs/mdtypes/commrec.h"
-#include "gromacs/mdtypes/forcerec.h"
 #include "gromacs/mdtypes/md_enums.h"
 #include "gromacs/utility/fatalerror.h"
 #include "gromacs/utility/smalloc.h"
@@ -67,12 +67,16 @@
 /* mopac interface routines */
 
 
-static void
-    F77_FUNC(inigms, IMIGMS) ();
+static void F77_FUNC(inigms, IMIGMS)();
 
-static void
-    F77_FUNC(grads, GRADS) (const int *nrqmat, real *qmcrd, const int *nrmmat, const real *mmchrg,
-                            real *mmcrd, real *qmgrad, real *mmgrad, real *energy);
+static void F77_FUNC(grads, GRADS)(const int*  nrqmat,
+                                   real*       qmcrd,
+                                   const int*  nrmmat,
+                                   const real* mmchrg,
+                                   real*       mmcrd,
+                                   real*       qmgrad,
+                                   real*       mmgrad,
+                                   real*       energy);
 
 #if !GMX_QMMM_GAMESS
 // Stub definitions to make compilation succeed when not configured
@@ -81,19 +85,13 @@ static void
 // issue fatal errors here, because that introduces problems with
 // tools suggesting and prohibiting noreturn attributes.
 
-void F77_FUNC(inigms, IMIGMS) ()
-{
-};
+void F77_FUNC(inigms, IMIGMS)(){};
 // NOLINTNEXTLINE(readability-named-parameter)
-void F77_FUNC(grads, GRADS) (const int *, real *, const int *,
-                             const real *, real *, real *,
-                             real *, real *)
-{
-};
+void F77_FUNC(grads, GRADS)(const int*, real*, const int*, const real*, real*, real*, real*, real*){};
 #endif
 
 //void init_gamess(const t_commrec *cr, t_QMrec *qm, t_MMrec *mm)
-void init_gamess(const t_commrec *cr, QMMM_QMrec& qm, QMMM_MMrec& mm)
+void init_gamess(const t_commrec* cr, QMMM_QMrec& qm, QMMM_MMrec& mm)
 {
     /* it works hopelessly complicated :-)
      * first a file is written. Then the standard gamess input/output
@@ -103,21 +101,17 @@ void init_gamess(const t_commrec *cr, QMMM_QMrec& qm, QMMM_MMrec& mm)
      * and energy evaluations are called. This setup works fine for
      * dynamics simulations. 7-6-2002 (London)
      */
-    int
-        i, j;
-    FILE
-       *out;
-    char
-        periodic_system[37][3] = {
-        "XX", "H ", "He", "Li", "Be", "B ", "C ", "N ",
-        "O ", "F ", "Ne", "Na", "Mg", "Al", "Si", "P ",
-        "S ", "Cl", "Ar", "K ", "Ca", "Sc", "Ti", "V ",
-        "Cr", "Mn", "Fe", "Co", "Ni", "Cu", "Zn", "Ga",
-        "Ge", "As", "Se", "Br", "Kr"
-    };
+    int   i, j;
+    FILE* out;
+    char  periodic_system[37][3] = { "XX", "H ", "He", "Li", "Be", "B ", "C ", "N ", "O ", "F ",
+                                    "Ne", "Na", "Mg", "Al", "Si", "P ", "S ", "Cl", "Ar", "K ",
+                                    "Ca", "Sc", "Ti", "V ", "Cr", "Mn", "Fe", "Co", "Ni", "Cu",
+                                    "Zn", "Ga", "Ge", "As", "Se", "Br", "Kr" };
     if (!GMX_QMMM_GAMESS)
     {
-        gmx_fatal(FARGS, "Cannot call GAMESS unless linked against it. Use cmake -DGMX_QMMM_PROGRAM=GAMESS, and ensure that linking will work correctly.");
+        gmx_fatal(FARGS,
+                  "Cannot call GAMESS unless linked against it. Use cmake "
+                  "-DGMX_QMMM_PROGRAM=GAMESS, and ensure that linking will work correctly.");
     }
 
     if (PAR(cr))
@@ -136,46 +130,31 @@ void init_gamess(const t_commrec *cr, QMMM_QMrec& qm, QMMM_MMrec& mm)
             {
 #ifdef DOUBLE
                 fprintf(out, "%10.7lf  %10.7lf  %10.7lf  %5.3lf  %2s\n",
-                        i/2.,
-                        i/3.,
-                        i/4.,
-                        qm.atomicnumberQM_get(i)*1.0,
+                        i/2., i/3., i/4., qm.atomicnumberQM_get(i)*1.0,
                         periodic_system[qm.atomicnumberQM_get(i)]);
 #else
                 fprintf(out, "%10.7f  %10.7f  %10.7f  %5.3f  %2s\n",
-                        i/2.,
-                        i/3.,
-                        i/4.,
-                        qm.atomicnumberQM_get(i)*1.0,
+                        i/2., i/3., i/4., qm.atomicnumberQM_get(i)*1.0,
                         periodic_system[qm.atomicnumberQM_get(i)]);
 #endif
             }
             if (mm.nrMMatoms)
             {
-                for (j = i; j < i+2; j++)
+                for (j = i; j < i + 2; j++)
                 {
 #ifdef DOUBLE
-                    fprintf(out, "%10.7lf  %10.7lf  %10.7lf  %5.3lf  BQ\n",
-                            j/5.,
-                            j/6.,
-                            j/7.,
-                            1.0);
+                    fprintf(out, "%10.7lf  %10.7lf  %10.7lf  %5.3lf  BQ\n", j / 5., j / 6., j / 7., 1.0);
 #else
-                    fprintf(out, "%10.7f  %10.7f  %10.7f  %5.3f  BQ\n",
-                            j/5.,
-                            j/6.,
-                            j/7.,
-                            2.0);
+                    fprintf(out, "%10.7f  %10.7f  %10.7f  %5.3f  BQ\n", j / 5., j / 6., j / 7., 2.0);
 #endif
                 }
             }
             fprintf(out, "END\nBASIS %s\nRUNTYPE GRADIENT\nSCFTYPE %s\n",
-                    eQMbasis_names[qm.QMbasis_get()],
-                    eQMmethod_names[qm.QMmethod_get()]); /* see enum.h */
+                    eQMbasis_names[qm.QMbasis_get()], eQMmethod_names[qm.QMmethod_get()]); /* see enum.h */
             fclose(out);
         }
         gmx_barrier(cr);
-        F77_FUNC(inigms, IMIGMS) ();
+        F77_FUNC(inigms, IMIGMS)();
     }
     else /* normal serial run */
 
@@ -190,65 +169,50 @@ void init_gamess(const t_commrec *cr, QMMM_QMrec& qm, QMMM_MMrec& mm)
         {
 #ifdef DOUBLE
             fprintf(out, "%10.7lf  %10.7lf  %10.7lf  %5.3lf  %2s\n",
-                    i/2.,
-                    i/3.,
-                    i/4.,
-                    qm.atomicnumberQM_get(i)*1.0,
+                    i/2., i/3., i/4., qm.atomicnumberQM_get(i)*1.0,
                     periodic_system[qm.atomicnumberQM_get(i)]);
 #else
             fprintf(out, "%10.7f  %10.7f  %10.7f  %5.3f  %2s\n",
-                    i/2.,
-                    i/3.,
-                    i/4.,
-                    qm.atomicnumberQM_get(i)*1.0,
+                    i/2., i/3., i/4., qm.atomicnumberQM_get(i)*1.0,
                     periodic_system[qm.atomicnumberQM_get(i)]);
 #endif
         }
         if (mm.nrMMatoms)
         {
-            for (j = i; j < i+2; j++)
+            for (j = i; j < i + 2; j++)
             {
 #ifdef DOUBLE
-                fprintf(out, "%10.7lf  %10.7lf  %10.7lf  %5.3lf  BQ\n",
-                        j/5.,
-                        j/6.,
-                        j/7.,
-                        1.0);
+                fprintf(out, "%10.7lf  %10.7lf  %10.7lf  %5.3lf  BQ\n", j / 5., j / 6., j / 7., 1.0);
 #else
-                fprintf(out, "%10.7f  %10.7f  %10.7f  %5.3f  BQ\n",
-                        j/5.,
-                        j/6.,
-                        j/7.,
-                        2.0);
+                fprintf(out, "%10.7f  %10.7f  %10.7f  %5.3f  BQ\n", j / 5., j / 6., j / 7., 2.0);
 #endif
             }
         }
         fprintf(out, "END\nBASIS %s\nRUNTYPE GRADIENT\nSCFTYPE %s\n",
-                eQMbasis_names[qm.QMbasis_get()],
-                eQMmethod_names[qm.QMmethod_get()]); /* see enum.h */
-        F77_FUNC(inigms, IMIGMS) ();
+                eQMbasis_names[qm.QMbasis_get()], eQMmethod_names[qm.QMmethod_get()]); /* see enum.h */
+        F77_FUNC(inigms, IMIGMS)();
     }
 }
 
-real call_gamess(const QMMM_QMrec& qm, const QMMM_MMrec& mm,
-                 rvec f[], rvec fshift[])
+real call_gamess(const QMMM_QMrec& qm, const QMMM_MMrec& mm, rvec f[], rvec fshift[])
 {
     /* do the actual QMMM calculation using GAMESS-UK. In this
      * implementation (3-2001) a system call is made to the GAMESS-UK
      * binary. Now we are working to get the electron integral, SCF, and
      * gradient routines linked directly
      */
-    int
-        nrQMatoms = qm.nrQMatoms_get(),
+    int nrQMatoms = qm.nrQMatoms_get(),
         nrMMatoms = mm.nrMMatoms,
-        i, j;
-    real
-        QMener = 0.0, *qmgrad, *mmgrad, *mmcrd, *qmcrd, energy = 0;
+        i,
+        j;
+    real QMener = 0.0,
+         energy = 0.0,
+        *qmgrad, *mmgrad, *mmcrd, *qmcrd;
 
-    snew(qmcrd, 3*nrQMatoms);
-    snew(mmcrd, 3*nrMMatoms);
-    snew(qmgrad, 3*nrQMatoms);
-    snew(mmgrad, 3*nrMMatoms);
+    snew(qmcrd, 3 * nrQMatoms);
+    snew(mmcrd, 3 * nrMMatoms);
+    snew(qmgrad, 3 * nrQMatoms);
+    snew(mmgrad, 3 * nrMMatoms);
 
     /* copy the data from qr into the arrays that are going to be used
      * in the fortran routines of gamess
@@ -257,46 +221,43 @@ real call_gamess(const QMMM_QMrec& qm, const QMMM_MMrec& mm,
     {
         for (j = 0; j < DIM; j++)
         {
-            qmcrd[DIM*i+j] = 1/BOHR2NM*qm.xQM_get(i,j);
+            qmcrd[DIM * i + j] = 1 / BOHR2NM * qm.xQM_get(i, j);
         }
     }
     for (i = 0; i < nrMMatoms; i++)
     {
         for (j = 0; j < DIM; j++)
         {
-            mmcrd[DIM*i+j] = 1/BOHR2NM*mm.xMM[i][j];
+            mmcrd[DIM * i + j] = 1 / BOHR2NM * mm.xMM[i][j];
         }
     }
-    for (i = 0; i < 3*nrQMatoms; i += 3)
+    for (i = 0; i < 3 * nrQMatoms; i += 3)
     {
-        fprintf(stderr, "%8.5f, %8.5f, %8.5f\n",
-                qmcrd[i],
-                qmcrd[i+1],
-                qmcrd[i+2]);
+        fprintf(stderr, "%8.5f, %8.5f, %8.5f\n", qmcrd[i], qmcrd[i + 1], qmcrd[i + 2]);
     }
 
-    F77_FUNC(grads, GRADS) (&nrQMatoms, qmcrd, &nrMMatoms, mm.MMcharges.data(),
-                            mmcrd, qmgrad, mmgrad, &energy);
+    F77_FUNC(grads, GRADS)
+    (&nrQMatoms, qmcrd, &nrMMatoms, mm.MMcharges.data(), mmcrd, qmgrad, mmgrad, &energy);
 
     for (i = 0; i < nrQMatoms; i++)
     {
         for (j = 0; j < DIM; j++)
         {
-            f[i][j]      = HARTREE_BOHR2MD*qmgrad[3*i+j];
-            fshift[i][j] = HARTREE_BOHR2MD*qmgrad[3*i+j];
+            f[i][j]      = HARTREE_BOHR2MD * qmgrad[3 * i + j];
+            fshift[i][j] = HARTREE_BOHR2MD * qmgrad[3 * i + j];
         }
     }
     for (i = 0; i < nrMMatoms; i++)
     {
         for (j = 0; j < DIM; j++)
         {
-            f[i][j]      = HARTREE_BOHR2MD*mmgrad[3*i+j];
-            fshift[i][j] = HARTREE_BOHR2MD*mmgrad[3*i+j];
+            f[i][j]      = HARTREE_BOHR2MD * mmgrad[3 * i + j];
+            fshift[i][j] = HARTREE_BOHR2MD * mmgrad[3 * i + j];
         }
     }
     /* convert a.u to kJ/mol */
-    QMener = energy*HARTREE2KJ*AVOGADRO;
-    return(QMener);
+    QMener = energy * HARTREE2KJ * AVOGADRO;
+    return (QMener);
 }
 
 #pragma GCC diagnostic pop

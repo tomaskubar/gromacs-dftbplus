@@ -32,10 +32,11 @@
  * To help us fund GROMACS development, we humbly ask that you cite
  * the research papers on the package. Check out http://www.gromacs.org.
  */
-/* \internal
+/*! \libinternal \file
  * \brief Declares the composite element for the modular simulator
  *
  * \author Pascal Merz <pascal.merz@me.com>
+ * \ingroup module_modularsimulator
  */
 #ifndef GROMACS_MDTYPES_COMPOSITESIMULATORELEMENT_H
 #define GROMACS_MDTYPES_COMPOSITESIMULATORELEMENT_H
@@ -49,10 +50,8 @@
 namespace gmx
 {
 
-//! \addtogroup module_modularsimulator
-//! \{
-
 /*! \libinternal
+ * \ingroup module_modularsimulator
  * \brief Composite simulator element
  *
  * The composite simulator element takes a call list of elements and implements
@@ -69,48 +68,43 @@ namespace gmx
  * owned by CompositeSimulatorElement is responsible to call setup and teardown
  * methods on these elements.
  */
-class CompositeSimulatorElement final :
-    public ISimulatorElement
+class CompositeSimulatorElement final : public ISimulatorElement
 {
-    public:
-        //! Constructor
-        explicit CompositeSimulatorElement(
-            std::vector< compat::not_null<ISimulatorElement*> > elementCallList,
-            std::vector< std::unique_ptr<ISimulatorElement> >   elements);
+public:
+    //! Constructor
+    explicit CompositeSimulatorElement(std::vector<compat::not_null<ISimulatorElement*>> elementCallList,
+                                       std::vector<std::unique_ptr<ISimulatorElement>> elements);
 
-        /*! \brief Register run function for step / time
-         *
-         * Lets every member of the composite simulator register run functions
-         * for the given step.
-         *
-         * @param step                 The step number
-         * @param time                 The time
-         * @param registerRunFunction  Function allowing to register a run function
-         */
-        void scheduleTask(
-            Step step, Time time,
-            const RegisterRunFunctionPtr &registerRunFunction) override;
+    /*! \brief Register run function for step / time
+     *
+     * Lets every member of the composite simulator register run functions
+     * for the given step.
+     *
+     * @param step                 The step number
+     * @param time                 The time
+     * @param registerRunFunction  Function allowing to register a run function
+     */
+    void scheduleTask(Step step, Time time, const RegisterRunFunctionPtr& registerRunFunction) override;
 
-        /*! \brief Element setup
-         *
-         * Calls the setup functions of the single elements.
-         */
-        void elementSetup() override;
+    /*! \brief Element setup
+     *
+     * Calls the setup functions of the single elements.
+     */
+    void elementSetup() override;
 
-        /*! \brief Element teardown
-         *
-         * Calls the teardown functions of the single elements.
-         */
-        void elementTeardown() override;
+    /*! \brief Element teardown
+     *
+     * Calls the teardown functions of the single elements.
+     */
+    void elementTeardown() override;
 
-    private:
-        //! The call list of elements forming the composite element
-        std::vector< compat::not_null<ISimulatorElement*> > elementCallList_;
-        //! List of elements owned by composite element
-        std::vector< std::unique_ptr<ISimulatorElement> >   elementOwnershipList_;
+private:
+    //! The call list of elements forming the composite element
+    std::vector<compat::not_null<ISimulatorElement*>> elementCallList_;
+    //! List of elements owned by composite element
+    std::vector<std::unique_ptr<ISimulatorElement>> elementOwnershipList_;
 };
 
-//! \}
-}      // namespace gmx
+} // namespace gmx
 
 #endif // GROMACS_MDTYPES_COMPOSITESIMULATORELEMENT_H

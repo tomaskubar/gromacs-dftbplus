@@ -1,7 +1,8 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2012,2013,2014,2015,2016,2017,2018,2019, by the GROMACS development team, led by
+ * Copyright (c) 2012,2013,2014,2015,2016 by the GROMACS development team.
+ * Copyright (c) 2017,2018,2019,2020, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -46,28 +47,25 @@
 /* Clusters at the cut-off only increase rlist by 60% of their size */
 static constexpr real c_nbnxnRlistIncreaseOutsideFactor = 0.6;
 
-real nbnxn_get_rlist_effective_inc(const int  jClusterSize,
-                                   const real atomDensity)
+real nbnxn_get_rlist_effective_inc(const int jClusterSize, const real atomDensity)
 {
     /* We should get this from the setup, but currently it's the same for
      * all setups, including GPUs.
      */
-    const real iClusterSize    = c_nbnxnCpuIClusterSize;
+    const real iClusterSize = c_nbnxnCpuIClusterSize;
 
-    const real iVolumeIncrease = (iClusterSize - 1)/atomDensity;
-    const real jVolumeIncrease = (jClusterSize - 1)/atomDensity;
+    const real iVolumeIncrease = (iClusterSize - 1) / atomDensity;
+    const real jVolumeIncrease = (jClusterSize - 1) / atomDensity;
 
-    return c_nbnxnRlistIncreaseOutsideFactor*std::cbrt(iVolumeIncrease +
-                                                       jVolumeIncrease);
+    return c_nbnxnRlistIncreaseOutsideFactor * std::cbrt(iVolumeIncrease + jVolumeIncrease);
 }
 
-real nbnxn_get_rlist_effective_inc(const int        clusterSize,
-                                   const gmx::RVec &averageClusterBoundingBox)
+real nbnxn_get_rlist_effective_inc(const int clusterSize, const gmx::RVec& averageClusterBoundingBox)
 {
     /* The average length of the diagonal of a sub cell */
-    const real diagonal    = std::sqrt(norm2(averageClusterBoundingBox));
+    const real diagonal = std::sqrt(norm2(averageClusterBoundingBox));
 
-    const real volumeRatio = (clusterSize - 1.0_real)/clusterSize;
+    const real volumeRatio = (clusterSize - 1.0_real) / clusterSize;
 
-    return c_nbnxnRlistIncreaseOutsideFactor*gmx::square(volumeRatio)*0.5_real*diagonal;
+    return c_nbnxnRlistIncreaseOutsideFactor * gmx::square(volumeRatio) * 0.5_real * diagonal;
 }

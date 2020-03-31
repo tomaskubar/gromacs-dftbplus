@@ -53,9 +53,8 @@
 #include "gromacs/gmxlib/nrnb.h"
 #include "gromacs/math/units.h"
 #include "gromacs/math/vec.h"
-#include "gromacs/mdlib/force.h"
-#include "gromacs/mdlib/forcerec.h" // ???
 #include "gromacs/mdlib/qmmm.h"
+#include "gromacs/mdtypes/forcerec.h"
 #include "gromacs/mdtypes/md_enums.h"
 #include "gromacs/timing/cyclecounter.h"
 #include "gromacs/timing/walltime_accounting.h"
@@ -74,9 +73,10 @@
 typedef struct Context {
   bool              pme;
   int               n;
-  const t_commrec  *cr;
-  const t_forcerec *fr;
-  t_nrnb           *nrnb;
+  const t_commrec*  cr;
+  QMMM_rec*         qr;
+//const t_forcerec* fr;
+  t_nrnb*           nrnb;
   gmx_wallcycle_t   wcycle;
   real              rcoul;
   real              ewaldcoeff_q;
@@ -87,15 +87,16 @@ typedef struct Context {
 
 /* Fill up the context (status structure) with all the relevant data
  */
-void initialize_context(Context *cont,
-                     int nrQMatoms,
-                     int qmmm_variant,
-                     const t_forcerec *fr_in,
-                     const t_inputrec *ir_in,
-                     const t_commrec *cr_in,
-                     gmx_wallcycle_t wcycle_in)
-//                   const real rcoul_in,
-//                   const real ewaldcoeff_q_in)
+void initialize_context(Context*          cont,
+                        int               nrQMatoms,
+                        int               qmmm_variant,
+                        QMMM_rec*         qr_in,
+                     // const t_forcerec* fr_in,
+                        const t_inputrec* ir_in,
+                        const t_commrec*  cr_in,
+                        gmx_wallcycle_t   wcycle_in)
+//                      const real        rcoul_in,
+//                      const real        ewaldcoeff_q_in)
 {
   /* The "cr" and "qr" structures will be initialized
    *   at the start of every MD step,
@@ -120,12 +121,14 @@ void initialize_context(Context *cont,
   if (cont->pme)
   {
       cont->cr           = cr_in;
-      cont->fr           = fr_in;
+      cont->qr           = qr_in;
       cont->wcycle       = wcycle_in;
       cont->rcoul        = ir_in->rcoulomb;
       cont->ewaldcoeff_q = calc_ewaldcoeff_q(ir_in->rcoulomb, ir_in->ewald_rtol);
       printf("cont->cr = %p\n", cont->cr);
-      printf("cont->fr = %p\n", cont->fr);
+      printf("cont->qr = %p\n", cont->qr);
+      printf("cont->qr->pmedata = %p\n", cont->qr->pmedata);
+      printf("cont->qr->pmedata* = %p\n", *cont->qr->pmedata);
       printf("cont->rcoul = %f\n", cont->rcoul);
       printf("cont->ewaldcoeff_q = %f\n", cont->ewaldcoeff_q);
   }
@@ -149,9 +152,9 @@ void calcQMextPotPME(Context *cont, double *q, double *extpot)
       snew(extpot_real, n);
       for (int i=0; i<n; i++)
       {
-          cont->fr->qr->qm[0].QMcharges_set(i, (real) -q[i]); // check sign TODO
+          cont->qr->qm[0].QMcharges_set(i, (real) -q[i]); // check sign TODO
       }
-      cont->fr->qr->calculate_complete_QM_QM(cont->cr, cont->nrnb, cont->wcycle, cont->fr->pmedata, extpot_real);
+      cont->qr->calculate_complete_QM_QM(cont->cr, cont->nrnb, cont->wcycle, *cont->qr->pmedata, extpot_real);
       for (int i=0; i<n; i++)
       {
           extpot[i] = (double) - extpot_real[i]; // sign OK
@@ -194,11 +197,12 @@ extern "C" void calcqmextpotgrad(void *refptr, gmx_unused double *q, double *ext
 
 /* DFTBPLUS interface routines */
 
-void init_dftbplus(QMMM_QMrec& qm,
-                   const t_forcerec *fr,
-                   const t_inputrec *ir,
-                   const t_commrec *cr,
-                   gmx_wallcycle_t wcycle)
+void init_dftbplus(QMMM_QMrec&       qm,
+                   QMMM_rec*         qr,
+                // const t_forcerec* fr,
+                   const t_inputrec* ir,
+                   const t_commrec*  cr,
+                   gmx_wallcycle_t   wcycle)
 //void init_dftbplus(t_forcerec *fr)
 {
     /* perhaps check the geometry first, to see which elements we have? */
@@ -214,7 +218,7 @@ void init_dftbplus(QMMM_QMrec& qm,
 
   //initialize_context(cont, qm.nrQMatoms, qm.qmmm_variant, fr, ir, cr, nrnb, wcycle);
     snew(qm.dftbContext, 1);
-    initialize_context(qm.dftbContext, qm.nrQMatoms_get(), qm.qmmm_variant_get(), fr, ir, cr, wcycle);
+    initialize_context(qm.dftbContext, qm.nrQMatoms_get(), qm.qmmm_variant_get(), qr, ir, cr, wcycle);
   //qm.dftbContext = cont;
 
     snew(qm.dpcalc, 1);
@@ -251,10 +255,10 @@ void init_dftbplus(QMMM_QMrec& qm,
     return;
 } /* init_dftbplus */
 
-real call_dftbplus(const t_forcerec *fr, const t_commrec *cr,
-                   QMMM_QMrec& qm,       QMMM_MMrec& mm,
-                   rvec f[],             rvec fshift[],
-		           t_nrnb *nrnb,         gmx_wallcycle_t wcycle)
+real call_dftbplus(QMMM_rec* qr,   const t_commrec* cr,
+                   QMMM_QMrec& qm, QMMM_MMrec& mm,
+                   rvec f[],       rvec fshift[],
+		           t_nrnb* nrnb,   gmx_wallcycle_t wcycle)
 {
     static int step = 0;
     static FILE *f_q = nullptr;
@@ -302,7 +306,7 @@ real call_dftbplus(const t_forcerec *fr, const t_commrec *cr,
             printf("The QM charges will be saved in file qm_dftb_charges.xvg every %d steps.\n", output_freq_q);
         }
 
-        if (qm.qmmm_variant != eqmmmVACUO && (env = getenv("GMX_DFTB_ESP")) != nullptr)
+        if (qm.qmmm_variant_get() != eqmmmVACUO && (env = getenv("GMX_DFTB_ESP")) != nullptr)
         {
             output_freq_p = atoi(env);
             f_p = fopen("qm_dftb_esp.xvg", "a");
@@ -316,7 +320,7 @@ real call_dftbplus(const t_forcerec *fr, const t_commrec *cr,
             printf("The QM coordinates (XYZQ) will be saved in file qm_dftb_qm.qxyz every %d steps.\n", output_freq_x_qm);
         }
 
-        if (qm.qmmm_variant != eqmmmVACUO && (env = getenv("GMX_DFTB_MM_COORD")) != nullptr)
+        if (qm.qmmm_variant_get() != eqmmmVACUO && (env = getenv("GMX_DFTB_MM_COORD")) != nullptr)
         {
             output_freq_x_mm = atoi(env);
             f_x_mm = fopen("qm_dftb_mm.qxyz", "a");
@@ -337,11 +341,11 @@ real call_dftbplus(const t_forcerec *fr, const t_commrec *cr,
      * with PME, this will only include MM atoms,
      *    and the contribution from QM atoms will be added in every SCC iteration
      */
-    fr->qr->calculate_SR_QM_MM(qm.qmmm_variant_get(), pot_sr);
+    qr->calculate_SR_QM_MM(qm.qmmm_variant_get(), pot_sr);
     if (qm.qmmm_variant_get() == eqmmmPME)
     {
-     // gmx_pme_init_qmmm(&(fr->qr->pme->pmedata), true, fr->pmedata);
-        fr->qr->calculate_LR_QM_MM(cr, nrnb, wcycle, fr->pmedata, pot_lr);
+     // gmx_pme_init_qmmm(&(qr->pme->pmedata), true, fr->pmedata);
+        qr->calculate_LR_QM_MM(cr, nrnb, wcycle, *qr->pmedata, pot_lr);
         for (int i=0; i<n; i++)
         {
             pot[i] = (double) - (pot_sr[i] + pot_lr[i]);
@@ -424,7 +428,7 @@ real call_dftbplus(const t_forcerec *fr, const t_commrec *cr,
 
     rvec *partgrad;
     snew(partgrad, qm.nrQMatoms_get());
-    fr->qr->gradient_QM_MM(cr, nrnb, wcycle, (qm.qmmm_variant_get() == eqmmmPME ? fr->pmedata : nullptr),
+    qr->gradient_QM_MM(cr, nrnb, wcycle, (qm.qmmm_variant_get() == eqmmmPME ? *qr->pmedata : nullptr),
                    qm.qmmm_variant_get(), partgrad, MMgrad, MMgrad_full);
     for (int i=0; i<n; i++)
     {
@@ -470,7 +474,7 @@ real call_dftbplus(const t_forcerec *fr, const t_commrec *cr,
         fprintf(f_q, "%8d", step);
         for (int i=0; i<n; i++)
         {
-            fprintf(f_q, " %8.5f", qm.QMcharges[i]);
+            fprintf(f_q, " %8.5f", qm.QMcharges_get(i));
         }
         fprintf(f_q, "\n");
     }
@@ -480,7 +484,7 @@ real call_dftbplus(const t_forcerec *fr, const t_commrec *cr,
         fprintf(f_p, "%8d", step);
         for (int i=0; i<n; i++)
         {
-            fprintf(f_p, " %8.5f", qm.pot_qmmm[i] + qm.pot_qmqm[i]);
+            fprintf(f_p, " %8.5f", qm.pot_qmmm_get(i) + qm.pot_qmqm_get(i));
          // if (qm.qmmm_variant == eqmmmPME)
          // {
          //     fprintf(f_p, " %8.5f %8.5f %8.5f", qm.pot_qmmm[i], qm.pot_qmqm[i], qm.pot_qmmm[i] + qm.pot_qmqm[i]);
@@ -504,9 +508,9 @@ real call_dftbplus(const t_forcerec *fr, const t_commrec *cr,
         fprintf(f_x_qm, "\nQM coordinates and charges step %d\n", step);
         for (int i=0; i<n; i++) {
             fprintf(f_x_qm, "%-2s %10.5f%10.5f%10.5f %10.7f\n",
-                periodic_system[qm.atomicnumberQM[i]],
-                qm.xQM[i][0] * 10., qm.xQM[i][1] * 10., qm.xQM[i][2] * 10.,
-                qm.QMcharges[i]);
+                periodic_system[qm.atomicnumberQM_get(i)],
+                qm.xQM_get(i, 0) * 10., qm.xQM_get(i, 1) * 10., qm.xQM_get(i, 2) * 10.,
+                qm.QMcharges_get(i));
         }
     }
 

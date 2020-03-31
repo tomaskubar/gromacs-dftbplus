@@ -32,10 +32,11 @@
  * To help us fund GROMACS development, we humbly ask that you cite
  * the research papers on the package. Check out http://www.gromacs.org.
  */
-/* \internal
+/*! \internal \file
  * \brief Defines the composite element for the modular simulator
  *
  * \author Pascal Merz <pascal.merz@me.com>
+ * \ingroup module_modularsimulator
  */
 
 #include "gmxpre.h"
@@ -45,17 +46,16 @@
 namespace gmx
 {
 CompositeSimulatorElement::CompositeSimulatorElement(
-        std::vector< compat::not_null<ISimulatorElement*> >    elementCallList,
-        std::vector< std::unique_ptr<gmx::ISimulatorElement> > elements) :
+        std::vector<compat::not_null<ISimulatorElement*>>    elementCallList,
+        std::vector<std::unique_ptr<gmx::ISimulatorElement>> elements) :
     elementCallList_(std::move(elementCallList)),
     elementOwnershipList_(std::move(elements))
-{}
-
-void CompositeSimulatorElement::scheduleTask(
-        Step step, Time time,
-        const RegisterRunFunctionPtr &registerRunFunction)
 {
-    for (auto &element : elementCallList_)
+}
+
+void CompositeSimulatorElement::scheduleTask(Step step, Time time, const RegisterRunFunctionPtr& registerRunFunction)
+{
+    for (auto& element : elementCallList_)
     {
         element->scheduleTask(step, time, registerRunFunction);
     }
@@ -63,7 +63,7 @@ void CompositeSimulatorElement::scheduleTask(
 
 void CompositeSimulatorElement::elementSetup()
 {
-    for (auto &element : elementOwnershipList_)
+    for (auto& element : elementOwnershipList_)
     {
         element->elementSetup();
     }
@@ -71,10 +71,10 @@ void CompositeSimulatorElement::elementSetup()
 
 void CompositeSimulatorElement::elementTeardown()
 {
-    for (auto &element : elementOwnershipList_)
+    for (auto& element : elementOwnershipList_)
     {
         element->elementTeardown();
     }
 }
 
-}  // namespace gmx
+} // namespace gmx

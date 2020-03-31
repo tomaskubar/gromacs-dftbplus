@@ -1,7 +1,7 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2018, by the GROMACS development team, led by
+ * Copyright (c) 2018,2019,2020, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -64,25 +64,23 @@ namespace test
 {
 
 //! Typed test fixture
-template <typename T>
+template<typename T>
 class PaddedVectorTest : public ::testing::Test
 {
-    public:
+public:
 };
 
 //! The types used in testing
-using Implementations = ::testing::Types <
-        std::allocator<int32_t>,
-    std::allocator<float>,
-    std::allocator<double>,
-    std::allocator < BasicVector < float>>,
-    std::allocator < BasicVector < double>>,
-    AlignedAllocator<int32_t>,
-    AlignedAllocator<float>,
-    AlignedAllocator<double>,
-    AlignedAllocator < BasicVector < float>>,
-    AlignedAllocator < BasicVector<double>>
-                                   >;
+using Implementations = ::testing::Types<std::allocator<int32_t>,
+                                         std::allocator<float>,
+                                         std::allocator<double>,
+                                         std::allocator<BasicVector<float>>,
+                                         std::allocator<BasicVector<double>>,
+                                         AlignedAllocator<int32_t>,
+                                         AlignedAllocator<float>,
+                                         AlignedAllocator<double>,
+                                         AlignedAllocator<BasicVector<float>>,
+                                         AlignedAllocator<BasicVector<double>>>;
 TYPED_TEST_CASE(PaddedVectorTest, Implementations);
 
 TYPED_TEST(PaddedVectorTest, ConstructsResizesAndReserves)
@@ -107,6 +105,23 @@ TYPED_TEST(PaddedVectorTest, ConstructsResizesAndReserves)
     EXPECT_LE(v.paddedSize(), vReserved.paddedSize());
 }
 
+TYPED_TEST(PaddedVectorTest, ArrayRefConversionsAreIdentical)
+{
+    using VectorType = PaddedVector<typename TypeParam::value_type, TypeParam>;
+
+    VectorType v;
+    fillInput(&v, 1);
+
+    SCOPED_TRACE("Comparing different paths to create identical unpadded views");
+    compareViews(makeArrayRef(v), v.arrayRefWithPadding().unpaddedArrayRef());
+    compareViews(makeConstArrayRef(v), v.constArrayRefWithPadding().unpaddedConstArrayRef());
+    compareViews(makeConstArrayRef(v), v.constArrayRefWithPadding().unpaddedArrayRef());
+    compareViews(makeConstArrayRef(v), v.arrayRefWithPadding().unpaddedConstArrayRef());
+
+    SCOPED_TRACE("Comparing const to non-const unpadded views");
+    compareViewsIgnoreConst(makeArrayRef(v), makeConstArrayRef(v));
+}
+
 TYPED_TEST(PaddedVectorTest, CanCopyAssign)
 {
     using VectorType = PaddedVector<typename TypeParam::value_type, TypeParam>;
@@ -116,9 +131,8 @@ TYPED_TEST(PaddedVectorTest, CanCopyAssign)
     fillInput(&w, 2);
 
     w = v;
-    compareViews(v.arrayRefWithPadding().unpaddedArrayRef(),
-                 w.arrayRefWithPadding().unpaddedArrayRef());
-    compareViews(makeArrayRef(v), makeArrayRef(v));
+    compareViews(v.arrayRefWithPadding().unpaddedArrayRef(), w.arrayRefWithPadding().unpaddedArrayRef());
+    compareViews(makeArrayRef(v), makeArrayRef(w));
 }
 
 TYPED_TEST(PaddedVectorTest, CanMoveAssign)
@@ -131,16 +145,14 @@ TYPED_TEST(PaddedVectorTest, CanMoveAssign)
     fillInput(&x, 1);
 
     SCOPED_TRACE("Comparing padded views before move");
-    compareViews(v.arrayRefWithPadding().unpaddedArrayRef(),
-                 x.arrayRefWithPadding().unpaddedArrayRef());
+    compareViews(v.arrayRefWithPadding().unpaddedArrayRef(), x.arrayRefWithPadding().unpaddedArrayRef());
     SCOPED_TRACE("Comparing unpadded views before move");
     compareViews(makeArrayRef(v), makeArrayRef(x));
 
     w = std::move(x);
 
     SCOPED_TRACE("Comparing padded views");
-    compareViews(v.arrayRefWithPadding().unpaddedArrayRef(),
-                 w.arrayRefWithPadding().unpaddedArrayRef());
+    compareViews(v.arrayRefWithPadding().unpaddedArrayRef(), w.arrayRefWithPadding().unpaddedArrayRef());
     SCOPED_TRACE("Comparing unpadded views");
     compareViews(makeArrayRef(v), makeArrayRef(w));
 }
@@ -155,8 +167,7 @@ TYPED_TEST(PaddedVectorTest, CanSwap)
     fillInput(&x, 1);
 
     std::swap(w, x);
-    compareViews(v.arrayRefWithPadding().unpaddedArrayRef(),
-                 w.arrayRefWithPadding().unpaddedArrayRef());
+    compareViews(v.arrayRefWithPadding().unpaddedArrayRef(), w.arrayRefWithPadding().unpaddedArrayRef());
     compareViews(makeArrayRef(v), makeArrayRef(w));
 }
 

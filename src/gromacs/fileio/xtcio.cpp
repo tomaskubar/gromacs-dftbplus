@@ -3,7 +3,8 @@
  *
  * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
  * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2016,2018,2019, by the GROMACS development team, led by
+ * Copyright (c) 2013,2014,2015,2016,2018 by the GROMACS development team.
+ * Copyright (c) 2019,2020, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -51,7 +52,7 @@
 #define XTC_MAGIC 1995
 
 
-static int xdr_r2f(XDR *xdrs, real *r, gmx_bool gmx_unused bRead)
+static int xdr_r2f(XDR* xdrs, real* r, gmx_bool gmx_unused bRead)
 {
 #if GMX_DOUBLE
     float f;
@@ -69,17 +70,17 @@ static int xdr_r2f(XDR *xdrs, real *r, gmx_bool gmx_unused bRead)
 
     return ret;
 #else
-    return xdr_float(xdrs, static_cast<float *>(r));
+    return xdr_float(xdrs, static_cast<float*>(r));
 #endif
 }
 
 
-t_fileio *open_xtc(const char *fn, const char *mode)
+t_fileio* open_xtc(const char* fn, const char* mode)
 {
     return gmx_fio_open(fn, mode);
 }
 
-void close_xtc(t_fileio *fio)
+void close_xtc(t_fileio* fio)
 {
     gmx_fio_close(fio);
 }
@@ -88,19 +89,20 @@ static void check_xtc_magic(int magic)
 {
     if (magic != XTC_MAGIC)
     {
-        gmx_fatal(FARGS, "Magic Number Error in XTC file (read %d, should be %d)",
-                  magic, XTC_MAGIC);
+        gmx_fatal(FARGS, "Magic Number Error in XTC file (read %d, should be %d)", magic, XTC_MAGIC);
     }
 }
 
-static int xtc_check(const char *str, gmx_bool bResult, const char *file, int line)
+static int xtc_check(const char* str, gmx_bool bResult, const char* file, int line)
 {
     if (!bResult)
     {
         if (debug)
         {
-            fprintf(debug, "\nXTC error: read/write of %s failed, "
-                    "source file %s, line %d\n", str, file, line);
+            fprintf(debug,
+                    "\nXTC error: read/write of %s failed, "
+                    "source file %s, line %d\n",
+                    str, file, line);
         }
         return 0;
     }
@@ -109,8 +111,7 @@ static int xtc_check(const char *str, gmx_bool bResult, const char *file, int li
 
 #define XTC_CHECK(s, b) xtc_check(s, b, __FILE__, __LINE__)
 
-static int xtc_header(XDR *xd, int *magic, int *natoms, int64_t *step, real *time,
-                      gmx_bool bRead, gmx_bool *bOK)
+static int xtc_header(XDR* xd, int* magic, int* natoms, int64_t* step, real* time, gmx_bool bRead, gmx_bool* bOK)
 {
     int result;
 
@@ -125,23 +126,23 @@ static int xtc_header(XDR *xd, int *magic, int *natoms, int64_t *step, real *tim
          * fix the fact that we used xdr_int for the step number,
          * which is defined to be signed and 32 bit. */
         int intStep = *step;
-        result = XTC_CHECK("step",   xdr_int(xd, &intStep)); /* frame number    */
-        *step  = intStep;
+        result      = XTC_CHECK("step", xdr_int(xd, &intStep)); /* frame number    */
+        *step       = intStep;
     }
     if (result)
     {
-        result = XTC_CHECK("time",   xdr_r2f(xd, time, bRead)); /* time */
+        result = XTC_CHECK("time", xdr_r2f(xd, time, bRead)); /* time */
     }
     *bOK = (result != 0);
 
     return result;
 }
 
-static int xtc_coord(XDR *xd, int *natoms, rvec *box, rvec *x, real *prec, gmx_bool bRead)
+static int xtc_coord(XDR* xd, int* natoms, rvec* box, rvec* x, real* prec, gmx_bool bRead)
 {
-    int    i, j, result;
+    int i, j, result;
 #if GMX_DOUBLE
-    float *ftmp;
+    float* ftmp;
     float  fprec;
 #endif
 
@@ -162,16 +163,16 @@ static int xtc_coord(XDR *xd, int *natoms, rvec *box, rvec *x, real *prec, gmx_b
 
 #if GMX_DOUBLE
     /* allocate temp. single-precision array */
-    snew(ftmp, (*natoms)*DIM);
+    snew(ftmp, (*natoms) * DIM);
 
     /* Copy data to temp. array if writing */
     if (!bRead)
     {
         for (i = 0; (i < *natoms); i++)
         {
-            ftmp[DIM*i+XX] = x[i][XX];
-            ftmp[DIM*i+YY] = x[i][YY];
-            ftmp[DIM*i+ZZ] = x[i][ZZ];
+            ftmp[DIM * i + XX] = x[i][XX];
+            ftmp[DIM * i + YY] = x[i][YY];
+            ftmp[DIM * i + ZZ] = x[i][ZZ];
         }
         fprec = *prec;
     }
@@ -182,9 +183,9 @@ static int xtc_coord(XDR *xd, int *natoms, rvec *box, rvec *x, real *prec, gmx_b
     {
         for (i = 0; (i < *natoms); i++)
         {
-            x[i][XX] = ftmp[DIM*i+XX];
-            x[i][YY] = ftmp[DIM*i+YY];
-            x[i][ZZ] = ftmp[DIM*i+ZZ];
+            x[i][XX] = ftmp[DIM * i + XX];
+            x[i][YY] = ftmp[DIM * i + YY];
+            x[i][ZZ] = ftmp[DIM * i + ZZ];
         }
         *prec = fprec;
     }
@@ -197,13 +198,10 @@ static int xtc_coord(XDR *xd, int *natoms, rvec *box, rvec *x, real *prec, gmx_b
 }
 
 
-
-int write_xtc(t_fileio *fio,
-              int natoms, int64_t step, real time,
-              const rvec *box, const rvec *x, real prec)
+int write_xtc(t_fileio* fio, int natoms, int64_t step, real time, const rvec* box, const rvec* x, real prec)
 {
     int      magic_number = XTC_MAGIC;
-    XDR     *xd;
+    XDR*     xd;
     gmx_bool bDum;
     int      bOK;
 
@@ -223,7 +221,8 @@ int write_xtc(t_fileio *fio,
     }
 
     /* write data */
-    bOK = xtc_coord(xd, &natoms, const_cast<rvec *>(box), const_cast<rvec *>(x), &prec, FALSE); /* bOK will be 1 if writing went well */
+    bOK = xtc_coord(xd, &natoms, const_cast<rvec*>(box), const_cast<rvec*>(x), &prec,
+                    FALSE); /* bOK will be 1 if writing went well */
 
     if (bOK)
     {
@@ -235,11 +234,10 @@ int write_xtc(t_fileio *fio,
     return bOK; /* 0 if bad, 1 if writing went well */
 }
 
-int read_first_xtc(t_fileio *fio, int *natoms, int64_t *step, real *time,
-                   matrix box, rvec **x, real *prec, gmx_bool *bOK)
+int read_first_xtc(t_fileio* fio, int* natoms, int64_t* step, real* time, matrix box, rvec** x, real* prec, gmx_bool* bOK)
 {
     int  magic;
-    XDR *xd;
+    XDR* xd;
 
     *bOK = TRUE;
     xd   = gmx_fio_getxdr(fio);
@@ -260,13 +258,11 @@ int read_first_xtc(t_fileio *fio, int *natoms, int64_t *step, real *time,
     return static_cast<int>(*bOK);
 }
 
-int read_next_xtc(t_fileio* fio,
-                  int natoms, int64_t *step, real *time,
-                  matrix box, rvec *x, real *prec, gmx_bool *bOK)
+int read_next_xtc(t_fileio* fio, int natoms, int64_t* step, real* time, matrix box, rvec* x, real* prec, gmx_bool* bOK)
 {
     int  magic;
     int  n;
-    XDR *xd;
+    XDR* xd;
 
     *bOK = TRUE;
     xd   = gmx_fio_getxdr(fio);
@@ -282,8 +278,7 @@ int read_next_xtc(t_fileio* fio,
 
     if (n > natoms)
     {
-        gmx_fatal(FARGS, "Frame contains more atoms (%d) than expected (%d)",
-                  n, natoms);
+        gmx_fatal(FARGS, "Frame contains more atoms (%d) than expected (%d)", n, natoms);
     }
 
     *bOK = (xtc_coord(xd, &natoms, box, x, prec, TRUE) != 0);

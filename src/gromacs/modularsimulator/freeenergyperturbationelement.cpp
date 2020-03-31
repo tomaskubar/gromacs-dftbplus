@@ -1,7 +1,7 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2019, by the GROMACS development team, led by
+ * Copyright (c) 2019,2020, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -32,7 +32,7 @@
  * To help us fund GROMACS development, we humbly ask that you cite
  * the research papers on the package. Check out http://www.gromacs.org.
  */
-/*! \libinternal
+/*! \internal \file
  * \brief Defines the free energy perturbation element for the modular simulator
  *
  * \author Pascal Merz <pascal.merz@me.com>
@@ -46,15 +46,15 @@
 #include "gromacs/mdlib/md_support.h"
 #include "gromacs/mdlib/mdatoms.h"
 #include "gromacs/mdtypes/inputrec.h"
+#include "gromacs/mdtypes/mdatom.h"
 #include "gromacs/mdtypes/state.h"
 
 namespace gmx
 {
 
-FreeEnergyPerturbationElement::FreeEnergyPerturbationElement(
-        FILE             *fplog,
-        const t_inputrec *inputrec,
-        MDAtoms          *mdAtoms) :
+FreeEnergyPerturbationElement::FreeEnergyPerturbationElement(FILE*             fplog,
+                                                             const t_inputrec* inputrec,
+                                                             MDAtoms*          mdAtoms) :
     lambda_(),
     lambda0_(),
     currentFEPState_(0),
@@ -65,33 +65,25 @@ FreeEnergyPerturbationElement::FreeEnergyPerturbationElement(
 {
     lambda_.fill(0);
     lambda0_.fill(0);
-    initialize_lambdas(
-            fplog_, *inputrec_, true,
-            &currentFEPState_, lambda_,
-            lambda0_.data());
+    initialize_lambdas(fplog_, *inputrec_, true, &currentFEPState_, lambda_, lambda0_.data());
     update_mdatoms(mdAtoms_->mdatoms(), lambda_[efptMASS]);
 }
 
-void FreeEnergyPerturbationElement::scheduleTask(
-        Step step, Time gmx_unused time,
-        const RegisterRunFunctionPtr &registerRunFunction)
+void FreeEnergyPerturbationElement::scheduleTask(Step step,
+                                                 Time gmx_unused               time,
+                                                 const RegisterRunFunctionPtr& registerRunFunction)
 {
     if (lambdasChange_)
     {
         (*registerRunFunction)(
-                std::make_unique<SimulatorRunFunction>(
-                        [this, step]()
-                        {updateLambdas(step); }));
+                std::make_unique<SimulatorRunFunction>([this, step]() { updateLambdas(step); }));
     }
 }
 
 void FreeEnergyPerturbationElement::updateLambdas(Step step)
 {
     // at beginning of step (if lambdas change...)
-    setCurrentLambdasLocal(
-            step, inputrec_->fepvals,
-            lambda0_.data(),
-            lambda_, currentFEPState_);
+    setCurrentLambdasLocal(step, inputrec_->fepvals, lambda0_.data(), lambda_, currentFEPState_);
     update_mdatoms(mdAtoms_->mdatoms(), lambda_[efptMASS]);
 }
 
@@ -110,12 +102,11 @@ int FreeEnergyPerturbationElement::currentFEPState()
     return currentFEPState_;
 }
 
-void FreeEnergyPerturbationElement::writeCheckpoint(
-        t_state *localState, t_state gmx_unused *globalState)
+void FreeEnergyPerturbationElement::writeCheckpoint(t_state* localState, t_state gmx_unused* globalState)
 {
     localState->fep_state = currentFEPState_;
     localState->lambda    = lambda_;
-    localState->flags    |= (1u<<estLAMBDA) | (1u<<estFEPSTATE);
+    localState->flags |= (1U << estLAMBDA) | (1U << estFEPSTATE);
 }
 
-}
+} // namespace gmx

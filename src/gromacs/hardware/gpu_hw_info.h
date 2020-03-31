@@ -1,7 +1,8 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2012,2013,2014,2015,2017,2018,2019, by the GROMACS development team, led by
+ * Copyright (c) 2012,2013,2014,2015,2017 The GROMACS development team.
+ * Copyright (c) 2018,2019,2020, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -37,22 +38,31 @@
 
 #include "gromacs/utility/basedefinitions.h"
 
-struct gmx_device_info_t;
+struct DeviceInformation;
 
 /*! \brief Possible results of the GPU detection/check.
  *
  * The egpuInsane value means that during the sanity checks an error
  * occurred that indicates malfunctioning of the device, driver, or
- * incompatible driver/runtime. */
+ * incompatible driver/runtime.
+ * eGpuUnavailable indicates that CUDA devices are busy or unavailable
+ * typically due to use of cudaComputeModeExclusive, cudaComputeModeProhibited modes.
+ */
 typedef enum
 {
-    egpuCompatible = 0,  egpuNonexistent,  egpuIncompatible, egpuIncompatibleClusterSize, egpuInsane, egpuNR
+    egpuCompatible = 0,
+    egpuNonexistent,
+    egpuIncompatible,
+    egpuIncompatibleClusterSize,
+    egpuInsane,
+    egpuUnavailable,
+    egpuNR
 } e_gpu_detect_res_t;
 
 /*! \brief Names of the GPU detection/check results
  *
  * \todo Make a proper class enumeration with helper string */
-extern const char * const gpu_detect_res_str[egpuNR];
+extern const char* const gpu_detect_res_str[egpuNR];
 
 /*! \brief Information about GPU devices on this physical node.
  *
@@ -63,13 +73,13 @@ extern const char * const gpu_detect_res_str[egpuNR];
 struct gmx_gpu_info_t
 {
     //! Did we attempt GPU detection?
-    gmx_bool           bDetectGPUs;
+    gmx_bool bDetectGPUs;
     //! Total number of GPU devices detected on this physical node
-    int                n_dev;
+    int n_dev;
     //! Information about each GPU device detected on this physical node
-    gmx_device_info_t *gpu_dev;
+    DeviceInformation* deviceInfo;
     //! Number of GPU devices detected on this physical node that are compatible.
-    int                n_dev_compatible;
+    int n_dev_compatible;
 };
 
 #endif

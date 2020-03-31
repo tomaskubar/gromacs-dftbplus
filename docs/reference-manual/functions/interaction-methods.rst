@@ -33,7 +33,7 @@ force field, which is implemented by keeping a separate list of 1-4 and
 normal Lennard-Jones parameters. In other force fields, such as
 OPLS \ :ref:`103 <refJorgensen88>`, the standard Lennard-Jones
 parameters are reduced by a factor of two, but in that case also the
-dispersion (r:math:`^{-6}`) and the Coulomb interaction are scaled.
+dispersion (r\ :math:`^{-6}`) and the Coulomb interaction are scaled.
 |Gromacs| can use either of these methods.
 
 Charge Groups
@@ -213,7 +213,7 @@ can be constructed from “particles” that are simpler virtual sites.
                                                   { | \mathbf{r}_{ij} | }
              :label: eqnvsite2fdatom
 
--  In this case the virtual site is on the line through the the other two
+-  In this case the virtual site is on the line through the other two
    particles at a distance of :math:`|a|` from :math:`i`. The force on
    particles :math:`i` and :math:`j` due to the force on the virtual site
    can be computed as:

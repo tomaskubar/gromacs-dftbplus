@@ -3,7 +3,8 @@
  *
  * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
  * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2016,2017,2018,2019, by the GROMACS development team, led by
+ * Copyright (c) 2013,2014,2015,2016,2017 by the GROMACS development team.
+ * Copyright (c) 2018,2019,2020, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -47,22 +48,36 @@ struct gmx_mtop_t;
 struct t_atoms;
 struct t_symtab;
 struct t_topology;
+enum class PbcType : int;
 
-void write_sto_conf_indexed(const char *outfile, const char *title,
-                            const t_atoms *atoms,
-                            const rvec x[], const rvec *v, int ePBC, const matrix box,
-                            int nindex, int index[]);
+void write_sto_conf_indexed(const char*    outfile,
+                            const char*    title,
+                            const t_atoms* atoms,
+                            const rvec     x[],
+                            const rvec*    v,
+                            PbcType        pbcType,
+                            const matrix   box,
+                            int            nindex,
+                            int            index[]);
 /* like write_sto_conf, but indexed */
 
-void write_sto_conf(const char *outfile, const char *title,
-                    const t_atoms *atoms,
-                    const rvec x[], const rvec *v, int ePBC, const matrix box);
+void write_sto_conf(const char*    outfile,
+                    const char*    title,
+                    const t_atoms* atoms,
+                    const rvec     x[],
+                    const rvec*    v,
+                    PbcType        pbcType,
+                    const matrix   box);
 /* write atoms, x, v (if .gro and not NULL) and box (if not NULL)
  * to an STO (.gro or .pdb) file */
 
-void write_sto_conf_mtop(const char *outfile, const char *title,
-                         const gmx_mtop_t *mtop,
-                         const rvec x[], const rvec *v, int ePBC, const matrix box);
+void write_sto_conf_mtop(const char*       outfile,
+                         const char*       title,
+                         const gmx_mtop_t* mtop,
+                         const rvec        x[],
+                         const rvec*       v,
+                         PbcType           pbcType,
+                         const matrix      box);
 /* As write_sto_conf, but uses a gmx_mtop_t struct */
 
 /*! \brief Read a configuration and, when available, a topology from a tpr or structure file.
@@ -73,15 +88,18 @@ void write_sto_conf_mtop(const char *outfile, const char *title,
  * \param[in]     infile        Input file name
  * \param[out]    haveTopology  true when a topology was read and stored in mtop
  * \param[out]    mtop          The topology, either complete or only atom data
- * \param[out]    ePBC          Enum reporting the type of PBC
+ * \param[out]    pbcType       Enum reporting the type of PBC
  * \param[in,out] x             Coordinates will be stored when *x!=NULL
  * \param[in,out] v             Velocities will be stored when *v!=NULL
  * \param[out]    box           Box dimensions
  */
-void readConfAndTopology(const char *infile,
-                         bool *haveTopology, gmx_mtop_t *mtop,
-                         int *ePBC,
-                         rvec **x, rvec **v, matrix box);
+void readConfAndTopology(const char* infile,
+                         bool*       haveTopology,
+                         gmx_mtop_t* mtop,
+                         PbcType*    pbcType,
+                         rvec**      x,
+                         rvec**      v,
+                         matrix      box);
 
 /*! \brief Read a configuration from a structure file.
  *
@@ -91,15 +109,19 @@ void readConfAndTopology(const char *infile,
  * \param[out]    symtab        The symbol table
  * \param[out]    name          The title of the molecule, e.g. from pdb TITLE record
  * \param[out]    atoms         The global t_atoms struct
- * \param[out]    ePBC          Enum reporting the type of PBC
+ * \param[out]    pbcType       Enum reporting the type of PBC
  * \param[in,out] x             Coordinates will be stored when *x!=NULL
  * \param[in,out] v             Velocities will be stored when *v!=NULL
  * \param[out]    box           Box dimensions
  */
-void readConfAndAtoms(const char *infile,
-                      t_symtab *symtab, char **name, t_atoms *atoms,
-                      int *ePBC,
-                      rvec **x, rvec **v, matrix box);
+void readConfAndAtoms(const char* infile,
+                      t_symtab*   symtab,
+                      char**      name,
+                      t_atoms*    atoms,
+                      PbcType*    pbcType,
+                      rvec**      x,
+                      rvec**      v,
+                      matrix      box);
 
 /*! \brief Read a configuration and, when available, a topology from a tpr or structure file.
  *
@@ -112,16 +134,21 @@ void readConfAndAtoms(const char *infile,
  * their presence is signaled with the \p haveMass flag in t_atoms of \p top.
  *
  * \param[in]     infile        Input file name
- * \param[out]    top           The topology, either complete or only atom data. Caller is responsible for calling done_top().
- * \param[out]    ePBC          Enum reporting the type of PBC
+ * \param[out]    top           The topology, either complete or only atom data. Caller is
+ *                              responsible for calling done_top().
+ * \param[out]    pbcType       Enum reporting the type of PBC
  * \param[in,out] x             Coordinates will be stored when *x!=NULL
  * \param[in,out] v             Velocities will be stored when *v!=NULL
  * \param[out]    box           Box dimensions
- * \param[in]     requireMasses Require masses to be present, either from tpr or from the mass database
- * \returns if a topology is available
+ * \param[in]     requireMasses Require masses to be present, either from tpr or from the mass
+ * database \returns if a topology is available
  */
-gmx_bool read_tps_conf(const char *infile, struct t_topology *top,
-                       int *ePBC, rvec **x, rvec **v, matrix box,
-                       gmx_bool requireMasses);
+gmx_bool read_tps_conf(const char*        infile,
+                       struct t_topology* top,
+                       PbcType*           pbcType,
+                       rvec**             x,
+                       rvec**             v,
+                       matrix             box,
+                       gmx_bool           requireMasses);
 
 #endif

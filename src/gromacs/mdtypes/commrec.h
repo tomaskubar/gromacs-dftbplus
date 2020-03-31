@@ -3,7 +3,8 @@
  *
  * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
  * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2017,2018,2019, by the GROMACS development team, led by
+ * Copyright (c) 2013,2014,2015,2017,2018 by the GROMACS development team.
+ * Copyright (c) 2019,2020, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -46,10 +47,11 @@
 struct mpi_in_place_buf_t;
 struct gmx_domdec_t;
 
-#define DUTY_PP  (1U<<0U)
-#define DUTY_PME (1U<<1U)
+#define DUTY_PP (1U << 0U)
+#define DUTY_PME (1U << 1U)
 
-typedef struct {
+typedef struct
+{
     int      bUse;
     MPI_Comm comm_intra;
     int      rank_intra;
@@ -57,7 +59,8 @@ typedef struct {
 
 } gmx_nodecomm_t;
 
-struct t_commrec {
+struct t_commrec
+{
     /* The nodeids in one sim are numbered sequentially from 0.
      * All communication within some simulation should happen
      * in mpi_comm_mysim, or its subset mpi_comm_mygroup.
@@ -67,35 +70,35 @@ struct t_commrec {
     /* thread numbers: */
     /* Not used yet: int threadid, nthreads; */
     /* The nodeid in the PP/PME, PP or PME group */
-    int      nodeid;
+    int nodeid;
 
     /* MPI communicators within a single simulation
      * Note: other parts of the code may further subset these communicators.
      */
-    MPI_Comm mpi_comm_mysim;           /* communicator including all ranks of
-                                          a single simulation */
-    MPI_Comm mpi_comm_mygroup;         /* subset of mpi_comm_mysim including only
-                                          the ranks in the same group (PP or PME) */
+    MPI_Comm mpi_comm_mysim;   /* communicator including all ranks of
+                                  a single simulation */
+    MPI_Comm mpi_comm_mygroup; /* subset of mpi_comm_mysim including only
+                                  the ranks in the same group (PP or PME) */
 
     gmx_nodecomm_t nc;
 
     /* For domain decomposition */
-    gmx_domdec_t *dd;
+    gmx_domdec_t* dd;
 
     /* The duties of this node, see the DUTY_ defines above.
      * This should be read through thisRankHasDuty() or getThisRankDuties().
      */
-    int                    duty;
+    int duty;
 
     /* these buffers are used as destination buffers if MPI_IN_PLACE isn't
        supported.*/
-    mpi_in_place_buf_t *mpb;
+    mpi_in_place_buf_t* mpb;
 };
 
 /*! \brief
  * Returns the rank's duty, and asserts that it has been initialized.
  */
-inline int getThisRankDuties(const t_commrec *cr)
+inline int getThisRankDuties(const t_commrec* cr)
 {
     GMX_ASSERT(cr, "Invalid commrec pointer");
     GMX_ASSERT(cr->duty != 0, "Commrec duty was not initialized!");
@@ -111,49 +114,61 @@ inline int getThisRankDuties(const t_commrec *cr)
  *
  * \returns Whether this duty is assigned to this rank.
  */
-inline bool thisRankHasDuty(const t_commrec *cr, int duty)
+inline bool thisRankHasDuty(const t_commrec* cr, int duty)
 {
     GMX_ASSERT((duty == DUTY_PME) || (duty == DUTY_PP), "Invalid duty type");
     return (getThisRankDuties(cr) & duty) != 0;
 }
 
-//! True if this is a simulation with more than 1 node
-#define PAR(cr)        ((cr)->nnodes > 1)
+/*! \brief True if this is a simulation with more than 1 rank
+ *
+ * In particular, this is true for multi-rank runs with TPI and NM, because
+ * they use a decomposition that is not the domain decomposition used by
+ * other simulation types. */
+#define PAR(cr) ((cr)->nnodes > 1)
 
 //! True of this is the master node
-#define MASTER(cr)     (((cr)->nodeid == 0) || !PAR(cr))
+#define MASTER(cr) (((cr)->nodeid == 0) || !PAR(cr))
 
 //! True if this is the particle-particle master
-#define SIMMASTER(cr)  ((MASTER(cr) && thisRankHasDuty((cr), DUTY_PP)) || !PAR(cr))
+#define SIMMASTER(cr) ((MASTER(cr) && thisRankHasDuty((cr), DUTY_PP)) || !PAR(cr))
 
 //! The node id for this rank
-#define RANK(cr, nodeid)    (nodeid)
+#define RANK(cr, nodeid) (nodeid)
 
 //! The node id for the master
-#define MASTERRANK(cr)     (0)
+#define MASTERRANK(cr) (0)
 
-/*! \brief Do we use domain decomposition
+/*! \brief Do we decompose the work of this simulation?
  *
- * Note that even with particle decomposition removed, the use of
- * non-DD parallelization in TPI, NM and multi-simulations means that
- * PAR(cr) and DOMAINDECOMP(cr) are not universally synonymous. In
- * particular, DOMAINDECOMP(cr) == true indicates that there is more
- * than one domain, not just that the dd algorithm is active. */
-#define DOMAINDECOMP(cr)   (((cr)->dd != nullptr) && PAR(cr))
+ * True if this simulation uses more than one PP rank, or if this simulation
+ * uses at least one PME-only rank.
+ *
+ * PAR(cr) is true if this is true, but the converse does not apply (see docs
+ * of PAR(cr)).
+ *
+ * This is true if havePPDomainDecomposition is true, but the converse does not
+ * apply (see docs of havePpDomainDecomposition()).
+ *
+ * \todo As part of Redmine #2395, replace calls to this with
+ * havePPDomainDecomposition or a call of some other/new function, as
+ * appropriate to each case. Then eliminate this macro. */
+#define DOMAINDECOMP(cr) (((cr)->dd != nullptr) && PAR(cr))
 
 /*! \brief Returns whether we have actual domain decomposition for the particle-particle interactions
  *
  * Will return false when we use 1 rank for PP and 1 for PME
  */
-static bool inline havePPDomainDecomposition(const t_commrec *cr)
+static bool inline havePPDomainDecomposition(const t_commrec* cr)
 {
     /* NOTE: It would be better to use cr->dd->nnodes, but we do not want
      *       to pull in a dependency on domdec.h into this file.
      */
     GMX_ASSERT(cr != nullptr, "Invalid call of havePPDomainDecomposition before commrec is made");
-    GMX_ASSERT(cr->npmenodes >= 0, "Invalid call of havePPDomainDecomposition before MPMD automated decomposition was chosen.");
-    return (cr->dd != nullptr &&
-            cr->nnodes - cr->npmenodes > 1);
+    GMX_ASSERT(cr->npmenodes >= 0,
+               "Invalid call of havePPDomainDecomposition before MPMD automated decomposition was "
+               "chosen.");
+    return (cr->dd != nullptr && cr->nnodes - cr->npmenodes > 1);
 }
 
 #endif

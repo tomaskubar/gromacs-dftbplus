@@ -3,7 +3,8 @@
  *
  * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
  * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2016,2017,2018, by the GROMACS development team, led by
+ * Copyright (c) 2013,2014,2015,2016,2017 by the GROMACS development team.
+ * Copyright (c) 2018,2019,2020, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -45,27 +46,30 @@
 
 #include "gromacs/mdlib/constr.h"
 #include "gromacs/mdtypes/inputrec.h"
-#include "gromacs/topology/block.h"
 #include "gromacs/topology/mtop_util.h"
 #include "gromacs/utility/basedefinitions.h"
 #include "gromacs/utility/fatalerror.h"
+#include "gromacs/utility/listoflists.h"
 #include "gromacs/utility/logger.h"
 #include "gromacs/utility/real.h"
-#include "gromacs/utility/smalloc.h"
 
 namespace gmx
 {
 
 //! Recursing function to help find all adjacent constraints.
-static void constr_recur(const t_blocka *at2con,
-                         const InteractionLists &ilist,
+static void constr_recur(const ListOfLists<int>&        at2con,
+                         const InteractionLists&        ilist,
                          gmx::ArrayRef<const t_iparams> iparams,
-                         gmx_bool bTopB,
-                         int at, int depth, int nc, int *path,
-                         real r0, real r1, real *r2max,
-                         int *count)
+                         gmx_bool                       bTopB,
+                         int                            at,
+                         int                            depth,
+                         int                            nc,
+                         ArrayRef<int>                  path,
+                         real                           r0,
+                         real                           r1,
+                         real*                          r2max,
+                         int*                           count)
 {
-    int      c, con, a1;
     gmx_bool bUse;
     real     len, rn0, rn1;
 
@@ -75,12 +79,11 @@ static void constr_recur(const t_blocka *at2con,
     gmx::ArrayRef<const int> ia2 = ilist[F_CONSTRNC].iatoms;
 
     /* Loop over all constraints connected to this atom */
-    for (c = at2con->index[at]; c < at2con->index[at+1]; c++)
+    for (const int con : at2con[at])
     {
-        con = at2con->a[c];
         /* Do not walk over already used constraints */
         bUse = TRUE;
-        for (a1 = 0; a1 < depth; a1++)
+        for (int a1 = 0; a1 < depth; a1++)
         {
             if (con == path[a1])
             {
@@ -89,7 +92,7 @@ static void constr_recur(const t_blocka *at2con,
         }
         if (bUse)
         {
-            const int *ia = constr_iatomptr(ia1, ia2, con);
+            const int* ia = constr_iatomptr(ia1, ia2, con);
             /* Flexible constraints currently have length 0, which is incorrect */
             if (!bTopB)
             {
@@ -111,16 +114,17 @@ static void constr_recur(const t_blocka *at2con,
                 rn1 = r1 + len;
             }
             /* Assume angles of 120 degrees between all bonds */
-            if (rn0*rn0 + rn1*rn1 + rn0*rn1 > *r2max)
+            if (rn0 * rn0 + rn1 * rn1 + rn0 * rn1 > *r2max)
             {
-                *r2max = rn0*rn0 + rn1*rn1 + r0*rn1;
+                *r2max = rn0 * rn0 + rn1 * rn1 + r0 * rn1;
                 if (debug)
                 {
-                    fprintf(debug, "Found longer constraint distance: r0 %5.3f r1 %5.3f rmax %5.3f\n", rn0, rn1, sqrt(*r2max));
-                    for (a1 = 0; a1 < depth; a1++)
+                    fprintf(debug,
+                            "Found longer constraint distance: r0 %5.3f r1 %5.3f rmax %5.3f\n", rn0,
+                            rn1, sqrt(*r2max));
+                    for (int a1 = 0; a1 < depth; a1++)
                     {
-                        fprintf(debug, " %d %5.3f",
-                                path[a1],
+                        fprintf(debug, " %d %5.3f", path[a1],
                                 iparams[constr_iatomptr(ia1, ia2, con)[0]].constr.dA);
                     }
                     fprintf(debug, " %d %5.3f\n", con, len);
@@ -130,8 +134,9 @@ static void constr_recur(const t_blocka *at2con,
              * so a call does not take more than a second,
              * even for highly connected systems.
              */
-            if (depth + 1 < nc && *count < 1000*nc)
+            if (depth + 1 < nc && *count < 1000 * nc)
             {
+                int a1;
                 if (ia[1] == at)
                 {
                     a1 = ia[2];
@@ -142,8 +147,7 @@ static void constr_recur(const t_blocka *at2con,
                 }
                 /* Recursion */
                 path[depth] = con;
-                constr_recur(at2con, ilist, iparams,
-                             bTopB, a1, depth+1, nc, path, rn0, rn1, r2max, count);
+                constr_recur(at2con, ilist, iparams, bTopB, a1, depth + 1, nc, path, rn0, rn1, r2max, count);
                 path[depth] = -1;
             }
         }
@@ -151,27 +155,25 @@ static void constr_recur(const t_blocka *at2con,
 }
 
 //! Find the interaction radius needed for constraints for this molecule type.
-static real constr_r_max_moltype(const gmx_moltype_t            *molt,
-                                 gmx::ArrayRef<const t_iparams>  iparams,
-                                 const t_inputrec               *ir)
+static real constr_r_max_moltype(const gmx_moltype_t*           molt,
+                                 gmx::ArrayRef<const t_iparams> iparams,
+                                 const t_inputrec*              ir)
 {
-    int      natoms, *path, at, count;
+    int natoms, at, count;
 
-    t_blocka at2con;
-    real     r0, r1, r2maxA, r2maxB, rmax, lam0, lam1;
+    real r0, r1, r2maxA, r2maxB, rmax, lam0, lam1;
 
-    if (molt->ilist[F_CONSTR].size()   == 0 &&
-        molt->ilist[F_CONSTRNC].size() == 0)
+    if (molt->ilist[F_CONSTR].empty() && molt->ilist[F_CONSTRNC].empty())
     {
         return 0;
     }
 
     natoms = molt->atoms.nr;
 
-    at2con = make_at2con(*molt, iparams,
-                         flexibleConstraintTreatment(EI_DYNAMICS(ir->eI)));
-    snew(path, 1+ir->nProjOrder);
-    for (at = 0; at < 1+ir->nProjOrder; at++)
+    const ListOfLists<int> at2con =
+            make_at2con(*molt, iparams, flexibleConstraintTreatment(EI_DYNAMICS(ir->eI)));
+    std::vector<int> path(1 + ir->nProjOrder);
+    for (at = 0; at < 1 + ir->nProjOrder; at++)
     {
         path[at] = -1;
     }
@@ -183,8 +185,8 @@ static real constr_r_max_moltype(const gmx_moltype_t            *molt,
         r1 = 0;
 
         count = 0;
-        constr_recur(&at2con, molt->ilist, iparams,
-                     FALSE, at, 0, 1+ir->nProjOrder, path, r0, r1, &r2maxA, &count);
+        constr_recur(at2con, molt->ilist, iparams, FALSE, at, 0, 1 + ir->nProjOrder, path, r0, r1,
+                     &r2maxA, &count);
     }
     if (ir->efep == efepNO)
     {
@@ -198,43 +200,39 @@ static real constr_r_max_moltype(const gmx_moltype_t            *molt,
             r0    = 0;
             r1    = 0;
             count = 0;
-            constr_recur(&at2con, molt->ilist, iparams,
-                         TRUE, at, 0, 1+ir->nProjOrder, path, r0, r1, &r2maxB, &count);
+            constr_recur(at2con, molt->ilist, iparams, TRUE, at, 0, 1 + ir->nProjOrder, path, r0,
+                         r1, &r2maxB, &count);
         }
         lam0 = ir->fepvals->init_lambda;
         if (EI_DYNAMICS(ir->eI))
         {
-            lam0 += ir->init_step*ir->fepvals->delta_lambda;
+            lam0 += ir->init_step * ir->fepvals->delta_lambda;
         }
-        rmax = (1 - lam0)*sqrt(r2maxA) + lam0*sqrt(r2maxB);
+        rmax = (1 - lam0) * sqrt(r2maxA) + lam0 * sqrt(r2maxB);
         if (EI_DYNAMICS(ir->eI))
         {
-            lam1 = ir->fepvals->init_lambda + (ir->init_step + ir->nsteps)*ir->fepvals->delta_lambda;
-            rmax = std::max(rmax, (1 - lam1)*std::sqrt(r2maxA) + lam1*std::sqrt(r2maxB));
+            lam1 = ir->fepvals->init_lambda + (ir->init_step + ir->nsteps) * ir->fepvals->delta_lambda;
+            rmax = std::max(rmax, (1 - lam1) * std::sqrt(r2maxA) + lam1 * std::sqrt(r2maxB));
         }
     }
 
-    done_blocka(&at2con);
-    sfree(path);
-
     return rmax;
 }
 
-real constr_r_max(const MDLogger &mdlog, const gmx_mtop_t *mtop, const t_inputrec *ir)
+real constr_r_max(const MDLogger& mdlog, const gmx_mtop_t* mtop, const t_inputrec* ir)
 {
     real rmax = 0;
-    for (const gmx_moltype_t &molt : mtop->moltype)
+    for (const gmx_moltype_t& molt : mtop->moltype)
     {
-        rmax = std::max(rmax,
-                        constr_r_max_moltype(&molt,
-                                             mtop->ffparams.iparams, ir));
+        rmax = std::max(rmax, constr_r_max_moltype(&molt, mtop->ffparams.iparams, ir));
     }
 
-    GMX_LOG(mdlog.info).appendTextFormatted(
-            "Maximum distance for %d constraints, at 120 deg. angles, all-trans: %.3f nm",
-            1+ir->nProjOrder, rmax);
+    GMX_LOG(mdlog.info)
+            .appendTextFormatted(
+                    "Maximum distance for %d constraints, at 120 deg. angles, all-trans: %.3f nm",
+                    1 + ir->nProjOrder, rmax);
 
     return rmax;
 }
 
-}  // namespace gmx
+} // namespace gmx

@@ -1,7 +1,7 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2018,2019, by the GROMACS development team, led by
+ * Copyright (c) 2018,2019,2020, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -47,6 +47,7 @@
 
 #include "gromacs/gmxpreprocess/grompp.h"
 #include "gromacs/math/vectypes.h"
+#include "gromacs/pbcutil/pbc.h"
 #include "gromacs/topology/topology.h"
 #include "gromacs/utility/arrayref.h"
 #include "gromacs/utility/exceptions.h"
@@ -77,12 +78,10 @@ TEST(TopologyInformation, CantWorkWithoutReadingAFile)
     ASSERT_TRUE(atoms2);
     EXPECT_NE(atoms1.get(), atoms2.get());
     EXPECT_EQ(0, atoms1->nr);
-    EXPECT_EQ(-1, topInfo.ePBC());
+    EXPECT_EQ(PbcType::Unset, topInfo.pbcType());
     EXPECT_THROW(topInfo.x().size(), gmx::APIError);
     EXPECT_THROW(topInfo.v().size(), gmx::APIError);
-    matrix box {{
-                    -2
-                }};
+    matrix box{ { -2 } };
     topInfo.getBox(box);
     EXPECT_EQ(0, box[XX][XX]);
     EXPECT_EQ(0, box[XX][YY]);
@@ -97,7 +96,7 @@ TEST(TopologyInformation, CantWorkWithoutReadingAFile)
 }
 
 //! Common test code to reduce duplication
-void runCommonTests(const TopologyInformation &topInfo, const int numAtoms)
+void runCommonTests(const TopologyInformation& topInfo, const int numAtoms)
 {
     EXPECT_TRUE(topInfo.hasTopology());
     ASSERT_TRUE(topInfo.mtop());
@@ -116,18 +115,16 @@ void runCommonTests(const TopologyInformation &topInfo, const int numAtoms)
     EXPECT_NE(atoms2.get(), atoms);
     EXPECT_EQ(numAtoms, topInfo.x().size());
     EXPECT_EQ(numAtoms, topInfo.v().size());
-    matrix box {{
-                    -2
-                }};
+    matrix box{ { -2 } };
     topInfo.getBox(box);
     EXPECT_FLOAT_EQ(5.9062, box[XX][XX]);
-    EXPECT_FLOAT_EQ(0,      box[XX][YY]);
-    EXPECT_FLOAT_EQ(0,      box[XX][ZZ]);
-    EXPECT_FLOAT_EQ(0,      box[YY][XX]);
+    EXPECT_FLOAT_EQ(0, box[XX][YY]);
+    EXPECT_FLOAT_EQ(0, box[XX][ZZ]);
+    EXPECT_FLOAT_EQ(0, box[YY][XX]);
     EXPECT_FLOAT_EQ(6.8451, box[YY][YY]);
-    EXPECT_FLOAT_EQ(0,      box[YY][ZZ]);
-    EXPECT_FLOAT_EQ(0,      box[ZZ][XX]);
-    EXPECT_FLOAT_EQ(0,      box[ZZ][YY]);
+    EXPECT_FLOAT_EQ(0, box[YY][ZZ]);
+    EXPECT_FLOAT_EQ(0, box[ZZ][XX]);
+    EXPECT_FLOAT_EQ(0, box[ZZ][YY]);
     EXPECT_FLOAT_EQ(3.0517, box[ZZ][ZZ]);
     EXPECT_STREQ("First 10 residues from 1AKI", topInfo.name());
 }
@@ -139,7 +136,7 @@ TEST(TopologyInformation, WorksWithGroFile)
     topInfo.fillFromInputFile(TestFileManager::getInputFilePath("lysozyme.gro"));
     EXPECT_FALSE(topInfo.hasFullTopology());
     runCommonTests(topInfo, numAtoms);
-    EXPECT_EQ(-1, topInfo.ePBC());
+    EXPECT_EQ(PbcType::Unset, topInfo.pbcType());
 
     // Check the per-atom data
     auto atoms = topInfo.copyAtoms();
@@ -172,7 +169,7 @@ TEST(TopologyInformation, WorksWithPdbFile)
     EXPECT_FALSE(topInfo.hasFullTopology());
     runCommonTests(topInfo, numAtoms);
     // TODO why does this differ from .gro?
-    EXPECT_EQ(0, topInfo.ePBC());
+    EXPECT_EQ(PbcType::Xyz, topInfo.pbcType());
 
     // Check the per-atom data
     auto atoms = topInfo.copyAtoms();
@@ -224,7 +221,7 @@ TEST(TopologyInformation, WorksWithTprFromPdbFile)
     EXPECT_TRUE(topInfo.hasFullTopology());
     runCommonTests(topInfo, numAtoms);
     // TODO why does this differ from .gro?
-    EXPECT_EQ(0, topInfo.ePBC());
+    EXPECT_EQ(PbcType::Xyz, topInfo.pbcType());
 
     // Check the per-atom data
     auto atoms = topInfo.copyAtoms();

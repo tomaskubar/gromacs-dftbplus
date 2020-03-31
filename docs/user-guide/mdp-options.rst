@@ -2,8 +2,9 @@
    See the "run control" section for a working example of the
    syntax to use when making .mdp entries, with and without detailed
    documentation for values those entries might take. Everything can
-   be cross-referenced, see the examples there. TODO Make more
-   cross-references.
+   be cross-referenced, see the examples there.
+
+.. todo:: Make more cross-references.
 
 Molecular dynamics parameters (.mdp options)
 ============================================
@@ -64,7 +65,7 @@ Run control
       of motion.  For constant NVE simulations started from
       corresponding points in the same trajectory, the trajectories
       are analytically, but not binary, identical to the
-      :mdp-value:`integrator=md` leap-frog integrator. The the kinetic
+      :mdp-value:`integrator=md` leap-frog integrator. The kinetic
       energy, which is determined from the whole step velocities and
       is therefore slightly too high. The advantage of this integrator
       is more accurate, reversible Nose-Hoover and Parrinello-Rahman
@@ -94,8 +95,8 @@ Run control
       significant part of the simulation time. The temperature for one
       or more groups of atoms (:mdp:`tc-grps`) is set with
       :mdp:`ref-t`, the inverse friction constant for each group is
-      set with :mdp:`tau-t`.  The parameter :mdp:`tcoupl` is
-      ignored. The random generator is initialized with
+      set with :mdp:`tau-t`.  The parameters :mdp:`tcoupl` and :mdp:`nsttcouple`
+      are ignored. The random generator is initialized with
       :mdp:`ld-seed`. When used as a thermostat, an appropriate value
       for :mdp:`tau-t` is 2 ps, since this results in a friction that
       is lower than the internal friction of water, while it is high
@@ -358,24 +359,30 @@ Output control
    (0) [steps]
    number of steps that elapse between writing coordinates to the output
    trajectory file (:ref:`trr`), the last coordinates are always written
+   unless 0, which means coordinates are not written into the trajectory
+   file.
 
 .. mdp:: nstvout
 
    (0) [steps]
    number of steps that elapse between writing velocities to the output
    trajectory file (:ref:`trr`), the last velocities are always written
+   unless 0, which means velocities are not written into the trajectory
+   file.
 
 .. mdp:: nstfout
 
    (0) [steps]
    number of steps that elapse between writing forces to the output
-   trajectory file (:ref:`trr`), the last forces are always written.
+   trajectory file (:ref:`trr`), the last forces are always written,
+   unless 0, which means forces are not written into the trajectory
+   file.
 
 .. mdp:: nstlog
 
    (1000) [steps]
    number of steps that elapse between writing energies to the log
-   file, the last energies are always written
+   file, the last energies are always written.
 
 .. mdp:: nstcalcenergy
 
@@ -400,7 +407,8 @@ Output control
 
    (0) [steps]
    number of steps that elapse between writing position coordinates
-   using lossy compression (:ref:`xtc` file)
+   using lossy compression (:ref:`xtc` file), 0 for not writing
+   compressed coordinates output.
 
 .. mdp:: compressed-x-precision
 
@@ -891,9 +899,9 @@ Ewald
    .. mdp-value:: 3dc
 
       The reciprocal sum is still performed in 3D, but a force and
-      potential correction applied in the `z` dimension to produce a
+      potential correction applied in the ``z`` dimension to produce a
       pseudo-2D summation. If your system has a slab geometry in the
-      `x-y` plane you can try to increase the `z`-dimension of the box
+      ``x-y`` plane you can try to increase the ``z``-dimension of the box
       (a box height of 3 times the slab height is usually ok) and use
       this option.
 
@@ -1087,14 +1095,14 @@ Pressure coupling
    .. mdp-value:: surface-tension
 
       Surface tension coupling for surfaces parallel to the
-      xy-plane. Uses normal pressure coupling for the `z`-direction,
-      while the surface tension is coupled to the `x/y` dimensions of
+      xy-plane. Uses normal pressure coupling for the ``z``-direction,
+      while the surface tension is coupled to the ``x/y`` dimensions of
       the box. The first :mdp:`ref-p` value is the reference surface
       tension times the number of surfaces ``bar nm``, the second
-      value is the reference `z`-pressure ``bar``. The two
+      value is the reference ``z``-pressure ``bar``. The two
       :mdp:`compressibility` values are the compressibility in the
-      `x/y` and `z` direction respectively. The value for the
-      `z`-compressibility should be reasonably accurate since it
+      ``x/y`` and ``z`` direction respectively. The value for the
+      ``z``-compressibility should be reasonably accurate since it
       influences the convergence of the surface-tension, it can also
       be set to zero to have a box with constant height.
 
@@ -1672,10 +1680,13 @@ pull-coord2-vec, pull-coord2-k, and so on.
 
    .. mdp-value:: direction-periodic
 
-      As :mdp-value:`pull-coord1-geometry=direction`, but allows the distance to be larger
-      than half the box size. With this geometry the box should not be
+      As :mdp-value:`pull-coord1-geometry=direction`, but does not apply
+      periodic box vector corrections to keep the distance within half
+      the box length. This is (only) useful for pushing groups apart
+      by more than half the box length by continuously changing the reference
+      location using a pull rate. With this geometry the box should not be
       dynamic (*e.g.* no pressure scaling) in the pull dimensions and
-      the pull force is not added to virial.
+      the pull force is not added to the virial.
 
    .. mdp-value:: direction-relative
 
@@ -1995,7 +2006,7 @@ AWH adaptive biasing
       The file name can be changed with the ``-awh`` option.
       The first :mdp:`awh1-ndim` columns of
       each input file should contain the coordinate values, such that each row defines a point in
-      coordinate space. Column :mdp:`awh1-ndim` + 1 should contain the PMF value for each point.
+      coordinate space. Column :mdp:`awh1-ndim` + 1 should contain the PMF value (in kT) for each point.
       The target distribution column can either follow the PMF (column  :mdp:`awh1-ndim` + 2) or
       be in the same column as written by :ref:`gmx awh`.
 
@@ -2243,7 +2254,7 @@ NMR refinement
 
    (1000) [kJ mol\ :sup:`-1` nm\ :sup:`-2`]
    force constant for distance restraints, which is multiplied by a
-   (possibly) different factor for each restraint given in the `fac`
+   (possibly) different factor for each restraint given in the ``fac``
    column of the interaction in the topology file.
 
 .. mdp:: disre-tau
@@ -2444,10 +2455,7 @@ Free energy calculations
 .. mdp:: sc-r-power
 
    (6)
-   the power of the radial term in the soft-core equation. Possible
-   values are 6 and 48. 6 is more standard, and is the default. When
-   48 is used, then sc-alpha should generally be much lower (between
-   0.001 and 0.003).
+   power 6 for the radial term in the soft-core equation.
 
 .. mdp:: sc-coul
 
@@ -2913,8 +2921,8 @@ Non-equilibrium MD
 .. mdp:: freezedim
 
    dimensions for which groups in :mdp:`freezegrps` should be frozen,
-   specify `Y` or `N` for X, Y and Z and for each group (*e.g.* ``Y Y
-   N N N N`` means that particles in the first group can move only in
+   specify ``Y`` or ``N`` for X, Y and Z and for each group (*e.g.*
+   ``Y Y N N N N`` means that particles in the first group can move only in
    Z direction. The particles in the second group can move in any
    direction).
 
@@ -3032,7 +3040,7 @@ Mixed quantum/classical molecular dynamics
 .. mdp:: QMcharge
 
    (0) [integer]
-   The total charge in `e` of the :mdp:`QMMM-grps`. In case there are
+   The total charge in ``e`` of the :mdp:`QMMM-grps`. In case there are
    more than one :mdp:`QMMM-grps`, the total charge of each ONIOM
    layer needs to be specified separately.
 
@@ -3228,6 +3236,11 @@ electron-microscopy experiments. (See the `reference manual`_ for details)
       Uses the negative relative entropy (or Kullback-Leibler divergence)
       between reference density and simulated density as similarity measure.
       Negative density values are ignored.
+
+   .. mdp-value:: cross-correlation
+
+      Uses the Pearson correlation coefficient between reference density and
+      simulated density as similarity measure.
 
 .. mdp:: density-guided-simulation-atom-spreading-weight
 
