@@ -65,8 +65,6 @@ enum class PbcType : int;
 struct DftbPlus;
 struct Context;
 
-class QMMM_QMsurfaceHopping;
-
 /* THIS STRUCTURE IS TENTATIVE,
  * JUST FOR THE BEGINNING.
  * MANY THINGS ARE STORED TWICE!
@@ -147,7 +145,7 @@ public:
  * \param[in] qm QM forcerec.
  */
 //void init_gaussian(QMMM_QMrec& qm);
-void init_gaussian(QMMM_QMsurfaceHopping &surfaceHopping, int QMbasis);
+void init_gaussian(int QMbasis);
 
 /*! \brief
  * Call gaussian to do qm calculation.
@@ -160,38 +158,6 @@ void init_gaussian(QMMM_QMsurfaceHopping &surfaceHopping, int QMbasis);
  */
 real call_gaussian(QMMM_QMrec& qm, QMMM_MMrec& mm, rvec f[], rvec fshift[]);
 
-/*! \brief
- * Call gaussian SH(?) to do qm calculation.
- *
- * \param[in] fr Global forcerec.
- * \param[in] qm QM part of forcerec.
- * \param[in] mm mm part of forcerec.
- * \param[in] f  force vector.
- * \param[in] fshift shift of force vector.
- */
-real call_gaussian_SH(QMMM_QMrec& qm, QMMM_MMrec& mm, rvec f[], rvec fshift[]);
-
-} ;
-
-class QMMM_QMsurfaceHopping {
-private:
-public:
-    /* Surface hopping stuff */
-    real               SAon;          /* at which energy gap the SA starts */
-    real               SAoff;         /* at which energy gap the SA stops  */
-    int                SAsteps;       /* stepwise switchinng on the SA     */
-    int                SAstep;        /* current state of SA               */
-    int                CIdim;
-    real              *CIvec1;
-    real              *CIvec2;
-    real              *CIvec1old;
-    real              *CIvec2old;
-    ivec               SHbasis;
-    int                CASelectrons;
-    int                CASorbitals;
-
-    void initParameters(const t_inputrec *ir,
-                        const int grpnr);
 } ;
 
 class QMMM_QMrec {
@@ -207,6 +173,8 @@ private:
     int                QMmethod;       /* see enums.h for all methods       */
     int                QMbasis;        /* see enums.h for all bases         */
     int                nelectrons;     /* total number of elecs in QM region*/
+    int                CASelectrons;   /* electron in active space */
+    int                CASorbitals;    /* orbitals in active space */
 
     matrix             box;
     int                qmmm_variant;
@@ -246,22 +214,6 @@ public:
 //  char              *gauss_dir;
 //  char              *gauss_exe;
 //  char              *devel_dir;
-//  /* Surface hopping stuff */
-    gmx_bool              bSH;
-    QMMM_QMsurfaceHopping surfaceHopping;
-//  gmx_bool           bSH;           /* surface hopping (diabatic only)   */
-//  real               SAon;          /* at which energy gap the SA starts */
-//  real               SAoff;         /* at which energy gap the SA stops  */
-//  int                SAsteps;       /* stepwise switchinng on the SA     */
-//  int                SAstep;        /* current state of SA               */
-//  int                CIdim;
-//  real              *CIvec1;
-//  real              *CIvec2;
-//  real              *CIvec1old;
-//  real              *CIvec2old;
-//  ivec               SHbasis;
-//  int                CASelectrons;
-//  int                CASorbitals;
 
     char              *orca_basename; /* basename for I/O with orca        */
     char              *orca_dir;      /* directory for ORCA                */
@@ -279,6 +231,8 @@ public:
     int    QMmethod_get()const;
     int    QMbasis_get()const;
     int    nelectrons_get()const;
+    int    CASelectrons_get()const;
+    int    CASorbitals_get()const;
     // input
     void   QMcharges_set(const int atom, const real value);
     void   pot_qmmm_set(const int atom, const double value);
@@ -344,8 +298,6 @@ public:
  // gmx_pme_t    *pmedata_full;
  // gmx_pme_t    *pmedata_qmonly;
  // std::vector<QMMM_QMgaussian>       gaussian;
- // std::vector<gmx_bool>              bSH;
- // std::vector<QMMM_QMsurfaceHopping> surfaceHopping;
 
     QMMM_rec(const t_commrec*                 cr,
              const gmx_mtop_t*                mtop,

@@ -301,12 +301,8 @@ void done_inputrec(t_inputrec* ir)
     sfree(ir->opts.QMbasis);
     sfree(ir->opts.QMcharge);
     sfree(ir->opts.QMmult);
-    sfree(ir->opts.bSH);
     sfree(ir->opts.CASorbitals);
     sfree(ir->opts.CASelectrons);
-    sfree(ir->opts.SAon);
-    sfree(ir->opts.SAoff);
-    sfree(ir->opts.SAsteps);
     sfree(ir->opts.egp_flags);
     done_lambdas(ir->fepvals);
     sfree(ir->fepvals);
@@ -332,12 +328,8 @@ static void pr_qm_opts(FILE* fp, int indent, const char* title, const t_grpopts*
         pr_ivec(fp, indent, "QMbasis", opts->QMbasis, opts->ngQM, FALSE);
         pr_ivec(fp, indent, "QMcharge", opts->QMcharge, opts->ngQM, FALSE);
         pr_ivec(fp, indent, "QMmult", opts->QMmult, opts->ngQM, FALSE);
-        pr_bvec(fp, indent, "SH", opts->bSH, opts->ngQM, FALSE);
         pr_ivec(fp, indent, "CASorbitals", opts->CASorbitals, opts->ngQM, FALSE);
         pr_ivec(fp, indent, "CASelectrons", opts->CASelectrons, opts->ngQM, FALSE);
-        pr_rvec(fp, indent, "SAon", opts->SAon, opts->ngQM, FALSE);
-        pr_rvec(fp, indent, "SAoff", opts->SAoff, opts->ngQM, FALSE);
-        pr_ivec(fp, indent, "SAsteps", opts->SAsteps, opts->ngQM, FALSE);
     }
 }
 

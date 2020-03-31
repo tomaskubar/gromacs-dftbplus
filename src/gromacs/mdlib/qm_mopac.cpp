@@ -121,17 +121,8 @@ void init_mopac(QMMM_QMrec& qm)
 
     snew(keywords, 240);
 
-    if (!qm.bSH)  /* if rerun then grad should not be done! */
-    {
-        sprintf(keywords, "PRECISE GEO-OK CHARGE=%d GRAD MMOK ANALYT %s\n",
-                qm.QMcharge_get(), eQMmethod_names[qm.QMmethod_get()]);
-    }
-    else
-    {
-        sprintf(keywords, "PRECISE GEO-OK CHARGE=%d SINGLET GRAD %s C.I.=(%d,%d) root=2 MECI \n",
-                qm.QMcharge_get(), eQMmethod_names[qm.QMmethod_get()],
-                qm.surfaceHopping.CASorbitals, qm.surfaceHopping.CASelectrons / 2);
-    }
+    sprintf(keywords, "PRECISE GEO-OK CHARGE=%d GRAD MMOK ANALYT %s\n",
+            qm.QMcharge_get(), eQMmethod_names[qm.QMmethod_get()]);
     nrQMatoms = qm.nrQMatoms_get();
     snew(atomicnumberQM, nrQMatoms);
     for (int i=0; i<nrQMatoms; i++)
@@ -208,66 +199,5 @@ real call_mopac(QMMM_QMrec& qm, QMMM_MMrec& mm, rvec f[], rvec fshift[])
     free(qmcrd);
     return (QMener);
 }
-
-real call_mopac_SH(QMMM_QMrec& qm, QMMM_MMrec& mm, rvec f[], rvec fshift[])
-{
-    /* do the actual SH QMMM calculation using directly linked mopac
-       subroutines */
-
-    double /* always double as the MOPAC routines are always compiled in
-              double precission! */
-            *qmcrd = nullptr, *qmchrg = nullptr,
-            *mmcrd = nullptr, *mmchrg = nullptr,
-            *qmgrad,
-            *mmgrad = nullptr,
-            energy = 0;
-    real QMener = 0.0;
-
-    snew(qmcrd, 3 * qm.nrQMatoms_get());
-    snew(qmgrad, 3 * qm.nrQMatoms_get());
-    /* copy the data from qr into the arrays that are going to be used
-     * in the fortran routines of MOPAC
-     */
-    for (int i = 0; i < qm.nrQMatoms_get(); i++)
-    {
-        for (int j = 0; j < DIM; j++)
-        {
-            qmcrd[3 * i + j] = static_cast<double>(qm.xQM_get(i, j)) * 10;
-        }
-    }
-    if (mm.nrMMatoms)
-    {
-        /* later we will add the point charges here. There are some
-         * conceptual problems with semi-empirical QM in combination with
-         * point charges that we need to solve first....
-         */
-        gmx_fatal(FARGS, "At present only ONIOM is allowed in combination with MOPAC\n");
-    }
-    else
-    {
-        /* now compute the energy and the gradients.
-         */
-        int nrQMatoms = qm.nrQMatoms_get();
-        snew(qmchrg, qm.nrQMatoms_get());
-
-        F77_FUNC(domop, DOMOP)(&nrQMatoms, qmcrd, &mm.nrMMatoms,
-                               mmchrg, mmcrd, qmgrad, mmgrad, &energy, qmchrg);
-        /* add the gradients to the f[] array, and also to the fshift[].
-         * the mopac gradients are in kCal/angstrom.
-         */
-        for (int i = 0; i < qm.nrQMatoms_get(); i++)
-        {
-            for (int j = 0; j < DIM; j++)
-            {
-                f[i][j]      = static_cast<real>(10) * CAL2JOULE * qmgrad[3 * i + j];
-                fshift[i][j] = static_cast<real>(10) * CAL2JOULE * qmgrad[3 * i + j];
-            }
-        }
-        QMener = static_cast<real> CAL2JOULE * energy;
-    }
-    free(qmgrad);
-    free(qmcrd);
-    return (QMener);
-} /* call_mopac_SH */
 
 #pragma GCC diagnostic pop

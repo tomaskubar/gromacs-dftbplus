@@ -105,20 +105,12 @@ struct t_grpopts
     int* QMbasis;
     //! Total charge in the QM region
     int* QMcharge;
-    //! Spin multiplicicty in the QM region
+    //! Spin multiplicity in the QM region
     int* QMmult;
-    //! Surface hopping (diabatic hop only)
-    gmx_bool* bSH;
-    //! Number of orbiatls in the active space
+    //! Number of orbitals in the active space
     int* CASorbitals;
     //! Number of electrons in the active space
     int* CASelectrons;
-    //! At which gap (A.U.) the SA is switched on
-    real* SAon;
-    //! At which gap (A.U.) the SA is switched off
-    real* SAoff;
-    //! In how many steps SA goes from 1-1 to 0.5-0.5
-    int* SAsteps;
 };
 
 struct t_simtemp

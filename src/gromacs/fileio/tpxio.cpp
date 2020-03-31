@@ -1637,12 +1637,8 @@ static void do_inputrec(gmx::ISerializer* serializer, t_inputrec* ir, int file_v
             snew(ir->opts.QMbasis, ir->opts.ngQM);
             snew(ir->opts.QMcharge, ir->opts.ngQM);
             snew(ir->opts.QMmult, ir->opts.ngQM);
-            snew(ir->opts.bSH, ir->opts.ngQM);
             snew(ir->opts.CASorbitals, ir->opts.ngQM);
             snew(ir->opts.CASelectrons, ir->opts.ngQM);
-            snew(ir->opts.SAon, ir->opts.ngQM);
-            snew(ir->opts.SAoff, ir->opts.ngQM);
-            snew(ir->opts.SAsteps, ir->opts.ngQM);
         }
         if (ir->opts.ngQM > 0 && ir->bQMMM)
         {
@@ -1650,12 +1646,8 @@ static void do_inputrec(gmx::ISerializer* serializer, t_inputrec* ir, int file_v
             serializer->doIntArray(ir->opts.QMbasis, ir->opts.ngQM);
             serializer->doIntArray(ir->opts.QMcharge, ir->opts.ngQM);
             serializer->doIntArray(ir->opts.QMmult, ir->opts.ngQM);
-            serializer->doBoolArray(ir->opts.bSH, ir->opts.ngQM);
             serializer->doIntArray(ir->opts.CASorbitals, ir->opts.ngQM);
             serializer->doIntArray(ir->opts.CASelectrons, ir->opts.ngQM);
-            serializer->doRealArray(ir->opts.SAon, ir->opts.ngQM);
-            serializer->doRealArray(ir->opts.SAoff, ir->opts.ngQM);
-            serializer->doIntArray(ir->opts.SAsteps, ir->opts.ngQM);
             /* We leave in dummy i/o for removed parameters to avoid
              * changing the tpr format for every QMMM change.
              */

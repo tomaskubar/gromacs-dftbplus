@@ -2056,14 +2056,9 @@ void get_ir(const char*     mdparin,
     setStringEntry(&inp, "QMcharge", is->QMcharge, nullptr);
     printStringNoNewline(&inp, "QM multiplicity");
     setStringEntry(&inp, "QMmult", is->QMmult, nullptr);
-    printStringNoNewline(&inp, "Surface Hopping");
-    setStringEntry(&inp, "SH", is->bSH, nullptr);
     printStringNoNewline(&inp, "CAS space options");
     setStringEntry(&inp, "CASorbitals", is->CASorbitals, nullptr);
     setStringEntry(&inp, "CASelectrons", is->CASelectrons, nullptr);
-    setStringEntry(&inp, "SAon", is->SAon, nullptr);
-    setStringEntry(&inp, "SAoff", is->SAoff, nullptr);
-    setStringEntry(&inp, "SAsteps", is->SAsteps, nullptr);
     printStringNoNewline(&inp, "Scale factor for MM charges");
     ir->scalefactor = get_ereal(&inp, "MMChargeScaleFactor", 1.0, wi);
 
@@ -3811,13 +3806,10 @@ void do_index(const char*                   mdparin,
         }
         auto qmMultiplicities = gmx::splitString(is->QMmult);
         auto qmCharges        = gmx::splitString(is->QMcharge);
-        auto qmbSH            = gmx::splitString(is->bSH);
         snew(ir->opts.QMmult, nr);
         snew(ir->opts.QMcharge, nr);
-        snew(ir->opts.bSH, nr);
         convertInts(wi, qmMultiplicities, "QMmult", ir->opts.QMmult);
         convertInts(wi, qmCharges, "QMcharge", ir->opts.QMcharge);
-        convertYesNos(wi, qmbSH, "bSH", ir->opts.bSH);
 
         auto CASelectrons = gmx::splitString(is->CASelectrons);
         auto CASorbitals  = gmx::splitString(is->CASorbitals);
@@ -3825,16 +3817,6 @@ void do_index(const char*                   mdparin,
         snew(ir->opts.CASorbitals, nr);
         convertInts(wi, CASelectrons, "CASelectrons", ir->opts.CASelectrons);
         convertInts(wi, CASorbitals, "CASOrbitals", ir->opts.CASorbitals);
-
-        auto SAon    = gmx::splitString(is->SAon);
-        auto SAoff   = gmx::splitString(is->SAoff);
-        auto SAsteps = gmx::splitString(is->SAsteps);
-        snew(ir->opts.SAon, nr);
-        snew(ir->opts.SAoff, nr);
-        snew(ir->opts.SAsteps, nr);
-        convertInts(wi, SAon, "SAon", ir->opts.SAon);
-        convertInts(wi, SAoff, "SAoff", ir->opts.SAoff);
-        convertInts(wi, SAsteps, "SAsteps", ir->opts.SAsteps);
     }
     else
     {

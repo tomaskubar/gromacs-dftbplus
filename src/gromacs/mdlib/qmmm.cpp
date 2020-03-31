@@ -131,14 +131,7 @@ static real call_QMroutine(const t_commrec gmx_unused* cr,
     {
         if (GMX_QMMM_MOPAC)
         {
-            if (qm.bSH)
-            {
-                return call_mopac_SH(qm, mm, f, fshift);
-            }
-            else
-            {
-                return call_mopac(qm, mm, f, fshift);
-            }
+            return call_mopac(qm, mm, f, fshift);
         }
         else
         {
@@ -148,55 +141,29 @@ static real call_QMroutine(const t_commrec gmx_unused* cr,
     else
     {
         /* do an ab-initio calculation */
-        if (qm.bSH && qm.QMmethod_get() == eQMmethodCASSCF)
+        if (GMX_QMMM_GAMESS)
         {
-            if (GMX_QMMM_GAUSSIAN)
-            {
-                return qm.gaussian.call_gaussian_SH(qm, mm, f, fshift);
-            }
-            else
-            {
-                gmx_fatal(FARGS, "Ab-initio Surface-hopping only supported with Gaussian.");
-            }
+            return call_gamess(qm, mm, f, fshift);
+        }
+        else if (GMX_QMMM_GAUSSIAN)
+        {
+            return qm.gaussian.call_gaussian(qm, mm, f, fshift);
+        }
+        else if (GMX_QMMM_ORCA)
+        {
+            return call_orca(qm, mm, f, fshift);
+        }
+        else if (GMX_QMMM_DFTBPLUS)
+        {
+            return call_dftbplus(qr, cr, qm, mm, f, fshift, nrnb, wcycle);
         }
         else
         {
-            if (GMX_QMMM_GAMESS)
-            {
-                return call_gamess(qm, mm, f, fshift);
-            }
-            else if (GMX_QMMM_GAUSSIAN)
-            {
-                return qm.gaussian.call_gaussian(qm, mm, f, fshift);
-            }
-            else if (GMX_QMMM_ORCA)
-            {
-                return call_orca(qm, mm, f, fshift);
-            }
-            else if (GMX_QMMM_DFTBPLUS)
-            {
-                return call_dftbplus(qr, cr, qm, mm, f, fshift, nrnb, wcycle);
-            }
-            else
-            {
-                // TODO Not quite true. Need to modify the distinction ab-initio x semi-empirical.
-                gmx_fatal(FARGS,
-                          "Ab-initio calculation only supported with Gamess, Gaussian, ORCA or DFTB+.");
-            }
+            // TODO Not quite true. Need to modify the distinction ab-initio x semi-empirical.
+            gmx_fatal(FARGS,
+                      "Ab-initio calculation only supported with Gamess, Gaussian, ORCA or DFTB+.");
         }
     }
-}
-
-void QMMM_QMsurfaceHopping::initParameters(const t_inputrec* ir,
-                                           const int         grpnr)
-{
-    CASorbitals  = ir->opts.CASorbitals[grpnr];
-    CASelectrons = ir->opts.CASelectrons[grpnr];
-    SAsteps      = ir->opts.SAsteps[grpnr];
-    SAon         = ir->opts.SAon[grpnr];
-    SAoff        = ir->opts.SAoff[grpnr];
-                       
-    return;
 }
 
 /* Update QM and MM coordinates in the QM/MM data structures.
@@ -479,6 +446,16 @@ int QMMM_QMrec::nelectrons_get()const
     return nelectrons;
 }
 
+int QMMM_QMrec::CASelectrons_get()const
+{
+    return CASelectrons;
+}
+
+int QMMM_QMrec::CASorbitals_get()const
+{
+    return CASorbitals;
+}
+
     /* MM rec creation */
 void QMMM_MMrec::init_MMrec(real scalefactor_in,
                             int  nrMMatoms_full_in,
@@ -577,8 +554,6 @@ QMMM_rec::QMMM_rec(const t_commrec*                 cr,
     std::vector<int> qmmmAtoms = qmmmAtomIndices(*ir, *mtop);
 
     qm.resize(numQmmmGroups);
-  //bSH.resize(numQmmmGroups); // bSH is a member of qm now
-  //surfaceHopping.resize(numQmmmGroups); // surfaceHOpping is a member of qm now
 
     /* Standard QMMM (no ONIOM).
      * All layers are merged together, so there is one QM subsystem and one MM subsystem.
@@ -590,12 +565,7 @@ QMMM_rec::QMMM_rec(const t_commrec*                 cr,
     /* store QM atoms in the QMrec and initialise
      */
     qm[0].init_QMrec(0, qmmmAtoms.size(), qmmmAtoms.data(), mtop, ir);
-    /* trajectory surface hopping setup (Gaussian only) */
-    qm[0].bSH = ir->opts.bSH[0]; // [grpnr];
-    if (qm[0].bSH)
-    {
-        qm[0].surfaceHopping.initParameters(ir, 0);
-    }
+
     /* print the current layer to allow users to check their input */
     fprintf(stderr, "Layer %d\nnr of QM atoms %d\n", 0, qm[0].nrQMatoms);
     fprintf(stderr, "QMlevel: %s/%s\n\n",
@@ -642,7 +612,7 @@ QMMM_rec::QMMM_rec(const t_commrec*                 cr,
         else if (GMX_QMMM_GAUSSIAN)
         {
           //qm[0].gaussian.init_gaussian(qm[0]);
-            qm[0].gaussian.init_gaussian(qm[0].surfaceHopping, qm[0].QMbasis_get());
+            qm[0].gaussian.init_gaussian(qm[0].QMbasis_get());
         }
         else if (GMX_QMMM_ORCA)
         {
