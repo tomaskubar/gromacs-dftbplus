@@ -141,7 +141,7 @@ if (GMX_QMMM_DFTBPLUS)
     add_library(libdftd3 STATIC IMPORTED)
     set_target_properties(libdftd3 PROPERTIES IMPORTED_LOCATION ${GMX_QMMM_DFTBPLUS_LIB}/libdftd3.a)
 
-    # search for the gfortran library in the system
+    # search for the gfortran and gomp libraries in the system
     # first look for possible library locations
     unset(_lib_env)
     string(REPLACE ":" ";" _lib_env "$ENV{LD_LIBRARY_PATH}")
@@ -149,20 +149,26 @@ if (GMX_QMMM_DFTBPLUS)
     list(APPEND _lib_env "${CMAKE_C_IMPLICIT_LINK_DIRECTORIES}")
     list(REMOVE_DUPLICATES _lib_env)
     set(PATH_TO_LOOK_FOR "${_lib_env}")
-    # then try to find the gfortran lib in the given paths
+    # try to find the gfortran lib in the given paths and add it
     find_library(GFORTRAN
         NAMES libgfortran.so.5 libgfortran.so.4
         HINTS ${PATH_TO_LOOK_FOR})
-    # finally, add the library
     add_library(gfortran SHARED IMPORTED)
     set_target_properties(gfortran PROPERTIES IMPORTED_LOCATION ${GFORTRAN})
+    # try to find the gomp lib in the given paths and add it
+    find_library(GOMP
+        NAMES libgomp.so.1 libgomp.so
+        HINTS ${PATH_TO_LOOK_FOR})
+    add_library(gomp SHARED IMPORTED)
+    set_target_properties(gomp PROPERTIES IMPORTED_LOCATION ${GOMP})
+
 #   add_library(gfortran-7.2 SHARED IMPORTED)
 #   set_target_properties(gfortran-7.2 PROPERTIES IMPORTED_LOCATION /usr/local/src/gcc-7.2.0-release/lib64/libgfortran.so.4)
 
     if(GMX_BUILD_MDRUN_ONLY)
-        target_link_libraries(mdrun libdftbplus libxmlf90 libdftd3 gfortran)
+        target_link_libraries(mdrun libdftbplus libxmlf90 libdftd3 gfortran gomp)
     else()
-        target_link_libraries(gmx libdftbplus libxmlf90 libdftd3 gfortran)
+        target_link_libraries(gmx libdftbplus libxmlf90 libdftd3 gfortran gomp)
     endif()
 endif()
 
