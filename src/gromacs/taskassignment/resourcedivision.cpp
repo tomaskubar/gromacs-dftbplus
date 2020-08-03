@@ -750,13 +750,18 @@ void checkAndUpdateHardwareOptions(const gmx::MDLogger& mdlog,
     }
     else
     {
-        /* GROMACS was configured without OpenMP support */
+        /* GROMACS was configured without OpenMP support
+         * But allow OpenMP for DFTB+ even if Gromacs doesn't have OpenMP
+         */
 
-        if (hw_opt->nthreads_omp > 1 || hw_opt->nthreads_omp_pme > 1)
+        if (!GMX_QMMM_DFTBPLUS)
         {
-            gmx_fatal(FARGS,
-                      "More than 1 OpenMP thread requested, but GROMACS was compiled without "
-                      "OpenMP support");
+            if (hw_opt->nthreads_omp > 1 || hw_opt->nthreads_omp_pme > 1)
+            {
+                gmx_fatal(FARGS,
+                          "More than 1 OpenMP thread requested, but GROMACS was compiled without "
+                          "OpenMP support");
+            }
         }
         hw_opt->nthreads_omp     = 1;
         hw_opt->nthreads_omp_pme = 1;

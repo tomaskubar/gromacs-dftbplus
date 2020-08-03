@@ -180,11 +180,23 @@ void gmx_omp_nthreads_read_env(const gmx::MDLogger& mdlog, int* nthreads_omp)
 
         if (bCommandLineSetNthreadsOMP && nt_omp != *nthreads_omp)
         {
-            gmx_fatal(FARGS,
-                      "Environment variable OMP_NUM_THREADS (%d) and the number of threads "
-                      "requested on the command line (%d) have different values. Either omit one, "
-                      "or set them both to the same value.",
-                      nt_omp, *nthreads_omp);
+            if (GMX_QMMM_DFTBPLUS)
+            {
+                gmx_warning(
+                          "Environment variable OMP_NUM_THREADS (%d) and the number of threads "
+                          "requested on the command line (%d) have different values. The command line "
+                          "value will be used for Gromacs, and OMP_NUM_THREADS will be used for DFTB+. "
+                          "Is this what you want?",
+                          nt_omp, *nthreads_omp);
+            }
+            else
+            {
+                gmx_fatal(FARGS,
+                          "Environment variable OMP_NUM_THREADS (%d) and the number of threads "
+                          "requested on the command line (%d) have different values. Either omit one, "
+                          "or set them both to the same value.",
+                          nt_omp, *nthreads_omp);
+            }
         }
 
         /* Setting the number of OpenMP threads. */
