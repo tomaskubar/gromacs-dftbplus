@@ -71,17 +71,19 @@ extern "C" void calcqmextpot(void *refptr, double *q, double *extpot);
 extern "C" void calcqmextpotgrad(void *refptr, gmx_unused double *q, double *extpotgrad);
 
 
-/**************************************************************************************************/
+/*------------------------------------------------------------------------------------------------*/
 /*  DFTB+: general package for performing fast atomistic simulations                              */
-/*  Copyright (C) 2018  DFTB+ developers group                                                    */
+/*  Copyright (C) 2006 - 2020  DFTB+ developers group                                             */
 /*                                                                                                */
 /*  See the LICENSE file for terms of usage and distribution.                                     */
-/**************************************************************************************************/
+/*------------------------------------------------------------------------------------------------*/
 #ifndef __DFTBPLUS_H__
 #define __DFTBPLUS_H__
 
+extern "C" {
+
 /**
- * Type containig the DFTB+ input tree.
+ * Type containing the DFTB+ input tree.
  *
  * Used by DFTB+ as an opaque handler. Do not manipulate the content of this type directly!
  */
@@ -91,7 +93,7 @@ typedef struct {
 
 
 /**
- * Type containig the DFTB+ calculator.
+ * Type containing the DFTB+ calculator.
  *
  * Used by DFTB+ as an opaque handler. Do not manipulate the content of this type directly!
  */
@@ -143,6 +145,18 @@ typedef void (*ExtPotGradFunc)(void *refptr, double *dqatom, double *extpotatomg
 
 
 /**
+ * Returns current version of the DFTB+ API
+ *
+ * \param[out] major major release number
+ *
+ * \param[out] minor minor release number
+ *
+ * \param[out] patch patch of release
+ */
+void dftbp_api(int *major, int *minor, int *patch);
+
+
+/**
  * Initializes a DFTB+ calculator.
  *
  * \param[inout] instance  Handler of DFTB+ instance.
@@ -151,7 +165,7 @@ typedef void (*ExtPotGradFunc)(void *refptr, double *dqatom, double *extpotatomg
  *     If you pass NULL, it will be written to standard output. If you pass any other file, it will
  *     be open, and the file will be written there. Pass "/dev/null" to suppress output.
  */
-extern "C" void dftbp_init(DftbPlus *instance, const char *outputfilename);
+void dftbp_init(DftbPlus *instance, const char *outputfilename);
 
 
 /**
@@ -159,7 +173,7 @@ extern "C" void dftbp_init(DftbPlus *instance, const char *outputfilename);
  *
  *  \param[inout] instance  Handler of the DFTB+ instance.
  */
-extern "C" void dftbp_final(DftbPlus *instance);
+void dftbp_final(DftbPlus *instance);
 
 
 /**
@@ -171,7 +185,7 @@ extern "C" void dftbp_final(DftbPlus *instance);
  *
  * \param[out] input Handler containing the input tree parsed from the input file.
  */
-extern "C" void dftbp_get_input_from_file(DftbPlus *instance, const char *filename, DftbPlusInput *input);
+void dftbp_get_input_from_file(DftbPlus *instance, const char *filename, DftbPlusInput *input);
 
 
 /**
@@ -182,7 +196,7 @@ extern "C" void dftbp_get_input_from_file(DftbPlus *instance, const char *filena
  * \param[inout] input The tree containing the DFTB+ input. On return, it contains the tree
  *     extended by all the default options set by the parser.
  */
-extern "C" void dftbp_process_input(DftbPlus *instance, DftbPlusInput *input);
+void dftbp_process_input(DftbPlus *instance, DftbPlusInput *input);
 
 
 /**
@@ -199,7 +213,7 @@ extern "C" void dftbp_process_input(DftbPlus *instance, DftbPlusInput *input);
  *     Hartree/Bohr. This parameter is optional, you can pass NULL if you did not ask DFTB+ to
  *     calculate forces.
  */
-extern "C" void dftbp_set_external_potential(DftbPlus *instance, const double *extpot,
+void dftbp_set_external_potential(DftbPlus *instance, const double *extpot,
                                   const double *extpotgrad);
 
 
@@ -219,7 +233,7 @@ extern "C" void dftbp_set_external_potential(DftbPlus *instance, const double *e
  * \param[in] extpotgrad Function pointer to the call-back function which DFTB+ should call,
  *     whenever the gradient of the population dependant external potential should be calculated.
  */
-extern "C" void dftbp_register_ext_pot_generator(DftbPlus *instance, const void *refptr, ExtPotFunc extpot,
+void dftbp_register_ext_pot_generator(DftbPlus *instance, const void *refptr, ExtPotFunc extpot,
                                       ExtPotGradFunc extpotgrad);
 
 
@@ -230,7 +244,7 @@ extern "C" void dftbp_register_ext_pot_generator(DftbPlus *instance, const void 
  *
  * \param[in] coords Coordinates of the atoms. Shape: [natom, 3]. Unit: Bohr.
  */
-extern "C" void dftbp_set_coords(DftbPlus *instance, const double *coords);
+void dftbp_set_coords(DftbPlus *instance, const double *coords);
 
 
 /**
@@ -242,9 +256,23 @@ extern "C" void dftbp_set_coords(DftbPlus *instance, const double *coords);
  *
  * \param[in] latvecs Lattice vectors Shape: [3, 3]. Unit: Bohr.
  */
-extern "C" void dftbp_set_coords_and_lattice_vecs(DftbPlus *instance, const double *coords,
+void dftbp_set_coords_and_lattice_vecs(DftbPlus *instance, const double *coords,
                                        const double *latvecs);
 
+
+/**
+ * Sets actual atom coordinates and lattice vectors.
+ *
+ * \param[inout] instance Handler of the DFTB+ instance.
+ *
+ * \param[in] coords Coordinates of the atoms in atomic units. Shape: [natom, 3]. Unit: Bohr.
+ *
+ * \param[in] latvecs Lattice vectors Shape: [3, 3]. Unit: Bohr.
+ *
+ * \param[in] origin Coordinate origin Shape: [3]. Unit: Bohr.
+ */
+void dftbp_set_coords_lattice_origin(DftbPlus *instance, const double *coords,
+                                       const double *latvecs, const double *origin);
 
 /**
  * Queries the nr. of atoms in the system.
@@ -253,7 +281,7 @@ extern "C" void dftbp_set_coords_and_lattice_vecs(DftbPlus *instance, const doub
  *
  * \return Nr. of atoms
  */
-extern "C" int dftbp_get_nr_atoms(DftbPlus *instance);
+int dftbp_get_nr_atoms(DftbPlus *instance);
 
 
 /**
@@ -263,7 +291,7 @@ extern "C" int dftbp_get_nr_atoms(DftbPlus *instance);
  *
  * \param[out] mermin_energy  Mermin free energy of the current geometry. Unit: Bohr.
  */
-extern "C" void dftbp_get_energy(DftbPlus *instance, double *mermin_energy);
+void dftbp_get_energy(DftbPlus *instance, double *mermin_energy);
 
 
 /**
@@ -273,7 +301,17 @@ extern "C" void dftbp_get_energy(DftbPlus *instance, double *mermin_energy);
  *
  * \param[out] gradients Gradients (not forces!) on each atom. Shape [natom, 3]. Unit: Hartree/Bohr.
  */
-extern "C" void dftbp_get_gradients(DftbPlus *instance, double *gradients);
+void dftbp_get_gradients(DftbPlus *instance, double *gradients);
+
+
+/**
+ * Queries the stress tensor of the current periodic box
+ *
+ * \param[inout] instance Handler of the DFTB+ instance.
+ *
+ * \param[out] stresstensor Stress Tensor for the periodic box. Shape [3, 3]. Unit: Pascals.
+ */
+void dftbp_get_stress_tensor(DftbPlus *instance, double *stresstensor);
 
 
 /**
@@ -284,7 +322,9 @@ extern "C" void dftbp_get_gradients(DftbPlus *instance, double *gradients);
  * \param[out] charges Net charges on each atom.  Shape [natom]. Sign convention: Electron has
  *     negative charge, so negative values indicate electron excess.
  */
-extern "C" void dftbp_get_gross_charges(DftbPlus *instance, double *charges);
+void dftbp_get_gross_charges(DftbPlus *instance, double *charges);
+
+}
 
 #endif
 
