@@ -207,8 +207,27 @@ void init_dftbplus(QMMM_QMrec&       qm,
 {
     /* perhaps check the geometry first, to see which elements we have? */
 
-    static DftbPlus calculator;
-    DftbPlusInput   input;
+    // variables
+    int nAtom;
+    int nSpecies;
+    char ptrElement[20][3]; // element names may have up to 2 characters (+1 null termination)
+    int *ptrSpecies;
+    int *atomicNumber;
+    int atomicNumberBySpecies[20];
+    char chemSymbol[55][3] = { "XX",
+          "H",                                      "He",
+          "Li", "Be", "B",  "C",  "N",  "O",  "F",  "Ne",
+          "Na", "Mg", "Al", "Si", "P",  "S",  "Cl", "Ar",
+          "K",  "Ca",
+          "Sc", "Ti", "V",  "Cr", "Mn", "Fe", "Co", "Ni", "Cu", "Zn",
+                      "Ga", "Ge", "As", "Se", "Br", "Kr",
+          "Rb", "Sr",
+          "Y ", "Zr", "Nb", "Mo", "Tc", "Ru", "Rh", "Pd", "Ag", "Cd",
+                      "In", "Sn", "Sb", "Te", "I",  "Xe" };
+
+    static DftbPlus  calculator;
+    DftbPlusInput    input;
+    DftbPlusAtomList atomList;
 
     /* This structure will be passed through DFTB+
      *   into the Gromacs calculator calcQMextPot
@@ -233,8 +252,57 @@ void init_dftbplus(QMMM_QMrec&       qm,
     dftbp_get_input_from_file(&calculator, "dftb_in.hsd", &input);
     printf("DFTB+ input has been read!\n");
 
+    /* Pass the list of QM atoms to DFTB+ */
+    nAtom = qm.nrQMatoms_get();
+    snew(ptrSpecies, nAtom);
+    snew(atomicNumber, nAtom);
+    // read the atomic numbers of QM atoms, and set up the lists
+    nSpecies = 0;
+    for (int i=0; i<nAtom; i++)
+    {
+        atomicNumber[i] = qm.atomicnumberQM_get(i);
+        // is this a new chemical element?
+        bool newElement = true;
+        for (int j=0; j<i; j++)
+            if (atomicNumber[i] == atomicNumber[j])
+                newElement = false;
+        // if it is a new element, introduce it in the list
+        if (newElement)
+        {
+            atomicNumberBySpecies[nSpecies] = atomicNumber[i];
+            nSpecies++;
+            ptrSpecies[i] = nSpecies; // this numbering will start at 1 (and not 0)
+        }
+        else
+        {
+            for (int k=0; k<nSpecies; k++)
+                if (atomicNumber[i] == atomicNumberBySpecies[k])
+                    ptrSpecies[i] = k+1; // because numbering starts at 1
+        }
+    }
+    // assemble the list of chemical species
+    for (int k=0; k<nSpecies; k++)
+        strcpy(ptrElement[k], chemSymbol[atomicNumberBySpecies[k]]);
+    // check what is being passed to DFTB+
+    printf("This is being passed from Gromacs to DFTB+:\n");
+    printf("No. of QM atoms = %d\n", nAtom);
+    printf("No. of chem. species = %d:", nSpecies);
+    for (int k=0; k<nSpecies; k++)
+        printf(" %d=%s", k+1, ptrElement[k]);
+    printf("\n");
+    printf("Species by atom:\n");
+    for (int i=0; i<nAtom; i++)
+        printf("Atom %d is species %d\n", i+1, ptrSpecies[i]);
+
+    // finally, call the DFTB+ routine
+    dftbp_get_atom_list(&atomList, &nAtom, &nSpecies, (char *) ptrElement, ptrSpecies);
+    printf("DFTB+ has obtained the list of QM atoms!\n");
+
+    sfree(atomicNumber);
+    sfree(ptrSpecies);
+
     /* Set up the calculator by processing the input tree */
-    dftbp_process_input(&calculator, &input);
+    dftbp_process_input(&calculator, &input, &atomList);
     printf("DFTB+ input has been processed!\n");
 
     qm.dpcalc = &calculator;

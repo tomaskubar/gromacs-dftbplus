@@ -83,6 +83,16 @@ extern "C" void calcqmextpotgrad(void *refptr, gmx_unused double *q, double *ext
 extern "C" {
 
 /**
+ * Type containing the list of atoms and species to be passed to DFTB+.
+ *
+ * Used by DFTB+ as an opaque handler. Do not manipulate the content of this type directly!
+ */
+typedef struct DftbPlusAtomList {
+  void *pDftbPlusAtomList;
+} DftbPlusAtomList;
+
+
+/**
  * Type containing the DFTB+ input tree.
  *
  * Used by DFTB+ as an opaque handler. Do not manipulate the content of this type directly!
@@ -177,13 +187,19 @@ void dftbp_final(DftbPlus *instance);
 
 
 /**
+ * Obtain no. of atoms and list of species from the MM program
+ */
+void dftbp_get_atom_list(DftbPlusAtomList *atomListHandler, int *nAtomC, int *nSpeciesC, char *elementC, int *species);
+
+
+/**
  * Fills up a DFTB+ input tree from a HSD input file.
  *
  * \param[inout] instance Handler of the DFTB+ instance.
  *
  * \param[in] filename Name of the file containing the HSD-input for DFTB+.
  *
- * \param[out] input Handler containing the input tree parsed from the input file.
+ * \param[inout] input Handler containing the input tree parsed from the input file.
  */
 void dftbp_get_input_from_file(DftbPlus *instance, const char *filename, DftbPlusInput *input);
 
@@ -193,10 +209,12 @@ void dftbp_get_input_from_file(DftbPlus *instance, const char *filename, DftbPlu
  *
  * \param[inout] instance Handler of the DFTB+ instance.
  *
+ * \param[inout] atomListHandler The structure containing the list of atoms and species.
+ *
  * \param[inout] input The tree containing the DFTB+ input. On return, it contains the tree
  *     extended by all the default options set by the parser.
  */
-void dftbp_process_input(DftbPlus *instance, DftbPlusInput *input);
+void dftbp_process_input(DftbPlus *instance, DftbPlusInput *input, DftbPlusAtomList *atomListHandler);
 
 
 /**
