@@ -46,11 +46,13 @@
 
 #include "gromacs/gpu_utils/devicebuffer_datatype.h"
 #include "gromacs/mdtypes/group.h"
+#include "gromacs/timing/wallcycle.h"
 #include "gromacs/utility/arrayref.h"
 #include "gromacs/utility/classhelpers.h"
 
+class DeviceContext;
+class DeviceStream;
 class GpuEventSynchronizer;
-
 struct gmx_mtop_t;
 enum class PbcType : int;
 class InteractionDefinitions;
@@ -67,23 +69,28 @@ class UpdateConstrainGpu
 public:
     /*! \brief Create Update-Constrain object.
      *
-     * The constructor is given a non-nullptr \p commandStream, in which all the update and constrain
-     * routines are executed. \p xUpdatedOnDevice should mark the completion of all kernels that modify
-     * coordinates. The event is maintained outside this class and also passed to all (if any) consumers
-     * of the updated coordinates. The \p xUpdatedOnDevice also can not be a nullptr because the
-     * markEvent(...) method is called unconditionally.
+     * The constructor is given a non-nullptr \p deviceStream, in which all the update and constrain
+     * routines are executed. \p xUpdatedOnDevice should mark the completion of all kernels that
+     * modify coordinates. The event is maintained outside this class and also passed to all (if
+     * any) consumers of the updated coordinates. The \p xUpdatedOnDevice also can not be a nullptr
+     * because the markEvent(...) method is called unconditionally.
      *
      * \param[in] ir                Input record data: LINCS takes number of iterations and order of
      *                              projection from it.
      * \param[in] mtop              Topology of the system: SETTLE gets the masses for O and H atoms
      *                              and target O-H and H-H distances from this object.
-     * \param[in] commandStream     GPU stream to use. Can be nullptr.
-     * \param[in] xUpdatedOnDevice  The event synchronizer to use to mark that update is done on the GPU.
+     * \param[in] deviceContext     GPU device context.
+     * \param[in] deviceStream      GPU stream to use.
+     * \param[in] xUpdatedOnDevice  The event synchronizer to use to mark that update is done
+     *                              on the GPU.
+     * \param[in] wcycle            The wallclock counter
      */
     UpdateConstrainGpu(const t_inputrec&     ir,
                        const gmx_mtop_t&     mtop,
-                       const void*           commandStream,
-                       GpuEventSynchronizer* xUpdatedOnDevice);
+                       const DeviceContext&  deviceContext,
+                       const DeviceStream&   deviceStream,
+                       GpuEventSynchronizer* xUpdatedOnDevice,
+                       gmx_wallcycle*        wcycle);
 
     ~UpdateConstrainGpu();
 
@@ -123,6 +130,14 @@ public:
      * \param[in] scalingMatrix Coordinates scaling matrix.
      */
     void scaleCoordinates(const matrix scalingMatrix);
+
+    /*! \brief Scale velocities on the GPU for the pressure coupling.
+     *
+     * After pressure coupling step, the box size may change. In the C-Rescale algorithm, velocities should be scaled.
+     *
+     * \param[in] scalingMatrix Velocities scaling matrix.
+     */
+    void scaleVelocities(const matrix scalingMatrix);
 
     /*! \brief Set the pointers and update data-structures (e.g. after NB search step).
      *

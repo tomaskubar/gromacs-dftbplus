@@ -82,6 +82,7 @@
 #include "gromacs/fileio/pdbio.h"
 #include "gromacs/gmxlib/network.h"
 #include "gromacs/gmxlib/nrnb.h"
+#include "gromacs/gpu_utils/device_stream_manager.h"
 #include "gromacs/gpu_utils/hostallocator.h"
 #include "gromacs/math/gmxcomplex.h"
 #include "gromacs/math/units.h"
@@ -105,7 +106,7 @@
 
 /*! \brief environment variable to enable GPU P2P communication */
 static const bool c_enableGpuPmePpComms =
-        (getenv("GMX_GPU_PME_PP_COMMS") != nullptr) && GMX_THREAD_MPI && (GMX_GPU == GMX_GPU_CUDA);
+        GMX_GPU_CUDA && GMX_THREAD_MPI && (getenv("GMX_GPU_PME_PP_COMMS") != nullptr);
 
 /*! \brief Master PP-PME communication data structure */
 struct gmx_pme_pp
@@ -417,7 +418,7 @@ static int gmx_pme_recv_coeffs_coords(struct gmx_pme_t*            pme,
         {
             if (atomSetChanged)
             {
-                gmx_pme_reinit_atoms(pme, nat, pme_pp->chargeA.data());
+                gmx_pme_reinit_atoms(pme, nat, pme_pp->chargeA.data(), pme_pp->chargeB.data());
                 if (useGpuForPme)
                 {
                     stateGpu->reinit(nat, nat);
@@ -587,7 +588,7 @@ static void gmx_pme_send_force_vir_ener(const gmx_pme_t& pme,
     /* Wait for the forces to arrive */
     MPI_Waitall(messages, pme_pp->req.data(), pme_pp->stat.data());
 #else
-    gmx_call("MPI not enabled");
+    GMX_RELEASE_ASSERT(false, "Invalid call to gmx_pme_send_force_vir_ener");
     GMX_UNUSED_VALUE(pme);
     GMX_UNUSED_VALUE(pme_pp);
     GMX_UNUSED_VALUE(output);
@@ -597,13 +598,14 @@ static void gmx_pme_send_force_vir_ener(const gmx_pme_t& pme,
 #endif
 }
 
-int gmx_pmeonly(struct gmx_pme_t*         pme,
-                const t_commrec*          cr,
-                t_nrnb*                   mynrnb,
-                gmx_wallcycle*            wcycle,
-                gmx_walltime_accounting_t walltime_accounting,
-                t_inputrec*               ir,
-                PmeRunMode                runMode)
+int gmx_pmeonly(struct gmx_pme_t*               pme,
+                const t_commrec*                cr,
+                t_nrnb*                         mynrnb,
+                gmx_wallcycle*                  wcycle,
+                gmx_walltime_accounting_t       walltime_accounting,
+                t_inputrec*                     ir,
+                PmeRunMode                      runMode,
+                const gmx::DeviceStreamManager* deviceStreamManager)
 {
     int     ret;
     int     natoms = 0;
@@ -628,23 +630,27 @@ int gmx_pmeonly(struct gmx_pme_t*         pme,
     const bool useGpuForPme = (runMode == PmeRunMode::GPU) || (runMode == PmeRunMode::Mixed);
     if (useGpuForPme)
     {
-        const void* commandStream = pme_gpu_get_device_stream(pme);
-        const void* deviceContext = pme_gpu_get_device_context(pme);
-
+        GMX_RELEASE_ASSERT(
+                deviceStreamManager != nullptr,
+                "Device stream manager can not be nullptr when using GPU in PME-only rank.");
+        GMX_RELEASE_ASSERT(deviceStreamManager->streamIsValid(gmx::DeviceStreamType::Pme),
+                           "Device stream can not be nullptr when using GPU in PME-only rank");
         changePinningPolicy(&pme_pp->chargeA, pme_get_pinning_policy());
         changePinningPolicy(&pme_pp->x, pme_get_pinning_policy());
         if (c_enableGpuPmePpComms)
         {
             pme_pp->pmeCoordinateReceiverGpu = std::make_unique<gmx::PmeCoordinateReceiverGpu>(
-                    commandStream, pme_pp->mpi_comm_mysim, pme_pp->ppRanks);
+                    deviceStreamManager->stream(gmx::DeviceStreamType::Pme), pme_pp->mpi_comm_mysim,
+                    pme_pp->ppRanks);
             pme_pp->pmeForceSenderGpu = std::make_unique<gmx::PmeForceSenderGpu>(
-                    commandStream, pme_pp->mpi_comm_mysim, pme_pp->ppRanks);
+                    deviceStreamManager->stream(gmx::DeviceStreamType::Pme), pme_pp->mpi_comm_mysim,
+                    pme_pp->ppRanks);
         }
         // TODO: Special PME-only constructor is used here. There is no mechanism to prevent from using the other constructor here.
         //       This should be made safer.
         stateGpu = std::make_unique<gmx::StatePropagatorDataGpu>(
-                commandStream, deviceContext, GpuApiCallBehavior::Async,
-                pme_gpu_get_padding_size(pme), wcycle);
+                &deviceStreamManager->stream(gmx::DeviceStreamType::Pme), deviceStreamManager->context(),
+                GpuApiCallBehavior::Async, pme_gpu_get_block_size(pme), wcycle);
     }
 
     clear_nrnb(mynrnb);
@@ -701,7 +707,7 @@ int gmx_pmeonly(struct gmx_pme_t*         pme,
         stepWork.computeVirial = computeEnergyAndVirial;
         stepWork.computeEnergy = computeEnergyAndVirial;
         stepWork.computeForces = true;
-        PmeOutput output;
+        PmeOutput output       = { {}, false, 0, { { 0 } }, 0, 0, { { 0 } }, 0 };
         if (useGpuForPme)
         {
             stepWork.haveDynamicBox      = false;
@@ -717,10 +723,10 @@ int gmx_pmeonly(struct gmx_pme_t*         pme,
             // TODO: with pme on GPU the receive should make a list of synchronizers and pass it here #3157
             auto xReadyOnDevice = nullptr;
 
-            pme_gpu_launch_spread(pme, xReadyOnDevice, wcycle);
+            pme_gpu_launch_spread(pme, xReadyOnDevice, wcycle, lambda_q);
             pme_gpu_launch_complex_transforms(pme, wcycle, stepWork);
-            pme_gpu_launch_gather(pme, wcycle);
-            output = pme_gpu_wait_finish_task(pme, computeEnergyAndVirial, wcycle);
+            pme_gpu_launch_gather(pme, wcycle, lambda_q);
+            output = pme_gpu_wait_finish_task(pme, computeEnergyAndVirial, lambda_q, wcycle);
             pme_gpu_reinit_computation(pme, wcycle);
         }
         else

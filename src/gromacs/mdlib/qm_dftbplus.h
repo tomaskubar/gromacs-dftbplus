@@ -44,8 +44,8 @@ init_dftbplus(QMMM_QMrec&       qm,
               QMMM_rec*         qr,
            // const t_forcerec* fr,
               const t_inputrec* ir,
-              const t_commrec*  cr,
-              gmx_wallcycle_t   wcycle);
+              const t_commrec*  cr);
+           // gmx_wallcycle_t   wcycle);
 
 real
 call_dftbplus(QMMM_rec* qr,   const t_commrec *cr,
@@ -61,8 +61,8 @@ void initialize_context(Context*          cont,
                         QMMM_rec*         qr_in,
                      // const t_forcerec* fr_in,
                         const t_inputrec* ir_in,
-                        const t_commrec*  cr_in,
-                        gmx_wallcycle_t   wcycle_in);
+                        const t_commrec*  cr_in);
+                     // gmx_wallcycle_t   wcycle_in);
 
 void calcQMextPotPME(Context *cont, double *q, double *extpot);
 

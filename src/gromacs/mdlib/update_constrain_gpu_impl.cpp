@@ -45,8 +45,9 @@
 #include "config.h"
 
 #include "gromacs/mdlib/update_constrain_gpu.h"
+#include "gromacs/utility/gmxassert.h"
 
-#if GMX_GPU != GMX_GPU_CUDA
+#if !GMX_GPU_CUDA
 
 namespace gmx
 {
@@ -57,11 +58,13 @@ class UpdateConstrainGpu::Impl
 
 UpdateConstrainGpu::UpdateConstrainGpu(const t_inputrec& /* ir   */,
                                        const gmx_mtop_t& /* mtop */,
-                                       const void* /* commandStream */,
-                                       GpuEventSynchronizer* /* xUpdatedOnDevice */) :
+                                       const DeviceContext& /* deviceContext */,
+                                       const DeviceStream& /* deviceStream */,
+                                       GpuEventSynchronizer* /* xUpdatedOnDevice */,
+                                       gmx_wallcycle* /*wcycle*/) :
     impl_(nullptr)
 {
-    GMX_ASSERT(false,
+    GMX_ASSERT(!impl_,
                "A CPU stub for UpdateConstrain was called instead of the correct implementation.");
 }
 
@@ -78,13 +81,19 @@ void UpdateConstrainGpu::integrate(GpuEventSynchronizer* /* fReadyOnDevice */,
                                    const float /* dtPressureCouple */,
                                    const matrix /* prVelocityScalingMatrix*/)
 {
-    GMX_ASSERT(false,
+    GMX_ASSERT(!impl_,
                "A CPU stub for UpdateConstrain was called instead of the correct implementation.");
 }
 
 void UpdateConstrainGpu::scaleCoordinates(const matrix /* scalingMatrix */)
 {
-    GMX_ASSERT(false,
+    GMX_ASSERT(!impl_,
+               "A CPU stub for UpdateConstrain was called instead of the correct implementation.");
+}
+
+void UpdateConstrainGpu::scaleVelocities(const matrix /* scalingMatrix */)
+{
+    GMX_ASSERT(!impl_,
                "A CPU stub for UpdateConstrain was called instead of the correct implementation.");
 }
 
@@ -95,19 +104,19 @@ void UpdateConstrainGpu::set(DeviceBuffer<RVec> /* d_x */,
                              const t_mdatoms& /* md */,
                              const int /* numTempScaleValues */)
 {
-    GMX_ASSERT(false,
+    GMX_ASSERT(!impl_,
                "A CPU stub for UpdateConstrain was called instead of the correct implementation.");
 }
 
 void UpdateConstrainGpu::setPbc(const PbcType /* pbcType */, const matrix /* box */)
 {
-    GMX_ASSERT(false,
+    GMX_ASSERT(!impl_,
                "A CPU stub for UpdateConstrain was called instead of the correct implementation.");
 }
 
 GpuEventSynchronizer* UpdateConstrainGpu::getCoordinatesReadySync()
 {
-    GMX_ASSERT(false,
+    GMX_ASSERT(!impl_,
                "A CPU stub for UpdateConstrain was called instead of the correct implementation.");
     return nullptr;
 }
@@ -119,4 +128,4 @@ bool UpdateConstrainGpu::isNumCoupledConstraintsSupported(const gmx_mtop_t& /* m
 
 } // namespace gmx
 
-#endif /* GMX_GPU != GMX_GPU_CUDA */
+#endif /* !GMX_GPU_CUDA */

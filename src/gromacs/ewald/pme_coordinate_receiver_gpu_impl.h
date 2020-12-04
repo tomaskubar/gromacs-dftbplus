@@ -43,6 +43,8 @@
 #ifndef GMX_PMECOORDINATERECEIVERGPU_IMPL_H
 #define GMX_PMECOORDINATERECEIVERGPU_IMPL_H
 
+#include <vector>
+
 #include "gromacs/ewald/pme_coordinate_receiver_gpu.h"
 #include "gromacs/utility/arrayref.h"
 
@@ -50,7 +52,6 @@ class GpuEventSynchronizer;
 
 namespace gmx
 {
-
 /*! \internal \brief Class with interfaces and data for CUDA version of PME coordinate receiving functionality */
 
 class PmeCoordinateReceiverGpu::Impl
@@ -62,7 +63,7 @@ public:
      * \param[in] comm            Communicator used for simulation
      * \param[in] ppRanks         List of PP ranks
      */
-    Impl(const void* pmeStream, MPI_Comm comm, gmx::ArrayRef<PpRanks> ppRanks);
+    Impl(const DeviceStream& pmeStream, MPI_Comm comm, gmx::ArrayRef<PpRanks> ppRanks);
     ~Impl();
 
     /*! \brief
@@ -84,7 +85,7 @@ public:
 
 private:
     //! CUDA stream for PME operations
-    cudaStream_t pmeStream_ = nullptr;
+    const DeviceStream& pmeStream_;
     //! communicator for simulation
     MPI_Comm comm_;
     //! list of PP ranks

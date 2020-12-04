@@ -60,6 +60,7 @@
 #         GROMACS     2019   4
 #         GROMACS     2020   5
 #         GROMACS     2021   6
+#         GROMACS     2022   7
 #   LIBRARY_SOVERSION_MINOR so minor version for the built libraries.
 #       Should be increased for each release that changes only the implementation.
 #       In GROMACS, the typical policy is to increase it for each patch version
@@ -197,7 +198,7 @@
 
 # The GROMACS convention is that these are the version number of the next
 # release that is going to be made from this branch.
-set(GMX_VERSION_MAJOR 2021)
+set(GMX_VERSION_MAJOR 2022)
 set(GMX_VERSION_PATCH 0)
 # The suffix, on the other hand, is used mainly for betas and release
 # candidates, where it signifies the most recent such release from
@@ -214,7 +215,7 @@ set(GMX_VERSION_SUFFIX "")
 # here. The important thing is to minimize the chance of third-party
 # code being able to dynamically link with a version of libgromacs
 # that might not work.
-set(LIBRARY_SOVERSION_MAJOR 6)
+set(LIBRARY_SOVERSION_MAJOR 7)
 set(LIBRARY_SOVERSION_MINOR 0)
 set(LIBRARY_VERSION ${LIBRARY_SOVERSION_MAJOR}.${LIBRARY_SOVERSION_MINOR}.0)
 
@@ -256,13 +257,13 @@ if (NOT SOURCE_IS_SOURCE_DISTRIBUTION AND
 endif()
 
 set(REGRESSIONTEST_VERSION "${GMX_VERSION_STRING}")
-set(REGRESSIONTEST_BRANCH "refs/heads/master")
+set(REGRESSIONTEST_BRANCH "master")
 # Run the regressiontests packaging job with the correct pakage
 # version string, and the release box checked, in order to have it
 # build the regressiontests tarball with all the right naming. The
 # naming affects the md5sum that has to go here, and if it isn't right
 # release workflow will report a failure.
-set(REGRESSIONTEST_MD5SUM "b032e4517195b1f8cd9db87cee1b30df" CACHE INTERNAL "MD5 sum of the regressiontests tarball for this GROMACS version")
+set(REGRESSIONTEST_MD5SUM "0a391e1a8fefd59859704f58626767e6" CACHE INTERNAL "MD5 sum of the regressiontests tarball for this GROMACS version")
 
 math(EXPR GMX_VERSION_NUMERIC
      "${GMX_VERSION_MAJOR}*10000 + ${GMX_VERSION_PATCH}")
@@ -333,13 +334,10 @@ set(VERSION_INFO_DEPS         ${VERSION_INFO_CMAKE_FILE})
 set(VERSION_INFO_CMAKEIN_FILE     ${CMAKE_CURRENT_LIST_DIR}/VersionInfo.cmake.cmakein)
 set(VERSION_INFO_CONFIGURE_SCRIPT ${CMAKE_CURRENT_LIST_DIR}/gmxConfigureVersionInfo.cmake)
 # A set of directories to scan for calculating the hash of source files.
-set(SET_OF_DIRECTORIES_TO_CHECKSUM  "${PROJECT_SOURCE_DIR}/src")
-list(APPEND SET_OF_DIRECTORIES_TO_CHECKSUM "${PROJECT_SOURCE_DIR}/python_packaging")
+set(SET_OF_DIRECTORIES_TO_CHECKSUM  "src")
+list(APPEND SET_OF_DIRECTORIES_TO_CHECKSUM "python_packaging")
 # Due to the limitations for passing a list as arguments, we make the directories a string here
 string(REPLACE ";" ":" DIRECTORIES_TO_CHECKSUM_STRING "${SET_OF_DIRECTORIES_TO_CHECKSUM}")
-# Try to find python for the checksumming script
-set(PythonInterp_FIND_QUIETLY ON)
-find_package(PythonInterp 3.5)
 
 # Rules to create the VersionInfo.cmake file.
 # For git info, the sequence is:
@@ -414,7 +412,7 @@ else()
             -D VERSION_CMAKEIN=${VERSION_INFO_CMAKEIN_FILE_PARTIAL}
             -D VERSION_OUT=${VERSION_INFO_CMAKE_FILE}
             -D VERSION_STRING_OF_FORK=${GMX_VERSION_STRING_OF_FORK}
-            -P ${CMAKE_CURRENT_LIST_DIR}/gmxGenerateVersionInfoRelease.cmake
+            -P ${CMAKE_CURRENT_LIST_DIR}/gmxGenerateVersionInfoWithoutGit.cmake
         WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
         COMMENT "Generating release version information")
     list(APPEND VERSION_INFO_DEPS release-version-info)
@@ -438,11 +436,16 @@ set(CHECKSUM_FILE "${PROJECT_SOURCE_DIR}/src/reference_checksum")
 # Note: The RUN_ALWAYS here is to regenerate the hash file only, it does not
 # mean that the target is run in all builds
 if (PYTHONINTERP_FOUND)
+    # We need the full path to the directories after passing it through
+    set(FULL_PATH_DIRECTORIES "")
+    foreach(DIR ${SET_OF_DIRECTORIES_TO_CHECKSUM})
+        list(APPEND FULL_PATH_DIRECTORIES "${PROJECT_SOURCE_DIR}/${DIR}")
+    endforeach()
     gmx_add_custom_output_target(reference_checksum RUN_ALWAYS
         OUTPUT ${CHECKSUM_FILE}
         COMMAND ${PYTHON_EXECUTABLE}
             ${PROJECT_SOURCE_DIR}/admin/createFileHash.py
-            -s ${SET_OF_DIRECTORIES_TO_CHECKSUM}
+            -s ${FULL_PATH_DIRECTORIES}
             -o ${CHECKSUM_FILE}
         WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
         COMMENT "Generating reference checksum of source files")

@@ -47,11 +47,11 @@
 
 #include <string>
 
-#if GMX_GPU == GMX_GPU_CUDA
+#if GMX_GPU_CUDA
 #    include "cuda/nbnxm_cuda_types.h"
 #endif
 
-#if GMX_GPU == GMX_GPU_OPENCL
+#if GMX_GPU_OPENCL
 #    include "opencl/nbnxm_ocl_types.h"
 #endif
 
@@ -357,7 +357,9 @@ static inline void gpu_accumulate_timings(gmx_wallclock_gpu_nbnxn_t* timings,
  *
  * See documentation in nbnxm_gpu.h for details.
  *
- * \todo Move into shared source file with gmx_compile_cpp_as_cuda
+ * \todo Move into shared source file, perhaps including
+ * cuda_runtime.h if needed for any remaining CUDA-specific
+ * objects.
  */
 //NOLINTNEXTLINE(misc-definitions-in-headers)
 bool gpu_try_finish_task(NbnxmGpu*                nb,
@@ -399,7 +401,7 @@ bool gpu_try_finish_task(NbnxmGpu*                nb,
             // GpuTaskCompletion::Wait mode the timing is expected to be done in the caller.
             wallcycle_start_nocount(wcycle, ewcWAIT_GPU_NB_L);
 
-            if (!haveStreamTasksCompleted(nb->stream[iLocality]))
+            if (!haveStreamTasksCompleted(*nb->deviceStreams[iLocality]))
             {
                 wallcycle_stop(wcycle, ewcWAIT_GPU_NB_L);
 
@@ -412,7 +414,7 @@ bool gpu_try_finish_task(NbnxmGpu*                nb,
         }
         else if (haveResultToWaitFor)
         {
-            gpuStreamSynchronize(nb->stream[iLocality]);
+            nb->deviceStreams[iLocality]->synchronize();
         }
 
         // TODO: this needs to be moved later because conditional wait could brake timing

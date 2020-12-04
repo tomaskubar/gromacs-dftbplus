@@ -50,7 +50,7 @@
 
 #include <sys/types.h>
 
-#include "gromacs/awh/read_params.h"
+#include "gromacs/applied_forces/awh/read_params.h"
 #include "gromacs/commandline/pargs.h"
 #include "gromacs/ewald/ewald_utils.h"
 #include "gromacs/ewald/pme.h"
@@ -80,7 +80,6 @@
 #include "gromacs/mdlib/compute_io.h"
 #include "gromacs/mdlib/constr.h"
 #include "gromacs/mdlib/perf_est.h"
-#include "gromacs/mdlib/qmmm.h"
 #include "gromacs/mdlib/vsite.h"
 #include "gromacs/mdrun/mdmodules.h"
 #include "gromacs/mdtypes/inputrec.h"
@@ -648,7 +647,7 @@ static void new_status(const char*                           topfile,
     /* Copy structures from msys to sys */
     molinfo2mtop(*mi, sys);
 
-    gmx_mtop_finalize(sys);
+    sys->finalize();
 
     /* Discourage using the, previously common, setup of applying constraints
      * to all bonds with force fields that have been parametrized with H-bond
@@ -1132,7 +1131,7 @@ static int nrdf_internal(const t_atoms* atoms)
     }
     switch (nmass)
     {
-        case 0: nrdf = 0; break;
+        case 0: // Fall through intended
         case 1: nrdf = 0; break;
         case 2: nrdf = 1; break;
         default: nrdf = nmass * 3 - 6; break;
@@ -1624,7 +1623,7 @@ static void set_verlet_buffer(const gmx_mtop_t*    mtop,
     ir->rlist = calcVerletBufferSize(*mtop, det(box), *ir, ir->nstlist, ir->nstlist - 1,
                                      buffer_temp, listSetup4x4);
 
-    const int n_nonlin_vsite = countNonlinearVsites(*mtop);
+    const int n_nonlin_vsite = gmx::countNonlinearVsites(*mtop);
     if (n_nonlin_vsite > 0)
     {
         std::string warningMessage = gmx::formatString(
@@ -1763,7 +1762,6 @@ int gmx_grompp(int argc, char* argv[])
         "interpret the output messages before attempting to bypass them with",
         "this option."
     };
-    t_gromppopts*                        opts;
     std::vector<MoleculeInformation>     mi;
     std::unique_ptr<MoleculeInformation> intermolecular_interactions;
     int                                  nvsite, comb;
@@ -1771,7 +1769,6 @@ int gmx_grompp(int argc, char* argv[])
     double                               reppow;
     const char*                          mdparin;
     bool                                 bNeedVel, bGenVel;
-    gmx_bool                             have_atomnumber;
     gmx_output_env_t*                    oenv;
     gmx_bool                             bVerbose = FALSE;
     warninp*                             wi;
@@ -1789,7 +1786,7 @@ int gmx_grompp(int argc, char* argv[])
                        { efEDR, "-e", nullptr, ffOPTRD },
                        /* This group is needed by the VMD viewer as the start configuration for IMD sessions: */
                        { efGRO, "-imd", "imdgroup", ffOPTWR },
-                       { efTRN, "-ref", "rotref", ffOPTRW } };
+                       { efTRN, "-ref", "rotref", ffOPTRW | ffALLOW_MISSING } };
 #define NFILE asize(fnm)
 
     /* Command line options */
@@ -1834,7 +1831,8 @@ int gmx_grompp(int argc, char* argv[])
     gmx::MDModules mdModules;
     t_inputrec     irInstance;
     t_inputrec*    ir = &irInstance;
-    snew(opts, 1);
+    t_gromppopts   optsInstance;
+    t_gromppopts*  opts = &optsInstance;
     snew(opts->include, STRLEN);
     snew(opts->define, STRLEN);
 
@@ -1957,25 +1955,6 @@ int gmx_grompp(int argc, char* argv[])
     if (EI_SD(ir->eI) && ir->etc != etcNO)
     {
         warning_note(wi, "Temperature coupling is ignored with SD integrators.");
-    }
-
-    /* If we are doing QM/MM, check that we got the atom numbers */
-    have_atomnumber = TRUE;
-    for (gmx::index i = 0; i < gmx::ssize(atypes); i++)
-    {
-        have_atomnumber = have_atomnumber && (atypes.atomNumberFromAtomType(i) >= 0);
-    }
-    if (!have_atomnumber && ir->bQMMM)
-    {
-        warning_error(
-                wi,
-                "\n"
-                "It appears as if you are trying to run a QM/MM calculation, but the force\n"
-                "field you are using does not contain atom numbers fields. This is an\n"
-                "optional field (introduced in GROMACS 3.3) for general runs, but mandatory\n"
-                "for QM/MM. The good news is that it is easy to add - put the atom number as\n"
-                "an integer just before the mass column in ffXXXnb.itp.\n"
-                "NB: United atoms have the same atom numbers as normal ones.\n\n");
     }
 
     /* Check for errors in the input now, since they might cause problems
@@ -2227,20 +2206,9 @@ int gmx_grompp(int argc, char* argv[])
         pr_symtab(debug, 0, "After close", &sys.symtab);
     }
 
-    /* make exclusions between QM atoms and remove charges if needed */
-    if (ir->bQMMM)
-    {
-        generate_qmexcl(&sys, ir, wi, GmxQmmmMode::GMX_QMMM_ORIGINAL, logger);
-        if (ir->QMMMscheme != eQMMMschemeoniom)
-        {
-            std::vector<int> qmmmAtoms = qmmmAtomIndices(*ir, sys);
-            removeQmmmAtomCharges(&sys, qmmmAtoms);
-        }
-    }
-
     if (ir->eI == eiMimic)
     {
-        generate_qmexcl(&sys, ir, wi, GmxQmmmMode::GMX_QMMM_MIMIC, logger);
+        generate_qmexcl(&sys, ir, logger);
     }
 
     if (ftp2bSet(efTRN, NFILE, fnm))
@@ -2335,8 +2303,10 @@ int gmx_grompp(int argc, char* argv[])
         {
             copy_mat(ir->compress, compressibility);
         }
-        setStateDependentAwhParams(ir->awhParams, ir->pull, pull, state.box, ir->pbcType,
-                                   compressibility, &ir->opts, wi);
+        setStateDependentAwhParams(
+                ir->awhParams, *ir->pull, pull, state.box, ir->pbcType, compressibility, &ir->opts,
+                ir->efep != efepNO ? ir->fepvals->all_lambda[efptFEP][ir->fepvals->init_fep_state] : 0,
+                sys, wi);
     }
 
     if (ir->bPull)
@@ -2416,8 +2386,9 @@ int gmx_grompp(int argc, char* argv[])
     gmx::write_IMDgroup_to_file(ir->bIMD, ir, &state, &sys, NFILE, fnm);
 
     sfree(opts->define);
+    sfree(opts->wall_atomtype[0]);
+    sfree(opts->wall_atomtype[1]);
     sfree(opts->include);
-    sfree(opts);
     for (auto& mol : mi)
     {
         // Some of the contents of molinfo have been stolen, so

@@ -58,7 +58,7 @@
  * \param[in] names     The array
  * \return the correct string or "no name defined"
  */
-const char* enum_name(int index, int max_index, const char* names[]);
+const char* enum_name(int index, int max_index, const char* const names[]);
 
 //! Boolean strings no or yes
 extern const char* yesno_names[BOOL_NR + 1];
@@ -115,6 +115,7 @@ enum
     epcPARRINELLORAHMAN,
     epcISOTROPIC,
     epcMTTK,
+    epcCRESCALE,
     epcNR
 };
 //! String corresponding to pressure coupling algorithm
@@ -239,7 +240,7 @@ enum
     eelUSER,
     eelGB_NOTUSED,
     eelRF_NEC_UNSUPPORTED,
-    eelENCADSHIFT,
+    eelENCADSHIFT_NOTUSED,
     eelPMEUSER,
     eelPMESWITCH,
     eelPMEUSERSWITCH,
@@ -282,7 +283,7 @@ enum
     evdwSWITCH,
     evdwSHIFT,
     evdwUSER,
-    evdwENCADSHIFT,
+    evdwENCADSHIFT_UNUSED,
     evdwPME,
     evdwNR
 };
@@ -886,7 +887,6 @@ enum gmx_nblist_interaction_type
 };
 //! String corresponding to interactions in neighborlist code
 extern const char* gmx_nblist_interaction_names[GMX_NBLIST_INTERACTION_NR + 1];
-
 
 //! \brief QM/MM mode
 enum struct GmxQmmmMode

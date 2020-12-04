@@ -34,28 +34,35 @@
 # the research papers on the package. Check out http://www.gromacs.org.
 
 gmx_add_unit_test(UtilityUnitTests utility-test
-                  alignedallocator.cpp
-                  arrayref.cpp
-                  bitmask32.cpp bitmask64.cpp bitmask128.cpp
-                  cstringutil.cpp
-                  defaultinitializationallocator.cpp
-                  enumerationhelpers.cpp
-                  fixedcapacityvector.cpp
-                  inmemoryserializer.cpp
-                  keyvaluetreeserializer.cpp
-                  keyvaluetreetransform.cpp
-                  listoflists.cpp
-                  logger.cpp
-                  mdmodulenotification-impl.cpp
-                  mutex.cpp
-                  path.cpp
-                  physicalnodecommunicator.cpp
-                  stringutil.cpp
-                  textreader.cpp
-                  textwriter.cpp
-                  typetraits.cpp
-                  )
+    CPP_SOURCE_FILES
+        alignedallocator.cpp
+        arrayref.cpp
+        bitmask32.cpp bitmask64.cpp bitmask128.cpp
+        cstringutil.cpp
+        defaultinitializationallocator.cpp
+        enumerationhelpers.cpp
+        fixedcapacityvector.cpp
+        inmemoryserializer.cpp
+        keyvaluetreeserializer.cpp
+        keyvaluetreetransform.cpp
+        listoflists.cpp
+        logger.cpp
+        mdmodulenotification-impl.cpp
+        mutex.cpp
+        path.cpp
+        physicalnodecommunicator.cpp
+        range.cpp
+        strconvert.cpp
+        stringutil.cpp
+        template_mp.cpp
+        textreader.cpp
+        textwriter.cpp
+        typetraits.cpp
+        )
+# TODO: Explicitly link specific modules.
+target_link_libraries(utility-test PRIVATE legacy_modules)
 
 gmx_add_mpi_unit_test(UtilityMpiUnitTests utility-mpi-test 4
-                  physicalnodecommunicator_mpi.cpp
-                  )
+    CPP_SOURCE_FILES
+        physicalnodecommunicator_mpi.cpp
+        )

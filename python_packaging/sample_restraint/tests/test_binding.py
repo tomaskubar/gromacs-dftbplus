@@ -15,7 +15,6 @@ from gmxapi.simulation.workflow import WorkElement, from_tpr
 from gmxapi import version as gmx_version
 import pytest
 
-logging.getLogger().setLevel(logging.DEBUG)
 # create console handler
 ch = logging.StreamHandler()
 ch.setLevel(logging.DEBUG)
@@ -36,14 +35,14 @@ def test_import():
 
 
 @pytest.mark.usefixtures("cleandir")
-def test_ensemble_potential_nompi(spc_water_box):
+def test_ensemble_potential_nompi(spc_water_box, mdrun_kwargs):
     """Test ensemble potential without an ensemble.
     """
     tpr_filename = spc_water_box
     print("Testing plugin potential with input file {}".format(os.path.abspath(tpr_filename)))
 
     assert gmx.version.api_is_at_least(0, 0, 5)
-    md = from_tpr([tpr_filename], append_output=False)
+    md = from_tpr([tpr_filename], append_output=False, **mdrun_kwargs)
 
     # Create a WorkElement for the potential
     params = {'sites': [1, 4],
@@ -74,13 +73,13 @@ def test_ensemble_potential_nompi(spc_water_box):
 
 @pytest.mark.withmpi_only
 @pytest.mark.usefixtures("cleandir")
-def test_ensemble_potential_withmpi(spc_water_box):
+def test_ensemble_potential_withmpi(spc_water_box, mdrun_kwargs):
     tpr_filename = spc_water_box
 
     logger.info("Testing plugin potential with input file {}".format(os.path.abspath(tpr_filename)))
 
     assert gmx_version.api_is_at_least(0, 0, 5)
-    md = from_tpr([tpr_filename, tpr_filename], append_output=False)
+    md = from_tpr([tpr_filename, tpr_filename], append_output=False, **mdrun_kwargs)
 
     # Create a WorkElement for the potential
     params = {'sites': [1, 4],

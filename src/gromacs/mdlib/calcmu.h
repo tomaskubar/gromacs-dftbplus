@@ -41,17 +41,22 @@
 #include <stdio.h>
 
 #include "gromacs/math/vectypes.h"
-#include "gromacs/utility/arrayref.h"
 #include "gromacs/utility/basedefinitions.h"
 
-void calc_mu(int                      start,
-             int                      homenr,
-             gmx::ArrayRef<gmx::RVec> x,
-             const real               q[],
-             const real               qB[],
-             int                      nChargePerturbed,
-             dvec                     mu,
-             dvec                     mu_B);
+namespace gmx
+{
+template<typename>
+class ArrayRef;
+}
+
+void calc_mu(int                            start,
+             int                            homenr,
+             gmx::ArrayRef<const gmx::RVec> x,
+             const real                     q[],
+             const real                     qB[],
+             int                            nChargePerturbed,
+             dvec                           mu,
+             dvec                           mu_B);
 
 gmx_bool read_mu(FILE* fp, rvec mu, real* vol);
 /* Return true on succes */

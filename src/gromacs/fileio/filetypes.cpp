@@ -37,7 +37,7 @@
  */
 #include "gmxpre.h"
 
-#include "filetypes.h"
+#include "gromacs/fileio/filetypes.h"
 
 #include <cstring>
 
@@ -138,7 +138,8 @@ static const t_deffile deffile[efNR] = {
     { eftASC, ".edi", "sam", nullptr, "ED sampling input" },
     { eftASC, ".cub", "pot", nullptr, "Gaussian cube file" },
     { eftASC, ".xpm", "root", nullptr, "X PixMap compatible matrix file" },
-    { eftASC, "", "rundir", nullptr, "Run directory" }
+    { eftASC, "", "rundir", nullptr, "Run directory" },
+    { eftASC, ".csv", "bench", nullptr, "CSV data file" }
 };
 
 const char* ftp2ext(int ftp)

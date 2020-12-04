@@ -930,8 +930,8 @@ static void checkResidueTypeSanity(t_atoms* pdba, int r0, int r1, ResidueType* r
 
 static void find_nc_ter(t_atoms* pdba, int r0, int r1, int* r_start, int* r_end, ResidueType* rt, const gmx::MDLogger& logger)
 {
-    int                                i;
-    gmx::compat::optional<std::string> startrestype;
+    int                        i;
+    std::optional<std::string> startrestype;
 
     *r_start = -1;
     *r_end   = -1;
@@ -1047,7 +1047,7 @@ static void find_nc_ter(t_atoms* pdba, int r0, int r1, int* r_start, int* r_end,
         /* Go through the rest of the residues, check that they are the same class, and identify the ending terminus. */
         for (int i = *r_start; i < r1; i++)
         {
-            gmx::compat::optional<std::string> restype =
+            std::optional<std::string> restype =
                     rt->optionalTypeOfNamedDatabaseResidue(*pdba->resinfo[i].name);
             if (!restype)
             {
@@ -1125,25 +1125,27 @@ static void find_nc_ter(t_atoms* pdba, int r0, int r1, int* r_start, int* r_end,
     }
 }
 
-/* enum for chain separation */
-enum ChainSepType
+enum class ChainSeparationType : int
 {
-    enChainSep_id_or_ter,
-    enChainSep_id_and_ter,
-    enChainSep_ter,
-    enChainSep_id,
-    enChainSep_interactive
+    IdOrTer,
+    IdAndTer,
+    Ter,
+    Id,
+    Interactive,
+    Count
 };
-static const char* ChainSepEnum[]       = { "id_or_ter", "id_and_ter", "ter", "id", "interactive" };
-static const char* ChainSepInfoString[] = {
-    "Splitting chemical chains based on TER records or chain id changing.\n",
-    "Splitting chemical chains based on TER records and chain id changing.\n",
-    "Splitting chemical chains based on TER records only (ignoring chain id).\n",
-    "Splitting chemical chains based on changing chain id only (ignoring TER records).\n",
-    "Splitting chemical chains interactively.\n"
+static const gmx::EnumerationArray<ChainSeparationType, const char*> c_chainSeparationTypeNames = {
+    { "id_or_ter", "id_and_ter", "ter", "id", "interactive" }
+};
+static const gmx::EnumerationArray<ChainSeparationType, const char*> c_chainSeparationTypeNotificationMessages = {
+    { "Splitting chemical chains based on TER records or chain id changing.\n",
+      "Splitting chemical chains based on TER records and chain id changing.\n",
+      "Splitting chemical chains based on TER records only (ignoring chain id).\n",
+      "Splitting chemical chains based on changing chain id only (ignoring TER records).\n",
+      "Splitting chemical chains interactively.\n" }
 };
 
-static void modify_chain_numbers(t_atoms* pdba, ChainSepType enumChainSep, const gmx::MDLogger& logger)
+static void modify_chain_numbers(t_atoms* pdba, ChainSeparationType chainSeparation, const gmx::MDLogger& logger)
 {
     int         i;
     char        old_prev_chainid;
@@ -1165,7 +1167,7 @@ static void modify_chain_numbers(t_atoms* pdba, ChainSepType enumChainSep, const
     char        this_chainid;
 
     /* The default chain enumeration is based on TER records only */
-    printf("%s", ChainSepInfoString[enumChainSep]);
+    printf("%s", c_chainSeparationTypeNotificationMessages[chainSeparation]);
 
     old_prev_chainid  = '?';
     old_prev_chainnum = -1;
@@ -1195,36 +1197,36 @@ static void modify_chain_numbers(t_atoms* pdba, ChainSepType enumChainSep, const
         this_resnum   = ri->nr;
         this_chainid  = ri->chainid;
 
-        switch (enumChainSep)
+        switch (chainSeparation)
         {
-            case enChainSep_id_or_ter:
+            case ChainSeparationType::IdOrTer:
                 if (old_this_chainid != old_prev_chainid || old_this_chainnum != old_prev_chainnum)
                 {
                     new_chainnum++;
                 }
                 break;
 
-            case enChainSep_id_and_ter:
+            case ChainSeparationType::IdAndTer:
                 if (old_this_chainid != old_prev_chainid && old_this_chainnum != old_prev_chainnum)
                 {
                     new_chainnum++;
                 }
                 break;
 
-            case enChainSep_id:
+            case ChainSeparationType::Id:
                 if (old_this_chainid != old_prev_chainid)
                 {
                     new_chainnum++;
                 }
                 break;
 
-            case enChainSep_ter:
+            case ChainSeparationType::Ter:
                 if (old_this_chainnum != old_prev_chainnum)
                 {
                     new_chainnum++;
                 }
                 break;
-            case enChainSep_interactive:
+            case ChainSeparationType::Interactive:
                 if (old_this_chainid != old_prev_chainid || old_this_chainnum != old_prev_chainnum)
                 {
                     if (i > 0)
@@ -1250,7 +1252,8 @@ static void modify_chain_numbers(t_atoms* pdba, ChainSepType enumChainSep, const
                     }
                 }
                 break;
-            default: gmx_fatal(FARGS, "Internal inconsistency - this shouldn't happen...");
+            case ChainSeparationType::Count:
+                gmx_fatal(FARGS, "Internal inconsistency - this shouldn't happen...");
         }
         old_prev_chainid  = old_this_chainid;
         old_prev_chainnum = old_this_chainnum;
@@ -1285,39 +1288,42 @@ struct t_chain
     std::vector<gmx::RVec>              x;
 };
 
-// TODO make all enums into scoped enums
-/* enum for vsites */
-enum VSitesType
+enum class VSitesType : int
 {
-    enVSites_none,
-    enVSites_hydrogens,
-    enVSites_aromatics
+    None,
+    Hydrogens,
+    Aromatics,
+    Count
 };
-static const char* VSitesEnum[] = { "none", "hydrogens", "aromatics" };
+static const gmx::EnumerationArray<VSitesType, const char*> c_vsitesTypeNames = {
+    { "none", "hydrogens", "aromatics" }
+};
 
-/* enum for water model */
-enum WaterType
+enum class WaterType : int
 {
-    enWater_select,
-    enWater_none,
-    enWater_spc,
-    enWater_spce,
-    enWater_tip3p,
-    enWater_tip4p,
-    enWater_tip5p,
-    enWater_tips3p
+    Select,
+    None,
+    Spc,
+    SpcE,
+    Tip3p,
+    Tip4p,
+    Tip5p,
+    Tips3p,
+    Count
 };
-static const char* WaterEnum[] = { "select", "none",  "spc",   "spce",
-                                   "tip3p",  "tip4p", "tip5p", "tips3p" };
+static const gmx::EnumerationArray<WaterType, const char*> c_waterTypeNames = {
+    { "select", "none", "spc", "spce", "tip3p", "tip4p", "tip5p", "tips3p" }
+};
 
-/* enum for merge */
-enum MergeType
+enum class MergeType : int
 {
-    enMerge_no,
-    enMerge_all,
-    enMerge_interactive
+    No,
+    All,
+    Interactive,
+    Count
 };
-static const char* MergeEnum[] = { "no", "all", "interactive" };
+static const gmx::EnumerationArray<MergeType, const char*> c_mergeTypeNames = { { "no", "all",
+                                                                                  "interactive" } };
 
 namespace gmx
 {
@@ -1332,13 +1338,17 @@ public:
         bVsites_(FALSE),
         bPrevWat_(FALSE),
         bVsiteAromatics_(FALSE),
-        enumChainSep_(enChainSep_id_or_ter),
-        enumVSites_(enVSites_none),
-        enumWater_(enWater_select),
-        enumMerge_(enMerge_no),
+        chainSeparation_(ChainSeparationType::IdOrTer),
+        vsitesType_(VSitesType::None),
+        waterType_(WaterType::Select),
+        mergeType_(MergeType::No),
         itp_file_(nullptr),
         mHmult_(0)
     {
+        gmx::LoggerBuilder builder;
+        builder.addTargetStream(gmx::MDLogger::LogLevel::Info, &gmx::TextOutputFile::standardOutput());
+        builder.addTargetStream(gmx::MDLogger::LogLevel::Warning, &gmx::TextOutputFile::standardError());
+        loggerOwner_ = std::make_unique<LoggerOwner>(builder.build());
     }
 
     // From ICommandLineOptionsModule
@@ -1394,20 +1404,20 @@ private:
     std::string outFile_;
     std::string ff_;
 
-    ChainSepType enumChainSep_;
-    VSitesType   enumVSites_;
-    WaterType    enumWater_;
-    MergeType    enumMerge_;
+    ChainSeparationType chainSeparation_;
+    VSitesType          vsitesType_;
+    WaterType           waterType_;
+    MergeType           mergeType_;
 
-    FILE*                          itp_file_;
-    char                           forcefield_[STRLEN];
-    char                           ffdir_[STRLEN];
-    char*                          ffname_;
-    char*                          watermodel_;
-    std::vector<std::string>       incls_;
-    std::vector<t_mols>            mols_;
-    real                           mHmult_;
-    std::unique_ptr<gmx::MDLogger> loggerPointer_;
+    FILE*                        itp_file_;
+    char                         forcefield_[STRLEN];
+    char                         ffdir_[STRLEN];
+    char*                        ffname_;
+    char*                        watermodel_;
+    std::vector<std::string>     incls_;
+    std::vector<t_mols>          mols_;
+    real                         mHmult_;
+    std::unique_ptr<LoggerOwner> loggerOwner_;
 };
 
 void pdb2gmx::initOptions(IOptionsContainer* options, ICommandLineOptionsModuleSettings* settings)
@@ -1532,16 +1542,19 @@ void pdb2gmx::initOptions(IOptionsContainer* options, ICommandLineOptionsModuleS
             RealOption("lb").store(&long_bond_dist_).defaultValue(0.25).hidden().description("Long bond warning distance"));
     options->addOption(
             RealOption("sb").store(&short_bond_dist_).defaultValue(0.05).hidden().description("Short bond warning distance"));
-    options->addOption(
-            EnumOption<ChainSepType>("chainsep").enumValue(ChainSepEnum).store(&enumChainSep_).description("Condition in PDB files when a new chain should be started (adding termini)"));
+    options->addOption(EnumOption<ChainSeparationType>("chainsep")
+                               .enumValue(c_chainSeparationTypeNames)
+                               .store(&chainSeparation_)
+                               .description("Condition in PDB files when a new chain should be "
+                                            "started (adding termini)"));
     options->addOption(EnumOption<MergeType>("merge")
-                               .enumValue(MergeEnum)
-                               .store(&enumMerge_)
+                               .enumValue(c_mergeTypeNames)
+                               .store(&mergeType_)
                                .description("Merge multiple chains into a single [moleculetype]"));
     options->addOption(StringOption("ff").store(&ff_).defaultValue("select").description(
             "Force field, interactive by default. Use [TT]-h[tt] for information."));
     options->addOption(
-            EnumOption<WaterType>("water").store(&enumWater_).enumValue(WaterEnum).description("Water model to use"));
+            EnumOption<WaterType>("water").store(&waterType_).enumValue(c_waterTypeNames).description("Water model to use"));
     options->addOption(BooleanOption("inter").store(&bInter_).defaultValue(false).description(
             "Set the next 8 options to interactive"));
     options->addOption(BooleanOption("ss").store(&bCysMan_).defaultValue(false).description(
@@ -1582,8 +1595,10 @@ void pdb2gmx::initOptions(IOptionsContainer* options, ICommandLineOptionsModuleS
             BooleanOption("v").store(&bVerbose_).defaultValue(false).description("Be slightly more verbose in messages"));
     options->addOption(
             RealOption("posrefc").store(&posre_fc_).defaultValue(1000).description("Force constant for position restraints"));
-    options->addOption(
-            EnumOption<VSitesType>("vsite").store(&enumVSites_).enumValue(VSitesEnum).description("Convert atoms to virtual sites"));
+    options->addOption(EnumOption<VSitesType>("vsite")
+                               .store(&vsitesType_)
+                               .enumValue(c_vsitesTypeNames)
+                               .description("Convert atoms to virtual sites"));
     options->addOption(BooleanOption("heavyh").store(&bHeavyH_).defaultValue(false).description(
             "Make hydrogen atoms heavy"));
     options->addOption(
@@ -1682,7 +1697,7 @@ void pdb2gmx::optionsFinished()
 
     /* Force field selection, interactive or direct */
     choose_ff(strcmp(ff_.c_str(), "select") == 0 ? nullptr : ff_.c_str(), forcefield_,
-              sizeof(forcefield_), ffdir_, sizeof(ffdir_), *loggerPointer_);
+              sizeof(forcefield_), ffdir_, sizeof(ffdir_), loggerOwner_->logger());
 
     if (strlen(forcefield_) > 0)
     {
@@ -1715,35 +1730,30 @@ int pdb2gmx::run()
     int         this_chainstart;
     int         prev_chainstart;
 
-    gmx::LoggerBuilder builder;
-    builder.addTargetStream(gmx::MDLogger::LogLevel::Info, &gmx::TextOutputFile::standardOutput());
-    builder.addTargetStream(gmx::MDLogger::LogLevel::Warning, &gmx::TextOutputFile::standardError());
-    gmx::LoggerOwner logOwner(builder.build());
-    loggerPointer_              = std::make_unique<gmx::MDLogger>(logOwner.logger());
-    const gmx::MDLogger& logger = *loggerPointer_;
+    const gmx::MDLogger& logger = loggerOwner_->logger();
 
     GMX_LOG(logger.info)
             .asParagraph()
             .appendTextFormatted("Using the %s force field in directory %s", ffname_, ffdir_);
 
-    choose_watermodel(WaterEnum[enumWater_], ffdir_, &watermodel_, logger);
+    choose_watermodel(c_waterTypeNames[waterType_], ffdir_, &watermodel_, logger);
 
-    switch (enumVSites_)
+    switch (vsitesType_)
     {
-        case enVSites_none:
+        case VSitesType::None:
             bVsites_         = false;
             bVsiteAromatics_ = false;
             break;
-        case enVSites_hydrogens:
+        case VSitesType::Hydrogens:
             bVsites_         = true;
             bVsiteAromatics_ = false;
             break;
-        case enVSites_aromatics:
+        case VSitesType::Aromatics:
             bVsites_         = true;
             bVsiteAromatics_ = true;
             break;
-        default:
-            gmx_fatal(FARGS, "Internal inconsistency: VSitesEnum='%s'", VSitesEnum[enumVSites_]);
+        case VSitesType::Count:
+            gmx_fatal(FARGS, "Internal inconsistency: VSitesType is out of range.");
     } /* end switch */
 
     /* Open the symbol table */
@@ -1812,7 +1822,7 @@ int pdb2gmx::run()
     GMX_LOG(logger.info).asParagraph().appendTextFormatted("Analyzing pdb file");
     int nwaterchain = 0;
 
-    modify_chain_numbers(&pdba_all, enumChainSep_, logger);
+    modify_chain_numbers(&pdba_all, chainSeparation_, logger);
 
     int nchainmerges = 0;
 
@@ -1866,7 +1876,7 @@ int pdb2gmx::run()
             bMerged         = false;
             if (i > 0 && !bWat_)
             {
-                if (!strncmp(MergeEnum[enumMerge_], "int", 3))
+                if (!strncmp(c_mergeTypeNames[mergeType_], "int", 3))
                 {
                     GMX_LOG(logger.info)
                             .asParagraph()
@@ -1885,7 +1895,7 @@ int pdb2gmx::run()
                     }
                     bMerged = (select[0] == 'y');
                 }
-                else if (!strncmp(MergeEnum[enumMerge_], "all", 3))
+                else if (!strncmp(c_mergeTypeNames[mergeType_], "all", 3))
                 {
                     bMerged = true;
                 }

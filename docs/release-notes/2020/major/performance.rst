@@ -4,7 +4,7 @@ Performance improvements
 .. Note to developers!
    Please use """"""" to underline the individual entries for fixed issues in the subfolders,
    otherwise the formatting on the webpage is messed up.
-   Also, please use the syntax :issue:`number` to reference issues on redmine, without the
+   Also, please use the syntax :issue:`number` to reference issues on GitLab, without the
    a space between the colon and number!
 
 Up to a factor 2.5 speed-up of the non-bonded free-energy kernel
@@ -16,8 +16,8 @@ performance when non-perturbed non-bondeds are offloaded to a GPU. In that case
 the PME-mesh calculation now always takes the most CPU time.
 
 
-Proper dihedrals of Fourier type and improper dihedrals of preriodic type are SIMD accelerated
-""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
+Proper dihedrals of Fourier type and improper dihedrals of periodic type are SIMD accelerated
+"""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
 
 Avoid configuring the own-FFTW with AVX512 enabled when |Gromacs| does not use AVX512
 """""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""

@@ -168,10 +168,10 @@ void initTestOptions(IOptionsContainer* options);
     {                                                                                                                  \
     public:                                                                                                            \
         name() { ::gmx::test::registerTestOptions(#name, this); }                                                      \
-        virtual void initOptions(::gmx::IOptionsContainer*(options));                                                  \
+        void initOptions(::gmx::IOptionsContainer*(options)) override;                                                 \
     };                                                                                                                 \
                                                                                                                        \
-    static name s_##name##Instance;                                                                                    \
+    static gmx_unused name s_##name##Instance;                                                                         \
                                                                                                                        \
     void name::initOptions(::gmx::IOptionsContainer* options) //NOLINT(misc-macro-parentheses,bugprone-macro-parentheses)
 

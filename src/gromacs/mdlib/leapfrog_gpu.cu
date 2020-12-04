@@ -46,7 +46,7 @@
  */
 #include "gmxpre.h"
 
-#include "leapfrog_gpu.cuh"
+#include "leapfrog_gpu.h"
 
 #include <assert.h>
 #include <stdio.h>
@@ -59,6 +59,7 @@
 #include "gromacs/gpu_utils/devicebuffer.h"
 #include "gromacs/gpu_utils/vectype_ops.cuh"
 #include "gromacs/math/vec.h"
+#include "gromacs/mdtypes/group.h"
 #include "gromacs/pbcutil/pbc.h"
 #include "gromacs/pbcutil/pbc_aiuc_cuda.cuh"
 #include "gromacs/utility/arrayref.h"
@@ -68,35 +69,11 @@ namespace gmx
 
 /*!\brief Number of CUDA threads in a block
  *
- * \todo Check if using smaller block size will lead to better prformance.
+ * \todo Check if using smaller block size will lead to better performance.
  */
 constexpr static int c_threadsPerBlock = 256;
 //! Maximum number of threads in a block (for __launch_bounds__)
 constexpr static int c_maxThreadsPerBlock = c_threadsPerBlock;
-
-/*! \brief Sets the number of different temperature coupling values
- *
- *  This is needed to template the kernel
- *  \todo Unify with similar enum in CPU update module
- */
-enum class NumTempScaleValues
-{
-    None,    //!< No temperature coupling
-    Single,  //!< Single T-scaling value (one group)
-    Multiple //!< Multiple T-scaling values, need to use T-group indices
-};
-
-/*! \brief Different variants of the Parrinello-Rahman velocity scaling
- *
- *  This is needed to template the kernel
- *  \todo Unify with similar enum in CPU update module
- */
-enum class VelocityScalingType
-{
-    None,     //!< Do not apply velocity scaling (not a PR-coupling run or step)
-    Diagonal, //!< Apply velocity scaling using a diagonal matrix
-    Full      //!< Apply velocity scaling using a full matrix
-};
 
 /*! \brief Main kernel for Leap-Frog integrator.
  *
@@ -260,10 +237,10 @@ inline auto selectLeapFrogKernelPtr(bool                doTemperatureScaling,
     return kernelPtr;
 }
 
-void LeapFrogGpu::integrate(const float3*                     d_x,
-                            float3*                           d_xp,
-                            float3*                           d_v,
-                            const float3*                     d_f,
+void LeapFrogGpu::integrate(const DeviceBuffer<float3>        d_x,
+                            DeviceBuffer<float3>              d_xp,
+                            DeviceBuffer<float3>              d_v,
+                            const DeviceBuffer<float3>        d_f,
                             const real                        dt,
                             const bool                        doTemperatureScaling,
                             gmx::ArrayRef<const t_grp_tcstat> tcstat,
@@ -287,7 +264,7 @@ void LeapFrogGpu::integrate(const float3*                     d_x,
                 h_lambdas_[i] = tcstat[i].lambda;
             }
             copyToDeviceBuffer(&d_lambdas_, h_lambdas_.data(), 0, numTempScaleValues_,
-                               commandStream_, GpuApiCallBehavior::Async, nullptr);
+                               deviceStream_, GpuApiCallBehavior::Async, nullptr);
         }
         VelocityScalingType prVelocityScalingType = VelocityScalingType::None;
         if (doParrinelloRahman)
@@ -311,12 +288,14 @@ void LeapFrogGpu::integrate(const float3*                     d_x,
     const auto kernelArgs = prepareGpuKernelArguments(
             kernelPtr, kernelLaunchConfig_, &numAtoms_, &d_x, &d_xp, &d_v, &d_f, &d_inverseMasses_,
             &dt, &d_lambdas_, &d_tempScaleGroups_, &prVelocityScalingMatrixDiagonal_);
-    launchGpuKernel(kernelPtr, kernelLaunchConfig_, nullptr, "leapfrog_kernel", kernelArgs);
+    launchGpuKernel(kernelPtr, kernelLaunchConfig_, deviceStream_, nullptr, "leapfrog_kernel", kernelArgs);
 
     return;
 }
 
-LeapFrogGpu::LeapFrogGpu(CommandStream commandStream) : commandStream_(commandStream)
+LeapFrogGpu::LeapFrogGpu(const DeviceContext& deviceContext, const DeviceStream& deviceStream) :
+    deviceContext_(deviceContext),
+    deviceStream_(deviceStream)
 {
     numAtoms_ = 0;
 
@@ -326,7 +305,6 @@ LeapFrogGpu::LeapFrogGpu(CommandStream commandStream) : commandStream_(commandSt
     kernelLaunchConfig_.blockSize[1]     = 1;
     kernelLaunchConfig_.blockSize[2]     = 1;
     kernelLaunchConfig_.sharedMemorySize = 0;
-    kernelLaunchConfig_.stream           = commandStream_;
 }
 
 LeapFrogGpu::~LeapFrogGpu()
@@ -334,24 +312,27 @@ LeapFrogGpu::~LeapFrogGpu()
     freeDeviceBuffer(&d_inverseMasses_);
 }
 
-void LeapFrogGpu::set(const t_mdatoms& md, const int numTempScaleValues, const unsigned short* tempScaleGroups)
+void LeapFrogGpu::set(const int             numAtoms,
+                      const real*           inverseMasses,
+                      const int             numTempScaleValues,
+                      const unsigned short* tempScaleGroups)
 {
-    numAtoms_                       = md.nr;
+    numAtoms_                       = numAtoms;
     kernelLaunchConfig_.gridSize[0] = (numAtoms_ + c_threadsPerBlock - 1) / c_threadsPerBlock;
 
     numTempScaleValues_ = numTempScaleValues;
 
     reallocateDeviceBuffer(&d_inverseMasses_, numAtoms_, &numInverseMasses_,
-                           &numInverseMassesAlloc_, nullptr);
-    copyToDeviceBuffer(&d_inverseMasses_, (float*)md.invmass, 0, numAtoms_, commandStream_,
+                           &numInverseMassesAlloc_, deviceContext_);
+    copyToDeviceBuffer(&d_inverseMasses_, (float*)inverseMasses, 0, numAtoms_, deviceStream_,
                        GpuApiCallBehavior::Sync, nullptr);
 
     // Temperature scale group map only used if there are more then one group
     if (numTempScaleValues > 1)
     {
         reallocateDeviceBuffer(&d_tempScaleGroups_, numAtoms_, &numTempScaleGroups_,
-                               &numTempScaleGroupsAlloc_, nullptr);
-        copyToDeviceBuffer(&d_tempScaleGroups_, tempScaleGroups, 0, numAtoms_, commandStream_,
+                               &numTempScaleGroupsAlloc_, deviceContext_);
+        copyToDeviceBuffer(&d_tempScaleGroups_, tempScaleGroups, 0, numAtoms_, deviceStream_,
                            GpuApiCallBehavior::Sync, nullptr);
     }
 
@@ -359,7 +340,8 @@ void LeapFrogGpu::set(const t_mdatoms& md, const int numTempScaleValues, const u
     if (numTempScaleValues_ > 0)
     {
         h_lambdas_.resize(numTempScaleValues);
-        reallocateDeviceBuffer(&d_lambdas_, numTempScaleValues_, &numLambdas_, &numLambdasAlloc_, nullptr);
+        reallocateDeviceBuffer(&d_lambdas_, numTempScaleValues_, &numLambdas_, &numLambdasAlloc_,
+                               deviceContext_);
     }
 }
 

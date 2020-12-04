@@ -64,7 +64,6 @@
 #include "gromacs/mdtypes/forceoutput.h"
 #include "gromacs/mdtypes/inputrec.h"
 #include "gromacs/mdtypes/md_enums.h"
-#include "gromacs/mdtypes/mdatom.h"
 #include "gromacs/mdtypes/state.h"
 #include "gromacs/pbcutil/pbc.h"
 #include "gromacs/topology/mtop_lookup.h"
@@ -89,7 +88,7 @@ extern template LocalAtomSet LocalAtomSetManager::add<void, void>(ArrayRef<const
 
 static int groupPbcFromParams(const t_pull_group& params, bool setPbcRefToPrevStepCOM)
 {
-    if (params.nat <= 1)
+    if (params.ind.size() <= 1)
     {
         /* no PBC required */
         return epgrppbcNONE;
@@ -175,7 +174,7 @@ double pull_conversion_factor_internal2userinput(const t_pull_coord* pcrd)
 static void apply_forces_grp_part(const pull_group_work_t* pgrp,
                                   int                      ind_start,
                                   int                      ind_end,
-                                  const t_mdatoms*         md,
+                                  const real*              masses,
                                   const dvec               f_pull,
                                   int                      sign,
                                   rvec*                    f)
@@ -186,7 +185,7 @@ static void apply_forces_grp_part(const pull_group_work_t* pgrp,
     for (int i = ind_start; i < ind_end; i++)
     {
         int    ii    = localAtomIndices[i];
-        double wmass = md->massT[ii];
+        double wmass = masses[ii];
         if (!pgrp->localWeights.empty())
         {
             wmass *= pgrp->localWeights[i];
@@ -201,7 +200,7 @@ static void apply_forces_grp_part(const pull_group_work_t* pgrp,
 
 /* Apply forces in a mass weighted fashion */
 static void apply_forces_grp(const pull_group_work_t* pgrp,
-                             const t_mdatoms*         md,
+                             const real*              masses,
                              const dvec               f_pull,
                              int                      sign,
                              rvec*                    f,
@@ -209,7 +208,7 @@ static void apply_forces_grp(const pull_group_work_t* pgrp,
 {
     auto localAtomIndices = pgrp->atomSet.localIndex();
 
-    if (pgrp->params.nat == 1 && pgrp->atomSet.numAtomsLocal() == 1)
+    if (pgrp->params.ind.size() == 1 && pgrp->atomSet.numAtomsLocal() == 1)
     {
         /* Only one atom and our rank has this atom: we can skip
          * the mass weighting, which means that this code also works
@@ -224,7 +223,7 @@ static void apply_forces_grp(const pull_group_work_t* pgrp,
     {
         if (localAtomIndices.size() <= c_pullMaxNumLocalAtomsSingleThreaded)
         {
-            apply_forces_grp_part(pgrp, 0, localAtomIndices.size(), md, f_pull, sign, f);
+            apply_forces_grp_part(pgrp, 0, localAtomIndices.size(), masses, f_pull, sign, f);
         }
         else
         {
@@ -233,7 +232,7 @@ static void apply_forces_grp(const pull_group_work_t* pgrp,
             {
                 int ind_start = (localAtomIndices.size() * (th + 0)) / nthreads;
                 int ind_end   = (localAtomIndices.size() * (th + 1)) / nthreads;
-                apply_forces_grp_part(pgrp, ind_start, ind_end, md, f_pull, sign, f);
+                apply_forces_grp_part(pgrp, ind_start, ind_end, masses, f_pull, sign, f);
             }
         }
     }
@@ -242,7 +241,7 @@ static void apply_forces_grp(const pull_group_work_t* pgrp,
 /* Apply forces in a mass weighted fashion to a cylinder group */
 static void apply_forces_cyl_grp(const pull_group_work_t* pgrp,
                                  const double             dv_corr,
-                                 const t_mdatoms*         md,
+                                 const real*              masses,
                                  const dvec               f_pull,
                                  double                   f_scal,
                                  int                      sign,
@@ -266,7 +265,7 @@ static void apply_forces_cyl_grp(const pull_group_work_t* pgrp,
             continue;
         }
         int    ii   = localAtomIndices[i];
-        double mass = md->massT[ii];
+        double mass = masses[ii];
         /* The stored axial distance from the cylinder center (dv) needs
          * to be corrected for an offset (dv_corr), which was unknown when
          * we calculated dv.
@@ -289,7 +288,7 @@ static void apply_forces_cyl_grp(const pull_group_work_t* pgrp,
  */
 static void apply_forces_vec_torque(const struct pull_t*     pull,
                                     const pull_coord_work_t* pcrd,
-                                    const t_mdatoms*         md,
+                                    const real*              masses,
                                     rvec*                    f)
 {
     const PullCoordSpatialData& spatialData = pcrd->spatialData;
@@ -315,15 +314,15 @@ static void apply_forces_vec_torque(const struct pull_t*     pull,
     }
 
     /* Apply the force to the groups defining the vector using opposite signs */
-    apply_forces_grp(&pull->group[pcrd->params.group[2]], md, f_perp, -1, f, pull->nthreads);
-    apply_forces_grp(&pull->group[pcrd->params.group[3]], md, f_perp, 1, f, pull->nthreads);
+    apply_forces_grp(&pull->group[pcrd->params.group[2]], masses, f_perp, -1, f, pull->nthreads);
+    apply_forces_grp(&pull->group[pcrd->params.group[3]], masses, f_perp, 1, f, pull->nthreads);
 }
 
 /* Apply forces in a mass weighted fashion */
 static void apply_forces_coord(struct pull_t*               pull,
                                int                          coord,
                                const PullCoordVectorForces& forces,
-                               const t_mdatoms*             md,
+                               const real*                  masses,
                                rvec*                        f)
 {
     /* Here it would be more efficient to use one large thread-parallel
@@ -336,7 +335,7 @@ static void apply_forces_coord(struct pull_t*               pull,
 
     if (pcrd.params.eGeom == epullgCYL)
     {
-        apply_forces_cyl_grp(&pull->dyna[coord], pcrd.spatialData.cyl_dev, md, forces.force01,
+        apply_forces_cyl_grp(&pull->dyna[coord], pcrd.spatialData.cyl_dev, masses, forces.force01,
                              pcrd.scalarForce, -1, f, pull->nthreads);
 
         /* Sum the force along the vector and the radial force */
@@ -345,7 +344,7 @@ static void apply_forces_coord(struct pull_t*               pull,
         {
             f_tot[m] = forces.force01[m] + pcrd.scalarForce * pcrd.spatialData.ffrad[m];
         }
-        apply_forces_grp(&pull->group[pcrd.params.group[1]], md, f_tot, 1, f, pull->nthreads);
+        apply_forces_grp(&pull->group[pcrd.params.group[1]], masses, f_tot, 1, f, pull->nthreads);
     }
     else
     {
@@ -354,24 +353,29 @@ static void apply_forces_coord(struct pull_t*               pull,
             /* We need to apply the torque forces to the pull groups
              * that define the pull vector.
              */
-            apply_forces_vec_torque(pull, &pcrd, md, f);
+            apply_forces_vec_torque(pull, &pcrd, masses, f);
         }
 
-        if (pull->group[pcrd.params.group[0]].params.nat > 0)
+        if (!pull->group[pcrd.params.group[0]].params.ind.empty())
         {
-            apply_forces_grp(&pull->group[pcrd.params.group[0]], md, forces.force01, -1, f, pull->nthreads);
+            apply_forces_grp(&pull->group[pcrd.params.group[0]], masses, forces.force01, -1, f,
+                             pull->nthreads);
         }
-        apply_forces_grp(&pull->group[pcrd.params.group[1]], md, forces.force01, 1, f, pull->nthreads);
+        apply_forces_grp(&pull->group[pcrd.params.group[1]], masses, forces.force01, 1, f, pull->nthreads);
 
         if (pcrd.params.ngroup >= 4)
         {
-            apply_forces_grp(&pull->group[pcrd.params.group[2]], md, forces.force23, -1, f, pull->nthreads);
-            apply_forces_grp(&pull->group[pcrd.params.group[3]], md, forces.force23, 1, f, pull->nthreads);
+            apply_forces_grp(&pull->group[pcrd.params.group[2]], masses, forces.force23, -1, f,
+                             pull->nthreads);
+            apply_forces_grp(&pull->group[pcrd.params.group[3]], masses, forces.force23, 1, f,
+                             pull->nthreads);
         }
         if (pcrd.params.ngroup >= 6)
         {
-            apply_forces_grp(&pull->group[pcrd.params.group[4]], md, forces.force45, -1, f, pull->nthreads);
-            apply_forces_grp(&pull->group[pcrd.params.group[5]], md, forces.force45, 1, f, pull->nthreads);
+            apply_forces_grp(&pull->group[pcrd.params.group[4]], masses, forces.force45, -1, f,
+                             pull->nthreads);
+            apply_forces_grp(&pull->group[pcrd.params.group[5]], masses, forces.force45, 1, f,
+                             pull->nthreads);
         }
     }
 }
@@ -453,7 +457,7 @@ static void low_get_pull_coord_dr(const struct pull_t*     pull,
     const pull_group_work_t* pgrp0 = &pull->group[pcrd->params.group[0]];
 
     /* Only the first group can be an absolute reference, in that case nat=0 */
-    if (pgrp0->params.nat == 0)
+    if (pgrp0->params.ind.empty())
     {
         for (int m = 0; m < DIM; m++)
         {
@@ -1376,15 +1380,15 @@ void register_external_pull_potential(struct pull_t* pull, int coord_index, cons
                 provider, coord_index + 1, epull_names[pcrd->params.eType], epull_names[epullEXTERNAL]);
     }
 
-    GMX_RELEASE_ASSERT(pcrd->params.externalPotentialProvider != nullptr,
+    GMX_RELEASE_ASSERT(!pcrd->params.externalPotentialProvider.empty(),
                        "The external potential provider string for a pull coordinate is NULL");
 
-    if (gmx_strcasecmp(provider, pcrd->params.externalPotentialProvider) != 0)
+    if (gmx_strcasecmp(provider, pcrd->params.externalPotentialProvider.c_str()) != 0)
     {
         gmx_fatal(FARGS,
                   "Module '%s' attempted to register an external potential for pull coordinate %d "
                   "which expects the external potential to be provided by a module named '%s'",
-                  provider, coord_index + 1, pcrd->params.externalPotentialProvider);
+                  provider, coord_index + 1, pcrd->params.externalPotentialProvider.c_str());
     }
 
     /* Lock to avoid (extremely unlikely) simultaneous reading and writing of
@@ -1431,7 +1435,7 @@ static void check_external_potential_registration(const struct pull_t* pull)
                   "pull coordinates. The first coordinate without provider is number %zu, which "
                   "expects a module named '%s' to provide the external potential.",
                   pull->numUnregisteredExternalPotentials, c + 1,
-                  pull->coord[c].params.externalPotentialProvider);
+                  pull->coord[c].params.externalPotentialProvider.c_str());
     }
 }
 
@@ -1444,7 +1448,7 @@ static void check_external_potential_registration(const struct pull_t* pull)
 void apply_external_pull_coord_force(struct pull_t*        pull,
                                      int                   coord_index,
                                      double                coord_force,
-                                     const t_mdatoms*      mdatoms,
+                                     const real*           masses,
                                      gmx::ForceWithVirial* forceWithVirial)
 {
     pull_coord_work_t* pcrd;
@@ -1477,7 +1481,7 @@ void apply_external_pull_coord_force(struct pull_t*        pull,
             forceWithVirial->addVirialContribution(virial);
         }
 
-        apply_forces_coord(pull, coord_index, pullCoordForces, mdatoms,
+        apply_forces_coord(pull, coord_index, pullCoordForces, masses,
                            as_rvec_array(forceWithVirial->force_.data()));
     }
 
@@ -1512,7 +1516,7 @@ static PullCoordVectorForces do_pull_pot_coord(struct pull_t* pull,
 }
 
 real pull_potential(struct pull_t*        pull,
-                    const t_mdatoms*      md,
+                    const real*           masses,
                     t_pbc*                pbc,
                     const t_commrec*      cr,
                     double                t,
@@ -1535,7 +1539,7 @@ real pull_potential(struct pull_t*        pull,
     {
         real dVdl = 0;
 
-        pull_calc_coms(cr, pull, md, pbc, t, x, nullptr);
+        pull_calc_coms(cr, pull, masses, pbc, t, x, nullptr);
 
         rvec*      f             = as_rvec_array(force->force_.data());
         matrix     virial        = { { 0 } };
@@ -1556,7 +1560,7 @@ real pull_potential(struct pull_t*        pull,
                     pull, c, pbc, t, lambda, &V, computeVirial ? virial : nullptr, &dVdl);
 
             /* Distribute the force over the atoms in the pulled groups */
-            apply_forces_coord(pull, c, pullCoordForces, md, f);
+            apply_forces_coord(pull, c, pullCoordForces, masses, f);
         }
 
         if (MASTER(cr))
@@ -1575,7 +1579,7 @@ real pull_potential(struct pull_t*        pull,
 }
 
 void pull_constraint(struct pull_t*   pull,
-                     const t_mdatoms* md,
+                     const real*      masses,
                      t_pbc*           pbc,
                      const t_commrec* cr,
                      double           dt,
@@ -1589,7 +1593,7 @@ void pull_constraint(struct pull_t*   pull,
 
     if (pull->comm.bParticipate)
     {
-        pull_calc_coms(cr, pull, md, pbc, t, x, xp);
+        pull_calc_coms(cr, pull, masses, pbc, t, x, xp);
 
         do_constraint(pull, pbc, xp, v, MASTER(cr), vir, dt, t);
     }
@@ -1718,7 +1722,7 @@ void dd_make_local_pull_groups(const t_commrec* cr, struct pull_t* pull)
                                "date prev. COM "
                                "to bcast here as well as to e.g. checkpointing");
 
-                    gmx_bcast(sizeof(dvec), group.x_prev_step, cr);
+                    gmx_bcast(sizeof(dvec), group.x_prev_step, cr->mpi_comm_mygroup);
                 }
             }
         }
@@ -1742,7 +1746,8 @@ static void init_pull_group_index(FILE*              fplog,
      * But we still want to have the correct mass-weighted COMs.
      * So we store the real masses in the weights.
      */
-    const bool setWeights = (pg->params.nweight > 0 || EI_ENERGY_MINIMIZATION(ir->eI) || ir->eI == eiBD);
+    const bool setWeights =
+            (!pg->params.weight.empty() || EI_ENERGY_MINIMIZATION(ir->eI) || ir->eI == eiBD);
 
     /* In parallel, store we need to extract localWeights from weights at DD time */
     std::vector<real>& weights = ((cr && PAR(cr)) ? pg->globalWeights : pg->localWeights);
@@ -1755,7 +1760,7 @@ static void init_pull_group_index(FILE*              fplog,
     double wmass   = 0;
     double wwmass  = 0;
     int    molb    = 0;
-    for (int i = 0; i < pg->params.nat; i++)
+    for (int i = 0; i < int(pg->params.ind.size()); i++)
     {
         int ii = pg->params.ind[i];
         if (bConstraint && ir->opts.nFreeze)
@@ -1780,7 +1785,7 @@ static void init_pull_group_index(FILE*              fplog,
             m = (1 - lambda) * atom.m + lambda * atom.mB;
         }
         real w;
-        if (pg->params.nweight > 0)
+        if (!pg->params.weight.empty())
         {
             w = pg->params.weight[i];
         }
@@ -1830,7 +1835,7 @@ static void init_pull_group_index(FILE*              fplog,
         /* We can have single atom groups with zero mass with potential pulling
          * without cosine weighting.
          */
-        if (pg->params.nat == 1 && !bConstraint && pg->epgrppbc != epgrppbcCOS)
+        if (pg->params.ind.size() == 1 && !bConstraint && pg->epgrppbc != epgrppbcCOS)
         {
             /* With one atom the mass doesn't matter */
             wwmass = 1;
@@ -1838,13 +1843,13 @@ static void init_pull_group_index(FILE*              fplog,
         else
         {
             gmx_fatal(FARGS, "The total%s mass of pull group %d is zero",
-                      pg->params.weight ? " weighted" : "", g);
+                      !pg->params.weight.empty() ? " weighted" : "", g);
         }
     }
     if (fplog)
     {
-        fprintf(fplog, "Pull group %d: %5d atoms, mass %9.3f", g, pg->params.nat, tmass);
-        if (pg->params.weight || EI_ENERGY_MINIMIZATION(ir->eI) || ir->eI == eiBD)
+        fprintf(fplog, "Pull group %d: %5zu atoms, mass %9.3f", g, pg->params.ind.size(), tmass);
+        if (!pg->params.weight.empty() || EI_ENERGY_MINIMIZATION(ir->eI) || ir->eI == eiBD)
         {
             fprintf(fplog, ", weighted mass %9.3f", wmass * wmass / wwmass);
         }
@@ -1865,7 +1870,7 @@ static void init_pull_group_index(FILE*              fplog,
         int ndim = 0;
         for (int d = 0; d < DIM; d++)
         {
-            ndim += pulldim_con[d] * pg->params.nat;
+            ndim += pulldim_con[d] * pg->params.ind.size();
         }
         if (fplog && nfrozen > 0 && nfrozen < ndim)
         {
@@ -1895,15 +1900,10 @@ struct pull_t* init_pull(FILE*                     fplog,
 
     /* Copy the pull parameters */
     pull->params = *pull_params;
-    /* Avoid pointer copies */
-    pull->params.group = nullptr;
-    pull->params.coord = nullptr;
 
     for (int i = 0; i < pull_params->ngroup; ++i)
     {
-        pull->group.emplace_back(pull_params->group[i],
-                                 atomSets->add({ pull_params->group[i].ind,
-                                                 pull_params->group[i].ind + pull_params->group[i].nat }),
+        pull->group.emplace_back(pull_params->group[i], atomSets->add(pull_params->group[i].ind),
                                  pull_params->bSetPbcRefToPrevStepCOM);
     }
 
@@ -1928,7 +1928,7 @@ struct pull_t* init_pull(FILE*                     fplog,
     pull->bXOutAverage = pull_params->bXOutAverage;
     pull->bFOutAverage = pull_params->bFOutAverage;
 
-    GMX_RELEASE_ASSERT(pull->group[0].params.nat == 0,
+    GMX_RELEASE_ASSERT(pull->group[0].params.ind.empty(),
                        "pull group 0 is an absolute reference group and should not contain atoms");
 
     pull->numCoordinatesWithExternalPotential = 0;
@@ -1983,6 +1983,10 @@ struct pull_t* init_pull(FILE*                     fplog,
                           epull_names[pcrd->params.eType], epullg_names[pcrd->params.eGeom],
                           epull_names[epullUMBRELLA]);
             }
+
+            GMX_RELEASE_ASSERT(
+                    !ir->useMts,
+                    "Constraint pulling can not be combined with multiple time stepping");
 
             pull->bConstraint = TRUE;
         }
@@ -2068,8 +2072,8 @@ struct pull_t* init_pull(FILE*                     fplog,
         bAbs = FALSE;
         for (const pull_coord_work_t& coord : pull->coord)
         {
-            if (pull->group[coord.params.group[0]].params.nat == 0
-                || pull->group[coord.params.group[1]].params.nat == 0)
+            if (pull->group[coord.params.group[0]].params.ind.empty()
+                || pull->group[coord.params.group[1]].params.ind.empty())
             {
                 bAbs = TRUE;
             }
@@ -2098,7 +2102,7 @@ struct pull_t* init_pull(FILE*                     fplog,
         // Don't include the reference group 0 in loop
         for (size_t g = 1; g < pull->group.size(); g++)
         {
-            if (pull->group[g].params.nat > 1 && pull->group[g].params.pbcatom < 0)
+            if (pull->group[g].params.ind.size() > 1 && pull->group[g].params.pbcatom < 0)
             {
                 /* We are using cosine weighting */
                 fprintf(fplog, "Cosine weighting is used for group %zu\n", g);
@@ -2118,7 +2122,7 @@ struct pull_t* init_pull(FILE*                     fplog,
         pull_group_work_t* pgrp;
 
         pgrp = &pull->group[g];
-        if (pgrp->params.nat > 0)
+        if (!pgrp->params.ind.empty())
         {
             /* There is an issue when a group is used in multiple coordinates
              * and constraints are applied in different dimensions with atoms
@@ -2174,7 +2178,7 @@ struct pull_t* init_pull(FILE*                     fplog,
             {
                 case epgrppbcREFAT: pull->bRefAt = TRUE; break;
                 case epgrppbcCOS:
-                    if (pgrp->params.weight != nullptr)
+                    if (!pgrp->params.weight.empty())
                     {
                         gmx_fatal(FARGS,
                                   "Pull groups can not have relative weights and cosine weighting "
@@ -2217,7 +2221,7 @@ struct pull_t* init_pull(FILE*                     fplog,
         {
             if (coord.params.eGeom == epullgCYL)
             {
-                if (pull->group[coord.params.group[0]].params.nat == 0)
+                if (pull->group[coord.params.group[0]].params.ind.empty())
                 {
                     gmx_fatal(FARGS,
                               "A cylinder pull group is not supported when using absolute "
@@ -2294,7 +2298,7 @@ static void destroy_pull(struct pull_t* pull)
 
 void preparePrevStepPullCom(const t_inputrec* ir,
                             pull_t*           pull_work,
-                            const t_mdatoms*  md,
+                            const real*       masses,
                             t_state*          state,
                             const t_state*    state_global,
                             const t_commrec*  cr,
@@ -2314,7 +2318,8 @@ void preparePrevStepPullCom(const t_inputrec* ir,
         if (PAR(cr))
         {
             /* Only the master rank has the checkpointed COM from the previous step */
-            gmx_bcast(sizeof(double) * state->pull_com_prev_step.size(), &state->pull_com_prev_step[0], cr);
+            gmx_bcast(sizeof(double) * state->pull_com_prev_step.size(),
+                      &state->pull_com_prev_step[0], cr->mpi_comm_mygroup);
         }
         setPrevStepPullComFromState(pull_work, state);
     }
@@ -2322,7 +2327,7 @@ void preparePrevStepPullCom(const t_inputrec* ir,
     {
         t_pbc pbc;
         set_pbc(&pbc, ir->pbcType, state->box);
-        initPullComFromPrevStep(cr, pull_work, md, &pbc, state->x.rvec_array());
+        initPullComFromPrevStep(cr, pull_work, masses, &pbc, state->x.rvec_array());
         updatePrevStepPullCom(pull_work, state);
     }
 }
@@ -2343,25 +2348,21 @@ void finish_pull(struct pull_t* pull)
     destroy_pull(pull);
 }
 
-gmx_bool pull_have_potential(const struct pull_t* pull)
+bool pull_have_potential(const pull_t& pull)
 {
-    return pull->bPotential;
+    return pull.bPotential;
 }
 
-gmx_bool pull_have_constraint(const struct pull_t* pull)
+bool pull_have_constraint(const pull_t& pull)
 {
-    return pull->bConstraint;
+    return pull.bConstraint;
 }
 
-bool pull_have_constraint(const pull_params_t* pullParameters)
+bool pull_have_constraint(const pull_params_t& pullParameters)
 {
-    if (pullParameters == nullptr)
+    for (int c = 0; c < pullParameters.ncoord; c++)
     {
-        return false;
-    }
-    for (int c = 0; c < pullParameters->ncoord; c++)
-    {
-        if (pullParameters->coord[c].eType == epullCONSTRAINT)
+        if (pullParameters.coord[c].eType == epullCONSTRAINT)
         {
             return true;
         }

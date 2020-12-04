@@ -107,19 +107,50 @@ std::string formatCentered(int width, const char* text)
 
 void printCopyright(gmx::TextWriter* writer)
 {
-    static const char* const Contributors[] = {
-        "Emile Apol",         "Rossen Apostolov",   "Paul Bauer",         "Herman J.C. Berendsen",
-        "Par Bjelkmar",       "Christian Blau",     "Viacheslav Bolnykh", "Kevin Boyd",
-        "Aldert van Buuren",  "Rudi van Drunen",    "Anton Feenstra",     "Alan Gray",
-        "Gerrit Groenhof",    "Anca Hamuraru",      "Vincent Hindriksen", "M. Eric Irrgang",
-        "Aleksei Iupinov",    "Christoph Junghans", "Joe Jordan",         "Dimitrios Karkoulis",
-        "Peter Kasson",       "Jiri Kraus",         "Carsten Kutzner",    "Per Larsson",
-        "Justin A. Lemkul",   "Viveca Lindahl",     "Magnus Lundborg",    "Erik Marklund",
-        "Pascal Merz",        "Pieter Meulenhoff",  "Teemu Murtola",      "Szilard Pall",
-        "Sander Pronk",       "Roland Schulz",      "Michael Shirts",     "Alexey Shvetsov",
-        "Alfons Sijbers",     "Peter Tieleman",     "Jon Vincent",        "Teemu Virolainen",
-        "Christian Wennberg", "Maarten Wolf",       "Artem Zhmurov"
-    };
+    static const char* const Contributors[]  = { "Andrey Alekseenko",
+                                                "Emile Apol",
+                                                "Rossen Apostolov",
+                                                "Paul Bauer",
+                                                "Herman J.C. Berendsen",
+                                                "Par Bjelkmar",
+                                                "Christian Blau",
+                                                "Viacheslav Bolnykh",
+                                                "Kevin Boyd",
+                                                "Aldert van Buuren",
+                                                "Rudi van Drunen",
+                                                "Anton Feenstra",
+                                                "Alan Gray",
+                                                "Gerrit Groenhof",
+                                                "Anca Hamuraru",
+                                                "Vincent Hindriksen",
+                                                "M. Eric Irrgang",
+                                                "Aleksei Iupinov",
+                                                "Christoph Junghans",
+                                                "Joe Jordan",
+                                                "Dimitrios Karkoulis",
+                                                "Peter Kasson",
+                                                "Jiri Kraus",
+                                                "Carsten Kutzner",
+                                                "Per Larsson",
+                                                "Justin A. Lemkul",
+                                                "Viveca Lindahl",
+                                                "Magnus Lundborg",
+                                                "Erik Marklund",
+                                                "Pascal Merz",
+                                                "Pieter Meulenhoff",
+                                                "Teemu Murtola",
+                                                "Szilard Pall",
+                                                "Sander Pronk",
+                                                "Roland Schulz",
+                                                "Michael Shirts",
+                                                "Alexey Shvetsov",
+                                                "Alfons Sijbers",
+                                                "Peter Tieleman",
+                                                "Jon Vincent",
+                                                "Teemu Virolainen",
+                                                "Christian Wennberg",
+                                                "Maarten Wolf",
+                                                "Artem Zhmurov" };
     static const char* const CopyrightText[] = {
         "Copyright (c) 1991-2000, University of Groningen, The Netherlands.",
         "Copyright (c) 2001-2019, The GROMACS development team at",
@@ -134,9 +165,9 @@ void printCopyright(gmx::TextWriter* writer)
     writer->writeLine(formatCentered(78, "GROMACS is written by:"));
     for (int i = 0; i < NCONTRIBUTORS;)
     {
-        for (int j = 0; j < 4 && i < NCONTRIBUTORS; ++j, ++i)
+        for (int j = 0; j < 3 && i < NCONTRIBUTORS; ++j, ++i)
         {
-            const int            width = 18;
+            const int            width = 26;
             std::array<char, 30> buf;
             const int            offset = centeringOffset(width, strlen(Contributors[i]));
             GMX_RELEASE_ASSERT(static_cast<int>(strlen(Contributors[i])) + offset < gmx::ssize(buf),
@@ -271,7 +302,9 @@ void gmx_print_version_info(gmx::TextWriter* writer)
     writer->writeLine(formatString("GPU support:        %s", getGpuImplementationString()));
     writer->writeLine(formatString("SIMD instructions:  %s", GMX_SIMD_STRING));
     writer->writeLine(formatString("FFT library:        %s", getFftDescriptionString()));
-    writer->writeLine(formatString("RDTSCP usage:       %s", HAVE_RDTSCP ? "enabled" : "disabled"));
+#if GMX_TARGET_X86
+    writer->writeLine(formatString("RDTSCP usage:       %s", GMX_USE_RDTSCP ? "enabled" : "disabled"));
+#endif
 #if GMX_USE_TNG
     writer->writeLine("TNG support:        enabled");
 #else
@@ -296,22 +329,25 @@ void gmx_print_version_info(gmx::TextWriter* writer)
      * them. Can wait for later, as the master branch has ready code to do all
      * that. */
     writer->writeLine(formatString("C compiler:         %s", BUILD_C_COMPILER));
-    writer->writeLine(formatString("C compiler flags:   %s", BUILD_CFLAGS));
+    writer->writeLine(formatString("C compiler flags:   %s %s", BUILD_CFLAGS,
+                                   CMAKE_BUILD_CONFIGURATION_C_FLAGS));
     writer->writeLine(formatString("C++ compiler:       %s", BUILD_CXX_COMPILER));
-    writer->writeLine(formatString("C++ compiler flags: %s", BUILD_CXXFLAGS));
+    writer->writeLine(formatString("C++ compiler flags: %s %s", BUILD_CXXFLAGS,
+                                   CMAKE_BUILD_CONFIGURATION_CXX_FLAGS));
 #ifdef HAVE_LIBMKL
     /* MKL might be used for LAPACK/BLAS even if FFTs use FFTW, so keep it separate */
     writer->writeLine(formatString("Linked with Intel MKL version %d.%d.%d.", __INTEL_MKL__,
                                    __INTEL_MKL_MINOR__, __INTEL_MKL_UPDATE__));
 #endif
-#if GMX_GPU == GMX_GPU_OPENCL
+#if GMX_GPU_OPENCL
     writer->writeLine(formatString("OpenCL include dir: %s", OPENCL_INCLUDE_DIR));
     writer->writeLine(formatString("OpenCL library:     %s", OPENCL_LIBRARY));
     writer->writeLine(formatString("OpenCL version:     %s", OPENCL_VERSION_STRING));
 #endif
-#if GMX_GPU == GMX_GPU_CUDA
+#if GMX_GPU_CUDA
     writer->writeLine(formatString("CUDA compiler:      %s", CUDA_COMPILER_INFO));
-    writer->writeLine(formatString("CUDA compiler flags:%s", CUDA_COMPILER_FLAGS));
+    writer->writeLine(formatString("CUDA compiler flags:%s %s", CUDA_COMPILER_FLAGS,
+                                   CMAKE_BUILD_CONFIGURATION_CXX_FLAGS));
     writer->writeLine("CUDA driver:        " + gmx::getCudaDriverVersionString());
     writer->writeLine("CUDA runtime:       " + gmx::getCudaRuntimeVersionString());
 #endif

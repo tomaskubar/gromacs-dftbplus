@@ -34,30 +34,24 @@
 # the research papers on the package. Check out http://www.gromacs.org.
 
 file(GLOB UTILITY_SOURCES *.cpp)
-if (GMX_GPU AND NOT GMX_USE_OPENCL)
+if (GMX_GPU_CUDA)
     gmx_add_libgromacs_sources(cuda_version_information.cu)
 endif()
 set(LIBGROMACS_SOURCES ${LIBGROMACS_SOURCES} ${UTILITY_SOURCES} PARENT_SCOPE)
 
-# TODO: (https://redmine.gromacs.org/issues/988) Find a new convention for defining public API.
-install(FILES
-        basedefinitions.h
-        current_function.h
-        gmxassert.h
-        real.h
-        DESTINATION include/gromacs/utility)
-
 if(GMX_INSTALL_LEGACY_API)
   install(FILES
-          arrayref.h
           baseversion.h
           classhelpers.h
           enumerationhelpers.h
-          exceptions.h
-          listoflists.h
+	  fileptr.h
+	  futil.h
+	  flags.h
+	  pleasecite.h
           programcontext.h
           range.h
           smalloc.h
+	  stringutil.h
           unique_cptr.h
           DESTINATION include/gromacs/utility)
 endif()

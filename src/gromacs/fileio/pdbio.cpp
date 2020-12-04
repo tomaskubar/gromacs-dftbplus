@@ -37,7 +37,7 @@
  */
 #include "gmxpre.h"
 
-#include "pdbio.h"
+#include "gromacs/fileio/pdbio.h"
 
 #include <cctype>
 #include <cmath>
@@ -78,40 +78,6 @@ static const char* pdbtp[epdbNR] = { "ATOM  ", "HETATM", "ANISOU", "CRYST1", "CO
                                      "ENDMDL", "TER",    "HEADER", "TITLE",  "REMARK", "CONECT" };
 
 #define REMARK_SIM_BOX "REMARK    THIS IS A SIMULATION BOX"
-
-static void xlate_atomname_pdb2gmx(char* name)
-{
-    int  i, length;
-    char temp;
-
-    length = std::strlen(name);
-    if (length > 3 && std::isdigit(name[0]))
-    {
-        temp = name[0];
-        for (i = 1; i < length; i++)
-        {
-            name[i - 1] = name[i];
-        }
-        name[length - 1] = temp;
-    }
-}
-
-// Deliberately taking a copy of name to return it later
-static std::string xlate_atomname_gmx2pdb(std::string name)
-{
-    size_t length = name.size();
-    if (length > 3 && std::isdigit(name[length - 1]))
-    {
-        char temp = name[length - 1];
-        for (size_t i = length - 1; i > 0; --i)
-        {
-            name[i] = name[i - 1];
-        }
-        name[0] = temp;
-    }
-    return name;
-}
-
 
 void gmx_write_pdb_box(FILE* out, PbcType pbcType, const matrix box)
 {
@@ -338,8 +304,6 @@ void write_pdbfile_indexed(FILE*          out,
         std::string resnm  = *atoms->resinfo[resind].name;
         std::string nm     = *atoms->atomname[i];
 
-        /* rename HG12 to 2HG1, etc. */
-        nm                  = xlate_atomname_gmx2pdb(nm);
         int           resnr = atoms->resinfo[resind].nr;
         unsigned char resic = atoms->resinfo[resind].ic;
         unsigned char ch;
@@ -575,8 +539,7 @@ void get_pdb_atomnumber(const t_atoms* atoms, AtomProperties* aps)
     }
 }
 
-static int
-read_atom(t_symtab* symtab, const char line[], int type, int natom, t_atoms* atoms, rvec x[], int chainnum, gmx_bool bChange)
+static int read_atom(t_symtab* symtab, const char line[], int type, int natom, t_atoms* atoms, rvec x[], int chainnum)
 {
     t_atom*       atomn;
     int           j, k;
@@ -696,10 +659,6 @@ read_atom(t_symtab* symtab, const char line[], int type, int natom, t_atoms* ato
         {
             atomn->resind = atoms->atom[natom - 1].resind;
         }
-        if (bChange)
-        {
-            xlate_atomname_pdb2gmx(anm);
-        }
         atoms->atomname[natom] = put_symtab(symtab, anm);
         atomn->m               = 0.0;
         atomn->q               = 0.0;
@@ -730,15 +689,7 @@ gmx_bool is_hydrogen(const char* nm)
     std::strcpy(buf, nm);
     trim(buf);
 
-    if (buf[0] == 'H')
-    {
-        return TRUE;
-    }
-    else if ((std::isdigit(buf[0])) && (buf[1] == 'H'))
-    {
-        return TRUE;
-    }
-    return FALSE;
+    return ((buf[0] == 'H') || ((std::isdigit(buf[0]) != 0) && (buf[1] == 'H')));
 }
 
 gmx_bool is_dummymass(const char* nm)
@@ -841,7 +792,6 @@ int read_pdbfile(FILE*      in,
                  rvec       x[],
                  PbcType*   pbcType,
                  matrix     box,
-                 gmx_bool   bChange,
                  gmx_conect conect)
 {
     gmx_conect_t* gc = conect;
@@ -881,7 +831,7 @@ int read_pdbfile(FILE*      in,
         {
             case epdbATOM:
             case epdbHETATM:
-                natom = read_atom(symtab, line, line_type, natom, atoms, x, chainnum, bChange);
+                natom = read_atom(symtab, line, line_type, natom, atoms, x, chainnum);
                 break;
 
             case epdbANISOU:
@@ -1013,7 +963,7 @@ void gmx_pdb_read_conf(const char* infile, t_symtab* symtab, char** name, t_atom
 {
     FILE* in = gmx_fio_fopen(infile, "r");
     char  title[STRLEN];
-    read_pdbfile(in, title, nullptr, atoms, symtab, x, pbcType, box, TRUE, nullptr);
+    read_pdbfile(in, title, nullptr, atoms, symtab, x, pbcType, box, nullptr);
     if (name != nullptr)
     {
         *name = gmx_strdup(title);

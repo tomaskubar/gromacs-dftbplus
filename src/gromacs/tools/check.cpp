@@ -125,11 +125,13 @@ static void comp_tpx(const char* fn1, const char* fn2, gmx_bool bRMSD, real ftol
         {
             if (ir[0]->bPull)
             {
-                comp_pull_AB(stdout, ir[0]->pull, ftol, abstol);
+                comp_pull_AB(stdout, *ir[0]->pull, ftol, abstol);
             }
             compareMtopAB(stdout, mtop[0], ftol, abstol);
         }
     }
+    delete ir[0];
+    delete ir[1];
 }
 
 static void comp_trx(const gmx_output_env_t* oenv, const char* fn1, const char* fn2, gmx_bool bRMSD, real ftol, real abstol)
@@ -815,6 +817,7 @@ int gmx_check(int argc, char* argv[])
     {
         fprintf(stderr, "Please give me TWO trajectory (.xtc/.trr/.tng) files!\n");
     }
+    output_env_done(oenv);
 
     fn1 = opt2fn_null("-s1", NFILE, fnm);
     fn2 = opt2fn_null("-s2", NFILE, fnm);

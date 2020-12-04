@@ -3,7 +3,7 @@
  *
  * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
  * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2011,2014,2015,2016,2018 by the GROMACS development team.
+ * Copyright (c) 2011,2014,2015,2016,2018, The GROMACS development team.
  * Copyright (c) 2019,2020, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
@@ -118,17 +118,18 @@ struct MoleculeBlockIndices
  */
 struct SimulationGroups
 {
-    //! Groups of particles
+    // TODO: collect groups and groupNumbers in a struct for each group type
+    //! Group numbers for each of the different SimulationAtomGroupType groups.
     gmx::EnumerationArray<SimulationAtomGroupType, AtomGroupIndices> groups;
     //! Names of groups, stored as pointer to the entries in the symbol table.
     std::vector<char**> groupNames;
-    //! Group numbers for the different SimulationAtomGroupType groups.
+    //! Indices into groups for each atom for each of the different SimulationAtomGroupType groups.
     gmx::EnumerationArray<SimulationAtomGroupType, std::vector<unsigned char>> groupNumbers;
 
     /*! \brief
-     * Number of group numbers for a single SimulationGroup.
+     * Number of atoms for which group numbers are stored for a single SimulationGroup.
      *
-     * \param[in] group Integer value for the group type.
+     * \param[in] group  The group type.
      */
     int numberOfGroupNumbers(SimulationAtomGroupType group) const
     {
@@ -177,15 +178,11 @@ struct gmx_mtop_t //NOLINT(clang-analyzer-optin.performance.Padding)
     std::unique_ptr<InteractionLists> intermolecular_ilist = nullptr;
     //! Number of global atoms.
     int natoms = 0;
-    //! Parameter for residue numbering.
-    int maxres_renum = 0;
-    //! The maximum residue number in moltype
-    int maxresnr = -1;
     //! Atomtype properties
     t_atomtypes atomtypes;
     //! Groups of atoms for different purposes
     SimulationGroups groups;
-    //! The symbol table
+    //! The legacy symbol table
     t_symtab symtab;
     //! Tells whether we have valid molecule indices
     bool haveMoleculeIndices = false;
@@ -194,9 +191,33 @@ struct gmx_mtop_t //NOLINT(clang-analyzer-optin.performance.Padding)
      */
     std::vector<int> intermolecularExclusionGroup;
 
-    /* Derived data  below */
+    //! Maximum number of residues in molecule to trigger renumbering of residues
+    int maxResiduesPerMoleculeToTriggerRenumber() const
+    {
+        return maxResiduesPerMoleculeToTriggerRenumber_;
+    }
+    //! Maximum residue number that is not renumbered.
+    int maxResNumberNotRenumbered() const { return maxResNumberNotRenumbered_; }
+    /*! \brief Finalize this data structure.
+     *
+     * Should be called after generating or reading mtop, to set some compute
+     * intesive variables to avoid N^2 operations later on.
+     *
+     * \todo Move into a builder class, once available.
+     */
+    void finalize();
+
+    /* Derived data below */
     //! Indices for each molblock entry for fast lookup of atom properties
     std::vector<MoleculeBlockIndices> moleculeBlockIndices;
+
+private:
+    //! Build the molblock indices
+    void buildMolblockIndices();
+    //! Maximum number of residues in molecule to trigger renumbering of residues
+    int maxResiduesPerMoleculeToTriggerRenumber_ = 0;
+    //! The maximum residue number in moltype that is not renumbered
+    int maxResNumberNotRenumbered_ = -1;
 };
 
 /*! \brief

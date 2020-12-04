@@ -42,17 +42,14 @@
 
 #include "typecasts_runner.h"
 
-#include "config.h"
-
 #include <vector>
 
 #include "gromacs/gpu_utils/cudautils.cuh"
 #include "gromacs/gpu_utils/devicebuffer.h"
 #include "gromacs/gpu_utils/typecasts.cuh"
+#include "gromacs/hardware/device_information.h"
 #include "gromacs/utility/exceptions.h"
 #include "gromacs/utility/stringutil.h"
-
-#if GMX_GPU == GMX_GPU_CUDA
 
 namespace gmx
 {
@@ -108,17 +105,24 @@ static __global__ void convertRVecToFloat3OnDevice_kernel(DeviceBuffer<float3> g
     }
 }
 
-void convertRVecToFloat3OnDevice(std::vector<gmx::RVec>& h_rVecOutput, const std::vector<gmx::RVec>& h_rVecInput)
+void convertRVecToFloat3OnDevice(std::vector<gmx::RVec>&       h_rVecOutput,
+                                 const std::vector<gmx::RVec>& h_rVecInput,
+                                 const TestDevice*             testDevice)
 {
+    const DeviceContext& deviceContext = testDevice->deviceContext();
+    const DeviceStream&  deviceStream  = testDevice->deviceStream();
+
+    setActiveDevice(testDevice->deviceInfo());
+
     const int numElements = h_rVecInput.size();
 
     DeviceBuffer<RVec> d_rVecInput;
-    allocateDeviceBuffer(&d_rVecInput, numElements, nullptr);
-    copyToDeviceBuffer(&d_rVecInput, h_rVecInput.data(), 0, numElements, nullptr,
+    allocateDeviceBuffer(&d_rVecInput, numElements, deviceContext);
+    copyToDeviceBuffer(&d_rVecInput, h_rVecInput.data(), 0, numElements, deviceStream,
                        GpuApiCallBehavior::Sync, nullptr);
 
     DeviceBuffer<float3> d_float3Output;
-    allocateDeviceBuffer(&d_float3Output, numElements * DIM, nullptr);
+    allocateDeviceBuffer(&d_float3Output, numElements * DIM, deviceContext);
 
     std::vector<float3> h_float3Output(numElements);
 
@@ -128,14 +132,14 @@ void convertRVecToFloat3OnDevice(std::vector<gmx::RVec>& h_rVecOutput, const std
     kernelLaunchConfig.blockSize[1]     = 1;
     kernelLaunchConfig.blockSize[2]     = 1;
     kernelLaunchConfig.sharedMemorySize = 0;
-    kernelLaunchConfig.stream           = nullptr;
 
     auto       kernelPtr  = convertRVecToFloat3OnDevice_kernel;
     const auto kernelArgs = prepareGpuKernelArguments(kernelPtr, kernelLaunchConfig,
                                                       &d_float3Output, &d_rVecInput, &numElements);
-    launchGpuKernel(kernelPtr, kernelLaunchConfig, nullptr, "convertRVecToFloat3OnDevice_kernel", kernelArgs);
+    launchGpuKernel(kernelPtr, kernelLaunchConfig, deviceStream, nullptr,
+                    "convertRVecToFloat3OnDevice_kernel", kernelArgs);
 
-    copyFromDeviceBuffer(h_float3Output.data(), &d_float3Output, 0, numElements, nullptr,
+    copyFromDeviceBuffer(h_float3Output.data(), &d_float3Output, 0, numElements, deviceStream,
                          GpuApiCallBehavior::Sync, nullptr);
 
     saveFloat3InRVecFormat(h_rVecOutput, h_float3Output.data(), numElements);
@@ -146,5 +150,3 @@ void convertRVecToFloat3OnDevice(std::vector<gmx::RVec>& h_rVecOutput, const std
 
 } // namespace test
 } // namespace gmx
-
-#endif // GMX_GPU == GMX_GPU_CUDA
