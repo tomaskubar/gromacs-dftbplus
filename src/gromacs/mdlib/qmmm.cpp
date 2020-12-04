@@ -449,8 +449,8 @@ void QMMM_MMrec::init_MMrec(real scalefactor_in,
 QMMM_rec::QMMM_rec(const t_commrec*                 cr,
                    const gmx_mtop_t*                mtop,
                    const t_inputrec*                ir,
-                   const t_forcerec*                fr,
-                   const gmx_wallcycle_t gmx_unused wcycle)
+                   const t_forcerec*                fr)
+ //                const gmx_wallcycle_t gmx_unused wcycle)
 {
 #if GMX_QMMM
     // Put the atom numbers of atoms that belong to the QMMM group
@@ -638,7 +638,7 @@ QMMM_rec::QMMM_rec(const t_commrec*                 cr,
         }
         snew(qm[0].QMcharges, qm[0].nrQMatoms);
 
-        init_dftbplus(qm[0], this, ir, cr, wcycle);
+        init_dftbplus(qm[0], this, ir, cr); //, wcycle);
     }
     else
     {
@@ -664,34 +664,34 @@ std::vector<int> qmmmAtomIndices(const t_inputrec& ir, const gmx_mtop_t& mtop)
                 qmmmAtoms.push_back(index);
             }
         }
-        if (ir.QMMMscheme == eQMMMschemeoniom)
-        {
-            // I assume that users specify the QM groups from small to big(ger) in the mdp file
-            gmx_mtop_ilistloop_all_t iloop      = gmx_mtop_ilistloop_all_init(&mtop);
-            int                      nral1      = 1 + NRAL(F_VSITE2);
-            int                      atomOffset = 0;
-            while (const InteractionLists* ilists = gmx_mtop_ilistloop_all_next(iloop, &atomOffset))
-            {
-                const InteractionList& ilist = (*ilists)[F_VSITE2];
-                for (int j = 0; j < ilist.size(); j += nral1)
-                {
-                    const int vsite = atomOffset + ilist.iatoms[j];     // the vsite
-                    const int ai    = atomOffset + ilist.iatoms[j + 1]; // constructing atom
-                    const int aj    = atomOffset + ilist.iatoms[j + 2]; // constructing atom
-                    if (getGroupType(groups, SimulationAtomGroupType::QuantumMechanics, vsite)
-                                == getGroupType(groups, SimulationAtomGroupType::QuantumMechanics, ai)
-                        && getGroupType(groups, SimulationAtomGroupType::QuantumMechanics, vsite)
-                                   == getGroupType(groups, SimulationAtomGroupType::QuantumMechanics, aj))
-                    {
-                        // this dummy link atom needs to be removed from qmmmAtoms
-                        //   before making the QMrec of this layer!
-                        qmmmAtoms.erase(std::remove_if(qmmmAtoms.begin(), qmmmAtoms.end(),
-                                                       [&vsite](int atom) { return atom == vsite; }),
-                                        qmmmAtoms.end());
-                    }
-                }
-            }
-        }
+     // if (ir.QMMMscheme == eQMMMschemeoniom)
+     // {
+     //     // I assume that users specify the QM groups from small to big(ger) in the mdp file
+     //     gmx_mtop_ilistloop_all_t iloop      = gmx_mtop_ilistloop_all_init(&mtop);
+     //     int                      nral1      = 1 + NRAL(F_VSITE2);
+     //     int                      atomOffset = 0;
+     //     while (const InteractionLists* ilists = gmx_mtop_ilistloop_all_next(iloop, &atomOffset))
+     //     {
+     //         const InteractionList& ilist = (*ilists)[F_VSITE2];
+     //         for (int j = 0; j < ilist.size(); j += nral1)
+     //         {
+     //             const int vsite = atomOffset + ilist.iatoms[j];     // the vsite
+     //             const int ai    = atomOffset + ilist.iatoms[j + 1]; // constructing atom
+     //             const int aj    = atomOffset + ilist.iatoms[j + 2]; // constructing atom
+     //             if (getGroupType(groups, SimulationAtomGroupType::QuantumMechanics, vsite)
+     //                         == getGroupType(groups, SimulationAtomGroupType::QuantumMechanics, ai)
+     //                 && getGroupType(groups, SimulationAtomGroupType::QuantumMechanics, vsite)
+     //                            == getGroupType(groups, SimulationAtomGroupType::QuantumMechanics, aj))
+     //             {
+     //                 // this dummy link atom needs to be removed from qmmmAtoms
+     //                 //   before making the QMrec of this layer!
+     //                 qmmmAtoms.erase(std::remove_if(qmmmAtoms.begin(), qmmmAtoms.end(),
+     //                                                [&vsite](int atom) { return atom == vsite; }),
+     //                                 qmmmAtoms.end());
+     //             }
+     //         }
+     //     }
+     // }
     }
     return qmmmAtoms;
 }
@@ -990,7 +990,7 @@ void QMMM_rec::update_QMMMrec_verlet_ns(const t_commrec*    cr,
 } // update_QMMMrec_verlet_ns
 
 real QMMM_rec::calculate_QMMM(const t_commrec*           cr,
-                              gmx::ForceWithShiftForces* forceWithShiftForces,
+                              gmx::ForceWithVirial*      forceWithVirial,
                               t_nrnb*                    nrnb,
                               const gmx_wallcycle_t      wcycle)
 {
@@ -1011,18 +1011,19 @@ real QMMM_rec::calculate_QMMM(const t_commrec*           cr,
     rvec *forces = nullptr,
          *fshift = nullptr;
  
-    gmx::ArrayRef<gmx::RVec> fMM      = forceWithShiftForces->force();
-    gmx::ArrayRef<gmx::RVec> fshiftMM = forceWithShiftForces->shiftForces();
+ // gmx::ArrayRef<gmx::RVec> fMM      = forceWithVirial->force_.data();
+                  gmx::RVec *fMM      = forceWithVirial->force_.data();
+ // gmx::ArrayRef<gmx::RVec> fshiftMM = forceWithShiftForces->shiftForces();
 
     if (GMX_QMMM_DFTBPLUS)
     {
         snew(forces, (qm_.nrQMatoms + mm_.nrMMatoms + mm_.nrMMatoms_full));
-        snew(fshift, (qm_.nrQMatoms + mm_.nrMMatoms + mm_.nrMMatoms_full));
+     // snew(fshift, (qm_.nrQMatoms + mm_.nrMMatoms + mm_.nrMMatoms_full));
     }
     else
     {
         snew(forces, (qm_.nrQMatoms + mm_.nrMMatoms));
-        snew(fshift, (qm_.nrQMatoms + mm_.nrMMatoms));
+     // snew(fshift, (qm_.nrQMatoms + mm_.nrMMatoms));
     }
 
     QMener = call_QMroutine(cr, this, qm_, mm_, forces, fshift, nrnb, wcycle);
@@ -1034,7 +1035,7 @@ real QMMM_rec::calculate_QMMM(const t_commrec*           cr,
             for (int j = 0; j < DIM; j++)
             {
                 fMM[qm_.indexQM[i]][j]        -= forces[i][j];
-                fshiftMM[qm_.shiftQM[i]][j]   += fshift[i][j];
+             // fshiftMM[qm_.shiftQM[i]][j]   += fshift[i][j];
             }
          // printf("F[%5d] = %8.2f %8.2f %8.2f\n", qm_.indexQM[i], forces[i][0], forces[i][1], forces[i][2]);
         }
@@ -1043,7 +1044,7 @@ real QMMM_rec::calculate_QMMM(const t_commrec*           cr,
             for (int j = 0; j < DIM; j++)
             {
                 fMM[mm_.indexMM[i]][j]        -= forces[qm_.nrQMatoms+i][j];
-                fshiftMM[mm_.shiftMM[i]][j]   += fshift[qm_.nrQMatoms+i][j];
+             // fshiftMM[mm_.shiftMM[i]][j]   += fshift[qm_.nrQMatoms+i][j];
             }
          // if (i<30) if (norm(forces[qm_.nrQMatoms+i]) > 10.)
          //   printf("F_MM[%5d] = %8.2f %8.2f %8.2f\n", mm_.indexMM[i],
@@ -1054,7 +1055,7 @@ real QMMM_rec::calculate_QMMM(const t_commrec*           cr,
             for (int j = 0; j < DIM; j++)
             {
                 fMM[mm_.indexMM_full[i]][j]        -= forces[qm_.nrQMatoms+mm_.nrMMatoms+i][j];
-                fshiftMM[mm_.shiftMM_full[i]][j]   += fshift[qm_.nrQMatoms+mm_.nrMMatoms+i][j];
+             // fshiftMM[mm_.shiftMM_full[i]][j]   += fshift[qm_.nrQMatoms+mm_.nrMMatoms+i][j];
             }
          // if (i<100) if (norm(forces[qm_.nrQMatoms+mm_.nrMMatoms+i]) > 10.)
          //   printf("F_MM_F[%5d] = %8.2f %8.2f %8.2f\n", mm_.indexMM_full[i],
@@ -1068,7 +1069,7 @@ real QMMM_rec::calculate_QMMM(const t_commrec*           cr,
             for (int j = 0; j < DIM; j++)
             {
                 fMM[qm_.indexQM[i]][j]          -= forces[i][j];
-                fshiftMM[qm_.shiftQM[i]][j]     += fshift[i][j];
+             // fshiftMM[qm_.shiftQM[i]][j]     += fshift[i][j];
             }
         }
         for (int i = 0; i < mm_.nrMMatoms; i++)
@@ -1076,13 +1077,13 @@ real QMMM_rec::calculate_QMMM(const t_commrec*           cr,
             for (int j = 0; j < DIM; j++)
             {
                 fMM[mm_.indexMM[i]][j]      -= forces[qm_.nrQMatoms+i][j];
-                fshiftMM[mm_.shiftMM[i]][j] += fshift[qm_.nrQMatoms+i][j];
+             // fshiftMM[mm_.shiftMM[i]][j] += fshift[qm_.nrQMatoms+i][j];
             }
         }
     }
 
     sfree(forces);
-    sfree(fshift);
+ // sfree(fshift);
 
     return QMener;
 } // calculate_QMMM

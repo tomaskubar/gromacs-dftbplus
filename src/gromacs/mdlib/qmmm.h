@@ -111,7 +111,8 @@ struct t_mdatoms;
 
 namespace gmx
 {
-class ForceWithShiftForces;
+//class ForceWithShiftForces;
+class ForceWithVirial;
 }
 
 class QMMM_QMrec;
@@ -277,8 +278,8 @@ public:
     QMMM_rec(const t_commrec*                 cr,
              const gmx_mtop_t*                mtop,
              const t_inputrec*                ir,
-             const t_forcerec*                fr,
-             const gmx_wallcycle_t gmx_unused wcycle);
+             const t_forcerec*                fr);
+          // const gmx_wallcycle_t gmx_unused wcycle);
     // From topology->atoms.atomname and topology->atoms.atomtype
     //   the atom names and types are read;
     // From inputrec->QMcharge resp. inputrec->QMmult the nelecs and multiplicity are determined
@@ -344,7 +345,7 @@ public:
                         rvec*             MMgrad_full);
 
     real calculate_QMMM(const t_commrec*           cr,
-                        gmx::ForceWithShiftForces* forceWithShiftForces,
+                        gmx::ForceWithVirial*      forceWithVirial,
                               t_nrnb*              nrnb,
                         const gmx_wallcycle_t      wcycle);
 

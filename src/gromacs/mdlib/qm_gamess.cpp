@@ -153,7 +153,7 @@ void init_gamess(const t_commrec* cr, QMMM_QMrec& qm, QMMM_MMrec& mm)
                     eQMbasis_names[qm.QMbasis_get()], eQMmethod_names[qm.QMmethod_get()]); /* see enum.h */
             fclose(out);
         }
-        gmx_barrier(cr);
+        gmx_barrier(cr->mpi_comm_mygroup);
         F77_FUNC(inigms, IMIGMS)();
     }
     else /* normal serial run */
