@@ -33,24 +33,31 @@
 # To help us fund GROMACS development, we humbly ask that you cite
 # the research papers on the package. Check out http://www.gromacs.org.
 
-gmx_add_unit_test(TrajectoryAnalysisUnitTests trajectoryanalysis-test
-                  moduletest.cpp
-                  clustsize.cpp
-                  cmdlinerunner.cpp
-                  angle.cpp
-                  convert_trj.cpp
-                  distance.cpp
-                  extract_cluster.cpp
-                  freevolume.cpp
-                  pairdist.cpp
-                  rdf.cpp
-                  sasa.cpp
-                  select.cpp
-                  surfacearea.cpp
-                  topologyinformation.cpp
-                  trajectory.cpp
-                  unionfind.cpp)
+gmx_add_gtest_executable(trajectoryanalysis-test
+    CPP_SOURCE_FILES
+        # Infrastructure
+        moduletest.cpp
+        # Tests
+        angle.cpp
+        clustsize.cpp
+        cmdlinerunner.cpp
+        convert_trj.cpp
+        distance.cpp
+        extract_cluster.cpp
+        freevolume.cpp
+        pairdist.cpp
+        rdf.cpp
+        sasa.cpp
+        select.cpp
+        surfacearea.cpp
+        topologyinformation.cpp
+        trajectory.cpp
+        unionfind.cpp
+        )
+gmx_register_gtest_test(TrajectoryAnalysisUnitTests trajectoryanalysis-test SLOW_TEST)
 target_link_libraries(trajectoryanalysis-test PRIVATE analysisdata-test-shared)
+target_link_libraries(trajectoryanalysis-test PRIVATE common)
 
 add_executable(test_selection ${UNITTEST_TARGET_OPTIONS} test_selection.cpp)
-target_link_libraries(test_selection PRIVATE libgromacs ${GMX_EXE_LINKER_FLAGS})
+# TODO: Explicitly link to module dependencies.
+target_link_libraries(test_selection PRIVATE common libgromacs legacy_modules ${GMX_EXE_LINKER_FLAGS})

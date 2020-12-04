@@ -39,7 +39,7 @@
 
 /* This file is completely threadsafe - keep it that way! */
 
-#include "tpxio.h"
+#include "gromacs/fileio/tpxio.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -58,6 +58,7 @@
 #include "gromacs/mdtypes/awh_params.h"
 #include "gromacs/mdtypes/inputrec.h"
 #include "gromacs/mdtypes/md_enums.h"
+#include "gromacs/mdtypes/multipletimestepping.h"
 #include "gromacs/mdtypes/pull_params.h"
 #include "gromacs/mdtypes/state.h"
 #include "gromacs/pbcutil/boxutilities.h"
@@ -131,6 +132,8 @@ enum tpxv
     tpxv_VSite2FD,                  /**< Added 2FD type virtual site */
     tpxv_AddSizeField, /**< Added field with information about the size of the serialized tpr file in bytes, excluding the header */
     tpxv_StoreNonBondedInteractionExclusionGroup, /**< Store the non bonded interaction exclusion group in the topology */
+    tpxv_VSite1,                                  /**< Added 1 type virtual site */
+    tpxv_MTS,                                     /**< Added multiple time stepping */
     tpxv_Count                                    /**< the total number of tpxv versions */
 };
 
@@ -205,10 +208,13 @@ static const t_ftupd ftupd[] = {
     { 72, F_GBPOL_NOLONGERUSED },
     { 72, F_NPSOLVATION_NOLONGERUSED },
     { 93, F_LJ_RECIP },
+    { 76, F_ANHARM_POL },
     { 90, F_FBPOSRES },
+    { tpxv_VSite1, F_VSITE1 },
+    { tpxv_VSite2FD, F_VSITE2FD },
+    { tpxv_GenericInternalParameters, F_DENSITYFITTING },
     { 69, F_VTEMP_NOLONGERUSED },
     { 66, F_PDISPCORR },
-    { 76, F_ANHARM_POL },
     { 79, F_DVDL_COUL },
     {
             79,
@@ -220,8 +226,6 @@ static const t_ftupd ftupd[] = {
     },
     { 79, F_DVDL_RESTRAINT },
     { 79, F_DVDL_TEMPERATURE },
-    { tpxv_GenericInternalParameters, F_DENSITYFITTING },
-    { tpxv_VSite2FD, F_VSITE2FD },
 };
 #define NFTUPD asize(ftupd)
 
@@ -237,20 +241,16 @@ static void do_pullgrp_tpx_pre95(gmx::ISerializer* serializer, t_pull_group* pgr
 {
     rvec tmp;
 
-    serializer->doInt(&pgrp->nat);
-    if (serializer->reading())
-    {
-        snew(pgrp->ind, pgrp->nat);
-    }
-    serializer->doIntArray(pgrp->ind, pgrp->nat);
-    serializer->doInt(&pgrp->nweight);
-    if (serializer->reading())
-    {
-        snew(pgrp->weight, pgrp->nweight);
-    }
-    serializer->doRealArray(pgrp->weight, pgrp->nweight);
+    int numAtoms = pgrp->ind.size();
+    serializer->doInt(&numAtoms);
+    pgrp->ind.resize(numAtoms);
+    serializer->doIntArray(pgrp->ind.data(), numAtoms);
+    int numWeights = pgrp->weight.size();
+    serializer->doInt(&numWeights);
+    pgrp->weight.resize(numWeights);
+    serializer->doRealArray(pgrp->weight.data(), numWeights);
     serializer->doInt(&pgrp->pbcatom);
-    serializer->doRvec(&pcrd->vec);
+    serializer->doRvec(&pcrd->vec.as_vec());
     clear_rvec(pcrd->origin);
     serializer->doRvec(&tmp);
     pcrd->init = tmp[0];
@@ -261,18 +261,14 @@ static void do_pullgrp_tpx_pre95(gmx::ISerializer* serializer, t_pull_group* pgr
 
 static void do_pull_group(gmx::ISerializer* serializer, t_pull_group* pgrp)
 {
-    serializer->doInt(&pgrp->nat);
-    if (serializer->reading())
-    {
-        snew(pgrp->ind, pgrp->nat);
-    }
-    serializer->doIntArray(pgrp->ind, pgrp->nat);
-    serializer->doInt(&pgrp->nweight);
-    if (serializer->reading())
-    {
-        snew(pgrp->weight, pgrp->nweight);
-    }
-    serializer->doRealArray(pgrp->weight, pgrp->nweight);
+    int numAtoms = pgrp->ind.size();
+    serializer->doInt(&numAtoms);
+    pgrp->ind.resize(numAtoms);
+    serializer->doIntArray(pgrp->ind.data(), numAtoms);
+    int numWeights = pgrp->weight.size();
+    serializer->doInt(&numWeights);
+    pgrp->weight.resize(numWeights);
+    serializer->doRealArray(pgrp->weight.data(), numWeights);
     serializer->doInt(&pgrp->pbcatom);
 }
 
@@ -304,14 +300,14 @@ static void do_pull_coord(gmx::ISerializer* serializer,
             }
             else
             {
-                pcrd->externalPotentialProvider = nullptr;
+                pcrd->externalPotentialProvider.clear();
             }
         }
         else
         {
             if (serializer->reading())
             {
-                pcrd->externalPotentialProvider = nullptr;
+                pcrd->externalPotentialProvider.clear();
             }
         }
         /* Note that we try to support adding new geometries without
@@ -322,7 +318,7 @@ static void do_pull_coord(gmx::ISerializer* serializer,
         serializer->doInt(&pcrd->ngroup);
         if (pcrd->ngroup <= c_pullCoordNgroupMax)
         {
-            serializer->doIntArray(pcrd->group, pcrd->ngroup);
+            serializer->doIntArray(pcrd->group.data(), pcrd->ngroup);
         }
         else
         {
@@ -338,7 +334,7 @@ static void do_pull_coord(gmx::ISerializer* serializer,
 
             pcrd->ngroup = 0;
         }
-        serializer->doIvec(&pcrd->dim);
+        serializer->doIvec(&pcrd->dim.as_vec());
     }
     else
     {
@@ -355,7 +351,7 @@ static void do_pull_coord(gmx::ISerializer* serializer,
                 serializer->doInt(&pcrd->group[2]);
                 serializer->doInt(&pcrd->group[3]);
             }
-            serializer->doIvec(&pcrd->dim);
+            serializer->doIvec(&pcrd->dim.as_vec());
         }
         else
         {
@@ -364,8 +360,8 @@ static void do_pull_coord(gmx::ISerializer* serializer,
             copy_ivec(dimOld, pcrd->dim);
         }
     }
-    serializer->doRvec(&pcrd->origin);
-    serializer->doRvec(&pcrd->vec);
+    serializer->doRvec(&pcrd->origin.as_vec());
+    serializer->doRvec(&pcrd->vec.as_vec());
     if (file_version >= tpxv_PullCoordTypeGeom)
     {
         serializer->doBool(&pcrd->bStart);
@@ -771,11 +767,8 @@ static void do_pull(gmx::ISerializer* serializer, pull_params_t* pull, int file_
     {
         pull->bSetPbcRefToPrevStepCOM = FALSE;
     }
-    if (serializer->reading())
-    {
-        snew(pull->group, pull->ngroup);
-        snew(pull->coord, pull->ncoord);
-    }
+    pull->group.resize(pull->ngroup);
+    pull->coord.resize(pull->ncoord);
     if (file_version < 95)
     {
         /* epullgPOS for position pulling, before epullgDIRPBC was removed */
@@ -799,7 +792,7 @@ static void do_pull(gmx::ISerializer* serializer, pull_params_t* pull, int file_
             }
         }
 
-        pull->bPrintCOM = (pull->group[0].nat > 0);
+        pull->bPrintCOM = (!pull->group[0].ind.empty());
     }
     else
     {
@@ -1080,6 +1073,29 @@ static void do_inputrec(gmx::ISerializer* serializer, t_inputrec* ir, int file_v
 
     serializer->doInt(&ir->simulation_part);
 
+    if (file_version >= tpxv_MTS)
+    {
+        serializer->doBool(&ir->useMts);
+        int numLevels = ir->mtsLevels.size();
+        if (ir->useMts)
+        {
+            serializer->doInt(&numLevels);
+        }
+        ir->mtsLevels.resize(numLevels);
+        for (auto& mtsLevel : ir->mtsLevels)
+        {
+            int forceGroups = mtsLevel.forceGroups.to_ulong();
+            serializer->doInt(&forceGroups);
+            mtsLevel.forceGroups = std::bitset<static_cast<int>(gmx::MtsForceGroups::Count)>(forceGroups);
+            serializer->doInt(&mtsLevel.stepFactor);
+        }
+    }
+    else
+    {
+        ir->useMts = false;
+        ir->mtsLevels.clear();
+    }
+
     if (file_version >= 67)
     {
         serializer->doInt(&ir->nstcalcenergy);
@@ -1156,20 +1172,14 @@ static void do_inputrec(gmx::ISerializer* serializer, t_inputrec* ir, int file_v
             real dummy_rlistlong = -1;
             serializer->doReal(&dummy_rlistlong);
 
-            if (ir->rlist > 0 && (dummy_rlistlong == 0 || dummy_rlistlong > ir->rlist))
-            {
-                // Get mdrun to issue an error (regardless of
-                // ir->cutoff_scheme).
-                ir->useTwinRange = true;
-            }
-            else
-            {
-                // grompp used to set rlistlong actively. Users were
-                // probably also confused and set rlistlong == rlist.
-                // However, in all remaining cases, it is safe to let
-                // mdrun proceed normally.
-                ir->useTwinRange = false;
-            }
+            ir->useTwinRange = (ir->rlist > 0 && (dummy_rlistlong == 0 || dummy_rlistlong > ir->rlist));
+            // When true, this forces mdrun to issue an error (regardless of
+            // ir->cutoff_scheme).
+            //
+            // Otherwise, grompp used to set rlistlong actively. Users
+            // were probably also confused and set rlistlong == rlist.
+            // However, in all remaining cases, it is safe to let
+            // mdrun proceed normally.
         }
     }
     else
@@ -1352,14 +1362,6 @@ static void do_inputrec(gmx::ISerializer* serializer, t_inputrec* ir, int file_v
     if (file_version >= 79)
     {
         serializer->doBool(&ir->bExpanded);
-        if (ir->bExpanded)
-        {
-            ir->bExpanded = TRUE;
-        }
-        else
-        {
-            ir->bExpanded = FALSE;
-        }
     }
     if (ir->bExpanded)
     {
@@ -1475,9 +1477,9 @@ static void do_inputrec(gmx::ISerializer* serializer, t_inputrec* ir, int file_v
         {
             if (serializer->reading())
             {
-                snew(ir->pull, 1);
+                ir->pull = std::make_unique<pull_params_t>();
             }
-            do_pull(serializer, ir->pull, file_version, ePullOld);
+            do_pull(serializer, ir->pull.get(), file_version, ePullOld);
         }
     }
 
@@ -1625,11 +1627,17 @@ static void do_inputrec(gmx::ISerializer* serializer, t_inputrec* ir, int file_v
         }
     }
 
-    /* QMMM stuff */
+    /* QMMM reading - despite defunct we require reading for backwards
+     * compability and correct serialization
+     */
     {
         serializer->doBool(&ir->bQMMM);
-        serializer->doInt(&ir->QMMMscheme);
-        serializer->doReal(&ir->scalefactor);
+        int qmmmScheme;
+        serializer->doInt(&qmmmScheme);
+        real unusedScalefactor;
+        serializer->doReal(&unusedScalefactor);
+
+        // this is still used in Mimic
         serializer->doInt(&ir->opts.ngQM);
         if (serializer->reading())
         {
@@ -1648,12 +1656,30 @@ static void do_inputrec(gmx::ISerializer* serializer, t_inputrec* ir, int file_v
             serializer->doIntArray(ir->opts.QMmult, ir->opts.ngQM);
             serializer->doIntArray(ir->opts.CASorbitals, ir->opts.ngQM);
             serializer->doIntArray(ir->opts.CASelectrons, ir->opts.ngQM);
+
             /* We leave in dummy i/o for removed parameters to avoid
-             * changing the tpr format for every QMMM change.
+             * changing the tpr format.
+            std::vector<int> dummyIntVec(4 * ir->opts.ngQM, 0);
+            serializer->doIntArray(dummyIntVec.data(), dummyIntVec.size());
+            dummyIntVec.clear();
+
+            // std::vector<bool> has no data()
+            std::vector<char> dummyBoolVec(ir->opts.ngQM * sizeof(bool) / sizeof(char));
+            serializer->doBoolArray(reinterpret_cast<bool*>(dummyBoolVec.data()), dummyBoolVec.size());
+            dummyBoolVec.clear();
+
+            dummyIntVec.resize(2 * ir->opts.ngQM, 0);
+            serializer->doIntArray(dummyIntVec.data(), dummyIntVec.size());
+            dummyIntVec.clear();
+
+            std::vector<real> dummyRealVec(2 * ir->opts.ngQM, 0);
+            serializer->doRealArray(dummyRealVec.data(), dummyRealVec.size());
+            dummyRealVec.clear();
+
+            dummyIntVec.resize(3 * ir->opts.ngQM, 0);
+            serializer->doIntArray(dummyIntVec.data(), dummyIntVec.size());
+            dummyIntVec.clear();
              */
-            std::vector<int> dummy(ir->opts.ngQM, 0);
-            serializer->doIntArray(dummy.data(), ir->opts.ngQM);
-            serializer->doIntArray(dummy.data(), ir->opts.ngQM);
         }
         /* end of QMMM stuff */
     }
@@ -1929,9 +1955,7 @@ static void do_iparams(gmx::ISerializer* serializer, t_functype ftype, t_iparams
             break;
         case F_CBTDIHS: serializer->doRealArray(iparams->cbtdihs.cbtcA, NR_CBTDIHS); break;
         case F_RBDIHS:
-            serializer->doRealArray(iparams->rbdihs.rbcA, NR_RBDIHS);
-            serializer->doRealArray(iparams->rbdihs.rbcB, NR_RBDIHS);
-            break;
+            // Fall-through intended
         case F_FOURDIHS:
             /* Fourier dihedrals are internally represented
              * as Ryckaert-Bellemans since those are faster to compute.
@@ -1948,6 +1972,7 @@ static void do_iparams(gmx::ISerializer* serializer, t_functype ftype, t_iparams
             serializer->doReal(&iparams->settle.doh);
             serializer->doReal(&iparams->settle.dhh);
             break;
+        case F_VSITE1: break; // VSite1 has 0 parameters
         case F_VSITE2:
         case F_VSITE2FD: serializer->doReal(&iparams->vsite.a); break;
         case F_VSITE3:
@@ -2842,7 +2867,7 @@ static void do_tpx_mtop(gmx::ISerializer* serializer, TpxFileHeader* tpx, gmx_mt
         {
             do_mtop(serializer, mtop, tpx->fileVersion);
             set_disres_npair(mtop);
-            gmx_mtop_finalize(mtop);
+            mtop->finalize();
         }
         else
         {

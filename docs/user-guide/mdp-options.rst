@@ -231,6 +231,46 @@ Run control
          same simulation. This option is generally useful to set only
          when coping with a crashed simulation where files were lost.
 
+.. mdp:: mts
+
+   .. mdp-value:: no
+
+      Evaluate all forces at every integration step.
+
+   .. mdp-value:: yes
+
+      Use a multiple timing-stepping integrator to evaluate some forces, as specified
+      by :mdp:`mts-level2-forces` every :mdp:`mts-level2-factor` integration
+      steps. All other forces are evaluated at every step. MTS is currently
+      only supported with :mdp-value:`integrator=md`.
+
+.. mdp:: mts-levels
+
+        (2)
+	The number of levels for the multiple time-stepping scheme.
+	Currently only 2 is supported.
+
+.. mdp:: mts-level2-forces
+
+   (longrange-nonbonded nonbonded pair dihedral)
+   A list of force groups that will be evaluated only every
+   :mdp:`mts-level2-factor` steps. Supported entries are:
+   ``longrange-nonbonded``, ``nonbonded``, ``pair``, ``dihedral``, ``angle``,
+   ``pull`` and ``awh``. With ``pair`` the listed pair forces (such as 1-4)
+   are selected. With ``dihedral`` all dihedrals are selected, including cmap.
+   All other forces, including all restraints, are evaluated and
+   integrated every step. When PME or Ewald is used for electrostatics
+   and/or LJ interactions, ``longrange-nonbonded`` has to be entered here.
+   The default value should work well for most standard atomistic simulations
+   and in particular for replacing virtual site treatment for increasing
+   the time step.
+
+.. mdp:: mts-level2-factor
+
+      (2) [steps]
+      Interval for computing the forces in level 2 of the multiple time-stepping
+      scheme
+
 .. mdp:: comm-mode
 
    .. mdp-value:: Linear
@@ -976,8 +1016,10 @@ Temperature coupling
 
    (-1)
    The frequency for coupling the temperature. The default value of -1
-   sets :mdp:`nsttcouple` equal to :mdp:`nstlist`, unless
-   :mdp:`nstlist` <=0, then a value of 10 is used. For velocity
+   sets :mdp:`nsttcouple` equal to 10, or fewer steps if required
+   for accurate integration. Note that the default value is not 1
+   because additional computation and communication is required for
+   obtaining the kinetic energy. For velocity
    Verlet integrators :mdp:`nsttcouple` is set to 1.
 
 .. mdp:: nh-chain-length
@@ -1033,6 +1075,13 @@ Pressure coupling
       argued that this does not yield a correct thermodynamic
       ensemble, but it is the most efficient way to scale a box at the
       beginning of a run.
+
+   .. mdp-value:: C-rescale
+
+      Exponential relaxation pressure coupling with time constant
+      :mdp:`tau-p`, including a stochastic term to enforce correct
+      volume fluctuations.  The box is scaled every :mdp:`nstpcouple`
+      steps. It can be used for both equilibration and production.
 
    .. mdp-value:: Parrinello-Rahman
 
@@ -1110,8 +1159,10 @@ Pressure coupling
 
    (-1)
    The frequency for coupling the pressure. The default value of -1
-   sets :mdp:`nstpcouple` equal to :mdp:`nstlist`, unless
-   :mdp:`nstlist` <=0, then a value of 10 is used. For velocity
+   sets :mdp:`nstpcouple` equal to 10, or fewer steps if required
+   for accurate integration. Note that the default value is not 1
+   because additional computation and communication is required for
+   obtaining the virial. For velocity
    Verlet integrators :mdp:`nstpcouple` is set to 1.
 
 .. mdp:: tau-p
@@ -1638,7 +1689,8 @@ pull-coord2-vec, pull-coord2-k, and so on.
       Center of mass pulling using a constraint between the reference
       group and one or more groups. The setup is identical to the
       option umbrella, except for the fact that a rigid constraint is
-      applied instead of a harmonic potential.
+      applied instead of a harmonic potential. Note that this type is
+      not supported in combination with multiple time stepping.
 
    .. mdp-value:: constant-force
 
@@ -2040,8 +2092,16 @@ AWH adaptive biasing
 
    .. mdp-value:: pull
 
-      The module providing the reaction coordinate for this dimension.
-      Currently AWH can only act on pull coordinates.
+      The pull module is providing the reaction coordinate for this dimension.
+      With multiple time-stepping, AWH and pull should be in the same MTS level.
+
+   .. mdp-value:: fep-lambda
+
+      The free energy lambda state is the reaction coordinate for this dimension.
+      The lambda states to use are specified by :mdp:`fep-lambdas`, :mdp:`vdw-lambdas`,
+      :mdp:`coul-lambdas` etc. This is not compatible with delta-lambda. It also requires
+      calc-lambda-neighbors to be -1. With multiple time-stepping, AWH should
+      be in the slow level.
 
 .. mdp:: awh1-dim1-coord-index
 
@@ -2073,7 +2133,7 @@ AWH adaptive biasing
 
 .. mdp:: awh1-dim1-diffusion
 
-   (10\ :sup:`-5`) [nm\ :sup:`2`/ps] or [rad\ :sup:`2`/ps]
+   (10\ :sup:`-5`) [nm\ :sup:`2`/ps], [rad\ :sup:`2`/ps] or [ps\ :sup:`-1`]
    Estimated diffusion constant for this coordinate dimension determining the initial
    biasing rate. This needs only be a rough estimate and should not critically
    affect the results unless it is set to something very low, leading to slow convergence,
@@ -3001,7 +3061,7 @@ Mixed quantum/classical molecular dynamics
 
 .. mdp:: QMMM-grps
 
-   groups to be descibed at the QM level (works also in case of MiMiC QM/MM)
+   groups to be described at the QM level
 
 .. mdp:: QMMMscheme
 
@@ -3062,21 +3122,6 @@ Mixed quantum/classical molecular dynamics
    (0) [integer]
    The number of electrons to be included in the active space when
    doing a CASSCF computation.
-
-.. MDP:: SH
-
-   .. mdp-value:: no
-
-      No surface hopping. The system is always in the electronic
-      ground-state.
-
-   .. mdp-value:: yes
-
-      Do a QM/MM MD simulation on the excited state-potential energy
-      surface and enforce a *diabatic* hop to the ground-state when
-      the system hits the conical intersection hyperline in the course
-      the simulation. This option only works in combination with the
-      CASSCF method.
 
 
 Computational Electrophysiology
@@ -3307,6 +3352,25 @@ electron-microscopy experiments. (See the `reference manual`_ for details)
 
    (4) [ps] Couple force constant to increase in similarity with reference density
    with this time constant. Larger times result in looser coupling.
+
+.. mdp:: density-guided-simulation-shift-vector
+
+   (0,0,0) [nm] Add this vector to all atoms in the 
+   density-guided-simulation-group before calculating forces and energies for
+   density-guided-simulations. Affects only the density-guided-simulation forces
+   and energies. Corresponds to a shift of the input density in the opposite
+   direction by (-1) * density-guided-simulation-shift-vector.
+
+.. mdp:: density-guided-simulation-transformation-matrix
+
+   (1,0,0,0,1,0,0,0,1) Multiply all atoms with this matrix in the 
+   density-guided-simulation-group before calculating forces and energies for
+   density-guided-simulations. Affects only the density-guided-simulation forces
+   and energies. Corresponds to a transformation of the input density by the
+   inverse of this matrix. The matrix is given in row-major order.
+   This option allows, e.g., rotation of the density-guided atom group around the
+   z-axis by :math:`\theta` degress by using following input:
+   :math:`(\cos \theta , -\sin \theta , 0 , \sin \theta , \cos \theta , 0 , 0 , 0 , 1)` .
 
 User defined thingies
 ^^^^^^^^^^^^^^^^^^^^^

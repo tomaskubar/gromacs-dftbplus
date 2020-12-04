@@ -159,9 +159,13 @@ bool pme_gpu_supports_build(std::string* error)
     {
         errorReasons.emplace_back("a double-precision build");
     }
-    if (GMX_GPU == GMX_GPU_NONE)
+    if (!GMX_GPU)
     {
         errorReasons.emplace_back("a non-GPU build");
+    }
+    if (GMX_GPU_SYCL)
+    {
+        errorReasons.emplace_back("SYCL build"); // SYCL-TODO
     }
     return addMessageIfNotSupported(errorReasons, error);
 }
@@ -170,7 +174,7 @@ bool pme_gpu_supports_hardware(const gmx_hw_info_t gmx_unused& hwinfo, std::stri
 {
     std::list<std::string> errorReasons;
 
-    if (GMX_GPU == GMX_GPU_OPENCL)
+    if (GMX_GPU_OPENCL)
     {
 #ifdef __APPLE__
         errorReasons.emplace_back("Apple OS X operating system");
@@ -179,7 +183,7 @@ bool pme_gpu_supports_hardware(const gmx_hw_info_t gmx_unused& hwinfo, std::stri
     return addMessageIfNotSupported(errorReasons, error);
 }
 
-bool pme_gpu_supports_input(const t_inputrec& ir, const gmx_mtop_t& mtop, std::string* error)
+bool pme_gpu_supports_input(const t_inputrec& ir, std::string* error)
 {
     std::list<std::string> errorReasons;
     if (!EEL_PME(ir.coulombtype))
@@ -190,21 +194,15 @@ bool pme_gpu_supports_input(const t_inputrec& ir, const gmx_mtop_t& mtop, std::s
     {
         errorReasons.emplace_back("interpolation orders other than 4");
     }
-    if (ir.efep != efepNO)
-    {
-        if (gmx_mtop_has_perturbed_charges(mtop))
-        {
-            errorReasons.emplace_back(
-                    "free energy calculations with perturbed charges (multiple grids)");
-        }
-    }
     if (EVDW_PME(ir.vdwtype))
     {
         errorReasons.emplace_back("Lennard-Jones PME");
     }
     if (!EI_DYNAMICS(ir.eI))
     {
-        errorReasons.emplace_back("not a dynamical integrator");
+        errorReasons.emplace_back(
+                "Cannot compute PME interactions on a GPU, because PME GPU requires a dynamical "
+                "integrator (md, sd, etc).");
     }
     return addMessageIfNotSupported(errorReasons, error);
 }
@@ -229,10 +227,6 @@ static bool pme_gpu_check_restrictions(const gmx_pme_t* pme, std::string* error)
     {
         errorReasons.emplace_back("interpolation orders other than 4");
     }
-    if (pme->bFEP)
-    {
-        errorReasons.emplace_back("free energy calculations (multiple grids)");
-    }
     if (pme->doLJ)
     {
         errorReasons.emplace_back("Lennard-Jones PME");
@@ -241,11 +235,14 @@ static bool pme_gpu_check_restrictions(const gmx_pme_t* pme, std::string* error)
     {
         errorReasons.emplace_back("double precision");
     }
-    if (GMX_GPU == GMX_GPU_NONE)
+    if (!GMX_GPU)
     {
         errorReasons.emplace_back("non-GPU build of GROMACS");
     }
-
+    if (GMX_GPU_SYCL)
+    {
+        errorReasons.emplace_back("SYCL build of GROMACS"); // SYCL-TODO
+    }
     return addMessageIfNotSupported(errorReasons, error);
 }
 
@@ -560,20 +557,21 @@ static int div_round_up(int enumerator, int denominator)
     return (enumerator + denominator - 1) / denominator;
 }
 
-gmx_pme_t* gmx_pme_init(const t_commrec*         cr,
-                        const NumPmeDomains&     numPmeDomains,
-                        const t_inputrec*        ir,
-                        gmx_bool                 bFreeEnergy_q,
-                        gmx_bool                 bFreeEnergy_lj,
-                        gmx_bool                 bReproducible,
-                        real                     ewaldcoeff_q,
-                        real                     ewaldcoeff_lj,
-                        int                      nthread,
-                        PmeRunMode               runMode,
-                        PmeGpu*                  pmeGpu,
-                        const DeviceInformation* deviceInfo,
-                        const PmeGpuProgram*     pmeGpuProgram,
-                        const gmx::MDLogger& /*mdlog*/)
+gmx_pme_t* gmx_pme_init(const t_commrec*     cr,
+                        const NumPmeDomains& numPmeDomains,
+                        const t_inputrec*    ir,
+                        gmx_bool             bFreeEnergy_q,
+                        gmx_bool             bFreeEnergy_lj,
+                        gmx_bool             bReproducible,
+                        real                 ewaldcoeff_q,
+                        real                 ewaldcoeff_lj,
+                        int                  nthread,
+                        PmeRunMode           runMode,
+                        PmeGpu*              pmeGpu,
+                        const DeviceContext* deviceContext,
+                        const DeviceStream*  deviceStream,
+                        const PmeGpuProgram* pmeGpuProgram,
+                        const gmx::MDLogger& mdlog)
 {
     int  use_threads, sum_use_threads, i;
     ivec ndata;
@@ -742,17 +740,19 @@ gmx_pme_t* gmx_pme_init(const t_commrec*         cr,
         imbal = estimate_pme_load_imbalance(pme.get());
         if (imbal >= 1.2 && pme->nodeid_major == 0 && pme->nodeid_minor == 0)
         {
-            fprintf(stderr,
-                    "\n"
-                    "NOTE: The load imbalance in PME FFT and solve is %d%%.\n"
-                    "      For optimal PME load balancing\n"
-                    "      PME grid_x (%d) and grid_y (%d) should be divisible by #PME_ranks_x "
-                    "(%d)\n"
-                    "      and PME grid_y (%d) and grid_z (%d) should be divisible by #PME_ranks_y "
-                    "(%d)\n"
-                    "\n",
-                    gmx::roundToInt((imbal - 1) * 100), pme->nkx, pme->nky, pme->nnodes_major,
-                    pme->nky, pme->nkz, pme->nnodes_minor);
+            GMX_LOG(mdlog.warning)
+                    .asParagraph()
+                    .appendTextFormatted(
+                            "NOTE: The load imbalance in PME FFT and solve is %d%%.\n"
+                            "      For optimal PME load balancing\n"
+                            "      PME grid_x (%d) and grid_y (%d) should be divisible by "
+                            "#PME_ranks_x "
+                            "(%d)\n"
+                            "      and PME grid_y (%d) and grid_z (%d) should be divisible by "
+                            "#PME_ranks_y "
+                            "(%d)",
+                            gmx::roundToInt((imbal - 1) * 100), pme->nkx, pme->nky,
+                            pme->nnodes_major, pme->nky, pme->nkz, pme->nnodes_minor);
         }
     }
 
@@ -883,8 +883,13 @@ gmx_pme_t* gmx_pme_init(const t_commrec*         cr,
         {
             GMX_THROW(gmx::NotImplementedError(errorString));
         }
+        pme_gpu_reinit(pme.get(), deviceContext, deviceStream, pmeGpuProgram);
     }
-    pme_gpu_reinit(pme.get(), deviceInfo, pmeGpuProgram);
+    else
+    {
+        GMX_ASSERT(pme->gpu == nullptr, "Should not have PME GPU object when PME is on a CPU.");
+    }
+
 
     pme_init_all_work(&pme->solve_work, pme->nthread, pme->nkx);
 
@@ -917,21 +922,21 @@ void gmx_pme_reinit(struct gmx_pme_t** pmedata,
 
     try
     {
+        // This is reinit. Any logging should have been done at first init.
+        // Here we should avoid writing notes for settings the user did not
+        // set directly.
         const gmx::MDLogger dummyLogger;
-        // This is reinit which is currently only changing grid size/coefficients,
-        // so we don't expect the actual logging.
-        // TODO: when PME is an object, it should take reference to mdlog on construction and save it.
         GMX_ASSERT(pmedata, "Invalid PME pointer");
         NumPmeDomains numPmeDomains = { pme_src->nnodes_major, pme_src->nnodes_minor };
         *pmedata = gmx_pme_init(cr, numPmeDomains, &irc, pme_src->bFEP_q, pme_src->bFEP_lj, FALSE,
                                 ewaldcoeff_q, ewaldcoeff_lj, pme_src->nthread, pme_src->runMode,
-                                pme_src->gpu, nullptr, nullptr, dummyLogger);
+                                pme_src->gpu, nullptr, nullptr, nullptr, dummyLogger);
         /* When running PME on the CPU not using domain decomposition,
          * the atom data is allocated once only in gmx_pme_(re)init().
          */
         if (!pme_src->gpu && pme_src->nnodes == 1)
         {
-            gmx_pme_reinit_atoms(*pmedata, pme_src->atc[0].numAtoms(), nullptr);
+            gmx_pme_reinit_atoms(*pmedata, pme_src->atc[0].numAtoms(), nullptr, nullptr);
         }
         // TODO this is mostly passing around current values
     }
@@ -1044,8 +1049,6 @@ int gmx_pme_do(struct gmx_pme_t*              pme,
     int                  fep_states_lj = pme->bFEP_lj ? 2 : 1;
     // There's no support for computing energy without virial, or vice versa
     const bool computeEnergyAndVirial = (stepWork.computeEnergy || stepWork.computeVirial);
-    // for QM/MM
-    const bool computePotentials = (bForQMMM && stepWork.computePotentials);
 
     /* We could be passing lambda!=0 while no q or LJ is actually perturbed */
     if (!pme->bFEP_q)
@@ -1285,7 +1288,7 @@ int gmx_pme_do(struct gmx_pme_t*              pme,
 
         unwrap_periodic_pmegrid(pme, grid);
 
-        if (computePotentials)
+        if (bForQMMM && stepWork.computePotentials)
         {
             /* Interpolate the elstat. potential induced on the QM atoms. */
 
@@ -1744,11 +1747,13 @@ void gmx_pme_destroy(gmx_pme_t* pme)
     delete pme;
 }
 
-void gmx_pme_reinit_atoms(gmx_pme_t* pme, const int numAtoms, const real* charges)
+void gmx_pme_reinit_atoms(gmx_pme_t* pme, const int numAtoms, const real* chargesA, const real* chargesB)
 {
     if (pme->gpu != nullptr)
     {
-        pme_gpu_reinit_atoms(pme->gpu, numAtoms, charges);
+        GMX_ASSERT(!(pme->bFEP_q && chargesB == nullptr),
+                   "B state charges must be specified if running Coulomb FEP on the GPU");
+        pme_gpu_reinit_atoms(pme->gpu, numAtoms, chargesA, pme->bFEP_q ? chargesB : nullptr);
     }
     else
     {

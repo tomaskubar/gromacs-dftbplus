@@ -36,8 +36,10 @@
 #define GMX_GPU_UTILS_GPUTRAITS_H
 
 /*! \libinternal \file
- *  \brief Declares the GPU type traits for non-GPU builds
+ *  \brief Declares the GPU type traits for non-GPU builds.
+ *
  *  \author Mark Abraham <mark.j.abraham@gmail.com>
+ *  \author Artem Zhmurov <zhmurov@gmail.com>
  *
  * \inlibraryapi
  * \ingroup module_gpu_utils
@@ -45,28 +47,24 @@
 
 #include "config.h"
 
-#if GMX_GPU == GMX_GPU_CUDA
+#if GMX_GPU_CUDA
 
 #    include "gromacs/gpu_utils/gputraits.cuh"
 
-#elif GMX_GPU == GMX_GPU_OPENCL
+#elif GMX_GPU_OPENCL
 
 #    include "gromacs/gpu_utils/gputraits_ocl.h"
 
+#elif GMX_GPU_SYCL
+
+#    include "gromacs/gpu_utils/gputraits_sycl.h"
+
 #else
 
-//! Stub for device information.
-struct DeviceInformation
-{
-    // No member needed
-};
+using DeviceTexture = void*;
 
-//! \brief GPU command stream
-using CommandStream = void*;
 //! \brief Single GPU call timing event
 using CommandEvent = void*;
-//! \brief GPU context
-using DeviceContext = void*;
 
 #endif // GMX_GPU
 

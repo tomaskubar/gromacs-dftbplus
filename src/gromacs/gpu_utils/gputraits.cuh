@@ -37,34 +37,20 @@
 
 /*! \libinternal \file
  *  \brief Declares the CUDA type traits.
+ *
  *  \author Aleksei Iupinov <a.yupinov@gmail.com>
+ *  \author Artem Zhmurov <zhmurov@gmail.com>
  *
  * \inlibraryapi
  * \ingroup module_gpu_utils
  */
+#include <cuda_runtime.h>
 
-/*! \brief CUDA device information.
- *
- * The CUDA device information is queried and set at detection and contains
- * both information about the device/hardware returned by the runtime as well
- * as additional data like support status.
- */
-struct DeviceInformation
-{
-    //! ID of the CUDA device.
-    int id;
-    //! CUDA device properties.
-    cudaDeviceProp prop;
-    //! Result of the device check.
-    int stat;
-};
+//! Device texture for fast read-only data fetching
+using DeviceTexture = cudaTextureObject_t;
 
-//! \brief GPU command stream
-using CommandStream = cudaStream_t;
 //! \brief Single GPU call timing event - meaningless in CUDA
 using CommandEvent = void;
-//! \brief Context used explicitly in OpenCL, does nothing in CUDA
-using DeviceContext = void*;
 
 /*! \internal \brief
  * GPU kernels scheduling description. This is same in OpenCL/CUDA.
@@ -73,10 +59,12 @@ using DeviceContext = void*;
  */
 struct KernelLaunchConfig
 {
-    size_t        gridSize[3]      = { 1, 1, 1 }; //!< Block counts
-    size_t        blockSize[3]     = { 1, 1, 1 }; //!< Per-block thread counts
-    size_t        sharedMemorySize = 0;           //!< Shared memory size in bytes
-    CommandStream stream           = nullptr;     //!< Stream to launch kernel in
+    //! Block counts
+    size_t gridSize[3] = { 1, 1, 1 };
+    //! Per-block thread counts
+    size_t blockSize[3] = { 1, 1, 1 };
+    //! Shared memory size in bytes
+    size_t sharedMemorySize = 0;
 };
 
 //! Sets whether device code can use arrays that are embedded in structs.

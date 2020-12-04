@@ -50,6 +50,7 @@
 #include "gromacs/utility/stringutil.h"
 
 #include "testutils/refdata.h"
+#include "testutils/test_hardware_environment.h"
 #include "testutils/testasserts.h"
 
 #include "pmetestcommon.h"
@@ -82,6 +83,10 @@ class PmeSplineAndSpreadTest : public ::testing::TestWithParam<SplineAndSpreadIn
 {
 public:
     PmeSplineAndSpreadTest() = default;
+
+    //! Sets the programs once
+    static void SetUpTestCase() { s_pmeTestHardwareContexts = createPmeTestHardwareContextList(); }
+
     //! The test
     void runTest()
     {
@@ -104,8 +109,6 @@ public:
         inputRec.coulombtype = eelPME;
         inputRec.epsilon_r   = 1.0;
 
-        TestReferenceData refData;
-
         const std::map<PmeSplineAndSpreadOptions, std::string> optionsToTest = {
             { PmeSplineAndSpreadOptions::SplineAndSpreadUnified,
               "spline computation and charge spreading (fused)" },
@@ -123,15 +126,17 @@ public:
         bool   gridValuesSizeAssigned = false;
         size_t previousGridValuesSize;
 
-        for (const auto& context : getPmeTestEnv()->getHardwareContexts())
+        TestReferenceData refData;
+        for (const auto& pmeTestHardwareContext : s_pmeTestHardwareContexts)
         {
-            CodePath   codePath = context->getCodePath();
-            const bool supportedInput =
-                    pmeSupportsInputForMode(*getPmeTestEnv()->hwinfo(), &inputRec, codePath);
+            pmeTestHardwareContext->activate();
+            CodePath   codePath       = pmeTestHardwareContext->codePath();
+            const bool supportedInput = pmeSupportsInputForMode(
+                    *getTestHardwareEnvironment()->hwinfo(), &inputRec, codePath);
             if (!supportedInput)
             {
                 /* Testing the failure for the unsupported input */
-                EXPECT_THROW_GMX(pmeInitWrapper(&inputRec, codePath, nullptr, nullptr, box),
+                EXPECT_THROW_GMX(pmeInitWrapper(&inputRec, codePath, nullptr, nullptr, nullptr, box),
                                  NotImplementedError);
                 continue;
             }
@@ -140,19 +145,24 @@ public:
             {
                 /* Describing the test uniquely in case it fails */
 
-                SCOPED_TRACE(
-                        formatString("Testing %s with %s %sfor PME grid size %d %d %d"
-                                     ", order %d, %zu atoms",
-                                     option.second.c_str(), codePathToString(codePath),
-                                     context->getDescription().c_str(), gridSize[XX], gridSize[YY],
-                                     gridSize[ZZ], pmeOrder, atomCount));
+                SCOPED_TRACE(formatString(
+                        "Testing %s on %s for PME grid size %d %d %d"
+                        ", order %d, %zu atoms",
+                        option.second.c_str(), pmeTestHardwareContext->description().c_str(),
+                        gridSize[XX], gridSize[YY], gridSize[ZZ], pmeOrder, atomCount));
 
                 /* Running the test */
 
-                PmeSafePointer pmeSafe = pmeInitWrapper(&inputRec, codePath, context->getDeviceInfo(),
-                                                        context->getPmeGpuProgram(), box);
+                PmeSafePointer pmeSafe =
+                        pmeInitWrapper(&inputRec, codePath, pmeTestHardwareContext->deviceContext(),
+                                       pmeTestHardwareContext->deviceStream(),
+                                       pmeTestHardwareContext->pmeGpuProgram(), box);
                 std::unique_ptr<StatePropagatorDataGpu> stateGpu =
-                        (codePath == CodePath::GPU) ? makeStatePropagatorDataGpu(*pmeSafe.get()) : nullptr;
+                        (codePath == CodePath::GPU)
+                                ? makeStatePropagatorDataGpu(*pmeSafe.get(),
+                                                             pmeTestHardwareContext->deviceContext(),
+                                                             pmeTestHardwareContext->deviceStream())
+                                : nullptr;
 
                 pmeInitAtoms(pmeSafe.get(), stateGpu.get(), codePath, coordinates, charges);
 
@@ -258,7 +268,11 @@ public:
             }
         }
     }
+
+    static std::vector<std::unique_ptr<PmeTestHardwareContext>> s_pmeTestHardwareContexts;
 };
+
+std::vector<std::unique_ptr<PmeTestHardwareContext>> PmeSplineAndSpreadTest::s_pmeTestHardwareContexts;
 
 
 /*! \brief Test for spline parameter computation and charge spreading. */

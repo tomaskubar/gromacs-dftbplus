@@ -119,7 +119,7 @@ void RestraintForceProvider::calculateForces(const ForceProviderInput& forceProv
     {
         // Note: this assumes that all ranks are hitting this line, which is not generally true.
         // I need to find the right subcommunicator. What I really want is a _scoped_ communicator...
-        gmx_barrier(&cr);
+        gmx_barrier(cr.mpi_comm_mygroup);
     }
 
     // Apply restraint on all thread ranks only after any updates have been made.
@@ -156,16 +156,6 @@ RestraintMDModuleImpl::RestraintMDModuleImpl(std::shared_ptr<IRestraintPotential
     forceProvider_(std::make_unique<RestraintForceProvider>(restraint, sites))
 {
     GMX_ASSERT(forceProvider_, "Class invariant implies non-null ForceProvider.");
-}
-
-IMdpOptionProvider* RestraintMDModuleImpl::mdpOptionProvider()
-{
-    return nullptr;
-}
-
-IMDOutputProvider* RestraintMDModuleImpl::outputProvider()
-{
-    return nullptr;
 }
 
 void RestraintMDModuleImpl::initForceProviders(ForceProviders* forceProviders)

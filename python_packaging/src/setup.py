@@ -50,7 +50,12 @@
 
 import os
 
-from skbuild import setup
+# Allow setup.py to be run when scikit-build is not installed, such as to
+# produce source distribution archives with `python setup.py sdist`
+try:
+    from skbuild import setup
+except ImportError:
+    from distutils.core import setup
 
 usage = """
 The `gmxapi` package requires an existing GROMACS installation, version 2020 or higher.
@@ -149,14 +154,14 @@ cmake_args = [cmake_platform_hints, cmake_gmxapi_hint]
 setup(
     name='gmxapi',
 
-    # TODO: single-source version information (currently repeated in gmxapi/version.py)
+    # TODO: single-source version information (currently repeated in gmxapi/version.py and CMakeLists.txt)
     version='0.2.0b1',
-    python_requires='>=3.5, <3.9',
-    setup_requires=['cmake>=3.12',
-                    'setuptools>=28',
-                    'scikit-build>=0.7'],
+    python_requires='>=3.6',
+    install_requires=['networkx>=2.0',
+                      'numpy>=1'],
 
     packages=['gmxapi', 'gmxapi.simulation'],
+    package_data={'gmxapi': ['gmxconfig.json']},
 
     cmake_args=cmake_args,
 

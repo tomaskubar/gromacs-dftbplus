@@ -50,8 +50,9 @@
 #include "gromacs/gpu_utils/gpu_macros.h"
 #include "gromacs/mdtypes/locality.h"
 
+#include "nbnxm.h"
+
 struct NbnxmGpu;
-struct gmx_gpu_info_t;
 struct DeviceInformation;
 struct gmx_wallclock_gpu_nbnxn_t;
 struct nbnxn_atomdata_t;
@@ -59,16 +60,22 @@ struct NbnxnPairlistGpu;
 struct PairlistParams;
 struct interaction_const_t;
 
+class DeviceStream;
+
+namespace gmx
+{
+class DeviceStreamManager;
+}
+
 namespace Nbnxm
 {
 
 /** Initializes the data structures related to GPU nonbonded calculations. */
 GPU_FUNC_QUALIFIER
-NbnxmGpu* gpu_init(const DeviceInformation gmx_unused* deviceInfo,
+NbnxmGpu* gpu_init(const gmx::DeviceStreamManager gmx_unused& deviceStreamManager,
                    const interaction_const_t gmx_unused* ic,
                    const PairlistParams gmx_unused& listParams,
                    const nbnxn_atomdata_t gmx_unused* nbat,
-                   int gmx_unused rank,
                    /* true if both local and non-local are done on GPU */
                    bool gmx_unused bLocalAndNonlocal) GPU_FUNC_TERM_WITH_RETURN(nullptr);
 
@@ -117,13 +124,23 @@ int gpu_min_ci_balanced(NbnxmGpu gmx_unused* nb) GPU_FUNC_TERM_WITH_RETURN(-1);
 
 /** Returns if analytical Ewald GPU kernels are used. */
 GPU_FUNC_QUALIFIER
-gmx_bool gpu_is_kernel_ewald_analytical(const NbnxmGpu gmx_unused* nb) GPU_FUNC_TERM_WITH_RETURN(FALSE);
+bool gpu_is_kernel_ewald_analytical(const NbnxmGpu gmx_unused* nb) GPU_FUNC_TERM_WITH_RETURN(FALSE);
+
+/** Return the enum value of electrostatics kernel type for given interaction parameters \p ic. */
+GPU_FUNC_QUALIFIER
+enum ElecType nbnxmGpuPickElectrostaticsKernelType(const interaction_const_t gmx_unused* ic)
+        GPU_FUNC_TERM_WITH_RETURN(ElecType::Count);
+
+/** Return the enum value of VdW kernel type for given \p ic and \p combRule. */
+GPU_FUNC_QUALIFIER
+enum VdwType nbnxmGpuPickVdwKernelType(const interaction_const_t gmx_unused* ic, int gmx_unused combRule)
+        GPU_FUNC_TERM_WITH_RETURN(VdwType::Count);
 
 /** Returns an opaque pointer to the GPU command stream
  *  Note: CUDA only.
  */
 CUDA_FUNC_QUALIFIER
-void* gpu_get_command_stream(NbnxmGpu gmx_unused* nb, gmx::InteractionLocality gmx_unused iloc)
+const DeviceStream* gpu_get_command_stream(NbnxmGpu gmx_unused* nb, gmx::InteractionLocality gmx_unused iloc)
         CUDA_FUNC_TERM_WITH_RETURN(nullptr);
 
 /** Returns an opaque pointer to the GPU coordinate+charge array

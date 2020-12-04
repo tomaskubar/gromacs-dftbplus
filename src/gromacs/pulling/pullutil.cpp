@@ -179,7 +179,7 @@ static void pull_set_pbcatoms(const t_commrec* cr, struct pull_t* pull, const rv
 }
 
 static void
-make_cyl_refgrps(const t_commrec* cr, pull_t* pull, const t_mdatoms* md, t_pbc* pbc, double t, const rvec* x)
+make_cyl_refgrps(const t_commrec* cr, pull_t* pull, const real* masses, t_pbc* pbc, double t, const rvec* x)
 {
     pull_comm_t* comm = &pull->comm;
 
@@ -259,7 +259,7 @@ make_cyl_refgrps(const t_commrec* cr, pull_t* pull, const t_mdatoms* md, t_pbc* 
                 {
                     /* add atom to sum of COM and to weight array */
 
-                    double mass = md->massT[atomIndex];
+                    double mass = masses[atomIndex];
                     /* The radial weight function is 1-2x^2+x^4,
                      * where x=r/cylinder_r. Since this function depends
                      * on the radial component, we also get radial forces
@@ -519,17 +519,12 @@ static void sum_com_part_cosweight(const pull_group_work_t* pgrp,
 
 /* calculates center of mass of selection index from all coordinates x */
 // Compiler segfault with 2019_update_5 and 2020_initial
-#if defined(__INTEL_COMPILER) \
-        && ((__INTEL_COMPILER == 1900 && __INTEL_COMPILER_UPDATE >= 5) || __INTEL_COMPILER >= 1910)
+#if defined(__INTEL_COMPILER)                                          \
+        && ((__INTEL_COMPILER == 1900 && __INTEL_COMPILER_UPDATE >= 5) \
+            || (__INTEL_COMPILER >= 1910 && __INTEL_COMPILER < 2021))
 #    pragma intel optimization_level 2
 #endif
-void pull_calc_coms(const t_commrec* cr,
-                    pull_t*          pull,
-                    const t_mdatoms* md,
-                    t_pbc*           pbc,
-                    double           t,
-                    const rvec       x[],
-                    rvec*            xp)
+void pull_calc_coms(const t_commrec* cr, pull_t* pull, const real* masses, t_pbc* pbc, double t, const rvec x[], rvec* xp)
 {
     real         twopi_box = 0;
     pull_comm_t* comm;
@@ -616,8 +611,8 @@ void pull_calc_coms(const t_commrec* cr,
                  * Note that with constraint pulling the mass does matter, but
                  * in that case a check group mass != 0 has been done before.
                  */
-                if (pgrp->params.nat == 1 && pgrp->atomSet.numAtomsLocal() == 1
-                    && md->massT[pgrp->atomSet.localIndex()[0]] == 0)
+                if (pgrp->params.ind.size() == 1 && pgrp->atomSet.numAtomsLocal() == 1
+                    && masses[pgrp->atomSet.localIndex()[0]] == 0)
                 {
                     GMX_ASSERT(xp == nullptr,
                                "We should not have groups with zero mass with constraints, i.e. "
@@ -634,8 +629,8 @@ void pull_calc_coms(const t_commrec* cr,
                 }
                 else if (pgrp->atomSet.numAtomsLocal() <= c_pullMaxNumLocalAtomsSingleThreaded)
                 {
-                    sum_com_part(pgrp, 0, pgrp->atomSet.numAtomsLocal(), x, xp, md->massT, pbc,
-                                 x_pbc, &comSumsTotal);
+                    sum_com_part(pgrp, 0, pgrp->atomSet.numAtomsLocal(), x, xp, masses, pbc, x_pbc,
+                                 &comSumsTotal);
                 }
                 else
                 {
@@ -644,7 +639,7 @@ void pull_calc_coms(const t_commrec* cr,
                     {
                         int ind_start = (pgrp->atomSet.numAtomsLocal() * (t + 0)) / pull->nthreads;
                         int ind_end   = (pgrp->atomSet.numAtomsLocal() * (t + 1)) / pull->nthreads;
-                        sum_com_part(pgrp, ind_start, ind_end, x, xp, md->massT, pbc, x_pbc,
+                        sum_com_part(pgrp, ind_start, ind_end, x, xp, masses, pbc, x_pbc,
                                      &pull->comSums[t]);
                     }
 
@@ -684,7 +679,7 @@ void pull_calc_coms(const t_commrec* cr,
                     int ind_start = (pgrp->atomSet.numAtomsLocal() * (t + 0)) / pull->nthreads;
                     int ind_end   = (pgrp->atomSet.numAtomsLocal() * (t + 1)) / pull->nthreads;
                     sum_com_part_cosweight(pgrp, ind_start, ind_end, pull->cosdim, twopi_box, x, xp,
-                                           md->massT, &pull->comSums[t]);
+                                           masses, &pull->comSums[t]);
                 }
 
                 /* Reduce the thread contributions to comSums[0] */
@@ -730,7 +725,7 @@ void pull_calc_coms(const t_commrec* cr,
         pgrp = &pull->group[g];
         if (pgrp->needToCalcCom)
         {
-            GMX_ASSERT(pgrp->params.nat > 0,
+            GMX_ASSERT(!pgrp->params.ind.empty(),
                        "Normal pull groups should have atoms, only group 0, which should have "
                        "bCalcCom=FALSE has nat=0");
 
@@ -814,7 +809,7 @@ void pull_calc_coms(const t_commrec* cr,
     if (pull->bCylinder)
     {
         /* Calculate the COMs for the cyclinder reference groups */
-        make_cyl_refgrps(cr, pull, md, pbc, t, x);
+        make_cyl_refgrps(cr, pull, masses, pbc, t, x);
     }
 }
 
@@ -1030,7 +1025,7 @@ void allocStatePrevStepPullCom(t_state* state, const pull_t* pull)
     }
 }
 
-void initPullComFromPrevStep(const t_commrec* cr, pull_t* pull, const t_mdatoms* md, t_pbc* pbc, const rvec x[])
+void initPullComFromPrevStep(const t_commrec* cr, pull_t* pull, const real* masses, t_pbc* pbc, const rvec x[])
 {
     pull_comm_t* comm   = &pull->comm;
     size_t       ngroup = pull->group.size();
@@ -1055,7 +1050,7 @@ void initPullComFromPrevStep(const t_commrec* cr, pull_t* pull, const t_mdatoms*
 
         if (pgrp->needToCalcCom && pgrp->epgrppbc == epgrppbcPREVSTEPCOM)
         {
-            GMX_ASSERT(pgrp->params.nat > 1,
+            GMX_ASSERT(pgrp->params.ind.size() > 1,
                        "Groups with no atoms, or only one atom, should not "
                        "use the COM from the previous step as reference.");
 
@@ -1079,8 +1074,8 @@ void initPullComFromPrevStep(const t_commrec* cr, pull_t* pull, const t_mdatoms*
 
             if (pgrp->atomSet.numAtomsLocal() <= c_pullMaxNumLocalAtomsSingleThreaded)
             {
-                sum_com_part(pgrp, 0, pgrp->atomSet.numAtomsLocal(), x, nullptr, md->massT, pbc,
-                             x_pbc, &comSumsTotal);
+                sum_com_part(pgrp, 0, pgrp->atomSet.numAtomsLocal(), x, nullptr, masses, pbc, x_pbc,
+                             &comSumsTotal);
             }
             else
             {
@@ -1089,7 +1084,7 @@ void initPullComFromPrevStep(const t_commrec* cr, pull_t* pull, const t_mdatoms*
                 {
                     int ind_start = (pgrp->atomSet.numAtomsLocal() * (t + 0)) / pull->nthreads;
                     int ind_end   = (pgrp->atomSet.numAtomsLocal() * (t + 1)) / pull->nthreads;
-                    sum_com_part(pgrp, ind_start, ind_end, x, nullptr, md->massT, pbc, x_pbc,
+                    sum_com_part(pgrp, ind_start, ind_end, x, nullptr, masses, pbc, x_pbc,
                                  &pull->comSums[t]);
                 }
 

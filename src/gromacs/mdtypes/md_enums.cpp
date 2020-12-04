@@ -39,7 +39,7 @@
 
 #include "md_enums.h"
 
-const char* enum_name(int index, int max_index, const char* names[])
+const char* enum_name(int index, int max_index, const char* const names[])
 {
     if (index < 0 || index >= max_index)
     {
@@ -73,8 +73,8 @@ const char* eel_names[eelNR + 1] = { "Cut-off",
                                      "Shift",
                                      "User",
                                      "Generalized-Born (unused)",
-                                     "Reaction-Field-nec",
-                                     "Encad-shift",
+                                     "Reaction-Field-nec (unsupported)",
+                                     "Encad-shift (unused)",
                                      "PME-User",
                                      "PME-Switch",
                                      "PME-User-Switch",
@@ -85,8 +85,8 @@ const char* eewg_names[eewgNR + 1] = { "3d", "3dc", nullptr };
 
 const char* eljpme_names[eljpmeNR + 1] = { "Geometric", "Lorentz-Berthelot", nullptr };
 
-const char* evdw_names[evdwNR + 1] = { "Cut-off",     "Switch", "Shift", "User",
-                                       "Encad-shift", "PME",    nullptr };
+const char* evdw_names[evdwNR + 1] = { "Cut-off", "Switch", "Shift", "User", "Encad-shift (unused)",
+                                       "PME",     nullptr };
 
 const char* econstr_names[econtNR + 1] = { "Lincs", "Shake", nullptr };
 
@@ -99,9 +99,9 @@ const char* etcoupl_names[etcNR + 1] = {
     "No", "Berendsen", "Nose-Hoover", "yes", "Andersen", "Andersen-massive", "V-rescale", nullptr
 }; /* yes is alias for berendsen */
 
-const char* epcoupl_names[epcNR + 1] = {
-    "No", "Berendsen", "Parrinello-Rahman", "Isotropic", "MTTK", nullptr
-}; /* isotropic is alias for berendsen */
+const char* epcoupl_names[epcNR + 1] = { "No",        "Berendsen", "Parrinello-Rahman",
+                                         "Isotropic", "MTTK",      "C-rescale",
+                                         nullptr }; /* isotropic is alias for berendsen */
 
 const char* epcoupltype_names[epctNR + 1] = { "Isotropic", "Semiisotropic", "Anisotropic",
                                               "Surface-Tension", nullptr };
@@ -175,7 +175,6 @@ const char* erotg_fitnames[erotgFitNR + 1] = { "rmsd", "norm", "potential", null
 const char* eSwapTypes_names[eSwapTypesNR + 1] = { "no", "X", "Y", "Z", nullptr };
 
 const char* eSwapFixedGrp_names[eSwapFixedGrpNR + 1] = { "Split0", "Split1", "Solvent", nullptr };
-
 
 const char* eQMmethod_names[eQMmethodNR + 1] = { "AM1",      "PM3",    "RHF",  "UHF",
                                                  "DFT",      "B3LYP",  "MP2",  "CASSCF",

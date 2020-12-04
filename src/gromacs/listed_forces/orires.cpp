@@ -54,14 +54,17 @@
 #include "gromacs/mdtypes/mdatom.h"
 #include "gromacs/mdtypes/state.h"
 #include "gromacs/pbcutil/ishift.h"
-#include "gromacs/pbcutil/mshift.h"
 #include "gromacs/pbcutil/pbc.h"
 #include "gromacs/topology/ifunc.h"
 #include "gromacs/topology/mtop_util.h"
 #include "gromacs/topology/topology.h"
+#include "gromacs/utility/arrayref.h"
 #include "gromacs/utility/fatalerror.h"
 #include "gromacs/utility/pleasecite.h"
 #include "gromacs/utility/smalloc.h"
+
+using gmx::ArrayRef;
+using gmx::RVec;
 
 // TODO This implementation of ensemble orientation restraints is nasty because
 // a user can't just do multi-sim with single-sim orientation restraints.
@@ -279,7 +282,8 @@ void init_orires(FILE*                 fplog,
 
     if (ms)
     {
-        fprintf(fplog, "  the orientation restraints are ensemble averaged over %d systems\n", ms->nsim);
+        fprintf(fplog, "  the orientation restraints are ensemble averaged over %d systems\n",
+                ms->numSimulations_);
 
         check_multi_int(fplog, ms, od->nr, "the number of orientation restraints", FALSE);
         check_multi_int(fplog, ms, od->nref, "the number of fit atoms for orientation restraining", FALSE);
@@ -382,22 +386,20 @@ real calc_orires_dev(const gmx_multisim_t* ms,
                      const t_iatom         forceatoms[],
                      const t_iparams       ip[],
                      const t_mdatoms*      md,
+                     ArrayRef<const RVec>  xWholeMolecules,
                      const rvec            x[],
                      const t_pbc*          pbc,
-                     t_fcdata*             fcd,
+                     t_oriresdata*         od,
                      history_t*            hist)
 {
-    int           nref;
-    real          edt, edt_1, invn, pfac, r2, invr, corrfac, wsv2, sw, dev;
-    OriresMatEq*  matEq;
-    real*         mref;
-    double        mtot;
-    rvec *        xref, *xtmp, com, r_unrot, r;
-    t_oriresdata* od;
-    gmx_bool      bTAV;
-    const real    two_thr = 2.0 / 3.0;
-
-    od = &(fcd->orires);
+    int          nref;
+    real         edt, edt_1, invn, pfac, r2, invr, corrfac, wsv2, sw, dev;
+    OriresMatEq* matEq;
+    real*        mref;
+    double       mtot;
+    rvec *       xref, *xtmp, com, r_unrot, r;
+    gmx_bool     bTAV;
+    const real   two_thr = 2.0 / 3.0;
 
     if (od->nr == 0)
     {
@@ -431,7 +433,7 @@ real calc_orires_dev(const gmx_multisim_t* ms,
 
     if (ms)
     {
-        invn = 1.0 / ms->nsim;
+        invn = 1.0 / ms->numSimulations_;
     }
     else
     {
@@ -445,7 +447,7 @@ real calc_orires_dev(const gmx_multisim_t* ms,
     {
         if (md->cORF[i] == 0)
         {
-            copy_rvec(x[i], xtmp[j]);
+            copy_rvec(xWholeMolecules[i], xtmp[j]);
             mref[j] = md->massT[i];
             for (int d = 0; d < DIM; d++)
             {
@@ -648,7 +650,6 @@ real orires(int             nfa,
             rvec4           f[],
             rvec            fshift[],
             const t_pbc*    pbc,
-            const t_graph*  g,
             real gmx_unused lambda,
             real gmx_unused* dvdlambda,
             const t_mdatoms gmx_unused* md,
@@ -656,7 +657,6 @@ real orires(int             nfa,
             int gmx_unused* global_atom_index)
 {
     int                 ex, power, ki = CENTRAL;
-    ivec                dt;
     real                r2, invr, invr2, fc, smooth_fc, dev, devins, pfac;
     rvec                r, Sr, fij;
     real                vtot;
@@ -664,7 +664,7 @@ real orires(int             nfa,
     gmx_bool            bTAV;
 
     vtot = 0;
-    od   = &(fcd->orires);
+    od   = fcd->orires;
 
     if (od->fc != 0)
     {
@@ -733,12 +733,6 @@ real orires(int             nfa,
                 fij[i] = -pfac * dev * (4 * Sr[i] - 2 * (2 + power) * invr2 * iprod(Sr, r) * r[i]);
             }
 
-            if (g)
-            {
-                ivec_sub(SHIFT_IVEC(g, ai), SHIFT_IVEC(g, aj), dt);
-                ki = IVEC2IS(dt);
-            }
-
             for (int i = 0; i < DIM; i++)
             {
                 f[ai][i] += fij[i];
@@ -757,21 +751,19 @@ real orires(int             nfa,
     /* Approx. 80*nfa/3 flops */
 }
 
-void update_orires_history(const t_fcdata* fcd, history_t* hist)
+void update_orires_history(const t_oriresdata& od, history_t* hist)
 {
-    const t_oriresdata* od = &(fcd->orires);
-
-    if (od->edt != 0)
+    if (od.edt != 0)
     {
         /* Copy the new time averages that have been calculated
          *  in calc_orires_dev.
          */
-        hist->orire_initf = od->exp_min_t_tau;
-        for (int pair = 0; pair < od->nr; pair++)
+        hist->orire_initf = od.exp_min_t_tau;
+        for (int pair = 0; pair < od.nr; pair++)
         {
             for (int i = 0; i < 5; i++)
             {
-                hist->orire_Dtav[pair * 5 + i] = od->Dtav[pair][i];
+                hist->orire_Dtav[pair * 5 + i] = od.Dtav[pair][i];
             }
         }
     }

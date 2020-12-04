@@ -155,6 +155,7 @@ static const char* wcsn[ewcsNR] = {
     "DD make top.",
     "DD make constr.",
     "DD top. other",
+    "DD GPU ops.",
     "NS grid local",
     "NS grid non-loc.",
     "NS search local",
@@ -175,6 +176,11 @@ static const char* wcsn[ewcsNR] = {
     "NB X buffer ops.",
     "NB F buffer ops.",
     "Clear force buffer",
+    "Launch GPU NB X buffer ops.",
+    "Launch GPU NB F buffer ops.",
+    "Launch GPU Comm. coord.",
+    "Launch GPU Comm. force.",
+    "Launch GPU update",
     "Test subcounter",
 };
 
@@ -547,9 +553,9 @@ WallcycleCounts wallcycle_sum(const t_commrec* cr, gmx_wallcycle_t wc)
 {
     WallcycleCounts cycles_sum;
     wallcc_t*       wcc;
-    double          cycles[ewcNR + ewcsNR];
+    double          cycles[int(ewcNR) + int(ewcsNR)];
 #if GMX_MPI
-    double cycles_n[ewcNR + ewcsNR + 1];
+    double cycles_n[int(ewcNR) + int(ewcsNR) + 1];
 #endif
     int i;
     int nsum;
@@ -611,7 +617,7 @@ WallcycleCounts wallcycle_sum(const t_commrec* cr, gmx_wallcycle_t wc)
 #if GMX_MPI
     if (cr->nnodes > 1)
     {
-        double buf[ewcNR + ewcsNR + 1];
+        double buf[int(ewcNR) + int(ewcsNR) + 1];
 
         // TODO this code is used only at the end of the run, so we
         // can just do a simple reduce of haveInvalidCount in

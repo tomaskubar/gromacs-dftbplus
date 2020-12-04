@@ -47,11 +47,13 @@
 #include "gromacs/mdtypes/md_enums.h"
 #include "gromacs/topology/atoms.h"
 #include "gromacs/topology/symtab.h"
+#include "gromacs/utility/arrayref.h"
 #include "gromacs/utility/cstringutil.h"
 #include "gromacs/utility/exceptions.h"
 #include "gromacs/utility/fatalerror.h"
 #include "gromacs/utility/gmxassert.h"
 #include "gromacs/utility/smalloc.h"
+#include "gromacs/utility/stringcompare.h"
 
 /* these MUST correspond to the enum in hackblock.h */
 const char* btsNames[ebtsNR] = { "bonds", "angles", "dihedrals", "impropers", "exclusions", "cmap" };
@@ -135,7 +137,7 @@ static int rbonded_find_atoms_in_list(const BondedInteraction&               b,
              * Since we only have the unparsed string here we can only detect
              * EXACT matches (including identical whitespace).
              */
-            if (b.s != it->s)
+            if (b.s == it->s)
             {
                 gmx_warning("Duplicate line found in or between hackblock and rtp entries");
             }

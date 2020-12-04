@@ -44,11 +44,13 @@
 #include <cstring>
 
 #include <algorithm>
+#include <numeric>
 
 #include "gromacs/math/veccompare.h"
 #include "gromacs/math/vecdump.h"
 #include "gromacs/mdtypes/awh_params.h"
 #include "gromacs/mdtypes/md_enums.h"
+#include "gromacs/mdtypes/multipletimestepping.h"
 #include "gromacs/mdtypes/pull_params.h"
 #include "gromacs/pbcutil/pbc.h"
 #include "gromacs/utility/compare.h"
@@ -65,12 +67,21 @@
 //! Macro to select a bool name
 #define EBOOL(e) gmx::boolToString(e)
 
+/* Default values for nstcalcenergy, used when the are no other restrictions. */
+constexpr int c_defaultNstCalcEnergy = 10;
+
 /* The minimum number of integration steps required for reasonably accurate
  * integration of first and second order coupling algorithms.
  */
 const int nstmin_berendsen_tcouple = 5;
 const int nstmin_berendsen_pcouple = 10;
 const int nstmin_harmonic          = 20;
+
+/* Default values for T- and P- coupling intervals, used when the are no other
+ * restrictions.
+ */
+constexpr int c_defaultNstTCouple = 10;
+constexpr int c_defaultNstPCouple = 10;
 
 t_inputrec::t_inputrec()
 {
@@ -87,21 +98,25 @@ t_inputrec::~t_inputrec()
     done_inputrec(this);
 }
 
-static int nst_wanted(const t_inputrec* ir)
+int ir_optimal_nstcalcenergy(const t_inputrec* ir)
 {
+    int nst;
+
     if (ir->nstlist > 0)
     {
-        return ir->nstlist;
+        nst = ir->nstlist;
     }
     else
     {
-        return 10;
+        nst = c_defaultNstCalcEnergy;
     }
-}
 
-int ir_optimal_nstcalcenergy(const t_inputrec* ir)
-{
-    return nst_wanted(ir);
+    if (ir->useMts)
+    {
+        nst = std::lcm(nst, ir->mtsLevels.back().stepFactor);
+    }
+
+    return nst;
 }
 
 int tcouple_min_integration_steps(int etc)
@@ -134,7 +149,7 @@ int ir_optimal_nsttcouple(const t_inputrec* ir)
 
     nmin = tcouple_min_integration_steps(ir->etc);
 
-    nwanted = nst_wanted(ir);
+    nwanted = c_defaultNstTCouple;
 
     tau_min = 1e20;
     if (ir->etc != etcNO)
@@ -175,7 +190,8 @@ int pcouple_min_integration_steps(int epc)
     switch (epc)
     {
         case epcNO: n = 0; break;
-        case etcBERENDSEN:
+        case epcBERENDSEN:
+        case epcCRESCALE:
         case epcISOTROPIC: n = nstmin_berendsen_pcouple; break;
         case epcPARRINELLORAHMAN:
         case epcMTTK: n = nstmin_harmonic; break;
@@ -187,27 +203,39 @@ int pcouple_min_integration_steps(int epc)
 
 int ir_optimal_nstpcouple(const t_inputrec* ir)
 {
-    int nmin, nwanted, n;
+    const int minIntegrationSteps = pcouple_min_integration_steps(ir->epc);
 
-    nmin = pcouple_min_integration_steps(ir->epc);
+    const int nwanted = c_defaultNstPCouple;
 
-    nwanted = nst_wanted(ir);
+    // With multiple time-stepping we can only compute the pressure at slowest steps
+    const int minNstPCouple = (ir->useMts ? ir->mtsLevels.back().stepFactor : 1);
 
-    if (nmin == 0 || ir->delta_t * nwanted <= ir->tau_p)
+    int n;
+    if (minIntegrationSteps == 0 || ir->delta_t * nwanted <= ir->tau_p)
     {
         n = nwanted;
     }
     else
     {
-        n = static_cast<int>(ir->tau_p / (ir->delta_t * nmin) + 0.001);
-        if (n < 1)
+        n = static_cast<int>(ir->tau_p / (ir->delta_t * minIntegrationSteps) + 0.001);
+        if (n < minNstPCouple)
         {
-            n = 1;
+            n = minNstPCouple;
         }
-        while (nwanted % n != 0)
+        // Without MTS we try to make nstpcouple a "nice" number
+        if (!ir->useMts)
         {
-            n--;
+            while (nwanted % n != 0)
+            {
+                n--;
+            }
         }
+    }
+
+    // With MTS, nstpcouple should be a multiple of the slowest MTS interval
+    if (ir->useMts)
+    {
+        n = n - (n % minNstPCouple);
     }
 
     return n;
@@ -215,7 +243,7 @@ int ir_optimal_nstpcouple(const t_inputrec* ir)
 
 gmx_bool ir_coulomb_switched(const t_inputrec* ir)
 {
-    return (ir->coulombtype == eelSWITCH || ir->coulombtype == eelSHIFT || ir->coulombtype == eelENCADSHIFT
+    return (ir->coulombtype == eelSWITCH || ir->coulombtype == eelSHIFT
             || ir->coulombtype == eelPMESWITCH || ir->coulombtype == eelPMEUSERSWITCH
             || ir->coulomb_modifier == eintmodPOTSWITCH || ir->coulomb_modifier == eintmodFORCESWITCH);
 }
@@ -233,7 +261,7 @@ gmx_bool ir_coulomb_might_be_zero_at_cutoff(const t_inputrec* ir)
 
 gmx_bool ir_vdw_switched(const t_inputrec* ir)
 {
-    return (ir->vdwtype == evdwSWITCH || ir->vdwtype == evdwSHIFT || ir->vdwtype == evdwENCADSHIFT
+    return (ir->vdwtype == evdwSWITCH || ir->vdwtype == evdwSHIFT
             || ir->vdw_modifier == eintmodPOTSWITCH || ir->vdw_modifier == eintmodFORCESWITCH);
 }
 
@@ -247,28 +275,6 @@ gmx_bool ir_vdw_might_be_zero_at_cutoff(const t_inputrec* ir)
     return (ir_vdw_is_zero_at_cutoff(ir) || ir->vdwtype == evdwUSER);
 }
 
-static void done_pull_group(t_pull_group* pgrp)
-{
-    if (pgrp->nat > 0)
-    {
-        sfree(pgrp->ind);
-        sfree(pgrp->weight);
-    }
-}
-
-static void done_pull_params(pull_params_t* pull)
-{
-    int i;
-
-    for (i = 0; i < pull->ngroup + 1; i++)
-    {
-        done_pull_group(pull->group);
-    }
-
-    sfree(pull->group);
-    sfree(pull->coord);
-}
-
 static void done_lambdas(t_lambda* fep)
 {
     if (fep->n_lambda > 0)
@@ -279,6 +285,24 @@ static void done_lambdas(t_lambda* fep)
         }
     }
     sfree(fep->all_lambda);
+}
+
+static void done_t_rot(t_rot* rot)
+{
+    if (rot == nullptr)
+    {
+        return;
+    }
+    if (rot->grp != nullptr)
+    {
+        for (int i = 0; i < rot->ngrp; i++)
+        {
+            sfree(rot->grp[i].ind);
+            sfree(rot->grp[i].x_ref);
+        }
+        sfree(rot->grp);
+    }
+    sfree(rot);
 }
 
 void done_inputrec(t_inputrec* ir)
@@ -309,11 +333,7 @@ void done_inputrec(t_inputrec* ir)
     sfree(ir->expandedvals);
     sfree(ir->simtempvals);
 
-    if (ir->pull)
-    {
-        done_pull_params(ir->pull);
-        sfree(ir->pull);
-    }
+    done_t_rot(ir->rot);
     delete ir->params;
 }
 
@@ -461,8 +481,8 @@ static void pr_pull_group(FILE* fp, int indent, int g, const t_pull_group* pgrp)
     pr_indent(fp, indent);
     fprintf(fp, "pull-group %d:\n", g);
     indent += 2;
-    pr_ivec_block(fp, indent, "atom", pgrp->ind, pgrp->nat, TRUE);
-    pr_rvec(fp, indent, "weight", pgrp->weight, pgrp->nweight, TRUE);
+    pr_ivec_block(fp, indent, "atom", pgrp->ind.data(), pgrp->ind.size(), TRUE);
+    pr_rvec(fp, indent, "weight", pgrp->weight.data(), pgrp->weight.size(), TRUE);
     PI("pbcatom", pgrp->pbcatom);
 }
 
@@ -475,12 +495,12 @@ static void pr_pull_coord(FILE* fp, int indent, int c, const t_pull_coord* pcrd)
     PS("type", EPULLTYPE(pcrd->eType));
     if (pcrd->eType == epullEXTERNAL)
     {
-        PS("potential-provider", pcrd->externalPotentialProvider);
+        PS("potential-provider", pcrd->externalPotentialProvider.c_str());
     }
     PS("geometry", EPULLGEOM(pcrd->eGeom));
     for (g = 0; g < pcrd->ngroup; g++)
     {
-        char buf[10];
+        char buf[STRLEN];
 
         sprintf(buf, "group[%d]", g);
         PI(buf, pcrd->group[g]);
@@ -604,29 +624,29 @@ static void pr_fepvals(FILE* fp, int indent, const t_lambda* fep, gmx_bool bMDPf
     PS("dhdl-derivatives", DHDLDERIVATIVESTYPE(fep->dhdl_derivatives));
 };
 
-static void pr_pull(FILE* fp, int indent, const pull_params_t* pull)
+static void pr_pull(FILE* fp, int indent, const pull_params_t& pull)
 {
     int g;
 
-    PR("pull-cylinder-r", pull->cylinder_r);
-    PR("pull-constr-tol", pull->constr_tol);
-    PS("pull-print-COM", EBOOL(pull->bPrintCOM));
-    PS("pull-print-ref-value", EBOOL(pull->bPrintRefValue));
-    PS("pull-print-components", EBOOL(pull->bPrintComp));
-    PI("pull-nstxout", pull->nstxout);
-    PI("pull-nstfout", pull->nstfout);
-    PS("pull-pbc-ref-prev-step-com", EBOOL(pull->bSetPbcRefToPrevStepCOM));
-    PS("pull-xout-average", EBOOL(pull->bXOutAverage));
-    PS("pull-fout-average", EBOOL(pull->bFOutAverage));
-    PI("pull-ngroups", pull->ngroup);
-    for (g = 0; g < pull->ngroup; g++)
+    PR("pull-cylinder-r", pull.cylinder_r);
+    PR("pull-constr-tol", pull.constr_tol);
+    PS("pull-print-COM", EBOOL(pull.bPrintCOM));
+    PS("pull-print-ref-value", EBOOL(pull.bPrintRefValue));
+    PS("pull-print-components", EBOOL(pull.bPrintComp));
+    PI("pull-nstxout", pull.nstxout);
+    PI("pull-nstfout", pull.nstfout);
+    PS("pull-pbc-ref-prev-step-com", EBOOL(pull.bSetPbcRefToPrevStepCOM));
+    PS("pull-xout-average", EBOOL(pull.bXOutAverage));
+    PS("pull-fout-average", EBOOL(pull.bFOutAverage));
+    PI("pull-ngroups", pull.ngroup);
+    for (g = 0; g < pull.ngroup; g++)
     {
-        pr_pull_group(fp, indent, g, &pull->group[g]);
+        pr_pull_group(fp, indent, g, &pull.group[g]);
     }
-    PI("pull-ncoords", pull->ncoord);
-    for (g = 0; g < pull->ncoord; g++)
+    PI("pull-ncoords", pull.ncoord);
+    for (g = 0; g < pull.ncoord; g++)
     {
-        pr_pull_coord(fp, indent, g, &pull->coord[g]);
+        pr_pull_coord(fp, indent, g, &pull.coord[g]);
     }
 }
 
@@ -813,6 +833,30 @@ void pr_inputrec(FILE* fp, int indent, const char* title, const t_inputrec* ir, 
         PSTEP("nsteps", ir->nsteps);
         PSTEP("init-step", ir->init_step);
         PI("simulation-part", ir->simulation_part);
+        PS("mts", EBOOL(ir->useMts));
+        if (ir->useMts)
+        {
+            for (int mtsIndex = 1; mtsIndex < static_cast<int>(ir->mtsLevels.size()); mtsIndex++)
+            {
+                const auto&       mtsLevel = ir->mtsLevels[mtsIndex];
+                const std::string forceKey = gmx::formatString("mts-level%d-forces", mtsIndex + 1);
+                std::string       forceGroups;
+                for (int i = 0; i < static_cast<int>(gmx::MtsForceGroups::Count); i++)
+                {
+                    if (mtsLevel.forceGroups[i])
+                    {
+                        if (!forceGroups.empty())
+                        {
+                            forceGroups += " ";
+                        }
+                        forceGroups += gmx::mtsForceGroupNames[i];
+                    }
+                }
+                PS(forceKey.c_str(), forceGroups.c_str());
+                const std::string factorKey = gmx::formatString("mts-level%d-factor", mtsIndex + 1);
+                PI(factorKey.c_str(), mtsLevel.stepFactor);
+            }
+        }
         PS("comm-mode", ECOM(ir->comm_mode));
         PI("nstcomm", ir->nstcomm);
 
@@ -917,6 +961,8 @@ void pr_inputrec(FILE* fp, int indent, const char* title, const t_inputrec* ir, 
 
         /* QMMM */
         PS("QMMM", EBOOL(ir->bQMMM));
+        fprintf(fp, "%s:\n", "qm-opts");
+        pr_int(fp, indent, "ngQM", ir->opts.ngQM);
         PI("QMconstraints", ir->QMconstraints);
         PI("QMMMscheme", ir->QMMMscheme);
         PR("MMChargeScaleFactor", ir->scalefactor);
@@ -948,7 +994,7 @@ void pr_inputrec(FILE* fp, int indent, const char* title, const t_inputrec* ir, 
         PS("pull", EBOOL(ir->bPull));
         if (ir->bPull)
         {
-            pr_pull(fp, indent, ir->pull);
+            pr_pull(fp, indent, *ir->pull);
         }
 
         /* AWH BIASING */
@@ -1283,6 +1329,15 @@ void cmp_inputrec(FILE* fp, const t_inputrec* ir1, const t_inputrec* ir2, real f
     cmp_int64(fp, "inputrec->nsteps", ir1->nsteps, ir2->nsteps);
     cmp_int64(fp, "inputrec->init_step", ir1->init_step, ir2->init_step);
     cmp_int(fp, "inputrec->simulation_part", -1, ir1->simulation_part, ir2->simulation_part);
+    cmp_int(fp, "inputrec->mts", -1, static_cast<int>(ir1->useMts), static_cast<int>(ir2->useMts));
+    if (ir1->useMts && ir2->useMts)
+    {
+        cmp_int(fp, "inputrec->mts-levels", -1, ir1->mtsLevels.size(), ir2->mtsLevels.size());
+        cmp_int(fp, "inputrec->mts-level2-forces", -1, ir1->mtsLevels[1].forceGroups.to_ulong(),
+                ir2->mtsLevels[1].forceGroups.to_ulong());
+        cmp_int(fp, "inputrec->mts-level2-factor", -1, ir1->mtsLevels[1].stepFactor,
+                ir2->mtsLevels[1].stepFactor);
+    }
     cmp_int(fp, "inputrec->pbcType", -1, static_cast<int>(ir1->pbcType), static_cast<int>(ir2->pbcType));
     cmp_bool(fp, "inputrec->bPeriodicMols", -1, ir1->bPeriodicMols, ir2->bPeriodicMols);
     cmp_int(fp, "inputrec->cutoff_scheme", -1, ir1->cutoff_scheme, ir2->cutoff_scheme);
@@ -1420,14 +1475,12 @@ void cmp_inputrec(FILE* fp, const t_inputrec* ir1, const t_inputrec* ir2, real f
     gmx::compareKeyValueTrees(&writer, *ir1->params, *ir2->params, ftol, abstol);
 }
 
-void comp_pull_AB(FILE* fp, pull_params_t* pull, real ftol, real abstol)
+void comp_pull_AB(FILE* fp, const pull_params_t& pull, real ftol, real abstol)
 {
-    int i;
-
-    for (i = 0; i < pull->ncoord; i++)
+    for (int i = 0; i < pull.ncoord; i++)
     {
         fprintf(fp, "comparing pull coord %d\n", i);
-        cmp_real(fp, "pull-coord->k", -1, pull->coord[i].k, pull->coord[i].kB, ftol, abstol);
+        cmp_real(fp, "pull-coord->k", -1, pull.coord[i].k, pull.coord[i].kB, ftol, abstol);
     }
 }
 
@@ -1482,7 +1535,7 @@ bool inputrecPbcXY2Walls(const t_inputrec* ir)
 bool integratorHasConservedEnergyQuantity(const t_inputrec* ir)
 {
     if (!EI_MD(ir->eI))
-    {
+    { // NOLINT bugprone-branch-clone
         // Energy minimization or stochastic integrator: no conservation
         return false;
     }

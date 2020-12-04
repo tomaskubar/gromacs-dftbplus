@@ -52,9 +52,10 @@
 
 #include <cmath>
 
-#include "gromacs/gpu_utils/gpu_utils.h"
+#include "gromacs/gpu_utils/device_stream_manager.h"
 #include "gromacs/gpu_utils/oclutils.h"
-#include "gromacs/hardware/gpu_hw_info.h"
+#include "gromacs/hardware/device_information.h"
+#include "gromacs/hardware/device_management.h"
 #include "gromacs/math/vectypes.h"
 #include "gromacs/mdlib/force_flags.h"
 #include "gromacs/mdtypes/interaction_const.h"
@@ -64,6 +65,7 @@
 #include "gromacs/nbnxm/gpu_jit_support.h"
 #include "gromacs/nbnxm/nbnxm.h"
 #include "gromacs/nbnxm/nbnxm_gpu.h"
+#include "gromacs/nbnxm/nbnxm_gpu_data_mgmt.h"
 #include "gromacs/nbnxm/pairlistsets.h"
 #include "gromacs/pbcutil/ishift.h"
 #include "gromacs/timing/gpu_timing.h"
@@ -73,7 +75,6 @@
 #include "gromacs/utility/real.h"
 #include "gromacs/utility/smalloc.h"
 
-#include "nbnxm_ocl_internal.h"
 #include "nbnxm_ocl_types.h"
 
 namespace Nbnxm
@@ -99,85 +100,19 @@ namespace Nbnxm
 static unsigned int gpu_min_ci_balanced_factor = 50;
 
 
-/*! \brief Returns true if LJ combination rules are used in the non-bonded kernels.
- *
- * Full doc in nbnxn_ocl_internal.h */
-bool useLjCombRule(int vdwType)
-{
-    return (vdwType == evdwOclCUTCOMBGEOM || vdwType == evdwOclCUTCOMBLB);
-}
-
-/*! \brief Tabulates the Ewald Coulomb force and initializes the size/scale
- * and the table GPU array.
- *
- * If called with an already allocated table, it just re-uploads the
- * table.
- */
-static void init_ewald_coulomb_force_table(const EwaldCorrectionTables&     tables,
-                                           cl_nbparam_t*                    nbp,
-                                           const gmx_device_runtime_data_t* runData)
-{
-    cl_mem coul_tab;
-
-    cl_int cl_error;
-
-    if (nbp->coulomb_tab_climg2d != nullptr)
-    {
-        freeDeviceBuffer(&(nbp->coulomb_tab_climg2d));
-    }
-
-    /* Switched from using textures to using buffers */
-    // TODO: decide which alternative is most efficient - textures or buffers.
-    /*
-       cl_image_format array_format;
-
-       array_format.image_channel_data_type = CL_FLOAT;
-       array_format.image_channel_order     = CL_R;
-
-       coul_tab = clCreateImage2D(runData->context, CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR,
-       &array_format, tabsize, 1, 0, ftmp, &cl_error);
-     */
-
-    coul_tab = clCreateBuffer(
-            runData->context, CL_MEM_READ_ONLY | CL_MEM_HOST_WRITE_ONLY | CL_MEM_COPY_HOST_PTR,
-            tables.tableF.size() * sizeof(cl_float), const_cast<real*>(tables.tableF.data()), &cl_error);
-    GMX_RELEASE_ASSERT(cl_error == CL_SUCCESS,
-                       ("clCreateBuffer failed: " + ocl_get_error_string(cl_error)).c_str());
-
-    nbp->coulomb_tab_climg2d = coul_tab;
-    nbp->coulomb_tab_scale   = tables.scale;
-}
-
-
 /*! \brief Initializes the atomdata structure first time, it only gets filled at
     pair-search.
  */
-static void init_atomdata_first(cl_atomdata_t* ad, int ntypes, gmx_device_runtime_data_t* runData)
+static void init_atomdata_first(cl_atomdata_t* ad, int ntypes, const DeviceContext& deviceContext)
 {
-    cl_int cl_error;
-
     ad->ntypes = ntypes;
 
-    ad->shift_vec = clCreateBuffer(runData->context, CL_MEM_READ_ONLY | CL_MEM_HOST_WRITE_ONLY,
-                                   SHIFTS * sizeof(nbnxn_atomdata_t::shift_vec[0]), nullptr, &cl_error);
-    GMX_RELEASE_ASSERT(cl_error == CL_SUCCESS,
-                       ("clCreateBuffer failed: " + ocl_get_error_string(cl_error)).c_str());
+    allocateDeviceBuffer(&ad->shift_vec, SHIFTS * DIM, deviceContext);
     ad->bShiftVecUploaded = CL_FALSE;
 
-    ad->fshift = clCreateBuffer(runData->context, CL_MEM_READ_WRITE | CL_MEM_HOST_READ_ONLY,
-                                SHIFTS * sizeof(nb_staging_t::fshift[0]), nullptr, &cl_error);
-    GMX_RELEASE_ASSERT(cl_error == CL_SUCCESS,
-                       ("clCreateBuffer failed: " + ocl_get_error_string(cl_error)).c_str());
-
-    ad->e_lj = clCreateBuffer(runData->context, CL_MEM_READ_WRITE | CL_MEM_HOST_READ_ONLY,
-                              sizeof(float), nullptr, &cl_error);
-    GMX_RELEASE_ASSERT(cl_error == CL_SUCCESS,
-                       ("clCreateBuffer failed: " + ocl_get_error_string(cl_error)).c_str());
-
-    ad->e_el = clCreateBuffer(runData->context, CL_MEM_READ_WRITE | CL_MEM_HOST_READ_ONLY,
-                              sizeof(float), nullptr, &cl_error);
-    GMX_RELEASE_ASSERT(cl_error == CL_SUCCESS,
-                       ("clCreateBuffer failed: " + ocl_get_error_string(cl_error)).c_str());
+    allocateDeviceBuffer(&ad->fshift, SHIFTS * DIM, deviceContext);
+    allocateDeviceBuffer(&ad->e_lj, 1, deviceContext);
+    allocateDeviceBuffer(&ad->e_el, 1, deviceContext);
 
     /* initialize to nullptr pointers to data that is not allocated here and will
        need reallocation in nbnxn_gpu_init_atomdata */
@@ -189,115 +124,19 @@ static void init_atomdata_first(cl_atomdata_t* ad, int ntypes, gmx_device_runtim
     ad->nalloc = -1;
 }
 
-/*! \brief Copies all parameters related to the cut-off from ic to nbp
- */
-static void set_cutoff_parameters(cl_nbparam_t* nbp, const interaction_const_t* ic, const PairlistParams& listParams)
-{
-    nbp->ewald_beta        = ic->ewaldcoeff_q;
-    nbp->sh_ewald          = ic->sh_ewald;
-    nbp->epsfac            = ic->epsfac;
-    nbp->two_k_rf          = 2.0 * ic->k_rf;
-    nbp->c_rf              = ic->c_rf;
-    nbp->rvdw_sq           = ic->rvdw * ic->rvdw;
-    nbp->rcoulomb_sq       = ic->rcoulomb * ic->rcoulomb;
-    nbp->rlistOuter_sq     = listParams.rlistOuter * listParams.rlistOuter;
-    nbp->rlistInner_sq     = listParams.rlistInner * listParams.rlistInner;
-    nbp->useDynamicPruning = listParams.useDynamicPruning;
-
-    nbp->sh_lj_ewald   = ic->sh_lj_ewald;
-    nbp->ewaldcoeff_lj = ic->ewaldcoeff_lj;
-
-    nbp->rvdw_switch      = ic->rvdw_switch;
-    nbp->dispersion_shift = ic->dispersion_shift;
-    nbp->repulsion_shift  = ic->repulsion_shift;
-    nbp->vdw_switch       = ic->vdw_switch;
-}
-
-/*! \brief Returns the kinds of electrostatics and Vdw OpenCL
- *  kernels that will be used.
- *
- * Respectively, these values are from enum eelOcl and enum
- * evdwOcl. */
-static void map_interaction_types_to_gpu_kernel_flavors(const interaction_const_t* ic,
-                                                        int                        combRule,
-                                                        int*                       gpu_eeltype,
-                                                        int*                       gpu_vdwtype)
-{
-    if (ic->vdwtype == evdwCUT)
-    {
-        switch (ic->vdw_modifier)
-        {
-            case eintmodNONE:
-            case eintmodPOTSHIFT:
-                switch (combRule)
-                {
-                    case ljcrNONE: *gpu_vdwtype = evdwOclCUT; break;
-                    case ljcrGEOM: *gpu_vdwtype = evdwOclCUTCOMBGEOM; break;
-                    case ljcrLB: *gpu_vdwtype = evdwOclCUTCOMBLB; break;
-                    default:
-                        gmx_incons(
-                                "The requested LJ combination rule is not implemented in the "
-                                "OpenCL GPU accelerated kernels!");
-                }
-                break;
-            case eintmodFORCESWITCH: *gpu_vdwtype = evdwOclFSWITCH; break;
-            case eintmodPOTSWITCH: *gpu_vdwtype = evdwOclPSWITCH; break;
-            default:
-                gmx_incons(
-                        "The requested VdW interaction modifier is not implemented in the GPU "
-                        "accelerated kernels!");
-        }
-    }
-    else if (ic->vdwtype == evdwPME)
-    {
-        if (ic->ljpme_comb_rule == ljcrGEOM)
-        {
-            *gpu_vdwtype = evdwOclEWALDGEOM;
-        }
-        else
-        {
-            *gpu_vdwtype = evdwOclEWALDLB;
-        }
-    }
-    else
-    {
-        gmx_incons("The requested VdW type is not implemented in the GPU accelerated kernels!");
-    }
-
-    if (ic->eeltype == eelCUT)
-    {
-        *gpu_eeltype = eelOclCUT;
-    }
-    else if (EEL_RF(ic->eeltype))
-    {
-        *gpu_eeltype = eelOclRF;
-    }
-    else if ((EEL_PME(ic->eeltype) || ic->eeltype == eelEWALD))
-    {
-        *gpu_eeltype = nbnxn_gpu_pick_ewald_kernel_type(*ic);
-    }
-    else
-    {
-        /* Shouldn't happen, as this is checked when choosing Verlet-scheme */
-        gmx_incons(
-                "The requested electrostatics type is not implemented in the GPU accelerated "
-                "kernels!");
-    }
-}
 
 /*! \brief Initializes the nonbonded parameter data structure.
  */
-static void init_nbparam(cl_nbparam_t*                    nbp,
-                         const interaction_const_t*       ic,
-                         const PairlistParams&            listParams,
-                         const nbnxn_atomdata_t::Params&  nbatParams,
-                         const gmx_device_runtime_data_t* runData)
+static void init_nbparam(NBParamGpu*                     nbp,
+                         const interaction_const_t*      ic,
+                         const PairlistParams&           listParams,
+                         const nbnxn_atomdata_t::Params& nbatParams,
+                         const DeviceContext&            deviceContext)
 {
-    cl_int cl_error;
-
     set_cutoff_parameters(nbp, ic, listParams);
 
-    map_interaction_types_to_gpu_kernel_flavors(ic, nbatParams.comb_rule, &(nbp->eeltype), &(nbp->vdwtype));
+    nbp->vdwType  = nbnxmGpuPickVdwKernelType(ic, nbatParams.comb_rule);
+    nbp->elecType = nbnxmGpuPickElectrostaticsKernelType(ic);
 
     if (ic->vdwtype == evdwPME)
     {
@@ -311,211 +150,33 @@ static void init_nbparam(cl_nbparam_t*                    nbp,
         }
     }
     /* generate table for PME */
-    nbp->coulomb_tab_climg2d = nullptr;
-    if (nbp->eeltype == eelOclEWALD_TAB || nbp->eeltype == eelOclEWALD_TAB_TWIN)
+    nbp->coulomb_tab = nullptr;
+    if (nbp->elecType == ElecType::EwaldTab || nbp->elecType == ElecType::EwaldTabTwin)
     {
         GMX_RELEASE_ASSERT(ic->coulombEwaldTables, "Need valid Coulomb Ewald correction tables");
-        init_ewald_coulomb_force_table(*ic->coulombEwaldTables, nbp, runData);
+        init_ewald_coulomb_force_table(*ic->coulombEwaldTables, nbp, deviceContext);
     }
     else
-    // TODO: improvement needed.
-    // The image2d is created here even if eeltype is not eelCuEWALD_TAB or eelCuEWALD_TAB_TWIN
-    // because the OpenCL kernels don't accept nullptr values for image2D parameters.
     {
-        /* Switched from using textures to using buffers */
-        // TODO: decide which alternative is most efficient - textures or buffers.
-        /*
-           cl_image_format array_format;
-
-           array_format.image_channel_data_type = CL_FLOAT;
-           array_format.image_channel_order     = CL_R;
-
-           nbp->coulomb_tab_climg2d = clCreateImage2D(runData->context, CL_MEM_READ_WRITE,
-            &array_format, 1, 1, 0, nullptr, &cl_error);
-         */
-
-        nbp->coulomb_tab_climg2d = clCreateBuffer(runData->context, CL_MEM_READ_ONLY,
-                                                  sizeof(cl_float), nullptr, &cl_error);
-        GMX_RELEASE_ASSERT(cl_error == CL_SUCCESS,
-                           ("clCreateBuffer failed: " + ocl_get_error_string(cl_error)).c_str());
+        allocateDeviceBuffer(&nbp->coulomb_tab, 1, deviceContext);
     }
 
     const int nnbfp      = 2 * nbatParams.numTypes * nbatParams.numTypes;
     const int nnbfp_comb = 2 * nbatParams.numTypes;
 
     {
-        /* Switched from using textures to using buffers */
-        // TODO: decide which alternative is most efficient - textures or buffers.
-        /*
-           cl_image_format array_format;
-
-           array_format.image_channel_data_type = CL_FLOAT;
-           array_format.image_channel_order     = CL_R;
-
-           nbp->nbfp_climg2d = clCreateImage2D(runData->context, CL_MEM_READ_ONLY |
-           CL_MEM_COPY_HOST_PTR, &array_format, nnbfp, 1, 0, nbat->nbfp, &cl_error);
-         */
-
-        nbp->nbfp_climg2d = clCreateBuffer(
-                runData->context, CL_MEM_READ_ONLY | CL_MEM_HOST_WRITE_ONLY | CL_MEM_COPY_HOST_PTR,
-                nnbfp * sizeof(cl_float), const_cast<float*>(nbatParams.nbfp.data()), &cl_error);
-        GMX_RELEASE_ASSERT(cl_error == CL_SUCCESS,
-                           ("clCreateBuffer failed: " + ocl_get_error_string(cl_error)).c_str());
+        /* set up LJ parameter lookup table */
+        DeviceBuffer<real> nbfp;
+        initParamLookupTable(&nbfp, nullptr, nbatParams.nbfp.data(), nnbfp, deviceContext);
+        nbp->nbfp = nbfp;
 
         if (ic->vdwtype == evdwPME)
         {
-            /* Switched from using textures to using buffers */
-            // TODO: decide which alternative is most efficient - textures or buffers.
-            /*  nbp->nbfp_comb_climg2d = clCreateImage2D(runData->context, CL_MEM_READ_WRITE |
-               CL_MEM_COPY_HOST_PTR, &array_format, nnbfp_comb, 1, 0, nbat->nbfp_comb, &cl_error);*/
-            nbp->nbfp_comb_climg2d = clCreateBuffer(
-                    runData->context, CL_MEM_READ_ONLY | CL_MEM_HOST_WRITE_ONLY | CL_MEM_COPY_HOST_PTR,
-                    nnbfp_comb * sizeof(cl_float), const_cast<float*>(nbatParams.nbfp_comb.data()),
-                    &cl_error);
-            GMX_RELEASE_ASSERT(cl_error == CL_SUCCESS,
-                               ("clCreateBuffer failed: " + ocl_get_error_string(cl_error)).c_str());
-        }
-        else
-        {
-            // TODO: improvement needed.
-            // The image2d is created here even if vdwtype is not evdwPME because the OpenCL kernels
-            // don't accept nullptr values for image2D parameters.
-            /* Switched from using textures to using buffers */
-            // TODO: decide which alternative is most efficient - textures or buffers.
-            /* nbp->nbfp_comb_climg2d = clCreateImage2D(runData->context, CL_MEM_READ_WRITE,
-                &array_format, 1, 1, 0, nullptr, &cl_error);*/
-            nbp->nbfp_comb_climg2d = clCreateBuffer(runData->context, CL_MEM_READ_ONLY,
-                                                    sizeof(cl_float), nullptr, &cl_error);
-            GMX_RELEASE_ASSERT(cl_error == CL_SUCCESS,
-                               ("clCreateBuffer failed: " + ocl_get_error_string(cl_error)).c_str());
+            DeviceBuffer<float> nbfp_comb;
+            initParamLookupTable(&nbfp_comb, nullptr, nbatParams.nbfp_comb.data(), nnbfp_comb, deviceContext);
+            nbp->nbfp_comb = nbfp_comb;
         }
     }
-}
-
-//! This function is documented in the header file
-void gpu_pme_loadbal_update_param(const nonbonded_verlet_t* nbv, const interaction_const_t* ic)
-{
-    if (!nbv || !nbv->useGpu())
-    {
-        return;
-    }
-    NbnxmGpu*     nb  = nbv->gpu_nbv;
-    cl_nbparam_t* nbp = nb->nbparam;
-
-    set_cutoff_parameters(nbp, ic, nbv->pairlistSets().params());
-
-    nbp->eeltype = nbnxn_gpu_pick_ewald_kernel_type(*ic);
-
-    GMX_RELEASE_ASSERT(ic->coulombEwaldTables, "Need valid Coulomb Ewald correction tables");
-    init_ewald_coulomb_force_table(*ic->coulombEwaldTables, nbp, nb->dev_rundata);
-}
-
-/*! \brief Initializes the pair list data structure.
- */
-static void init_plist(cl_plist_t* pl)
-{
-    /* initialize to nullptr pointers to data that is not allocated here and will
-       need reallocation in nbnxn_gpu_init_pairlist */
-    pl->sci   = nullptr;
-    pl->cj4   = nullptr;
-    pl->imask = nullptr;
-    pl->excl  = nullptr;
-
-    /* size -1 indicates that the respective array hasn't been initialized yet */
-    pl->na_c          = -1;
-    pl->nsci          = -1;
-    pl->sci_nalloc    = -1;
-    pl->ncj4          = -1;
-    pl->cj4_nalloc    = -1;
-    pl->nimask        = -1;
-    pl->imask_nalloc  = -1;
-    pl->nexcl         = -1;
-    pl->excl_nalloc   = -1;
-    pl->haveFreshList = false;
-}
-
-/*! \brief Initializes the timings data structure.
- */
-static void init_timings(gmx_wallclock_gpu_nbnxn_t* t)
-{
-    int i, j;
-
-    t->nb_h2d_t = 0.0;
-    t->nb_d2h_t = 0.0;
-    t->nb_c     = 0;
-    t->pl_h2d_t = 0.0;
-    t->pl_h2d_c = 0;
-    for (i = 0; i < 2; i++)
-    {
-        for (j = 0; j < 2; j++)
-        {
-            t->ktime[i][j].t = 0.0;
-            t->ktime[i][j].c = 0;
-        }
-    }
-
-    t->pruneTime.c        = 0;
-    t->pruneTime.t        = 0.0;
-    t->dynamicPruneTime.c = 0;
-    t->dynamicPruneTime.t = 0.0;
-}
-
-
-//! OpenCL notification callback function
-static void CL_CALLBACK ocl_notify_fn(const char* pErrInfo,
-                                      const void gmx_unused* private_info,
-                                      size_t gmx_unused cb,
-                                      void gmx_unused* user_data)
-{
-    if (pErrInfo != nullptr)
-    {
-        printf("%s\n", pErrInfo); // Print error/hint
-    }
-}
-
-/*! \brief Creates context for OpenCL GPU given by \p mygpu
- *
- * A fatal error results if creation fails.
- *
- * \param[inout] runtimeData Runtime data including program and context
- * \param[in]    deviceInfo  Device info struct
- * \param[in]    rank        MPI rank (for error reporting)
- */
-static void nbnxn_gpu_create_context(gmx_device_runtime_data_t* runtimeData,
-                                     const DeviceInformation*   deviceInfo,
-                                     int                        rank)
-{
-    cl_context_properties context_properties[5];
-    cl_platform_id        platform_id;
-    cl_device_id          device_id;
-    cl_context            context;
-    cl_int                cl_error;
-
-    GMX_ASSERT(runtimeData, "Need a valid runtimeData object");
-    GMX_ASSERT(deviceInfo, "Need a valid device info object");
-
-    platform_id = deviceInfo->oclPlatformId;
-    device_id   = deviceInfo->oclDeviceId;
-
-    int i                   = 0;
-    context_properties[i++] = CL_CONTEXT_PLATFORM;
-    context_properties[i++] = reinterpret_cast<cl_context_properties>(platform_id);
-    if (getenv("GMX_OCL_SHOW_DIAGNOSTICS"))
-    {
-        context_properties[i++] = CL_CONTEXT_SHOW_DIAGNOSTICS_INTEL;
-        context_properties[i++] =
-                CL_CONTEXT_DIAGNOSTICS_LEVEL_BAD_INTEL | CL_CONTEXT_DIAGNOSTICS_LEVEL_NEUTRAL_INTEL;
-    }
-    context_properties[i++] = 0; /* Terminates the list of properties */
-
-    context = clCreateContext(context_properties, 1, &device_id, ocl_notify_fn, nullptr, &cl_error);
-    if (CL_SUCCESS != cl_error)
-    {
-        gmx_fatal(FARGS, "On rank %d failed to create context for GPU #%s:\n OpenCL error %d: %s",
-                  rank, deviceInfo->device_name, cl_error, ocl_get_error_string(cl_error).c_str());
-    }
-
-    runtimeData->context = context;
 }
 
 /*! \brief Initializes the OpenCL kernel pointers of the nbnxn_ocl_ptr_t input data structure. */
@@ -528,7 +189,7 @@ static cl_kernel nbnxn_gpu_create_kernel(NbnxmGpu* nb, const char* kernel_name)
     if (CL_SUCCESS != cl_error)
     {
         gmx_fatal(FARGS, "Failed to create kernel '%s' for GPU #%s: OpenCL error %d", kernel_name,
-                  nb->deviceInfo->device_name, cl_error);
+                  nb->deviceContext_->deviceInfo().device_name, cl_error);
     }
 
     return kernel;
@@ -541,7 +202,7 @@ static void nbnxn_ocl_clear_e_fshift(NbnxmGpu* nb)
 
     cl_int           cl_error;
     cl_atomdata_t*   adat = nb->atdat;
-    cl_command_queue ls   = nb->stream[InteractionLocality::Local];
+    cl_command_queue ls   = nb->deviceStreams[InteractionLocality::Local]->stream();
 
     size_t local_work_size[3]  = { 1, 1, 1 };
     size_t global_work_size[3] = { 1, 1, 1 };
@@ -598,30 +259,29 @@ static void nbnxn_gpu_init_kernels(NbnxmGpu* nb)
  *  Initializes members of the atomdata and nbparam structs and
  *  clears e/fshift output buffers.
  */
-static void nbnxn_ocl_init_const(NbnxmGpu*                       nb,
+static void nbnxn_ocl_init_const(cl_atomdata_t*                  atomData,
+                                 NBParamGpu*                     nbParams,
                                  const interaction_const_t*      ic,
                                  const PairlistParams&           listParams,
-                                 const nbnxn_atomdata_t::Params& nbatParams)
+                                 const nbnxn_atomdata_t::Params& nbatParams,
+                                 const DeviceContext&            deviceContext)
 {
-    init_atomdata_first(nb->atdat, nbatParams.numTypes, nb->dev_rundata);
-    init_nbparam(nb->nbparam, ic, listParams, nbatParams, nb->dev_rundata);
+    init_atomdata_first(atomData, nbatParams.numTypes, deviceContext);
+    init_nbparam(nbParams, ic, listParams, nbatParams, deviceContext);
 }
 
 
 //! This function is documented in the header file
-NbnxmGpu* gpu_init(const DeviceInformation*   deviceInfo,
-                   const interaction_const_t* ic,
-                   const PairlistParams&      listParams,
-                   const nbnxn_atomdata_t*    nbat,
-                   const int                  rank,
-                   const bool                 bLocalAndNonlocal)
+NbnxmGpu* gpu_init(const gmx::DeviceStreamManager& deviceStreamManager,
+                   const interaction_const_t*      ic,
+                   const PairlistParams&           listParams,
+                   const nbnxn_atomdata_t*         nbat,
+                   const bool                      bLocalAndNonlocal)
 {
-    cl_int                      cl_error;
-    cl_command_queue_properties queue_properties;
-
     GMX_ASSERT(ic, "Need a valid interaction constants object");
 
-    auto nb = new NbnxmGpu;
+    auto nb            = new NbnxmGpu();
+    nb->deviceContext_ = &deviceStreamManager.context();
     snew(nb->atdat, 1);
     snew(nb->nbparam, 1);
     snew(nb->plist[InteractionLocality::Local], 1);
@@ -636,8 +296,7 @@ NbnxmGpu* gpu_init(const DeviceInformation*   deviceInfo,
     snew(nb->timings, 1);
 
     /* set device info, just point it to the right GPU among the detected ones */
-    nb->deviceInfo = deviceInfo;
-    snew(nb->dev_rundata, 1);
+    nb->dev_rundata = new gmx_device_runtime_data_t();
 
     /* init nbst */
     pmalloc(reinterpret_cast<void**>(&nb->nbst.e_lj), sizeof(*nb->nbst.e_lj));
@@ -649,38 +308,21 @@ NbnxmGpu* gpu_init(const DeviceInformation*   deviceInfo,
     /* OpenCL timing disabled if GMX_DISABLE_GPU_TIMING is defined. */
     nb->bDoTime = (getenv("GMX_DISABLE_GPU_TIMING") == nullptr);
 
-    /* Create queues only after bDoTime has been initialized */
-    if (nb->bDoTime)
-    {
-        queue_properties = CL_QUEUE_PROFILING_ENABLE;
-    }
-    else
-    {
-        queue_properties = 0;
-    }
-
-    nbnxn_gpu_create_context(nb->dev_rundata, nb->deviceInfo, rank);
-
     /* local/non-local GPU streams */
-    nb->stream[InteractionLocality::Local] = clCreateCommandQueue(
-            nb->dev_rundata->context, nb->deviceInfo->oclDeviceId, queue_properties, &cl_error);
-    if (CL_SUCCESS != cl_error)
-    {
-        gmx_fatal(FARGS, "On rank %d failed to create context for GPU #%s: OpenCL error %d", rank,
-                  nb->deviceInfo->device_name, cl_error);
-    }
+    GMX_RELEASE_ASSERT(deviceStreamManager.streamIsValid(gmx::DeviceStreamType::NonBondedLocal),
+                       "Local non-bonded stream should be initialized to use GPU for non-bonded.");
+    nb->deviceStreams[InteractionLocality::Local] =
+            &deviceStreamManager.stream(gmx::DeviceStreamType::NonBondedLocal);
 
     if (nb->bUseTwoStreams)
     {
         init_plist(nb->plist[InteractionLocality::NonLocal]);
 
-        nb->stream[InteractionLocality::NonLocal] = clCreateCommandQueue(
-                nb->dev_rundata->context, nb->deviceInfo->oclDeviceId, queue_properties, &cl_error);
-        if (CL_SUCCESS != cl_error)
-        {
-            gmx_fatal(FARGS, "On rank %d failed to create context for GPU #%s: OpenCL error %d",
-                      rank, nb->deviceInfo->device_name, cl_error);
-        }
+        GMX_RELEASE_ASSERT(deviceStreamManager.streamIsValid(gmx::DeviceStreamType::NonBondedNonLocal),
+                           "Non-local non-bonded stream should be initialized to use GPU for "
+                           "non-bonded with domain decomposition.");
+        nb->deviceStreams[InteractionLocality::NonLocal] =
+                &deviceStreamManager.stream(gmx::DeviceStreamType::NonBondedNonLocal);
     }
 
     if (nb->bDoTime)
@@ -688,14 +330,14 @@ NbnxmGpu* gpu_init(const DeviceInformation*   deviceInfo,
         init_timings(nb->timings);
     }
 
-    nbnxn_ocl_init_const(nb, ic, listParams, nbat->params());
+    nbnxn_ocl_init_const(nb->atdat, nb->nbparam, ic, listParams, nbat->params(), *nb->deviceContext_);
 
     /* Enable LJ param manual prefetch for AMD or Intel or if we request through env. var.
      * TODO: decide about NVIDIA
      */
     nb->bPrefetchLjParam = (getenv("GMX_OCL_DISABLE_I_PREFETCH") == nullptr)
-                           && ((nb->deviceInfo->deviceVendor == DeviceVendor::Amd)
-                               || (nb->deviceInfo->deviceVendor == DeviceVendor::Intel)
+                           && ((nb->deviceContext_->deviceInfo().deviceVendor == DeviceVendor::Amd)
+                               || (nb->deviceContext_->deviceInfo().deviceVendor == DeviceVendor::Intel)
                                || (getenv("GMX_OCL_ENABLE_I_PREFETCH") != nullptr));
 
     /* NOTE: in CUDA we pick L1 cache configuration for the nbnxn kernels here,
@@ -725,16 +367,10 @@ static void nbnxn_ocl_clear_f(NbnxmGpu* nb, int natoms_clear)
         return;
     }
 
-    cl_int gmx_used_in_debug cl_error;
+    cl_atomdata_t*      atomData    = nb->atdat;
+    const DeviceStream& localStream = *nb->deviceStreams[InteractionLocality::Local];
 
-    cl_atomdata_t*   atomData = nb->atdat;
-    cl_command_queue ls       = nb->stream[InteractionLocality::Local];
-    cl_float         value    = 0.0F;
-
-    cl_error = clEnqueueFillBuffer(ls, atomData->f, &value, sizeof(cl_float), 0,
-                                   natoms_clear * sizeof(rvec), 0, nullptr, nullptr);
-    GMX_RELEASE_ASSERT(cl_error == CL_SUCCESS,
-                       ("clEnqueueFillBuffer failed: " + ocl_get_error_string(cl_error)).c_str());
+    clearDeviceBufferAsync(&atomData->f, 0, natoms_clear * DIM, localStream);
 }
 
 //! This function is documented in the header file
@@ -750,82 +386,23 @@ void gpu_clear_outputs(NbnxmGpu* nb, bool computeVirial)
 
     /* kick off buffer clearing kernel to ensure concurrency with constraints/update */
     cl_int gmx_unused cl_error;
-    cl_error = clFlush(nb->stream[InteractionLocality::Local]);
+    cl_error = clFlush(nb->deviceStreams[InteractionLocality::Local]->stream());
     GMX_ASSERT(cl_error == CL_SUCCESS, ("clFlush failed: " + ocl_get_error_string(cl_error)).c_str());
-}
-
-//! This function is documented in the header file
-void gpu_init_pairlist(NbnxmGpu* nb, const NbnxnPairlistGpu* h_plist, const InteractionLocality iloc)
-{
-    char sbuf[STRLEN];
-    // Timing accumulation should happen only if there was work to do
-    // because getLastRangeTime() gets skipped with empty lists later
-    // which leads to the counter not being reset.
-    bool             bDoTime = (nb->bDoTime && !h_plist->sci.empty());
-    cl_command_queue stream  = nb->stream[iloc];
-    cl_plist_t*      d_plist = nb->plist[iloc];
-
-    if (d_plist->na_c < 0)
-    {
-        d_plist->na_c = h_plist->na_ci;
-    }
-    else
-    {
-        if (d_plist->na_c != h_plist->na_ci)
-        {
-            sprintf(sbuf, "In cu_init_plist: the #atoms per cell has changed (from %d to %d)",
-                    d_plist->na_c, h_plist->na_ci);
-            gmx_incons(sbuf);
-        }
-    }
-
-    gpu_timers_t::Interaction& iTimers = nb->timers->interaction[iloc];
-
-    if (bDoTime)
-    {
-        iTimers.pl_h2d.openTimingRegion(stream);
-        iTimers.didPairlistH2D = true;
-    }
-
-    // TODO most of this function is same in CUDA and OpenCL, move into the header
-    DeviceContext context = nb->dev_rundata->context;
-
-    reallocateDeviceBuffer(&d_plist->sci, h_plist->sci.size(), &d_plist->nsci, &d_plist->sci_nalloc, context);
-    copyToDeviceBuffer(&d_plist->sci, h_plist->sci.data(), 0, h_plist->sci.size(), stream,
-                       GpuApiCallBehavior::Async, bDoTime ? iTimers.pl_h2d.fetchNextEvent() : nullptr);
-
-    reallocateDeviceBuffer(&d_plist->cj4, h_plist->cj4.size(), &d_plist->ncj4, &d_plist->cj4_nalloc, context);
-    copyToDeviceBuffer(&d_plist->cj4, h_plist->cj4.data(), 0, h_plist->cj4.size(), stream,
-                       GpuApiCallBehavior::Async, bDoTime ? iTimers.pl_h2d.fetchNextEvent() : nullptr);
-
-    reallocateDeviceBuffer(&d_plist->imask, h_plist->cj4.size() * c_nbnxnGpuClusterpairSplit,
-                           &d_plist->nimask, &d_plist->imask_nalloc, context);
-
-    reallocateDeviceBuffer(&d_plist->excl, h_plist->excl.size(), &d_plist->nexcl,
-                           &d_plist->excl_nalloc, context);
-    copyToDeviceBuffer(&d_plist->excl, h_plist->excl.data(), 0, h_plist->excl.size(), stream,
-                       GpuApiCallBehavior::Async, bDoTime ? iTimers.pl_h2d.fetchNextEvent() : nullptr);
-
-    if (bDoTime)
-    {
-        iTimers.pl_h2d.closeTimingRegion(stream);
-    }
-
-    /* need to prune the pair list during the next step */
-    d_plist->haveFreshList = true;
 }
 
 //! This function is documented in the header file
 void gpu_upload_shiftvec(NbnxmGpu* nb, const nbnxn_atomdata_t* nbatom)
 {
-    cl_atomdata_t*   adat = nb->atdat;
-    cl_command_queue ls   = nb->stream[InteractionLocality::Local];
+    cl_atomdata_t*      adat         = nb->atdat;
+    const DeviceStream& deviceStream = *nb->deviceStreams[InteractionLocality::Local];
 
     /* only if we have a dynamic box */
     if (nbatom->bDynamicBox || !adat->bShiftVecUploaded)
     {
-        ocl_copy_H2D_async(adat->shift_vec, nbatom->shift_vec.data(), 0,
-                           SHIFTS * sizeof(nbatom->shift_vec[0]), ls, nullptr);
+        GMX_ASSERT(sizeof(float) * DIM == sizeof(*nbatom->shift_vec.data()),
+                   "Sizes of host- and device-side shift vectors should be the same.");
+        copyToDeviceBuffer(&adat->shift_vec, reinterpret_cast<const float*>(nbatom->shift_vec.data()),
+                           0, SHIFTS * DIM, deviceStream, GpuApiCallBehavior::Async, nullptr);
         adat->bShiftVecUploaded = CL_TRUE;
     }
 }
@@ -833,13 +410,14 @@ void gpu_upload_shiftvec(NbnxmGpu* nb, const nbnxn_atomdata_t* nbatom)
 //! This function is documented in the header file
 void gpu_init_atomdata(NbnxmGpu* nb, const nbnxn_atomdata_t* nbat)
 {
-    cl_int           cl_error;
-    int              nalloc, natoms;
-    bool             realloced;
-    bool             bDoTime = nb->bDoTime;
-    cl_timers_t*     timers  = nb->timers;
-    cl_atomdata_t*   d_atdat = nb->atdat;
-    cl_command_queue ls      = nb->stream[InteractionLocality::Local];
+    cl_int               cl_error;
+    int                  nalloc, natoms;
+    bool                 realloced;
+    bool                 bDoTime       = nb->bDoTime;
+    cl_timers_t*         timers        = nb->timers;
+    cl_atomdata_t*       d_atdat       = nb->atdat;
+    const DeviceContext& deviceContext = *nb->deviceContext_;
+    const DeviceStream&  deviceStream  = *nb->deviceStreams[InteractionLocality::Local];
 
     natoms    = nbat->numAtoms();
     realloced = false;
@@ -847,7 +425,7 @@ void gpu_init_atomdata(NbnxmGpu* nb, const nbnxn_atomdata_t* nbat)
     if (bDoTime)
     {
         /* time async copy */
-        timers->atdat.openTimingRegion(ls);
+        timers->atdat.openTimingRegion(deviceStream);
     }
 
     /* need to reallocate if we have to copy more atoms than the amount of space
@@ -865,31 +443,18 @@ void gpu_init_atomdata(NbnxmGpu* nb, const nbnxn_atomdata_t* nbat)
             freeDeviceBuffer(&d_atdat->atom_types);
         }
 
-        d_atdat->f = clCreateBuffer(nb->dev_rundata->context, CL_MEM_READ_WRITE | CL_MEM_HOST_READ_ONLY,
-                                    nalloc * DIM * sizeof(nbat->out[0].f[0]), nullptr, &cl_error);
-        GMX_RELEASE_ASSERT(cl_error == CL_SUCCESS,
-                           ("clCreateBuffer failed: " + ocl_get_error_string(cl_error)).c_str());
 
-        d_atdat->xq = clCreateBuffer(nb->dev_rundata->context, CL_MEM_READ_ONLY | CL_MEM_HOST_WRITE_ONLY,
-                                     nalloc * sizeof(cl_float4), nullptr, &cl_error);
-        GMX_RELEASE_ASSERT(cl_error == CL_SUCCESS,
-                           ("clCreateBuffer failed: " + ocl_get_error_string(cl_error)).c_str());
+        allocateDeviceBuffer(&d_atdat->f, nalloc * DIM, deviceContext);
+        allocateDeviceBuffer(&d_atdat->xq, nalloc * (DIM + 1), deviceContext);
 
-        if (useLjCombRule(nb->nbparam->vdwtype))
+        if (useLjCombRule(nb->nbparam->vdwType))
         {
-            d_atdat->lj_comb = clCreateBuffer(nb->dev_rundata->context,
-                                              CL_MEM_READ_ONLY | CL_MEM_HOST_WRITE_ONLY,
-                                              nalloc * sizeof(cl_float2), nullptr, &cl_error);
-            GMX_RELEASE_ASSERT(cl_error == CL_SUCCESS,
-                               ("clCreateBuffer failed: " + ocl_get_error_string(cl_error)).c_str());
+            // Two Lennard-Jones parameters per atom
+            allocateDeviceBuffer(&d_atdat->lj_comb, nalloc * 2, deviceContext);
         }
         else
         {
-            d_atdat->atom_types = clCreateBuffer(nb->dev_rundata->context,
-                                                 CL_MEM_READ_ONLY | CL_MEM_HOST_WRITE_ONLY,
-                                                 nalloc * sizeof(int), nullptr, &cl_error);
-            GMX_RELEASE_ASSERT(cl_error == CL_SUCCESS,
-                               ("clCreateBuffer failed: " + ocl_get_error_string(cl_error)).c_str());
+            allocateDeviceBuffer(&d_atdat->atom_types, nalloc, deviceContext);
         }
 
         d_atdat->nalloc = nalloc;
@@ -905,24 +470,29 @@ void gpu_init_atomdata(NbnxmGpu* nb, const nbnxn_atomdata_t* nbat)
         nbnxn_ocl_clear_f(nb, nalloc);
     }
 
-    if (useLjCombRule(nb->nbparam->vdwtype))
+    if (useLjCombRule(nb->nbparam->vdwType))
     {
-        ocl_copy_H2D_async(d_atdat->lj_comb, nbat->params().lj_comb.data(), 0, natoms * sizeof(cl_float2),
-                           ls, bDoTime ? timers->atdat.fetchNextEvent() : nullptr);
+        GMX_ASSERT(sizeof(float) == sizeof(*nbat->params().lj_comb.data()),
+                   "Size of the LJ parameters element should be equal to the size of float2.");
+        copyToDeviceBuffer(&d_atdat->lj_comb, nbat->params().lj_comb.data(), 0, 2 * natoms,
+                           deviceStream, GpuApiCallBehavior::Async,
+                           bDoTime ? timers->atdat.fetchNextEvent() : nullptr);
     }
     else
     {
-        ocl_copy_H2D_async(d_atdat->atom_types, nbat->params().type.data(), 0, natoms * sizeof(int),
-                           ls, bDoTime ? timers->atdat.fetchNextEvent() : nullptr);
+        GMX_ASSERT(sizeof(int) == sizeof(*nbat->params().type.data()),
+                   "Sizes of host- and device-side atom types should be the same.");
+        copyToDeviceBuffer(&d_atdat->atom_types, nbat->params().type.data(), 0, natoms, deviceStream,
+                           GpuApiCallBehavior::Async, bDoTime ? timers->atdat.fetchNextEvent() : nullptr);
     }
 
     if (bDoTime)
     {
-        timers->atdat.closeTimingRegion(ls);
+        timers->atdat.closeTimingRegion(deviceStream);
     }
 
     /* kick off the tasks enqueued above to ensure concurrency with the search */
-    cl_error = clFlush(ls);
+    cl_error = clFlush(deviceStream.stream());
     GMX_RELEASE_ASSERT(cl_error == CL_SUCCESS,
                        ("clFlush failed: " + ocl_get_error_string(cl_error)).c_str());
 }
@@ -955,36 +525,21 @@ static void free_kernels(cl_kernel* kernels, int count)
     }
 }
 
-/*! \brief Free the OpenCL runtime data (context and program).
+/*! \brief Free the OpenCL program.
  *
- *  The function releases the OpenCL context and program assuciated with the
+ *  The function releases the OpenCL program assuciated with the
  *  device that the calling PP rank is running on.
  *
- *  \param runData [in]  porinter to the structure with runtime data.
+ *  \param program [in]  OpenCL program to release.
  */
-static void free_gpu_device_runtime_data(gmx_device_runtime_data_t* runData)
+static void freeGpuProgram(cl_program program)
 {
-    if (runData == nullptr)
+    if (program)
     {
-        return;
-    }
-
-    cl_int gmx_unused cl_error;
-
-    if (runData->context)
-    {
-        cl_error = clReleaseContext(runData->context);
-        GMX_RELEASE_ASSERT(cl_error == CL_SUCCESS,
-                           ("clReleaseContext failed: " + ocl_get_error_string(cl_error)).c_str());
-        runData->context = nullptr;
-    }
-
-    if (runData->program)
-    {
-        cl_error = clReleaseProgram(runData->program);
+        cl_int cl_error = clReleaseProgram(program);
         GMX_RELEASE_ASSERT(cl_error == CL_SUCCESS,
                            ("clReleaseProgram failed: " + ocl_get_error_string(cl_error)).c_str());
-        runData->program = nullptr;
+        program = nullptr;
     }
 }
 
@@ -997,15 +552,19 @@ void gpu_free(NbnxmGpu* nb)
     }
 
     /* Free kernels */
+    // NOLINTNEXTLINE(bugprone-sizeof-expression)
     int kernel_count = sizeof(nb->kernel_ener_noprune_ptr) / sizeof(nb->kernel_ener_noprune_ptr[0][0]);
     free_kernels(nb->kernel_ener_noprune_ptr[0], kernel_count);
 
+    // NOLINTNEXTLINE(bugprone-sizeof-expression)
     kernel_count = sizeof(nb->kernel_ener_prune_ptr) / sizeof(nb->kernel_ener_prune_ptr[0][0]);
     free_kernels(nb->kernel_ener_prune_ptr[0], kernel_count);
 
+    // NOLINTNEXTLINE(bugprone-sizeof-expression)
     kernel_count = sizeof(nb->kernel_noener_noprune_ptr) / sizeof(nb->kernel_noener_noprune_ptr[0][0]);
     free_kernels(nb->kernel_noener_noprune_ptr[0], kernel_count);
 
+    // NOLINTNEXTLINE(bugprone-sizeof-expression)
     kernel_count = sizeof(nb->kernel_noener_prune_ptr) / sizeof(nb->kernel_noener_prune_ptr[0][0]);
     free_kernels(nb->kernel_noener_prune_ptr[0], kernel_count);
 
@@ -1023,9 +582,9 @@ void gpu_free(NbnxmGpu* nb)
     sfree(nb->atdat);
 
     /* Free nbparam */
-    freeDeviceBuffer(&(nb->nbparam->nbfp_climg2d));
-    freeDeviceBuffer(&(nb->nbparam->nbfp_comb_climg2d));
-    freeDeviceBuffer(&(nb->nbparam->coulomb_tab_climg2d));
+    freeDeviceBuffer(&(nb->nbparam->nbfp));
+    freeDeviceBuffer(&(nb->nbparam->nbfp_comb));
+    freeDeviceBuffer(&(nb->nbparam->coulomb_tab));
     sfree(nb->nbparam);
 
     /* Free plist */
@@ -1055,14 +614,6 @@ void gpu_free(NbnxmGpu* nb)
     pfree(nb->nbst.fshift);
     nb->nbst.fshift = nullptr;
 
-    /* Free command queues */
-    clReleaseCommandQueue(nb->stream[InteractionLocality::Local]);
-    nb->stream[InteractionLocality::Local] = nullptr;
-    if (nb->bUseTwoStreams)
-    {
-        clReleaseCommandQueue(nb->stream[InteractionLocality::NonLocal]);
-        nb->stream[InteractionLocality::NonLocal] = nullptr;
-    }
     /* Free other events */
     if (nb->nonlocal_done)
     {
@@ -1075,8 +626,8 @@ void gpu_free(NbnxmGpu* nb)
         nb->misc_ops_and_local_H2D_done = nullptr;
     }
 
-    free_gpu_device_runtime_data(nb->dev_rundata);
-    sfree(nb->dev_rundata);
+    freeGpuProgram(nb->dev_rundata->program);
+    delete nb->dev_rundata;
 
     /* Free timers and timings */
     delete nb->timers;
@@ -1090,30 +641,9 @@ void gpu_free(NbnxmGpu* nb)
 }
 
 //! This function is documented in the header file
-gmx_wallclock_gpu_nbnxn_t* gpu_get_timings(NbnxmGpu* nb)
-{
-    return (nb != nullptr && nb->bDoTime) ? nb->timings : nullptr;
-}
-
-//! This function is documented in the header file
-void gpu_reset_timings(nonbonded_verlet_t* nbv)
-{
-    if (nbv->gpu_nbv && nbv->gpu_nbv->bDoTime)
-    {
-        init_timings(nbv->gpu_nbv->timings);
-    }
-}
-
-//! This function is documented in the header file
 int gpu_min_ci_balanced(NbnxmGpu* nb)
 {
-    return nb != nullptr ? gpu_min_ci_balanced_factor * nb->deviceInfo->compute_units : 0;
-}
-
-//! This function is documented in the header file
-gmx_bool gpu_is_kernel_ewald_analytical(const NbnxmGpu* nb)
-{
-    return ((nb->nbparam->eeltype == eelOclEWALD_ANA) || (nb->nbparam->eeltype == eelOclEWALD_ANA_TWIN));
+    return nb != nullptr ? gpu_min_ci_balanced_factor * nb->deviceContext_->deviceInfo().compute_units : 0;
 }
 
 } // namespace Nbnxm

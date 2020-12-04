@@ -45,7 +45,6 @@
 
 #include "gromacs/math/paddedvector.h"
 #include "gromacs/math/vectypes.h"
-#include "gromacs/mdtypes/mdatom.h"
 #include "gromacs/pbcutil/pbc.h"
 #include "gromacs/topology/idef.h"
 #include "gromacs/topology/topology.h"
@@ -63,6 +62,8 @@ namespace test
 class SettleTestData
 {
 public:
+    //! Number of settles
+    int numSettles_;
     //! Initial (undisturbed) positions
     PaddedVector<gmx::RVec> x_;
     //! Updated water atom positions to constrain
@@ -74,8 +75,12 @@ public:
 
     //! Global topology
     gmx_mtop_t mtop_;
-    //! Atoms data
-    t_mdatoms mdatoms_;
+    //! Number of atoms
+    int numAtoms_ = 0;
+    //! Atom masses
+    std::vector<real> masses_;
+    //! Reciprocal masses
+    std::vector<real> inverseMasses_;
     //! Local topology
     std::unique_ptr<InteractionDefinitions> idef_;
 

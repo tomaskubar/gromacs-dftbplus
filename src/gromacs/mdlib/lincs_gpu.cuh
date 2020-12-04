@@ -44,9 +44,10 @@
 #ifndef GMX_MDLIB_LINCS_GPU_CUH
 #define GMX_MDLIB_LINCS_GPU_CUH
 
+#include "gromacs/gpu_utils/device_context.h"
+#include "gromacs/gpu_utils/device_stream.h"
 #include "gromacs/gpu_utils/gputraits.cuh"
 #include "gromacs/mdlib/constr.h"
-#include "gromacs/mdtypes/mdatom.h"
 #include "gromacs/pbcutil/pbc_aiuc.h"
 #include "gromacs/utility/classhelpers.h"
 
@@ -103,9 +104,13 @@ public:
      *
      * \param[in] numIterations    Number of iteration for the correction of the projection.
      * \param[in] expansionOrder   Order of the matrix inversion algorithm.
-     * \param[in] commandStream    Device command stream.
+     * \param[in] deviceContext    Device context (dummy in CUDA).
+     * \param[in] deviceStream     Device command stream.
      */
-    LincsGpu(int numIterations, int expansionOrder, CommandStream commandStream);
+    LincsGpu(int                  numIterations,
+             int                  expansionOrder,
+             const DeviceContext& deviceContext,
+             const DeviceStream&  deviceStream);
     /*! \brief Destructor.*/
     ~LincsGpu();
 
@@ -150,13 +155,12 @@ public:
      * Information about constraints is taken from:
      *     idef.il[F_CONSTR].iatoms  --- type (T) of constraint and two atom indexes (i1, i2)
      *     idef.iparams[T].constr.dA --- target length for constraint of type T
-     * From t_mdatom, the code takes:
-     *     md.invmass  --- array of inverse square root of masses for each atom in the system.
      *
-     * \param[in] idef  Local topology data to get information on constraints from.
-     * \param[in] md    Atoms data to get atom masses from.
+     * \param[in] idef      Local topology data to get information on constraints from.
+     * \param[in] numAtoms  Number of atoms.
+     * \param[in] invmass   Inverse masses of atoms.
      */
-    void set(const InteractionDefinitions& idef, const t_mdatoms& md);
+    void set(const InteractionDefinitions& idef, int numAtoms, const real* invmass);
 
     /*! \brief
      * Returns whether the maximum number of coupled constraints is supported
@@ -167,8 +171,10 @@ public:
     static bool isNumCoupledConstraintsSupported(const gmx_mtop_t& mtop);
 
 private:
+    //! GPU context object
+    const DeviceContext& deviceContext_;
     //! GPU stream
-    CommandStream commandStream_;
+    const DeviceStream& deviceStream_;
 
     //! Parameters and pointers, passed to the GPU kernel
     LincsGpuKernelParameters kernelParams_;

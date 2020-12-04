@@ -93,8 +93,8 @@ void initialize_context(Context*          cont,
                         QMMM_rec*         qr_in,
                      // const t_forcerec* fr_in,
                         const t_inputrec* ir_in,
-                        const t_commrec*  cr_in,
-                        gmx_wallcycle_t   wcycle_in)
+                        const t_commrec*  cr_in)
+                     // gmx_wallcycle_t   wcycle_in)
 //                      const real        rcoul_in,
 //                      const real        ewaldcoeff_q_in)
 {
@@ -122,7 +122,7 @@ void initialize_context(Context*          cont,
   {
       cont->cr           = cr_in;
       cont->qr           = qr_in;
-      cont->wcycle       = wcycle_in;
+   // cont->wcycle       = wcycle_in;
       cont->rcoul        = ir_in->rcoulomb;
       cont->ewaldcoeff_q = calc_ewaldcoeff_q(ir_in->rcoulomb, ir_in->ewald_rtol);
       printf("cont->cr = %p\n", cont->cr);
@@ -201,8 +201,8 @@ void init_dftbplus(QMMM_QMrec&       qm,
                    QMMM_rec*         qr,
                 // const t_forcerec* fr,
                    const t_inputrec* ir,
-                   const t_commrec*  cr,
-                   gmx_wallcycle_t   wcycle)
+                   const t_commrec*  cr)
+                // gmx_wallcycle_t   wcycle)
 //void init_dftbplus(t_forcerec *fr)
 {
     /* perhaps check the geometry first, to see which elements we have? */
@@ -237,7 +237,7 @@ void init_dftbplus(QMMM_QMrec&       qm,
 
   //initialize_context(cont, qm.nrQMatoms, qm.qmmm_variant, fr, ir, cr, nrnb, wcycle);
     snew(qm.dftbContext, 1);
-    initialize_context(qm.dftbContext, qm.nrQMatoms_get(), qm.qmmm_variant_get(), qr, ir, cr, wcycle);
+    initialize_context(qm.dftbContext, qm.nrQMatoms_get(), qm.qmmm_variant_get(), qr, ir, cr); //, wcycle);
   //qm.dftbContext = cont;
 
     snew(qm.dpcalc, 1);

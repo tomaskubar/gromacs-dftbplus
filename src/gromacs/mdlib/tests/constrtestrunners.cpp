@@ -63,9 +63,9 @@
 #include "gromacs/mdlib/constr.h"
 #include "gromacs/mdlib/lincs.h"
 #include "gromacs/mdlib/shake.h"
+#include "gromacs/mdrunutility/multisim.h"
 #include "gromacs/mdtypes/commrec.h"
 #include "gromacs/mdtypes/inputrec.h"
-#include "gromacs/mdtypes/mdatom.h"
 #include "gromacs/pbcutil/pbc.h"
 #include "gromacs/topology/idef.h"
 #include "gromacs/topology/ifunc.h"
@@ -80,39 +80,33 @@ namespace gmx
 namespace test
 {
 
-/*! \brief
- * Initialize and apply SHAKE constraints.
- *
- * \param[in] testData        Test data structure.
- * \param[in] pbc             Periodic boundary data.
- */
-void applyShake(ConstraintsTestData* testData, t_pbc gmx_unused pbc)
+void ShakeConstraintsRunner::applyConstraints(ConstraintsTestData* testData, t_pbc /* pbc */)
 {
-    shakedata* shaked = shake_init();
-    make_shake_sblock_serial(shaked, testData->idef_.get(), testData->md_);
+    shakedata shaked;
+    make_shake_sblock_serial(&shaked, testData->idef_.get(), testData->numAtoms_);
     bool success = constrain_shake(
-            nullptr, shaked, testData->invmass_.data(), *testData->idef_, testData->ir_,
-            as_rvec_array(testData->x_.data()), as_rvec_array(testData->xPrime_.data()),
-            as_rvec_array(testData->xPrime2_.data()), &testData->nrnb_, testData->md_.lambda,
-            &testData->dHdLambda_, testData->invdt_, as_rvec_array(testData->v_.data()),
-            testData->computeVirial_, testData->virialScaled_, false, gmx::ConstraintVariable::Positions);
+            nullptr, &shaked, testData->invmass_.data(), *testData->idef_, testData->ir_, testData->x_,
+            testData->xPrime_, testData->xPrime2_, nullptr, &testData->nrnb_, testData->lambda_,
+            &testData->dHdLambda_, testData->invdt_, testData->v_, testData->computeVirial_,
+            testData->virialScaled_, false, gmx::ConstraintVariable::Positions);
     EXPECT_TRUE(success) << "Test failed with a false return value in SHAKE.";
-    done_shake(shaked);
 }
 
-/*! \brief
- * Initialize and apply LINCS constraints.
- *
- * \param[in] testData        Test data structure.
- * \param[in] pbc             Periodic boundary data.
- */
-void applyLincs(ConstraintsTestData* testData, t_pbc pbc)
+void LincsConstraintsRunner::applyConstraints(ConstraintsTestData* testData, t_pbc pbc)
 {
 
     Lincs* lincsd;
     int    maxwarn         = 100;
     int    warncount_lincs = 0;
     gmx_omp_nthreads_set(emntLINCS, 1);
+
+    // Communication record
+    t_commrec cr;
+    cr.nnodes = 1;
+    cr.dd     = nullptr;
+
+    // Multi-sim record
+    gmx_multisim_t ms{ 1, 0, MPI_COMM_NULL, MPI_COMM_NULL };
 
     // Make blocka structure for faster LINCS setup
     std::vector<ListOfLists<int>> at2con_mt;
@@ -126,14 +120,15 @@ void applyLincs(ConstraintsTestData* testData, t_pbc pbc)
     // Initialize LINCS
     lincsd = init_lincs(nullptr, testData->mtop_, testData->nflexcon_, at2con_mt, false,
                         testData->ir_.nLincsIter, testData->ir_.nProjOrder);
-    set_lincs(*testData->idef_, testData->md_, EI_DYNAMICS(testData->ir_.eI), &testData->cr_, lincsd);
+    set_lincs(*testData->idef_, testData->numAtoms_, testData->invmass_.data(), testData->lambda_,
+              EI_DYNAMICS(testData->ir_.eI), &cr, lincsd);
 
     // Evaluate constraints
     bool success = constrain_lincs(
-            false, testData->ir_, 0, lincsd, testData->md_, &testData->cr_, &testData->ms_,
+            false, testData->ir_, 0, lincsd, testData->invmass_.data(), &cr, &ms,
             testData->x_.arrayRefWithPadding(), testData->xPrime_.arrayRefWithPadding(),
             testData->xPrime2_.arrayRefWithPadding().unpaddedArrayRef(), pbc.box, &pbc,
-            testData->md_.lambda, &testData->dHdLambda_, testData->invdt_,
+            testData->hasMassPerturbed_, testData->lambda_, &testData->dHdLambda_, testData->invdt_,
             testData->v_.arrayRefWithPadding().unpaddedArrayRef(), testData->computeVirial_,
             testData->virialScaled_, gmx::ConstraintVariable::Positions, &testData->nrnb_, maxwarn,
             &warncount_lincs);
@@ -142,18 +137,13 @@ void applyLincs(ConstraintsTestData* testData, t_pbc pbc)
     done_lincs(lincsd);
 }
 
-#if GMX_GPU != GMX_GPU_CUDA
-/*! \brief
- * Stub for GPU version of LINCS constraints to satisfy compiler.
- *
- * \param[in] testData        Test data structure.
- * \param[in] pbc             Periodic boundary data.
- */
-void applyLincsGpu(ConstraintsTestData gmx_unused* testData, t_pbc gmx_unused pbc)
+#if !GMX_GPU_CUDA
+void LincsDeviceConstraintsRunner::applyConstraints(ConstraintsTestData* /* testData */, t_pbc /* pbc */)
 {
+    GMX_UNUSED_VALUE(testDevice_);
     FAIL() << "Dummy LINCS CUDA function was called instead of the real one.";
 }
-#endif
+#endif // !GMX_GPU_CUDA
 
 } // namespace test
 } // namespace gmx
