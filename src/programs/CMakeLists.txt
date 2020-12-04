@@ -44,7 +44,7 @@ target_include_directories(mdrun_objlib SYSTEM PRIVATE ${PROJECT_SOURCE_DIR}/src
 target_link_libraries(mdrun_objlib PRIVATE common)
 target_link_libraries(mdrun_objlib PRIVATE legacy_api)
 # TODO: Explicitly link specific modules.
-target_link_libraries(mdrun_objlib PRIVATE common legacy_modules)
+target_link_libraries(mdrun_objlib PRIVATE legacy_modules)
 
 if(GMX_FAHCORE)
     # The lack of a real source file here alongside the object library
@@ -53,16 +53,21 @@ if(GMX_FAHCORE)
     add_library(fahcore $<TARGET_OBJECTS:mdrun_objlib>)
     target_link_libraries(fahcore PRIVATE ${GMX_COMMON_LIBRARIES} legacy_api)
 elseif(GMX_BUILD_MDRUN_ONLY)
-    add_executable(mdrun $<TARGET_OBJECTS:mdrun_objlib> mdrun_main.cpp)
-    gmx_target_compile_options(mdrun)
-    target_compile_definitions(mdrun PRIVATE HAVE_CONFIG_H)
-    target_link_libraries(mdrun libgromacs
-        ${GMX_COMMON_LIBRARIES}
-        ${GMX_EXE_LINKER_FLAGS})
+    add_executable(mdrun-only $<TARGET_OBJECTS:mdrun_objlib> mdrun_main.cpp)
+    gmx_target_compile_options(mdrun-only)
+    target_include_directories(mdrun-only SYSTEM BEFORE PRIVATE ${PROJECT_SOURCE_DIR}/src/external/thread_mpi/include)
+    target_compile_definitions(mdrun-only PRIVATE HAVE_CONFIG_H)
+    target_link_libraries(mdrun-only PRIVATE
+                          common
+                          legacy_modules
+                          libgromacs
+                          ${GMX_COMMON_LIBRARIES}
+                          ${GMX_EXE_LINKER_FLAGS}
+                          )
     set(BINARY_NAME "mdrun${GMX_BINARY_SUFFIX}")
-    set_target_properties(mdrun PROPERTIES
+    set_target_properties(mdrun-only PROPERTIES
         OUTPUT_NAME "${BINARY_NAME}")
-    install(TARGETS mdrun DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT mdrun)
+    install(TARGETS mdrun-only DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT mdrun-only)
     file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/gmx-completion-${BINARY_NAME}.bash
          "complete -o nospace -F _gmx_mdrun_compl ${BINARY_NAME}")
     install(FILES ${CMAKE_CURRENT_BINARY_DIR}/gmx-completion-${BINARY_NAME}.bash
@@ -95,8 +100,8 @@ else()
     gmx_target_compile_options(gmx)
     target_compile_definitions(gmx PRIVATE HAVE_CONFIG_H)
     target_link_libraries(gmx PRIVATE
-                          libgromacs
                           common
+                          libgromacs
                           ${GMX_COMMON_LIBRARIES}
                           ${GMX_EXE_LINKER_FLAGS})
     if(GMX_X11)

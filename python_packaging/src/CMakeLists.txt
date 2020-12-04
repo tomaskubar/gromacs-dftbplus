@@ -55,7 +55,7 @@ set(CMAKE_OSX_ARCHITECTURES x86_64 CACHE STRING
 # Note that this is the gmxapi._gmxapi Python bindings package version,
 # not the C++ API version. It is not essential that it match the pure Python
 # package version, but is likely to do so.
-project(gmxapi VERSION 0.2.0)
+project(gmxapi VERSION 0.3.0)
 
 # Check if Python package is being built directly or via add_subdirectory
 set(GMXAPI_MASTER_PROJECT OFF)
@@ -153,6 +153,7 @@ set_target_properties(_gmxapi PROPERTIES
 if(GMXAPI_MASTER_PROJECT)
     # TODO: This requirement is probably overly restrictive.
     find_package(GROMACS 2021 REQUIRED
+                 NAMES gromacs gromacs_mpi
                  HINTS "$ENV{GROMACS_DIR}"
                  )
 endif()

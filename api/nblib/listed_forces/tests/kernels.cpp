@@ -1,7 +1,7 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2013,2014,2017,2019, by the GROMACS development team, led by
+ * Copyright (c) 2020, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -32,55 +32,33 @@
  * To help us fund GROMACS development, we humbly ask that you cite
  * the research papers on the package. Check out http://www.gromacs.org.
  */
-/*! \libinternal \file
+/*! \internal \file
  * \brief
- * Declares gmx::test::StdioTestHelper.
+ * This implements kernel tests
  *
- * \author Mark Abraham <mark.j.abraham@gmail.com>
- * \inlibraryapi
- * \ingroup module_testutils
+ * \author Victor Holanda <victor.holanda@cscs.ch>
+ * \author Joe Jordan <ejjordan@kth.se>
+ * \author Prashanth Kanduri <kanduri@cscs.ch>
+ * \author Sebastian Keller <keller@cscs.ch>
  */
-#ifndef GMX_TESTUTILS_STDIOHELPER_H
-#define GMX_TESTUTILS_STDIOHELPER_H
+#include "nblib/listed_forces/kernels.hpp"
 
-#include "gromacs/utility/classhelpers.h"
+#include "testutils/testasserts.h"
 
-namespace gmx
-{
-namespace test
+namespace nblib
 {
 
-class TestFileManager;
-
-/*! \libinternal \brief
- * Helper class for tests where code reads directly from `stdin`.
- *
- * Any method in this class may throw std::bad_alloc if out of memory.
- *
- * \inlibraryapi
- * \ingroup module_testutils
- */
-class StdioTestHelper
+TEST(Kernels, HarmonicScalarKernelCanCompute)
 {
-public:
-    //! Creates a helper using the given file manager.
-    explicit StdioTestHelper(TestFileManager* fileManager) : fileManager_(*fileManager) {}
+    real k  = 1.1;
+    real x0 = 1.0;
+    real x  = 1.2;
 
-    /*! \brief Accepts a string as input, writes it to a temporary
-     * file and then reopens stdin to read the contents of that
-     * string.
-     *
-     * \throws FileIOError  when the freopen() fails
-     */
-    void redirectStringToStdin(const char* theString);
+    real force, epot;
+    std::tie(force, epot) = harmonicScalarForce(k, x0, x);
 
-private:
-    TestFileManager& fileManager_;
+    EXPECT_REAL_EQ_TOL(-k * (x - x0), force, gmx::test::absoluteTolerance(1e-4));
+    EXPECT_REAL_EQ_TOL(0.5 * k * (x - x0) * (x - x0), epot, gmx::test::absoluteTolerance(1e-4));
+}
 
-    GMX_DISALLOW_COPY_AND_ASSIGN(StdioTestHelper);
-};
-
-} // namespace test
-} // namespace gmx
-
-#endif
+} // namespace nblib

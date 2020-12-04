@@ -1,7 +1,7 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2017,2018,2019, by the GROMACS development team, led by
+ * Copyright (c) 2020, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -32,79 +32,64 @@
  * To help us fund GROMACS development, we humbly ask that you cite
  * the research papers on the package. Check out http://www.gromacs.org.
  */
-/*! \libinternal \file
+/*! \internal \file
  * \brief
- * Declares function to add the content of a conf file to a checker.
+ * Implements a RAII encapsulation for PbcAiuc
+ * note this is a header implementation to make inlining easier if needed
  *
- * \author David van der Spoel <david.vanderspoel@icm.uu.se>
- * \inlibraryapi
- * \ingroup module_testutils
+ * \author Victor Holanda <victor.holanda@cscs.ch>
+ * \author Joe Jordan <ejjordan@kth.se>
+ * \author Prashanth Kanduri <kanduri@cscs.ch>
+ * \author Sebastian Keller <keller@cscs.ch>
+ * \author Artem Zhmurov <zhmurov@gmail.com>
  */
-#ifndef GMX_TESTUTILS_CONFTEST_H
-#define GMX_TESTUTILS_CONFTEST_H
+#ifndef NBLIB_PBC_HPP
+#define NBLIB_PBC_HPP
 
-#include <string>
+#include "nblib/box.h"
+#include "gromacs/math/vec.h"
+#include "gromacs/pbcutil/pbc_aiuc.h"
 
-#include "testutils/testasserts.h"
-#include "testutils/textblockmatchers.h"
+struct PbcAiuc;
 
-namespace gmx
+namespace nblib
 {
 
-class TextInputStream;
-
-namespace test
-{
-
-class TestReferenceChecker;
-
-struct ConfMatchSettings
-{
-    ConfMatchSettings() : tolerance(defaultRealTolerance()) {}
-
-    FloatingPointTolerance tolerance;
-};
-
-/*! \brief
- * Adds content of a gro file to TestReferenceChecker object.
+/*! \brief life-time manager for PbcAiuc
  *
- * \param[in] input       Stream that provides the gro content.
- * \param[in,out] checker Checker to use.
- * \param[in] settings    Settings to use for matching.
- *
- * Parses a gro file from the input stream, and checks the contents against
- * reference data (only first two lines for now).
- *
- * \see ConfMatch
  */
-void checkConfFile(TextInputStream* input, TestReferenceChecker* checker, const ConfMatchSettings& settings);
-
-/*! \libinternal \brief
- * Match the contents as an gro file.
- *
- * \see checkGroFile()
- *
- * \inlibraryapi
- * \ingroup module_testutils
- */
-class ConfMatch : public ITextBlockMatcherSettings
+class PbcHolder
 {
 public:
-    //! Sets the tolerance for matching floating point values.
-    ConfMatch& tolerance(const FloatingPointTolerance& tolerance)
+    //! \brief ctor
+    explicit PbcHolder(const Box& box)
     {
-        settings_.tolerance = tolerance;
-        return *this;
+        setPbcAiuc(3, box.legacyMatrix(), &m_pbc);
     }
 
-    TextBlockMatcherPointer createMatcher() const override;
+    //! \brief calculate pbc-aware r1-r2
+    inline void dxAiuc(const rvec& r1, const rvec& r2, rvec dr) const
+    {
+        ::pbcDxAiuc(m_pbc, r1, r2, dr);
+    }
 
 private:
-    ConfMatchSettings settings_;
+   PbcAiuc m_pbc;
 };
 
-} // namespace test
+/*! \brief dummy class used to turn off Pbc in listed forces
+ *
+ */
+class NoPbc
+{
+public:
 
-} // namespace gmx
+    //! \brief calculate r1-r2, ignore pbc
+    inline void dxAiuc(const rvec& r1, const rvec& r2, rvec dr) const
+    {
+        rvec_sub(r1, r2, dr);
+    }
+};
 
-#endif
+} // namespace nblib
+#endif // NBLIB_PBC_HPP

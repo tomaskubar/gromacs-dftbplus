@@ -1,7 +1,7 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2019, by the GROMACS development team, led by
+ * Copyright (c) 2020, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -32,56 +32,72 @@
  * To help us fund GROMACS development, we humbly ask that you cite
  * the research papers on the package. Check out http://www.gromacs.org.
  */
-/*! \libinternal \file
- * \brief
- * Helper functions to have identical behavior of setenv and unsetenv
- * on Unix and Windows systems.
+/*! \internal \file
+ * \brief Implements functions from the EnergyDriftTracker class.
  *
- * \author Pascal Merz <pascal.merz@me.com>
- * \inlibraryapi
- * \ingroup module_testutils
+ * \author Berk Hess <hess@kth.se>
+ *
+ * \ingroup module_mdlib
  */
+#include "gmxpre.h"
 
-#include "config.h"
+#include "energydrifttracker.h"
 
-#include <cstdlib>
+#include <cmath>
 
-#ifndef GMX_TESTUTILS_SETENV_H
-#    define GMX_TESTUTILS_SETENV_H
+#include <string>
+
+#include "gromacs/utility/gmxassert.h"
+#include "gromacs/utility/real.h"
+#include "gromacs/utility/stringutil.h"
 
 namespace gmx
 {
-namespace test
+
+void EnergyDriftTracker::addPoint(double time, double energy)
 {
-//! Workaround to make setenv work on Windows
-inline int gmxSetenv(const char* name, const char* value, int overwrite)
-{
-#    if GMX_NATIVE_WINDOWS
-    if (!overwrite)
+    GMX_ASSERT(std::isfinite(energy), "Non-finite energy encountered!");
+
+    if (!storedFirst_)
     {
-        size_t size  = 0;
-        int    error = getenv_s(&size, nullptr, 0, name);
-        if (error != 0 || size != 0)
-        {
-            return error;
-        }
+        firstTime_   = time;
+        firstEnergy_ = energy;
+        storedFirst_ = true;
     }
-    return _putenv_s(name, value);
-#    else
-    return setenv(name, value, overwrite);
-#    endif
+    lastTime_   = time;
+    lastEnergy_ = energy;
 }
 
-//! Workaround to make unsetenv work on Windows
-inline int gmxUnsetenv(const char* name)
+double EnergyDriftTracker::energyDrift() const
 {
-#    if GMX_NATIVE_WINDOWS
-    return _putenv_s(name, "");
-#    else
-    return unsetenv(name);
-#    endif
+    if (timeInterval() > 0)
+    {
+        return (lastEnergy_ - firstEnergy_) / (timeInterval() * numAtoms_);
+    }
+    else
+    {
+        return 0;
+    }
 }
-} // namespace test
-} // namespace gmx
 
-#endif // GMX_TESTUTILS_SETENV_H
+std::string EnergyDriftTracker::energyDriftString(const std::string& partName) const
+{
+    std::string mesg;
+
+    if (timeInterval() > 0)
+    {
+        mesg = formatString("Energy conservation over %s of length %g ns, time %g to %g ns\n",
+                            partName.c_str(), timeInterval(), firstTime_, lastTime_);
+        mesg += formatString("  Conserved energy drift: %.2e kJ/mol/ps per atom\n", energyDrift());
+    }
+    else
+    {
+        mesg = formatString(
+                "Time interval for measuring conserved energy has length 0, time %g to %g\n",
+                firstTime_, lastTime_);
+    }
+
+    return mesg;
+}
+
+} // namespace gmx

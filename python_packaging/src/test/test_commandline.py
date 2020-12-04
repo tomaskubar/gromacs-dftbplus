@@ -60,15 +60,12 @@ class SimpleCliTestCase(unittest.TestCase):
         command = shutil.which('true')
         operation = commandline.cli(command=[command], shell=False)
 
-        # Note: 'stdout' and 'stderr' not mapped.
         # Note: getitem not implemented.
-        # assert not 'stdout' in operation.output
-        # assert not 'stderr' in operation.output
-        assert not hasattr(operation.output, 'stdout')
-        assert not hasattr(operation.output, 'stderr')
-
-        # Check for the attributes that we _do_ expect.
-        assert hasattr(operation.output, 'erroroutput')
+        # assert 'stdout' in operation.output
+        # assert 'stderr' in operation.output
+        assert hasattr(operation.output, 'stdout')
+        assert hasattr(operation.output, 'stderr')
+        assert not hasattr(operation.output, 'erroroutput')
         assert hasattr(operation.output, 'returncode')
 
         operation.run()
@@ -118,14 +115,13 @@ class CommandLineOperationSimpleTestCase(unittest.TestCase):
 
     def test_true(self):
         operation = commandline.commandline_operation(executable='true')
-        # Note: 'stdout' and 'stderr' not mapped.
         # Note: getitem not implemented.
-        # assert not 'stdout' in operation.output
-        # assert not 'stderr' in operation.output
-        assert not hasattr(operation.output, 'stdout')
-        assert not hasattr(operation.output, 'stderr')
+        # assert 'stdout' in operation.output
+        # assert 'stderr' in operation.output
+        assert not hasattr(operation.output, 'erroroutput')
         assert hasattr(operation.output, 'file')
-        assert hasattr(operation.output, 'erroroutput')
+        assert hasattr(operation.output, 'stdout')
+        assert hasattr(operation.output, 'stderr')
         assert hasattr(operation.output, 'returncode')
         assert operation.output.returncode.result() == 0
 
@@ -134,7 +130,7 @@ class CommandLineOperationSimpleTestCase(unittest.TestCase):
         assert operation.output.returncode.result() == 1
 
     def test_echo(self):
-        # TODO: (FR5+) do we want to pipeline or checkpoint stdout somehow?
+        # TODO: (#3549) Check stdout, stderr.
         operation = commandline.commandline_operation(executable='echo',
                                                       arguments=['hi there'])
         assert operation.output.returncode.result() == 0

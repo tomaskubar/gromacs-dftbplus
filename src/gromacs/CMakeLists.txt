@@ -112,6 +112,8 @@ add_subdirectory(imd)
 add_subdirectory(compat)
 add_subdirectory(mimic)
 add_subdirectory(modularsimulator)
+# Note that this subset should match the subset of module
+# BUILD_INTERFACEs added to libgromacs below.
 if (NOT GMX_BUILD_MDRUN_ONLY)
     add_subdirectory(gmxana)
     add_subdirectory(gmxpreprocess)
@@ -190,13 +192,13 @@ if (GMX_GPU_CUDA)
 else()
     add_library(libgromacs ${LIBGROMACS_SOURCES})
 endif()
-target_link_libraries(libgromacs PRIVATE common)
+target_link_libraries(libgromacs PRIVATE $<BUILD_INTERFACE:common>)
 # As long as the libgromacs target has source files that reference headers from
 # modules that don't provide CMake targets, libgromacs needs to use `src/`
 # amongst its include directories (to support `#include "gromacs/module/header.h"`).
 add_library(legacy_modules INTERFACE)
-target_include_directories(legacy_modules INTERFACE ${CMAKE_SOURCE_DIR}/src)
-target_link_libraries(libgromacs PRIVATE legacy_modules)
+target_include_directories(legacy_modules INTERFACE $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/src>)
+target_link_libraries(libgromacs PRIVATE $<BUILD_INTERFACE:legacy_modules>)
 
 # Add these contents first because linking their tests can take a lot
 # of time, so we want lots of parallel work still available after
@@ -335,7 +337,65 @@ if (GMX_PLUMED)
     target_link_libraries(libgromacs PUBLIC ${PLUMED_LOAD})
 endif()
 target_link_libraries(libgromacs PUBLIC legacy_api)
-
+# Dependencies from libgromacs to the modules are set up here, but
+# once the add_subdirectory() commands are re-ordered then
+# responsibility for setting this up will move to the respective
+# modules.
+target_link_libraries(libgromacs PRIVATE
+                      $<BUILD_INTERFACE:applied_forces>
+                      $<BUILD_INTERFACE:commandline>
+                      $<BUILD_INTERFACE:compat>
+                      $<BUILD_INTERFACE:domdec>
+#                      $<BUILD_INTERFACE:energyanalysis>
+                      $<BUILD_INTERFACE:essentialdynamics>
+                      $<BUILD_INTERFACE:ewald>
+                      $<BUILD_INTERFACE:fft>
+                      $<BUILD_INTERFACE:fileio>
+                      $<BUILD_INTERFACE:gmxlib>
+                      $<BUILD_INTERFACE:gpu_utils>
+                      $<BUILD_INTERFACE:hardware>
+                      $<BUILD_INTERFACE:imd>
+                      $<BUILD_INTERFACE:linearalgebra>
+                      $<BUILD_INTERFACE:listed_forces>
+                      $<BUILD_INTERFACE:math>
+                      $<BUILD_INTERFACE:mdlib>
+                      $<BUILD_INTERFACE:mdrun>
+                      $<BUILD_INTERFACE:mdrunutility>
+                      $<BUILD_INTERFACE:mdspan>
+                      $<BUILD_INTERFACE:mdtypes>
+                      $<BUILD_INTERFACE:mimic>
+                      $<BUILD_INTERFACE:modularsimulator>
+                      $<BUILD_INTERFACE:nbnxm>
+                      $<BUILD_INTERFACE:onlinehelp>
+                      $<BUILD_INTERFACE:options>
+                      $<BUILD_INTERFACE:pbcutil>
+                      $<BUILD_INTERFACE:pulling>
+                      $<BUILD_INTERFACE:random>
+                      $<BUILD_INTERFACE:restraint>
+                      $<BUILD_INTERFACE:selection>
+                      $<BUILD_INTERFACE:simd>
+                      $<BUILD_INTERFACE:swap>
+                      $<BUILD_INTERFACE:tables>
+                      $<BUILD_INTERFACE:taskassignment>
+                      $<BUILD_INTERFACE:timing>
+                      $<BUILD_INTERFACE:topology>
+                      $<BUILD_INTERFACE:trajectory>
+                      $<BUILD_INTERFACE:utility>
+                      )
+# Note that this subset should match the subset of module
+# subdirectories added above.
+if (NOT GMX_BUILD_MDRUN_ONLY)
+    target_link_libraries(libgromacs PRIVATE
+                          $<BUILD_INTERFACE:analysisdata>
+                          $<BUILD_INTERFACE:coordinateio>
+                          $<BUILD_INTERFACE:correlationfunctions>
+                          $<BUILD_INTERFACE:gmxana>
+                          $<BUILD_INTERFACE:gmxpreprocess>
+                          $<BUILD_INTERFACE:statistics>
+                          $<BUILD_INTERFACE:tools>
+                          $<BUILD_INTERFACE:trajectoryanalysis>
+                          )
+endif()
 if (GMX_OPENMP)
     target_link_libraries(libgromacs PUBLIC OpenMP::OpenMP_CXX)
 endif()

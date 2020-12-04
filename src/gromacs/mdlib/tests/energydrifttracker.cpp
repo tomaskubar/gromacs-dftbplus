@@ -1,7 +1,7 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2019, by the GROMACS development team, led by
+ * Copyright (c) 2020, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -32,51 +32,54 @@
  * To help us fund GROMACS development, we humbly ask that you cite
  * the research papers on the package. Check out http://www.gromacs.org.
  */
-/*! \libinternal \file
- * \brief
- * Helper for generating reusuable TPR files for tests within the same test binary.
+/*! \internal \file
+ * \brief Tests for the EnergyDriftTacker class
  *
- * \ingroup module_testutils
- * \author Paul Bauer <paul.bauer.q@gmail.com>
+ * \author berk Hess <hess@kth.se>
+ * \ingroup module_mdlib
  */
-#ifndef GMX_TESTUTILS_TPRFILEGENERATOR_H
-#define GMX_TESTUTILS_TPRFILEGENERATOR_H
+#include "gmxpre.h"
 
-#include <memory>
-#include <string>
+#include "gromacs/mdlib/energydrifttracker.h"
 
-#include "testutils/testfilemanager.h"
+#include <gtest/gtest.h>
+
+#include "testutils/testasserts.h"
 
 namespace gmx
 {
-namespace test
+
+namespace
 {
 
-class TestFileManager;
-
-/*! \libinternal \brief
- * Helper to bundle generated TPR and the file manager to clean it up.
- */
-class TprAndFileManager
+TEST(EnergyDriftTracker, emptyWorks)
 {
-public:
-    /*! \brief
-     * Generates the file when needed.
-     *
-     * \param[in] name The basename of the input files and the generated TPR.
-     */
-    TprAndFileManager(const std::string& name);
-    //! Access to the string.
-    const std::string& tprName() const { return tprFileName_; }
+    EnergyDriftTracker tracker(1);
 
-private:
-    //! Tpr file name.
-    std::string tprFileName_;
-    //! Filemanager, needed to clean up the file later.
-    TestFileManager fileManager_;
-};
+    EXPECT_EQ(tracker.timeInterval(), 0);
+    EXPECT_EQ(tracker.energyDrift(), 0);
+}
 
-} // namespace test
+TEST(EnergyDriftTracker, onePointWorks)
+{
+    EnergyDriftTracker tracker(1);
+
+    tracker.addPoint(1.5, -3.5_real);
+    EXPECT_EQ(tracker.timeInterval(), 0);
+    EXPECT_EQ(tracker.energyDrift(), 0);
+}
+
+TEST(EnergyDriftTracker, manyPointsWorks)
+{
+    EnergyDriftTracker tracker(10);
+
+    tracker.addPoint(1.5, 2.5_real);
+    tracker.addPoint(3.5, 4.0_real);
+    tracker.addPoint(5.5, -5.5_real);
+    EXPECT_FLOAT_EQ(tracker.timeInterval(), 4.0_real);
+    EXPECT_FLOAT_EQ(tracker.energyDrift(), -0.2_real);
+}
+
+} // namespace
+
 } // namespace gmx
-
-#endif

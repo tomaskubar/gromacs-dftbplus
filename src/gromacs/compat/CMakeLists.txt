@@ -1,7 +1,7 @@
 #
 # This file is part of the GROMACS molecular simulation package.
 #
-# Copyright (c) 2018,2019, by the GROMACS development team, led by
+# Copyright (c) 2018,2019,2020, by the GROMACS development team, led by
 # Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
 # and including many others, as listed in the AUTHORS file in the
 # top-level source directory and at http://www.gromacs.org.
@@ -31,6 +31,36 @@
 #
 # To help us fund GROMACS development, we humbly ask that you cite
 # the research papers on the package. Check out http://www.gromacs.org.
+
+add_library(compat INTERFACE)
+
+# Source files have the following private module dependencies.
+target_link_libraries(compat PRIVATE
+                      )
+
+# Public interface for modules, including dependencies and interfaces
+#target_include_directories(compat PUBLIC
+target_include_directories(compat INTERFACE
+                           $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>)
+#target_link_libraries(compat PUBLIC
+target_link_libraries(compat INTERFACE
+                      legacy_api
+                      )
+
+# TODO: when compat is an OBJECT target
+#target_link_libraries(compat PUBLIC legacy_api)
+#target_link_libraries(compat PRIVATE common)
+
+# Module dependencies
+# compat interfaces convey transitive dependence on these modules.
+#target_link_libraries(compat PUBLIC
+target_link_libraries(compat INTERFACE
+                      utility
+                      )
+# Source files have the following private module dependencies.
+#target_link_libraries(compat PRIVATE tng_io)
+# TODO: Explicitly link specific modules.
+#target_link_libraries(compat PRIVATE legacy_modules)
 
 if (BUILD_TESTING)
     add_subdirectory(tests)
