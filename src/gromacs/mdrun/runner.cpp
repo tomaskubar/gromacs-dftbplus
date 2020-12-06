@@ -843,7 +843,8 @@ int Mdrunner::mdrunner()
         // master and spawned threads joins at the end of this block.
     }
 
-    GMX_RELEASE_ASSERT(ms || simulationCommunicator != MPI_COMM_NULL,
+ // GMX_RELEASE_ASSERT(ms || simulationCommunicator != MPI_COMM_NULL,
+    GMX_RELEASE_ASSERT(ms || simulationCommunicator == MPI_COMM_WORLD,
                        "Must have valid communicator unless running a multi-simulation");
     CommrecHandle crHandle = init_commrec(simulationCommunicator);
     t_commrec*    cr       = crHandle.get();

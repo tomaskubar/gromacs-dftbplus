@@ -514,7 +514,7 @@ real call_dftbplus(QMMM_rec* qr,   const t_commrec* cr,
         for (int j = 0; j < DIM; j++)
         {
             f[i][j]      = HARTREE_BOHR2MD*QMgrad[i][j];
-            fshift[i][j] = HARTREE_BOHR2MD*QMgrad[i][j];
+         // fshift[i][j] = HARTREE_BOHR2MD*QMgrad[i][j];
         }
     }
     for (int i = 0; i < mm.nrMMatoms; i++)
@@ -522,7 +522,7 @@ real call_dftbplus(QMMM_rec* qr,   const t_commrec* cr,
         for (int j = 0; j < DIM; j++)
         {
             f[i+qm.nrQMatoms_get()][j]      = HARTREE_BOHR2MD*MMgrad[i][j];
-            fshift[i+qm.nrQMatoms_get()][j] = HARTREE_BOHR2MD*MMgrad[i][j];
+         // fshift[i+qm.nrQMatoms_get()][j] = HARTREE_BOHR2MD*MMgrad[i][j];
         }
     }
     if (qm.qmmm_variant_get() == eqmmmPME)
@@ -532,7 +532,7 @@ real call_dftbplus(QMMM_rec* qr,   const t_commrec* cr,
             for (int j = 0; j < DIM; j++)
             {
                 f[i+qm.nrQMatoms_get()+mm.nrMMatoms][j]      = HARTREE_BOHR2MD*MMgrad_full[i][j];
-                fshift[i+qm.nrQMatoms_get()+mm.nrMMatoms][j] = HARTREE_BOHR2MD*MMgrad_full[i][j];
+             // fshift[i+qm.nrQMatoms_get()+mm.nrMMatoms][j] = HARTREE_BOHR2MD*MMgrad_full[i][j];
             }
         }
     }

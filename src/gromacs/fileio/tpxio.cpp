@@ -1627,17 +1627,11 @@ static void do_inputrec(gmx::ISerializer* serializer, t_inputrec* ir, int file_v
         }
     }
 
-    /* QMMM reading - despite defunct we require reading for backwards
-     * compability and correct serialization
-     */
+    /* QMMM stuff */
     {
         serializer->doBool(&ir->bQMMM);
-        int qmmmScheme;
-        serializer->doInt(&qmmmScheme);
-        real unusedScalefactor;
-        serializer->doReal(&unusedScalefactor);
-
-        // this is still used in Mimic
+        serializer->doInt(&ir->QMMMscheme);
+        serializer->doReal(&ir->scalefactor);
         serializer->doInt(&ir->opts.ngQM);
         if (serializer->reading())
         {
@@ -1656,30 +1650,12 @@ static void do_inputrec(gmx::ISerializer* serializer, t_inputrec* ir, int file_v
             serializer->doIntArray(ir->opts.QMmult, ir->opts.ngQM);
             serializer->doIntArray(ir->opts.CASorbitals, ir->opts.ngQM);
             serializer->doIntArray(ir->opts.CASelectrons, ir->opts.ngQM);
-
             /* We leave in dummy i/o for removed parameters to avoid
-             * changing the tpr format.
-            std::vector<int> dummyIntVec(4 * ir->opts.ngQM, 0);
-            serializer->doIntArray(dummyIntVec.data(), dummyIntVec.size());
-            dummyIntVec.clear();
-
-            // std::vector<bool> has no data()
-            std::vector<char> dummyBoolVec(ir->opts.ngQM * sizeof(bool) / sizeof(char));
-            serializer->doBoolArray(reinterpret_cast<bool*>(dummyBoolVec.data()), dummyBoolVec.size());
-            dummyBoolVec.clear();
-
-            dummyIntVec.resize(2 * ir->opts.ngQM, 0);
-            serializer->doIntArray(dummyIntVec.data(), dummyIntVec.size());
-            dummyIntVec.clear();
-
-            std::vector<real> dummyRealVec(2 * ir->opts.ngQM, 0);
-            serializer->doRealArray(dummyRealVec.data(), dummyRealVec.size());
-            dummyRealVec.clear();
-
-            dummyIntVec.resize(3 * ir->opts.ngQM, 0);
-            serializer->doIntArray(dummyIntVec.data(), dummyIntVec.size());
-            dummyIntVec.clear();
+             * changing the tpr format for every QMMM change.
              */
+            std::vector<int> dummy(ir->opts.ngQM, 0);
+            serializer->doIntArray(dummy.data(), ir->opts.ngQM);
+            serializer->doIntArray(dummy.data(), ir->opts.ngQM);
         }
         /* end of QMMM stuff */
     }

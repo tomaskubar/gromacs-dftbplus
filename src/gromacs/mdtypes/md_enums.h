@@ -888,6 +888,7 @@ enum gmx_nblist_interaction_type
 //! String corresponding to interactions in neighborlist code
 extern const char* gmx_nblist_interaction_names[GMX_NBLIST_INTERACTION_NR + 1];
 
+
 //! \brief QM/MM mode
 enum struct GmxQmmmMode
 {
