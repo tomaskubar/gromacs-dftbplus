@@ -812,18 +812,6 @@ extern const char* eQMbasis_names[eQMbasisNR + 1];
 //! Macro to pick right basis function string
 #define EQMBASIS(e) enum_name(e, eQMbasisNR, eQMbasis_names)
 
-//! QMMM scheme
-enum
-{
-    eQMMMschemenormal,
-    eQMMMschemeoniom,
-    eQMMMschemeNR
-};
-//! QMMMM scheme names
-extern const char* eQMMMscheme_names[eQMMMschemeNR + 1];
-//! Macro to pick QMMMM scheme name
-#define EQMMMSCHEME(e) enum_name(e, eQMMMschemeNR, eQMMMscheme_names)
-
 /*! \brief Neighborlist geometry type.
  *
  * Kernels will compute interactions between two particles,

@@ -570,10 +570,6 @@ struct t_inputrec // NOLINT (clang-analyzer-optin.performance.Padding)
     t_grpopts opts;
     //! QM/MM calculation
     gmx_bool bQMMM;
-    //! Constraints on QM bonds
-    int QMconstraints;
-    //! Scheme: ONIOM or normal
-    int QMMMscheme;
     //! Factor for scaling the MM charges in QM calc.
     real scalefactor;
 

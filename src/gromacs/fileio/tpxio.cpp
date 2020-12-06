@@ -1630,7 +1630,8 @@ static void do_inputrec(gmx::ISerializer* serializer, t_inputrec* ir, int file_v
     /* QMMM stuff */
     {
         serializer->doBool(&ir->bQMMM);
-        serializer->doInt(&ir->QMMMscheme);
+        int qmmmScheme;
+        serializer->doInt(&qmmmScheme);
         serializer->doReal(&ir->scalefactor);
         serializer->doInt(&ir->opts.ngQM);
         if (serializer->reading())

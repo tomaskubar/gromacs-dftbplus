@@ -2060,8 +2060,6 @@ void get_ir(const char*     mdparin,
     setStringEntry(&inp, "QMMM-grps", inputrecStrings->QMMM, nullptr);
     printStringNoNewline(&inp, "QM method");
     setStringEntry(&inp, "QMmethod", inputrecStrings->QMmethod, nullptr);
-    printStringNoNewline(&inp, "QMMM scheme");
-    ir->QMMMscheme = get_eeenum(&inp, "QMMMscheme", eQMMMscheme_names, wi);
     printStringNoNewline(&inp, "QM basisset");
     setStringEntry(&inp, "QMbasis", inputrecStrings->QMbasis, nullptr);
     printStringNoNewline(&inp, "QM charge");

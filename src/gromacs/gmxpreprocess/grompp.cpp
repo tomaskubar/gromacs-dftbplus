@@ -2231,11 +2231,8 @@ int gmx_grompp(int argc, char* argv[])
     if (ir->bQMMM)
     {
         generate_qmexcl(&sys, ir, wi, GmxQmmmMode::GMX_QMMM_ORIGINAL, logger);
-        if (ir->QMMMscheme != eQMMMschemeoniom)
-        {
-            std::vector<int> qmmmAtoms = qmmmAtomIndices(*ir, sys);
-            removeQmmmAtomCharges(&sys, qmmmAtoms);
-        }
+        std::vector<int> qmmmAtoms = qmmmAtomIndices(*ir, sys);
+        removeQmmmAtomCharges(&sys, qmmmAtoms);
     }
 
     if (ir->eI == eiMimic)

@@ -664,34 +664,6 @@ std::vector<int> qmmmAtomIndices(const t_inputrec& ir, const gmx_mtop_t& mtop)
                 qmmmAtoms.push_back(index);
             }
         }
-     // if (ir.QMMMscheme == eQMMMschemeoniom)
-     // {
-     //     // I assume that users specify the QM groups from small to big(ger) in the mdp file
-     //     gmx_mtop_ilistloop_all_t iloop      = gmx_mtop_ilistloop_all_init(&mtop);
-     //     int                      nral1      = 1 + NRAL(F_VSITE2);
-     //     int                      atomOffset = 0;
-     //     while (const InteractionLists* ilists = gmx_mtop_ilistloop_all_next(iloop, &atomOffset))
-     //     {
-     //         const InteractionList& ilist = (*ilists)[F_VSITE2];
-     //         for (int j = 0; j < ilist.size(); j += nral1)
-     //         {
-     //             const int vsite = atomOffset + ilist.iatoms[j];     // the vsite
-     //             const int ai    = atomOffset + ilist.iatoms[j + 1]; // constructing atom
-     //             const int aj    = atomOffset + ilist.iatoms[j + 2]; // constructing atom
-     //             if (getGroupType(groups, SimulationAtomGroupType::QuantumMechanics, vsite)
-     //                         == getGroupType(groups, SimulationAtomGroupType::QuantumMechanics, ai)
-     //                 && getGroupType(groups, SimulationAtomGroupType::QuantumMechanics, vsite)
-     //                            == getGroupType(groups, SimulationAtomGroupType::QuantumMechanics, aj))
-     //             {
-     //                 // this dummy link atom needs to be removed from qmmmAtoms
-     //                 //   before making the QMrec of this layer!
-     //                 qmmmAtoms.erase(std::remove_if(qmmmAtoms.begin(), qmmmAtoms.end(),
-     //                                                [&vsite](int atom) { return atom == vsite; }),
-     //                                 qmmmAtoms.end());
-     //             }
-     //         }
-     //     }
-     // }
     }
     return qmmmAtoms;
 }
