@@ -344,7 +344,7 @@ void QMMM_rec::calculate_LR_QM_MM(const t_commrec *cr,
         // rvec_inc(subsum_qx, qx);
 	   }
 	   // contribution to the potential
-       real pot_add[n];
+       std::vector<real> pot_add(n);
 	   real vol = qm_.box[XX][XX] * qm_.box[YY][YY] * qm_.box[ZZ][ZZ];
 	   for (int j=0; j<n; j++) {
 	       pot_add[j] = 4. * M_PI / 3. / vol / pme_full.epsilon_r * iprod(qm_.xQM[j], sum_qx) / NM2BOHR;
@@ -455,7 +455,7 @@ void calculate_complete_QM_QM_ewald(t_QMMMrec *qr,
   print_time_difference("EWATIME 2 ", time1, time2);
   
   // short-range corrections
-  real pot_corr[n];
+  std::vector<real> pot_corr(n);
   for (int j=0; j<n; j++)
   {
       // exclude the interaction of atom j with its own charge density
@@ -471,7 +471,7 @@ void calculate_complete_QM_QM_ewald(t_QMMMrec *qr,
       }
   }
       
-  real pot_surf[n];
+  std::vector<real> pot_surf(n);
   if (pme->surf_corr_pme)
   {
       // optionally evaluate the PME surface correction term.
@@ -564,7 +564,7 @@ void QMMM_rec::calculate_complete_QM_QM(const t_commrec*  cr,
 //}
   
   /* short-range corrections */
-  real pot_corr[n];
+  std::vector<real> pot_corr(n);
   for (int j=0; j<n; j++)
   {
       /* exclude the interaction of atom j with its own charge density */
@@ -580,7 +580,7 @@ void QMMM_rec::calculate_complete_QM_QM(const t_commrec*  cr,
       }
   }
       
-  real pot_surf[n];
+  std::vector<real> pot_surf(n);
   if (pme_qmonly.surf_corr_pme)
   {
       /* optionally evaluate the PME surface correction term.
@@ -769,7 +769,7 @@ void QMMM_rec::gradient_QM_MM(const t_commrec*  cr,
     {
       QMMM_PME& pme_full   = pme[0];
       QMMM_PME& pme_qmonly = pme[1];
-      rvec grad_add[n];
+      std::vector<rvec> grad_add(n);
 
       /* (1) gradient on QM atoms due to MM atoms. */
 
