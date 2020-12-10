@@ -40,7 +40,7 @@
 #define HARTREE_TO_EV     (27.211396132)
 
 void
-init_dftbplus(QMMM_QMrec&       qm,
+init_dftbplus(QMMM_QMrec*       qm,
               QMMM_rec*         qr,
            // const t_forcerec* fr,
               const t_inputrec* ir,
@@ -48,10 +48,14 @@ init_dftbplus(QMMM_QMrec&       qm,
            // gmx_wallcycle_t   wcycle);
 
 real
-call_dftbplus(QMMM_rec* qr,   const t_commrec *cr,
-              QMMM_QMrec& qm, QMMM_MMrec& mm,
-              rvec f[],       rvec fshift[],
-              t_nrnb *nrnb,   gmx_wallcycle_t wcycle);
+call_dftbplus(QMMM_rec*         qr,
+              const t_commrec*  cr,
+              QMMM_QMrec*       qm,
+              const QMMM_MMrec& mm,
+              rvec              f[],
+              rvec              fshift[],
+              t_nrnb*           nrnb,
+              gmx_wallcycle_t   wcycle);
 
 struct Context;
 

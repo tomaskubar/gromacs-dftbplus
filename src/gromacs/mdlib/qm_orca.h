@@ -37,8 +37,8 @@
 #ifndef GMX_MDLIB_QM_ORCA_H
 #define GMX_MDLIB_QM_ORCA_H
 
-void init_orca(QMMM_QMrec& qm);
+void init_orca(QMMM_QMrec* qm);
 
-real call_orca(QMMM_QMrec& qm, QMMM_MMrec& mm, rvec f[], rvec fshift[]);
+real call_orca(const QMMM_QMrec& qm, const QMMM_MMrec& mm, rvec f[], rvec fshift[]);
 
 #endif

@@ -63,7 +63,7 @@
 
 /* ORCA interface routines */
 
-void init_orca(QMMM_QMrec& qm)
+void init_orca(QMMM_QMrec* qm)
 {
     char* buf;
     snew(buf, 200);
@@ -79,8 +79,8 @@ void init_orca(QMMM_QMrec& qm)
     buf = getenv("GMX_QM_ORCA_BASENAME");
     if (buf)
     {
-        snew(qm.orca_basename, 200);
-        sscanf(buf, "%s", qm.orca_basename);
+        snew(qm->orca_basename, 200);
+        sscanf(buf, "%s", qm->orca_basename);
     }
     else
     {
@@ -93,24 +93,24 @@ void init_orca(QMMM_QMrec& qm)
 
     if (buf)
     {
-        snew(qm.orca_dir, 200);
-        sscanf(buf, "%s", qm.orca_dir);
+        snew(qm->orca_dir, 200);
+        sscanf(buf, "%s", qm->orca_dir);
     }
     else
     {
         gmx_fatal(FARGS, "$GMX_ORCA_PATH not set, check manual\n");
     }
 
-    fprintf(stderr, "Setting ORCA path to: %s...\n", qm.orca_dir);
+    fprintf(stderr, "Setting ORCA path to: %s...\n", qm->orca_dir);
     fprintf(stderr, "ORCA initialised...\n\n");
     /* since we append the output to the BASENAME.out file,
        we should delete an existent old out-file here. */
-    sprintf(buf, "%s.out", qm.orca_basename);
+    sprintf(buf, "%s.out", qm->orca_basename);
     remove(buf);
 }
 
 
-static void write_orca_input(QMMM_QMrec& qm, QMMM_MMrec& mm)
+static void write_orca_input(const QMMM_QMrec& qm, const QMMM_MMrec& mm)
 {
     int   i;
     FILE *pcFile, *addInputFile;
@@ -190,7 +190,7 @@ static void write_orca_input(QMMM_QMrec& qm, QMMM_MMrec& mm)
     fclose(out);
 } /* write_orca_input */
 
-static real read_orca_output(rvec QMgrad[], rvec MMgrad[], QMMM_QMrec& qm, QMMM_MMrec& mm)
+static real read_orca_output(rvec QMgrad[], rvec MMgrad[], const QMMM_QMrec& qm, const QMMM_MMrec& mm)
 {
     char  buf[300], orca_pcgradFilename[300], orca_engradFilename[300];
     real  QMener;
@@ -321,7 +321,7 @@ static void do_orca(char* orca_dir, char* basename)
     }
 }
 
-real call_orca(QMMM_QMrec& qm, QMMM_MMrec& mm, rvec f[], rvec fshift[])
+real call_orca(const QMMM_QMrec& qm, const QMMM_MMrec& mm, rvec f[], rvec fshift[])
 {
     /* normal orca jobs */
     static int step = 0;

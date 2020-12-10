@@ -85,26 +85,40 @@ void F77_FUNC(domop, DOMOP)(int*    nrqmat,
 //   so there is no need to issue fatal errors here,
 //   because that introduces problems with tools suggesting and prohibiting noreturn attributes.
 
-static void F77_FUNC(domldt, DOMLDT)(int*,
-                                     int[],
-                                     char[])
-{ }
+static void F77_FUNC(domldt, DOMLDT)(const int* nrqmat,
+                                     const int  labels[],
+                                     const char keywords[])
+{
+    (void) nrqmat;
+    (void) labels;
+    (void) keywords;
+}
 
-static void F77_FUNC(domop, DOMOP)(int*,
-                                   double[],
-                                   int*,
-                                   double[],
-                                   double[],
-                                   double[],
-                                   double[],
-                                   double*,
-                                   double[])
-{ }
+static void F77_FUNC(domop, DOMOP)(const int*    nrqmat,
+                                   const double  qmcrd[],
+                                   const int*    nrmmat,
+                                   const double  mmchrg[],
+                                   const double  mmcrd[],
+                                   const double  qmgrad[],
+                                   const double  mmgrad[],
+                                   const double* energy,
+                                   const double  qmcharges[])
+{
+    (void) nrqmat;
+    (void) qmcrd;
+    (void) nrmmat;
+    (void) mmchrg;
+    (void) mmcrd;
+    (void) qmgrad;
+    (void) mmgrad;
+    (void) energy;
+    (void) qmcharges;
+}
 
 #endif
 
 
-void init_mopac(QMMM_QMrec& qm)
+void init_mopac(const QMMM_QMrec& qm)
 {
     // Initializes the MOPAC routines and sets up the computation by calling moldat().
     // The inline MOPAC routines can only perform gradient operations.
@@ -139,7 +153,7 @@ void init_mopac(QMMM_QMrec& qm)
 
 } // init_mopac
 
-real call_mopac(QMMM_QMrec& qm, QMMM_MMrec& mm, rvec f[], rvec fshift[])
+real call_mopac(const QMMM_QMrec& qm, const QMMM_MMrec& mm, rvec f[], rvec fshift[])
 {
     // Do the actual QMMM calculation using directly linked MOPAC subroutines
     double // always double as the MOPAC routines are always compiled in double precission!

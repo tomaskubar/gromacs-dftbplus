@@ -42,7 +42,7 @@
  *
  * \param[in] qm QM forcerec.
  */
-void init_mopac(QMMM_QMrec& qm);
+void init_mopac(const QMMM_QMrec& qm);
 
 /*! \brief
  * Run calculation with MOPAC.
@@ -52,16 +52,6 @@ void init_mopac(QMMM_QMrec& qm);
  * \param[in] f  Force vector.
  * \param[in] fshift Force shift vector.
  */
-real call_mopac(QMMM_QMrec& qm, QMMM_MMrec& mm, rvec f[], rvec fshift[]);
-
-/*! \brief
- * Run surface-hopping calculation with MOPAC.
- *
- * \param[in] qm QM part of forcerec.
- * \param[in] mm MM part of forcerec.
- * \param[in] f  Force vector.
- * \param[in] fshift Force shift vector.
- */
-real call_mopac_SH(QMMM_QMrec& qm, QMMM_MMrec& mm, rvec f[], rvec fshift[]);
+real call_mopac(const QMMM_QMrec& qm, const QMMM_MMrec& mm, rvec f[], rvec fshift[]);
 
 #endif

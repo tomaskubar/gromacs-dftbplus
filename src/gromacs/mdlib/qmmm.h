@@ -143,10 +143,10 @@ void init_gaussian();
  * \param[in] f  force vector.
  * \param[in] fshift shift of force vector.
  */
-real call_gaussian(QMMM_QMrec& qm,
-                   QMMM_MMrec& mm,
-                   rvec        f[],
-                   rvec        fshift[]);
+real call_gaussian(const QMMM_QMrec& qm,
+                   const QMMM_MMrec& mm,
+                   rvec              f[],
+                   rvec              fshift[]) const;
 } ;
 
 class QMMM_QMrec {
@@ -180,15 +180,15 @@ private:
                     const t_inputrec* ir);
 
     friend class QMMM_rec;
-    friend void init_dftbplus(QMMM_QMrec&       qm,
+    friend void init_dftbplus(QMMM_QMrec*       qm,
                               const t_forcerec* fr,
                               const t_inputrec* ir,
                               const t_commrec*  cr,
                               gmx_wallcycle_t   wcycle);
     friend real call_dftbplus(const t_forcerec* fr,
                               const t_commrec*  cr,
-                              QMMM_QMrec&       qm,
-                              QMMM_MMrec&       mm,
+                              QMMM_QMrec*       qm,
+                              QMMM_MMrec*       mm,
                               rvec              f[],
                               rvec              fshift[],
                               t_nrnb*           nrnb,
@@ -206,11 +206,11 @@ public:
     // output
     int              nrQMatoms_get()const;
     int              qmmm_variant_get()const;
-    double           xQM_get(const int atom, const int coordinate)const;
-    real             QMcharges_get(const int atom)const;
-    double           pot_qmmm_get(const int atom)const;
-    double           pot_qmqm_get(const int atom)const;
-    int              atomicnumberQM_get(const int atom)const;
+    double           xQM_get(int atom, int coordinate)const;
+    real             QMcharges_get(int atom)const;
+    double           pot_qmmm_get(int atom)const;
+    double           pot_qmqm_get(int atom)const;
+    int              atomicnumberQM_get(int atom)const;
     int              QMcharge_get()const;
     int              multiplicity_get()const;
     int              QMmethod_get()const;
@@ -219,9 +219,9 @@ public:
     int              CASelectrons_get()const;
     int              CASorbitals_get()const;
     // input
-    void             QMcharges_set(const int atom, const real value);
-    void             pot_qmmm_set(const int atom, const double value);
-    void             pot_qmqm_set(const int atom, const double value);
+    void             QMcharges_set(int atom, real value);
+    void             pot_qmmm_set(int atom, double value);
+    void             pot_qmqm_set(int atom, double value);
 } ;
 
 class QMMM_MMrec {
@@ -256,12 +256,12 @@ public:
     std::vector<real>       MMcharges_full;
     std::vector<int>        shiftMM_full;
 
-    void init_MMrec(real scalefactor_in,
-                    int  nrMMatoms_full_in,
-                    int  natoms,
-                    int  nrQMatoms,
-                    int* indexQM,
-                    int& found_mm_atoms);
+    void init_MMrec(real       scalefactor_in,
+                    int        nrMMatoms_full_in,
+                    int        natoms,
+                    int        nrQMatoms,
+                    const int* indexQM,
+                    int*       found_mm_atoms);
 } ;
 
 class QMMM_rec {
@@ -347,7 +347,7 @@ public:
     real calculate_QMMM(const t_commrec*           cr,
                         gmx::ForceWithVirial*      forceWithVirial,
                               t_nrnb*              nrnb,
-                        const gmx_wallcycle_t      wcycle);
+                              gmx_wallcycle_t      wcycle);
 
     // QMMM computes the QM forces.
     // This routine makes either function calls to gmx QM routines

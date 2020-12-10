@@ -54,7 +54,7 @@
 #define QUI(x) ((x)*(x)*(x)*(x)*(x))
 #define HEX(x) ((x)*(x)*(x)*(x)*(x)*(x))
 #define OCT(x) ((x)*(x)*(x)*(x)*(x)*(x)*(x)*(x))
-#define CHOOSE2(x) ((x)*(x+1)/2)
+#define CHOOSE2(x) ((x)*((x)+1)/2)
 
 #define gmx_erfc(x) (std::erfc(x))
 #define gmx_erf(x)  (std::erf(x))
@@ -70,12 +70,10 @@ void print_time_difference(const char s[],
                            struct timespec end)
 {
   //int sec, nsec;
-  long long value = 1000000000ll * ((long long) end.tv_sec
-                                  - (long long) start.tv_sec)
-                    + (long long) (end.tv_nsec - start.tv_nsec);
+  long long value = 1000000000ll * (static_cast<long long>(end.tv_sec)
+                                  - static_cast<long long>(start.tv_sec))
+                    + static_cast<long long>(end.tv_nsec - start.tv_nsec);
   printf("%s %12lld\n", s, value);
-
-  return;
 }  
 
 /****************************************
@@ -100,8 +98,6 @@ static inline void pbc_dx_qmmm(matrix box, const rvec x1, const rvec x2, rvec dx
             }
         }
     }
-
-    return;
 }
 
 static inline real pbc_dist_qmmm(matrix box, const rvec x1, const rvec x2)
@@ -244,6 +240,7 @@ void QMMM_rec::calculate_SR_QM_MM(int variant,
         }
       } // for k
     } // for j
+    break;
   }
 
   default: // it should never get this far
@@ -256,8 +253,6 @@ void QMMM_rec::calculate_SR_QM_MM(int variant,
       pot[j] /= NM2BOHR;
    // printf("SR QM/MM POT in a.u.: %d %8.5f\n", j+1, pot[j]);
   }
-
-  return;
 } // calculate_SR_QM_MM
 
 /* Calculate the effect of environment with PME,
@@ -366,8 +361,6 @@ void QMMM_rec::calculate_LR_QM_MM(const t_commrec *cr,
 //for (int j=0; j<n; j++) {
 //    printf("POT LR [%d] = %8.5f\n", j+1, pot[j]);
 //}
-
-  return;
 } // calculate_LR_QM_MM
 
 /****************************************
@@ -618,10 +611,8 @@ void QMMM_rec::calculate_complete_QM_QM(const t_commrec*  cr,
   // also, save the potential in the QMMM_QMrec structure
   for (int j=0; j<n; j++)
   {
-      qm_.pot_qmqm_set(j, (double) pot[j] * HARTREE_TO_EV); // in volt units
+      qm_.pot_qmqm_set(j, static_cast<double>(pot[j]) * HARTREE_TO_EV); // in volt units
   }
-
-  return;
 } // calculate_complete_QM_QM
 
 /**********************************
@@ -1057,6 +1048,5 @@ void QMMM_rec::gradient_QM_MM(const t_commrec*  cr,
     default: // it should never get this far
       ;
   } // switch (cutoff_qmmm)
-  return;
 }
 

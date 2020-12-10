@@ -94,8 +94,8 @@
 void put_cluster_in_MMlist_verlet(int                            ck, // cluster number
                                   int                            na_ck, // # of atoms in cluster
                                   int                            nrQMatoms,
-                                  int*                           indexQM,
-                                  const gmx::ArrayRef<const int> atomIndices,
+                                  const int*                     indexQM,
+                                        gmx::ArrayRef<const int> atomIndices,
 			                      int*                           shiftMMatom,
                                   // ^ also has a role of "bool* isMMatom"
 				                  t_pbc*                         pbc,
@@ -113,37 +113,37 @@ void init_QMMM_rec(const t_commrec  *cr,
 }
 */
 
-static real call_QMroutine(const t_commrec gmx_unused* cr,
-                           QMMM_rec gmx_unused*        qr,
-                           QMMM_QMrec gmx_unused&      qm,
-                           QMMM_MMrec gmx_unused&      mm,
-                           rvec gmx_unused             f[],
-                           rvec gmx_unused             fshift[],
-                           t_nrnb*                     nrnb,
-                           gmx_wallcycle_t gmx_unused  wcycle)
+static real call_QMroutine(const t_commrec*  cr,
+                           QMMM_rec*         qr,
+                           QMMM_QMrec*       qm,
+                           QMMM_MMrec*       mm,
+                           rvec              f[],
+                           rvec              fshift[],
+                           t_nrnb*           nrnb,
+                           gmx_wallcycle_t   wcycle)
 {
     // Makes a call to the requested QM routine (qm->QMmethod).
     // Note that f is actually the gradient, i.e. -f
 
     if (GMX_QMMM_MOPAC)
     {
-        return call_mopac(qm, mm, f, fshift);
+        return call_mopac(*qm, *mm, f, fshift);
     }
     else if (GMX_QMMM_GAMESS)
     {
-        return call_gamess(qm, mm, f, fshift);
+        return call_gamess(*qm, *mm, f, fshift);
     }
     else if (GMX_QMMM_GAUSSIAN)
     {
-        return qm.gaussian.call_gaussian(qm, mm, f, fshift);
+        return qm->gaussian.call_gaussian(*qm, *mm, f, fshift);
     }
     else if (GMX_QMMM_ORCA)
     {
-        return call_orca(qm, mm, f, fshift);
+        return call_orca(*qm, *mm, f, fshift);
     }
     else if (GMX_QMMM_DFTBPLUS)
     {
-        return call_dftbplus(qr, cr, qm, mm, f, fshift, nrnb, wcycle);
+        return call_dftbplus(qr, cr, qm, *mm, f, fshift, nrnb, wcycle);
     }
     else
     {
@@ -280,8 +280,6 @@ void QMMM_rec::update_QMMM_coord(const t_commrec*  cr,
             copy_rvec(x[mm_.indexMM_full[i]], mm_.xMM_full[i]);
         }
     }
-
-    return;
 } // update_QMMM_coord
 
 void QMMM_QMrec::init_QMrec(int               grpnr,
@@ -351,7 +349,6 @@ real QMMM_QMrec::QMcharges_get(const int atom) const
 void QMMM_QMrec::QMcharges_set(const int atom, const real value)
 {
     QMcharges[atom] = value;
-    return;
 }
 
 double QMMM_QMrec::pot_qmmm_get(const int atom) const
@@ -367,13 +364,11 @@ double QMMM_QMrec::pot_qmqm_get(const int atom) const
 void QMMM_QMrec::pot_qmmm_set(const int atom, const double value)
 {
     pot_qmmm[atom] = value;
-    return;
 }
 
 void QMMM_QMrec::pot_qmqm_set(const int atom, const double value)
 {
     pot_qmqm[atom] = value;
-    return;
 }
 
 int QMMM_QMrec::atomicnumberQM_get(const int atom)const
@@ -420,8 +415,8 @@ void QMMM_MMrec::init_MMrec(real scalefactor_in,
                             int  nrMMatoms_full_in,
                             int  natoms,
                             int  nrQMatoms,
-                            int* indexQM,
-                            int& found_mm_atoms)
+                            const int* indexQM,
+                            int* found_mm_atoms)
 {
     scalefactor    = scalefactor_in;
     nrMMatoms_full = nrMMatoms_full_in;
@@ -431,17 +426,21 @@ void QMMM_MMrec::init_MMrec(real scalefactor_in,
     shiftMM_full.resize(nrMMatoms_full); // ???
 
     // fill the indexMM_full array
-    found_mm_atoms = 0;
+    *found_mm_atoms = 0;
     for (int i=0; i<natoms; i++)
     {
         bool is_mm_atom = true;
         for (int j=0; j<nrQMatoms; j++)
+        {
             if (i == indexQM[j])
+            {
                  is_mm_atom = false;
+            }
+        }
         if (is_mm_atom)
         {
-            indexMM_full[found_mm_atoms] = i;
-	        found_mm_atoms++;
+            indexMM_full[*found_mm_atoms] = i;
+	        (*found_mm_atoms)++;
         }
     }
 }
@@ -527,7 +526,7 @@ QMMM_rec::QMMM_rec(const t_commrec*                 cr,
     int found_mm_atoms = 0;
     mm.resize(1);
     QMMM_MMrec& mm_ = mm[0];
-    mm_.init_MMrec(ir->scalefactor, nrMMatoms_full_in, mtop->natoms, qm[0].nrQMatoms, qm[0].indexQM, found_mm_atoms); 
+    mm_.init_MMrec(ir->scalefactor, nrMMatoms_full_in, mtop->natoms, qm[0].nrQMatoms, qm[0].indexQM, &found_mm_atoms); 
 
     printf ("(mtop->natoms) = %d\n(qr->qm[0]->nrQMatoms) = %d\nmm->nrMMatoms_full = %d\n",
             (mtop->natoms), (qm[0].nrQMatoms), mm_.nrMMatoms_full);
@@ -555,7 +554,7 @@ QMMM_rec::QMMM_rec(const t_commrec*                 cr,
     }
     else if (GMX_QMMM_ORCA)
     {
-        init_orca(qm[0]);
+        init_orca(&(qm[0]));
     }
     else if (GMX_QMMM_DFTBPLUS)
     {
@@ -638,7 +637,7 @@ QMMM_rec::QMMM_rec(const t_commrec*                 cr,
         }
         snew(qm[0].QMcharges, qm[0].nrQMatoms);
 
-        init_dftbplus(qm[0], this, ir, cr); //, wcycle);
+        init_dftbplus(&(qm[0]), this, ir, cr); //, wcycle);
     }
     else
     {
@@ -646,6 +645,10 @@ QMMM_rec::QMMM_rec(const t_commrec*                 cr,
     }
 #else // GMX_QMMM
     gmx_incons("Compiled without QMMM");
+    (void) cr;
+    (void) mtop;
+    (void) ir;
+    (void) fr;
 #endif
 } // init_QMMMrec
 
@@ -735,14 +738,13 @@ void QMMM_rec::update_QMMMrec_dftb(const t_commrec*  cr,
     {
         mm_.MMcharges_full[i] = md->chargeA[mm_.indexMM_full[i]] * mm_.scalefactor;
     }
-    return;
 } // update_QMMMrec_dftb
 
 // ADD THE NON-QM ATOMS IN THE VERLET CLUSTER ck TO THE LIST OF MM ATOMS
 void put_cluster_in_MMlist_verlet(int                            ck, // cluster number
                                   int                            na_ck, // # of atoms in cluster
                                   int                            nrQMatoms,
-                                  int*                           indexQM,
+                                  const int*                     indexQM,
                                   const gmx::ArrayRef<const int> atomIndices,
 			                      int*                           shiftMMatom,
                                   // ^ also has a role of "bool* isMMatom"
@@ -798,8 +800,6 @@ void put_cluster_in_MMlist_verlet(int                            ck, // cluster 
 	        shiftMMatom[ck_atom] = sh; // true;
 	    }
     }
-
-    return;
 }
 
 // create the SR MM list using the Verlet neighborlist
@@ -957,14 +957,12 @@ void QMMM_rec::update_QMMMrec_verlet_ns(const t_commrec*    cr,
         printf("ERROR IN MM ATOM SEARCH -- VERLET BASED SCHEME\n");
 	    exit(-1);
     }
-
-    return;
 } // update_QMMMrec_verlet_ns
 
-real QMMM_rec::calculate_QMMM(const t_commrec*           cr,
-                              gmx::ForceWithVirial*      forceWithVirial,
-                              t_nrnb*                    nrnb,
-                              const gmx_wallcycle_t      wcycle)
+real QMMM_rec::calculate_QMMM(const t_commrec*      cr,
+                              gmx::ForceWithVirial* forceWithVirial,
+                              t_nrnb*               nrnb,
+                              gmx_wallcycle_t       wcycle)
 {
     if (!GMX_QMMM)
     {
@@ -977,8 +975,8 @@ real QMMM_rec::calculate_QMMM(const t_commrec*           cr,
     // Now it works through defines.
     //   ... Not so nice yet
 
-    QMMM_QMrec& qm_ = qm[0];
-    QMMM_MMrec& mm_ = mm[0];
+    QMMM_QMrec* qm_ = &(qm[0]);
+    QMMM_MMrec* mm_ = &(mm[0]);
 
     rvec *forces = nullptr,
          *fshift = nullptr;
@@ -989,12 +987,12 @@ real QMMM_rec::calculate_QMMM(const t_commrec*           cr,
 
     if (GMX_QMMM_DFTBPLUS)
     {
-        snew(forces, (qm_.nrQMatoms + mm_.nrMMatoms + mm_.nrMMatoms_full));
-     // snew(fshift, (qm_.nrQMatoms + mm_.nrMMatoms + mm_.nrMMatoms_full));
+        snew(forces, (qm_->nrQMatoms + mm_->nrMMatoms + mm_->nrMMatoms_full));
+     // snew(fshift, (qm_->nrQMatoms + mm_->nrMMatoms + mm_->nrMMatoms_full));
     }
     else
     {
-        snew(forces, (qm_.nrQMatoms + mm_.nrMMatoms));
+        snew(forces, (qm_->nrQMatoms + mm_->nrMMatoms));
      // snew(fshift, (qm_.nrQMatoms + mm_.nrMMatoms));
     }
 
@@ -1002,54 +1000,54 @@ real QMMM_rec::calculate_QMMM(const t_commrec*           cr,
 
     if (GMX_QMMM_DFTBPLUS)
     {
-        for (int i = 0; i < qm_.nrQMatoms; i++)
+        for (int i = 0; i < qm_->nrQMatoms; i++)
         {
             for (int j = 0; j < DIM; j++)
             {
-                fMM[qm_.indexQM[i]][j]        -= forces[i][j];
-             // fshiftMM[qm_.shiftQM[i]][j]   += fshift[i][j];
+                fMM[qm_->indexQM[i]][j]        -= forces[i][j];
+             // fshiftMM[qm_->shiftQM[i]][j]   += fshift[i][j];
             }
-         // printf("F[%5d] = %8.2f %8.2f %8.2f\n", qm_.indexQM[i], forces[i][0], forces[i][1], forces[i][2]);
+         // printf("F[%5d] = %8.2f %8.2f %8.2f\n", qm_->indexQM[i], forces[i][0], forces[i][1], forces[i][2]);
         }
-        for (int i = 0; i < mm_.nrMMatoms; i++)
+        for (int i = 0; i < mm_->nrMMatoms; i++)
         {
             for (int j = 0; j < DIM; j++)
             {
-                fMM[mm_.indexMM[i]][j]        -= forces[qm_.nrQMatoms+i][j];
-             // fshiftMM[mm_.shiftMM[i]][j]   += fshift[qm_.nrQMatoms+i][j];
+                fMM[mm_->indexMM[i]][j]        -= forces[qm_->nrQMatoms+i][j];
+             // fshiftMM[mm_->shiftMM[i]][j]   += fshift[qm_->nrQMatoms+i][j];
             }
-         // if (i<30) if (norm(forces[qm_.nrQMatoms+i]) > 10.)
-         //   printf("F_MM[%5d] = %8.2f %8.2f %8.2f\n", mm_.indexMM[i],
-         //     forces[qm_.nrQMatoms+i][0], forces[qm_.nrQMatoms+i][1], forces[qm_.nrQMatoms+i][2]);
+         // if (i<30) if (norm(forces[qm_->nrQMatoms+i]) > 10.)
+         //   printf("F_MM[%5d] = %8.2f %8.2f %8.2f\n", mm_->indexMM[i],
+         //     forces[qm_->nrQMatoms+i][0], forces[qm_->nrQMatoms+i][1], forces[qm_->nrQMatoms+i][2]);
         }
-        for (int i = 0; i < mm_.nrMMatoms_full; i++)
+        for (int i = 0; i < mm_->nrMMatoms_full; i++)
         {
             for (int j = 0; j < DIM; j++)
             {
-                fMM[mm_.indexMM_full[i]][j]        -= forces[qm_.nrQMatoms+mm_.nrMMatoms+i][j];
-             // fshiftMM[mm_.shiftMM_full[i]][j]   += fshift[qm_.nrQMatoms+mm_.nrMMatoms+i][j];
+                fMM[mm_->indexMM_full[i]][j]        -= forces[qm_->nrQMatoms+mm_->nrMMatoms+i][j];
+             // fshiftMM[mm_->shiftMM_full[i]][j]   += fshift[qm_->nrQMatoms+mm_->nrMMatoms+i][j];
             }
-         // if (i<100) if (norm(forces[qm_.nrQMatoms+mm_.nrMMatoms+i]) > 10.)
-         //   printf("F_MM_F[%5d] = %8.2f %8.2f %8.2f\n", mm_.indexMM_full[i],
-         //   forces[qm_.nrQMatoms+mm_.nrMMatoms+i][0], forces[qm_.nrQMatoms+mm_.nrMMatoms+i][1], forces[qm_.nrQMatoms+mm_.nrMMatoms+i][2]);
+         // if (i<100) if (norm(forces[qm_->nrQMatoms+mm_->nrMMatoms+i]) > 10.)
+         //   printf("F_MM_F[%5d] = %8.2f %8.2f %8.2f\n", mm_->indexMM_full[i],
+         //   forces[qm_->nrQMatoms+mm_->nrMMatoms+i][0], forces[qm_->nrQMatoms+mm_->nrMMatoms+i][1], forces[qm_->nrQMatoms+mm_->nrMMatoms+i][2]);
         }
     }
     else
     {
-        for (int i = 0; i < qm_.nrQMatoms; i++)
+        for (int i = 0; i < qm_->nrQMatoms; i++)
         {
             for (int j = 0; j < DIM; j++)
             {
-                fMM[qm_.indexQM[i]][j]          -= forces[i][j];
-             // fshiftMM[qm_.shiftQM[i]][j]     += fshift[i][j];
+                fMM[qm_->indexQM[i]][j]          -= forces[i][j];
+             // fshiftMM[qm_->shiftQM[i]][j]     += fshift[i][j];
             }
         }
-        for (int i = 0; i < mm_.nrMMatoms; i++)
+        for (int i = 0; i < mm_->nrMMatoms; i++)
         {
             for (int j = 0; j < DIM; j++)
             {
-                fMM[mm_.indexMM[i]][j]      -= forces[qm_.nrQMatoms+i][j];
-             // fshiftMM[mm_.shiftMM[i]][j] += fshift[qm_.nrQMatoms+i][j];
+                fMM[mm_->indexMM[i]][j]      -= forces[qm_->nrQMatoms+i][j];
+             // fshiftMM[mm_->shiftMM[i]][j] += fshift[qm_->nrQMatoms+i][j];
             }
         }
     }

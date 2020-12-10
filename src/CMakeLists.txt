@@ -71,7 +71,7 @@ list(APPEND IGNORED_CLANG_ALL_WARNINGS
     # GMX_CATCH_ALL_AND_EXIT_WITH_FATAL_ERROR. Those will look strange
     # if they don't have a semicolon after them, and might confuse
     # tools like IDEs also.
-    "-Wno-extra-semi-stmt"
+    "-Wno-extra-semi" # -stmt"
 
     #Following ones are undecided/TODO
     "-Wno-disabled-macro-expansion"

@@ -45,7 +45,7 @@
  * \param[in] mm MM part of forcerec.
  */
 //void init_gamess(const t_commrec *cr, t_QMrec *qm, t_MMrec *mm);
-void init_gamess(const t_commrec* cr, QMMM_QMrec& qm, QMMM_MMrec& mm);
+void init_gamess(const t_commrec* cr, const QMMM_QMrec& qm, const QMMM_MMrec& mm);
 
 /*! \brief
  * Run calculation with Gamess.

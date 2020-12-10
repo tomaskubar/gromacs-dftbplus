@@ -91,7 +91,7 @@ void F77_FUNC(grads, GRADS)(const int*, real*, const int*, const real*, real*, r
 #endif
 
 //void init_gamess(const t_commrec *cr, t_QMrec *qm, t_MMrec *mm)
-void init_gamess(const t_commrec* cr, QMMM_QMrec& qm, QMMM_MMrec& mm)
+void init_gamess(const t_commrec* cr, const QMMM_QMrec& qm, const QMMM_MMrec& mm)
 {
     /* it works hopelessly complicated :-)
      * first a file is written. Then the standard gamess input/output

@@ -180,7 +180,7 @@ void QMMM_QMgaussian::init_gaussian()
 }
 
 
-static void write_gaussian_input(int step, QMMM_QMrec& qm, QMMM_MMrec& mm)
+static void write_gaussian_input(int step, const QMMM_QMrec& qm, const QMMM_MMrec& mm)
 {
     FILE* out = fopen("input.com", "w");
 
@@ -297,7 +297,7 @@ static void write_gaussian_input(int step, QMMM_QMrec& qm, QMMM_MMrec& mm)
 
 } // write_gaussian_input
 
-static real read_gaussian_output(rvec QMgrad[], rvec MMgrad[], QMMM_QMrec& qm, QMMM_MMrec& mm)
+static real read_gaussian_output(rvec QMgrad[], rvec MMgrad[], const QMMM_QMrec& qm, const QMMM_MMrec& mm)
 {
     char  buf[300];
     real  QMener;
@@ -374,7 +374,7 @@ static void do_gaussian(int step, char* exe)
     }
 }
 
-real QMMM_QMgaussian::call_gaussian(QMMM_QMrec& qm, QMMM_MMrec& mm, rvec f[], rvec fshift[])
+real QMMM_QMgaussian::call_gaussian(const QMMM_QMrec& qm, const QMMM_MMrec& mm, rvec f[], rvec fshift[]) const
 {
     static int step = 0;
     real       QMener = 0.0;
