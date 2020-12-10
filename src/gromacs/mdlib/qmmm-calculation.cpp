@@ -760,7 +760,8 @@ void QMMM_rec::gradient_QM_MM(const t_commrec*  cr,
     {
       QMMM_PME& pme_full   = pme[0];
       QMMM_PME& pme_qmonly = pme[1];
-      std::vector<rvec> grad_add(n);
+    //std::vector<rvec> grad_add(n);
+      rvec* grad_add = new rvec [n];
 
       /* (1) gradient on QM atoms due to MM atoms. */
 
@@ -1041,6 +1042,7 @@ void QMMM_rec::gradient_QM_MM(const t_commrec*  cr,
    //     printf("GRAD MM  5 %d: %8.5f %8.5f %8.5f\n", i+1, mm_.grad[i][XX], mm_.grad[i][YY], mm_.grad[i][ZZ]);
    // }
 
+      delete[] grad_add;
       // end of PME
       break;
     }
