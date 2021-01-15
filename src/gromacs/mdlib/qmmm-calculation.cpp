@@ -61,9 +61,9 @@
 
 #include<time.h>
 
-void print_time_difference(const char s[],
-                           struct timespec start,
-                           struct timespec end);
+//void print_time_difference(const char s[],
+//                           struct timespec start,
+//                           struct timespec end);
 
 void print_time_difference(const char s[],
                            struct timespec start,

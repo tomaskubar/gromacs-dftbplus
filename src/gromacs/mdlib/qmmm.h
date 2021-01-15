@@ -384,4 +384,8 @@ std::vector<int> qmmmAtomIndices(const t_inputrec& ir,
 void removeQmmmAtomCharges(gmx_mtop_t*              mtop,
                            gmx::ArrayRef<const int> qmmmAtoms);
 
+void print_time_difference(const char s[],
+                           struct timespec start,
+                           struct timespec end);
+
 #endif

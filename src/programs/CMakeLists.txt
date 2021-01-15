@@ -189,10 +189,36 @@ if (GMX_QMMM_DFTBPLUS)
     set_target_properties(gomp PROPERTIES IMPORTED_LOCATION ${GOMP})
 
     if(GMX_BUILD_MDRUN_ONLY)
-        target_link_libraries(mdrun PRIVATE libdftbplus libdftd3 libmudpack gfortran gomp)
+        target_link_libraries(mdrun-only PRIVATE libdftbplus libdftd3 libmudpack gfortran gomp)
        #target_link_libraries(mdrun libdftbplus libxmlf90 libdftd3 gfortran gomp)
     else()
         target_link_libraries(gmx PRIVATE libdftbplus libdftd3 libmudpack gfortran gomp)
        #target_link_libraries(gmx libdftbplus libxmlf90 libdftd3 gfortran gomp)
+    endif()
+endif()
+
+if (GMX_TENSORFLOW)
+    # search for the tensorflow library in the system
+
+    # first look for possible library locations
+    unset(_lib_env)
+    string(REPLACE ":" ";" _lib_env "$ENV{LD_LIBRARY_PATH}")
+    list(APPEND _lib_env "${CMAKE_PLATFORM_IMPLICIT_LINK_DIRECTORIES}")
+    list(APPEND _lib_env "${CMAKE_C_IMPLICIT_LINK_DIRECTORIES}")
+    list(REMOVE_DUPLICATES _lib_env)
+    set(PATH_TO_LOOK_FOR "${_lib_env}")
+
+    # try to find the lib in the given paths
+    find_library(TENSORFLOW
+        NAMES libtensorflow.so
+        HINTS ${PATH_TO_LOOK_FOR})
+    add_library(libtensorflow SHARED IMPORTED)
+    set_target_properties(libtensorflow PROPERTIES IMPORTED_LOCATION ${TENSORFLOW})
+
+    # add the library
+    if(GMX_BUILD_MDRUN_ONLY)
+        target_link_libraries(mdrun-only PRIVATE libtensorflow)
+    else()
+        target_link_libraries(gmx PRIVATE libtensorflow)
     endif()
 endif()

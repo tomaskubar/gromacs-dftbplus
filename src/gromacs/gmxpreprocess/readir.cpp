@@ -2748,7 +2748,8 @@ static void do_numbering(int                        natoms,
                          int                        restnm,
                          int                        grptp,
                          bool                       bVerbose,
-                         warninp_t                  wi)
+                         warninp_t                  wi,
+                         bool                       bTransfer)
 {
     unsigned short*   cbuf;
     AtomGroupIndices* grps = &(groups->groups[gtype]);
@@ -2850,13 +2851,14 @@ static void do_numbering(int                        natoms,
         }
     }
 
-    if (grps->size() == 1 && (ntot == 0 || ntot == natoms))
+    if (grps->size() == 1 && (ntot == 0 || ntot == natoms) && !bTransfer)
     {
         /* All atoms are part of one (or no) group, no index required */
         groups->groupNumbers[gtype].clear();
     }
     else
     {
+        /* For TRANSFER, always do the "else" clause */
         for (int j = 0; (j < natoms); j++)
         {
             groups->groupNumbers[gtype].emplace_back(cbuf[j]);
@@ -3419,7 +3421,7 @@ void do_index(const char*                   mdparin,
     const bool useReferenceTemperature = integratorHasReferenceTemperature(ir);
     do_numbering(natoms, groups, temperatureCouplingGroupNames, defaultIndexGroups, gnames,
                  SimulationAtomGroupType::TemperatureCoupling, restnm,
-                 useReferenceTemperature ? egrptpALL : egrptpALL_GENREST, bVerbose, wi);
+                 useReferenceTemperature ? egrptpALL : egrptpALL_GENREST, bVerbose, wi, false);
     nr            = groups->groups[SimulationAtomGroupType::TemperatureCoupling].size();
     ir->opts.ngtc = nr;
     snew(ir->opts.nrdf, nr);
@@ -3738,7 +3740,7 @@ void do_index(const char*                   mdparin,
                   accelerationGroupNames.size(), accelerations.size());
     }
     do_numbering(natoms, groups, accelerationGroupNames, defaultIndexGroups, gnames,
-                 SimulationAtomGroupType::Acceleration, restnm, egrptpALL_GENREST, bVerbose, wi);
+                 SimulationAtomGroupType::Acceleration, restnm, egrptpALL_GENREST, bVerbose, wi, false);
     nr = groups->groups[SimulationAtomGroupType::Acceleration].size();
     snew(ir->opts.acc, nr);
     ir->opts.ngacc = nr;
@@ -3753,7 +3755,7 @@ void do_index(const char*                   mdparin,
                   freezeGroupNames.size(), freezeDims.size());
     }
     do_numbering(natoms, groups, freezeGroupNames, defaultIndexGroups, gnames,
-                 SimulationAtomGroupType::Freeze, restnm, egrptpALL_GENREST, bVerbose, wi);
+                 SimulationAtomGroupType::Freeze, restnm, egrptpALL_GENREST, bVerbose, wi, false);
     nr             = groups->groups[SimulationAtomGroupType::Freeze].size();
     ir->opts.ngfrz = nr;
     snew(ir->opts.nFreeze, nr);
@@ -3785,13 +3787,13 @@ void do_index(const char*                   mdparin,
 
     auto energyGroupNames = gmx::splitString(inputrecStrings->energy);
     do_numbering(natoms, groups, energyGroupNames, defaultIndexGroups, gnames,
-                 SimulationAtomGroupType::EnergyOutput, restnm, egrptpALL_GENREST, bVerbose, wi);
+                 SimulationAtomGroupType::EnergyOutput, restnm, egrptpALL_GENREST, bVerbose, wi, false);
     add_wall_energrps(groups, ir->nwall, symtab);
     ir->opts.ngener    = groups->groups[SimulationAtomGroupType::EnergyOutput].size();
     auto vcmGroupNames = gmx::splitString(inputrecStrings->vcm);
     do_numbering(natoms, groups, vcmGroupNames, defaultIndexGroups, gnames,
                  SimulationAtomGroupType::MassCenterVelocityRemoval, restnm,
-                 vcmGroupNames.empty() ? egrptpALL_GENREST : egrptpPART, bVerbose, wi);
+                 vcmGroupNames.empty() ? egrptpALL_GENREST : egrptpPART, bVerbose, wi, true); // TRANSFER
 
     if (ir->comm_mode != ecmNO)
     {
@@ -3803,17 +3805,17 @@ void do_index(const char*                   mdparin,
 
     auto user1GroupNames = gmx::splitString(inputrecStrings->user1);
     do_numbering(natoms, groups, user1GroupNames, defaultIndexGroups, gnames,
-                 SimulationAtomGroupType::User1, restnm, egrptpALL_GENREST, bVerbose, wi);
+                 SimulationAtomGroupType::User1, restnm, egrptpALL_GENREST, bVerbose, wi, false);
     auto user2GroupNames = gmx::splitString(inputrecStrings->user2);
     do_numbering(natoms, groups, user2GroupNames, defaultIndexGroups, gnames,
-                 SimulationAtomGroupType::User2, restnm, egrptpALL_GENREST, bVerbose, wi);
+                 SimulationAtomGroupType::User2, restnm, egrptpALL_GENREST, bVerbose, wi, false);
     auto compressedXGroupNames = gmx::splitString(inputrecStrings->x_compressed_groups);
     do_numbering(natoms, groups, compressedXGroupNames, defaultIndexGroups, gnames,
-                 SimulationAtomGroupType::CompressedPositionOutput, restnm, egrptpONE, bVerbose, wi);
+                 SimulationAtomGroupType::CompressedPositionOutput, restnm, egrptpONE, bVerbose, wi, false);
     auto orirefFitGroupNames = gmx::splitString(inputrecStrings->orirefitgrp);
     do_numbering(natoms, groups, orirefFitGroupNames, defaultIndexGroups, gnames,
                  SimulationAtomGroupType::OrientationRestraintsFit, restnm, egrptpALL_GENREST,
-                 bVerbose, wi);
+                 bVerbose, wi, false);
 
     /* QMMM input processing */
     auto qmGroupNames = gmx::splitString(inputrecStrings->QMMM);
@@ -3830,7 +3832,7 @@ void do_index(const char*                   mdparin,
         }
         /* group rest, if any, is always MM! */
         do_numbering(natoms, groups, qmGroupNames, defaultIndexGroups, gnames,
-                     SimulationAtomGroupType::QuantumMechanics, restnm, egrptpALL_GENREST, bVerbose, wi);
+                     SimulationAtomGroupType::QuantumMechanics, restnm, egrptpALL_GENREST, bVerbose, wi, false);
         nr            = qmGroupNames.size(); /*atoms->grps[egcQMMM].nr;*/
         ir->opts.ngQM = qmGroupNames.size();
         snew(ir->opts.QMmethod, nr);
@@ -3866,7 +3868,7 @@ void do_index(const char*                   mdparin,
         }
         /* group rest, if any, is always MM! */
         do_numbering(natoms, groups, qmGroupNames, defaultIndexGroups, gnames,
-                     SimulationAtomGroupType::QuantumMechanics, restnm, egrptpALL_GENREST, bVerbose, wi);
+                     SimulationAtomGroupType::QuantumMechanics, restnm, egrptpALL_GENREST, bVerbose, wi, false);
 
         ir->opts.ngQM = qmGroupNames.size();
     }

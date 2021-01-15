@@ -270,11 +270,15 @@ static void doStopComMotionLinear(const t_mdatoms& mdatoms, gmx::ArrayRef<gmx::R
         {
             unsigned short vcmGroup    = (group_id == nullptr ? 0 : group_id[i]);
             unsigned short freezeGroup = mdatoms.cFREEZE[i];
-            for (int d = 0; d < numDimensions; d++)
+            /* TRANSFER: only do it for group number zero */
+            if (vcmGroup == 0)
             {
-                if (vcm.nFreeze[freezeGroup][d] == 0)
+                for (int d = 0; d < numDimensions; d++)
                 {
-                    v[i][d] -= vcm.group_v[vcmGroup][d];
+                    if (vcm.nFreeze[freezeGroup][d] == 0)
+                    {
+                        v[i][d] -= vcm.group_v[vcmGroup][d];
+                    }
                 }
             }
         }
@@ -296,9 +300,13 @@ static void doStopComMotionLinear(const t_mdatoms& mdatoms, gmx::ArrayRef<gmx::R
         for (int i = 0; i < homenr; i++)
         {
             const int g = group_id[i];
-            for (int d = 0; d < numDimensions; d++)
+            /* TRANSFER: only do it for group number zero */
+            if (g == 0)
             {
-                v[i][d] -= vcm.group_v[g][d];
+                for (int d = 0; d < numDimensions; d++)
+                {
+                    v[i][d] -= vcm.group_v[g][d];
+                }
             }
         }
     }
@@ -343,10 +351,14 @@ static void doStopComMotionAccelerationCorrection(int                      homen
         for (int i = 0; i < homenr; i++)
         {
             const int g = group_id[i];
-            for (int d = 0; d < numDimensions; d++)
+            /* TRANSFER: only do it for group number zero */
+            if (g == 0)
             {
-                x[i][d] -= vcm.group_v[g][d] * xCorrectionFactor;
-                v[i][d] -= vcm.group_v[g][d];
+                for (int d = 0; d < numDimensions; d++)
+                {
+                    x[i][d] -= vcm.group_v[g][d] * xCorrectionFactor;
+                    v[i][d] -= vcm.group_v[g][d];
+                }
             }
         }
     }
@@ -414,11 +426,15 @@ static void do_stopcm_grp(const t_mdatoms&         mdatoms,
                     {
                         g = group_id[i];
                     }
-                    /* Compute the correction to the velocity for each atom */
-                    rvec dv, dx;
-                    rvec_sub(x[i], vcm.group_x[g], dx);
-                    cprod(vcm.group_w[g], dx, dv);
-                    rvec_dec(v[i], dv);
+                    /* TRANSFER: only do it for group number zero */
+                    if (g == 0)
+                    {
+                        /* Compute the correction to the velocity for each atom */
+                        rvec dv, dx;
+                        rvec_sub(x[i], vcm.group_x[g], dx);
+                        cprod(vcm.group_w[g], dx, dv);
+                        rvec_dec(v[i], dv);
+                    }
                 }
             }
         }
