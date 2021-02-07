@@ -351,30 +351,30 @@ int do_wf_decomp_evec_fermi(charge_transfer_t *ct, dftb_broyden_t *broyd, double
 }
 
 
-void project_wf_on_new_basis_exact(int step, dftb_t *dftb, charge_transfer_t *ct, FILE *f_ct_project_wf, FILE *f_ct_project_wf_ref)
+void project_wf_on_new_basis_exact(int                step,
+                                   dftb_t*            dftb,
+                                   charge_transfer_t* ct,
+                                   FILE*              f_ct_project_wf,
+                                   FILE*              f_ct_project_wf_ref)
 //void project_wf_on_new_basis(int step, dftb_t *dftb, charge_transfer_t *ct, FILE *f_ct_project_wf, FILE *f_ct_project_wf_ref)
 {
-    int    i, ii, j, k, l, m; // jj, n;
-    int    iao, jao, ifo; // offset, jfo;
- // double sum;
-    double norm;
-// Transform orthogonal eigenvectors (basis of FO Hamiltonian) from non-orthogonal fragment basis to atomic basis //
-    for (l = 0; l < ct->dim; l++)
+    // Transform orthogonal eigenvectors (basis of FO Hamiltonian) from non-orthogonal fragment basis to atomic basis
+    for (int l = 0; l < ct->dim; l++)
     {
-        for (iao = 0; iao < dftb->phase2.norb; iao++)
+        for (int iao = 0; iao < dftb->phase2.norb; iao++)
         {
             dftb->orthogo.evec_ao[iao][l] = 0.0;
         }
     }
-    for (l = 0; l < ct->dim; l++)
+    for (int l = 0; l < ct->dim; l++)
     {
-        k = 0;
-        for (i = 0; i < ct->sites; i++)
+        int k = 0;
+        for (int i = 0; i < ct->sites; i++)
         {
-            for (ii = 0; ii < ct->site[i].homos; ii++)
+            for (int ii = 0; ii < ct->site[i].homos; ii++)
             {
-                ifo = ct->site[i].homo[ii] + dftb->phase2.inf[i] - 1;
-                for (iao = 0; iao < dftb->phase2.norb; iao++)
+                int ifo = ct->site[i].homo[ii] + dftb->phase2.inf[i] - 1;
+                for (int iao = 0; iao < dftb->phase2.norb; iao++)
                 {
                     dftb->orthogo.evec_ao[iao][l] += dftb->orthogo.sij[k + l * ct->dim] * dftb->phase2.Taf[iao][ifo];
                 }
@@ -385,144 +385,151 @@ void project_wf_on_new_basis_exact(int step, dftb_t *dftb, charge_transfer_t *ct
     if (ct->first_step)
     {
         printf("initialize state following \n");
-        for (l = 0; l < ct->dim; l++)
+        for (int l = 0; l < ct->dim; l++)
         {
-            for (iao = 0; iao < dftb->phase2.norb; iao++)
+            for (int iao = 0; iao < dftb->phase2.norb; iao++)
             {
                 dftb->orthogo.evec_ao_old[iao][l] = dftb->orthogo.evec_ao[iao][l];
                 dftb->orthogo.evec_ao_ref[iao][l] = dftb->orthogo.evec_ao[iao][l];
             }
         }
     }
-/*
+
    // calculate overlap for basis function i
    // using combined overlap matrix with different atomic overlaps for intra and inter-fragment calculations
-   //no longer needed. now dftb2.overl is already hybrid matrix
+   // no longer needed. now dftb2.overl is already hybrid matrix
    // <evec_ao|evec_ao_old> = evec_ao^T * S_ao * evec_ao_old
-   for (iao=0; iao<dftb->phase2.norb; iao++)
-   for (jao=0; jao<dftb->phase2.norb; jao++)
-   dftb->phase2.overl_hybrid[iao][jao]=dftb->phase2.overl[iao][jao]; // we just need here the inter fragment overlap. intra fragment overlap will be overwritten
-   offset=0;
-   for (i=0; i<ct->sites; i++){
-   for (j=0; j < dftb->phase1[i].norb; j++) {
-   for (k=0; k < dftb->phase1[i].norb; k++){
-   dftb->phase2.overl_hybrid[offset+j][offset+k] = dftb->phase1[i].overl[j][k];
-   dftb->phase2.overl_hybrid[offset+k][offset+j] = dftb->phase1[i].overl[k][j];
-   }
-   }
-   offset+=dftb->phase1[i].norb;
-   }
- */
-/*
-   offset=0;
-   for (i=0; i<ct->sites; i++){
-   m=0;
-   for (j=0; j < dftb->phase1[i].norb; j++) {
-   n=0;
-   for (k=0; k < dftb->phase1[i].norb; k++){
-   dftb->phase2.overl_hybrid[offset+m][offset+n] = dftb->phase1[i].overl[j][k];
-   dftb->phase2.overl_hybrid[offset+n][offset+m] = dftb->phase1[i].overl[k][j];
-   n++;
-   }
-   m++;
-   }
-   offset+=dftb->phase1[i].norb;
-   }
- */
-/*
-   printf("overlap ortho/ortho (hybrid matrix)\n");
-   printf( "%10d ", step);
-   for (i=0; i<ct->dim; i++) {
-   for (m=i; m<ct->dim; m++) printf(" %10.6f ", dftb->overl_test[i][m]);
-   }
-   printf( "\n");
- */
-// overlap with last step //
-// <evec_ao|evec_ao_old> = evec_ao^T * S_ao * evec_ao_old
-    for (i = 0; i < ct->dim; i++)
+ // for (iao=0; iao<dftb->phase2.norb; iao++)
+ //     for (jao=0; jao<dftb->phase2.norb; jao++)
+ //         // we just need here the inter fragment overlap. intra fragment overlap will be overwritten
+ //         dftb->phase2.overl_hybrid[iao][jao]=dftb->phase2.overl[iao][jao];
+ // int offset=0;
+ // for (int i=0; i<ct->sites; i++)
+ // {
+ //     for (int j=0; j < dftb->phase1[i].norb; j++)
+ //     {
+ //         for (int k=0; k < dftb->phase1[i].norb; k++)
+ //         {
+ //             dftb->phase2.overl_hybrid[offset+j][offset+k] = dftb->phase1[i].overl[j][k];
+ //             dftb->phase2.overl_hybrid[offset+k][offset+j] = dftb->phase1[i].overl[k][j];
+ //         }
+ //     }
+ //     offset+=dftb->phase1[i].norb;
+ // }
+
+ // int offset=0;
+ // for (int i=0; i<ct->sites; i++)
+ // {
+ //     int m=0;
+ //     for (int j=0; j < dftb->phase1[i].norb; j++)
+ //     {
+ //         int n=0;
+ //         for (int k=0; k < dftb->phase1[i].norb; k++)
+ //         {
+ //             dftb->phase2.overl_hybrid[offset+m][offset+n] = dftb->phase1[i].overl[j][k];
+ //             dftb->phase2.overl_hybrid[offset+n][offset+m] = dftb->phase1[i].overl[k][j];
+ //             n++;
+ //         }
+ //         m++;
+ //     }
+ //     offset+=dftb->phase1[i].norb;
+ // }
+
+ // printf("overlap ortho/ortho (hybrid matrix)\n");
+ // printf( "%10d ", step);
+ // for (int i=0; i<ct->dim; i++)
+ //     for (int m=i; m<ct->dim; m++)
+ //         printf(" %10.6f ", dftb->overl_test[i][m]);
+ // printf("\n");
+
+    // overlap with last step //
+    // <evec_ao|evec_ao_old> = evec_ao^T * S_ao * evec_ao_old
+    for (int i = 0; i < ct->dim; i++)
     {
-        for (j = 0; j < ct->dim; j++)
+        for (int j = 0; j < ct->dim; j++)
         {
             dftb->orthogo.overlap[i][j] = 0.0;
-            for (iao = 0; iao < dftb->phase2.norb; iao++)
+            for (int iao = 0; iao < dftb->phase2.norb; iao++)
             {
-                for (jao = 0; jao < dftb->phase2.norb; jao++)
+                for (int jao = 0; jao < dftb->phase2.norb; jao++)
                 {
                     dftb->orthogo.overlap[i][j] += dftb->orthogo.evec_ao[iao][i] * dftb->phase2.overl[iao][jao] * dftb->orthogo.evec_ao_old[jao][j];
                 }
             }
         }
     }
-// overlap with wf in t=0
-    for (i = 0; i < ct->dim; i++)
+    // overlap with wf in t=0
+    for (int i = 0; i < ct->dim; i++)
     {
-        for (j = 0; j < ct->dim; j++)
+        for (int j = 0; j < ct->dim; j++)
         {
             dftb->orthogo.overlap_ref[i][j] = 0.0;
-            for (iao = 0; iao < dftb->phase2.norb; iao++)
+            for (int iao = 0; iao < dftb->phase2.norb; iao++)
             {
-                for (jao = 0; jao < dftb->phase2.norb; jao++)
+                for (int jao = 0; jao < dftb->phase2.norb; jao++)
                 {
                     dftb->orthogo.overlap_ref[i][j] += dftb->orthogo.evec_ao[iao][i] * dftb->phase2.overl[iao][jao] * dftb->orthogo.evec_ao_ref[jao][j];
                 }
             }
         }
     }
-///*
+
     printf("Wave function before proj %d:\n", step);
-    for (i = 0; i < ct->dim; i++)
+    for (int i = 0; i < ct->dim; i++)
     {
         printf("%10.7f %10.7f\n", ct->wf[i], ct->wf[i + ct->dim]);
     }
-//*/
-// get new wf by projecting old wf onto new basis. element i is now:
-// wf_i(t2) = |fo_i(t2)><fo_i(t2)|wf(t1)>
-// wf_i(t2) = sum_j |fo_i(t2)><fo_i(t2)|fo_j(t1)>*c_j
-    for (i = 0; i < ct->dim; i++)
+
+    // get new wf by projecting old wf onto new basis. element i is now:
+    // wf_i(t2) = |fo_i(t2)><fo_i(t2)|wf(t1)>
+    // wf_i(t2) = sum_j |fo_i(t2)><fo_i(t2)|fo_j(t1)>*c_j
+    for (int i = 0; i < ct->dim; i++)
     {
         ct->wf_old[i]         = ct->wf[i];
         ct->wf_old[i+ct->dim] = ct->wf[i+ct->dim];
         ct->wf[i]             = 0.0;
         ct->wf[i+ct->dim]     = 0.0;
     }
-    for (i = 0; i < ct->dim; i++)
+    for (int i = 0; i < ct->dim; i++)
     {
-        for (j = 0; j < ct->dim; j++)
+        for (int j = 0; j < ct->dim; j++)
         {
-            ct->wf[i]         += ct->wf_old[j] * dftb->orthogo.overlap[i][j];         //real part
+            ct->wf[i]         += ct->wf_old[j]         * dftb->orthogo.overlap[i][j]; //real part
             ct->wf[i+ct->dim] += ct->wf_old[j+ct->dim] * dftb->orthogo.overlap[i][j]; //imaginary part
         }
     }
-// scale new wavefunction (reasons: projection is not complete) //
-    norm = 0;
-    for (i = 0; i < ct->dim; i++)
+
+    // scale new wavefunction (reasons: projection is not complete) //
+    double norm = 0;
+    for (int i = 0; i < ct->dim; i++)
     {
         norm += SQR(ct->wf[i]) + SQR(ct->wf[i+ct->dim]);
     }
-    for (i = 0; i < 2*ct->dim; i++)
+    for (int i = 0; i < 2*ct->dim; i++)
     {
         ct->wf[i] /= sqrt(norm);
     }
-///*
+
     printf("Wave function after proj %d:\n", step);
-    for (i = 0; i < ct->dim; i++)
+    for (int i = 0; i < ct->dim; i++)
     {
         printf("%10.7f %10.7f\n", ct->wf[i], ct->wf[i + ct->dim]);
     }
-//*/
-// save wave function for next step //
-    for (l = 0; l < ct->dim; l++)
+
+    // save wave function for next step
+    for (int l = 0; l < ct->dim; l++)
     {
-        for (iao = 0; iao < dftb->phase2.norb; iao++)
+        for (int iao = 0; iao < dftb->phase2.norb; iao++)
         {
             dftb->orthogo.evec_ao_old[iao][l] = dftb->orthogo.evec_ao[iao][l];
         }
     }
-// OUTPUT INTO FILES//
+
+    // OUTPUT INTO FILES
     fprintf(f_ct_project_wf, "%10d ", step);
-    for (i = 0; i < ct->dim; i++)
+    for (int i = 0; i < ct->dim; i++)
     {
-        for (m = i; m < ct->dim; m++)
+        for (int m = i; m < ct->dim; m++)
         {
             fprintf(f_ct_project_wf, " %10.6f ", dftb->orthogo.overlap[i][m]);
         }
@@ -530,44 +537,42 @@ void project_wf_on_new_basis_exact(int step, dftb_t *dftb, charge_transfer_t *ct
     fprintf(f_ct_project_wf, " %10.6f ", sqrt(norm));
     fprintf(f_ct_project_wf, "\n");
     fprintf(f_ct_project_wf_ref, "%10d ", step);
-    for (i = 0; i < ct->dim; i++)
+    for (int i = 0; i < ct->dim; i++)
     {
-        for (m = i; m < ct->dim; m++)
+        for (int m = i; m < ct->dim; m++)
         {
             fprintf(f_ct_project_wf_ref, " %10.6f ", dftb->orthogo.overlap_ref[i][m]);
         }
     }
     fprintf(f_ct_project_wf_ref, "\n");
-    return;
 }
 
 
 //void project_wf_on_new_basis_approx(int step, dftb_t *dftb, charge_transfer_t *ct, FILE *f_ct_project_wf, FILE *f_ct_project_wf_ref )
-void project_wf_on_new_basis(int step, dftb_t *dftb, charge_transfer_t *ct, FILE *f_ct_project_wf, FILE *f_ct_project_wf_ref )
+void project_wf_on_new_basis(int step,
+                             dftb_t *dftb,
+                             charge_transfer_t *ct,
+                             FILE *f_ct_project_wf,
+                             FILE *f_ct_project_wf_ref)
 {
-    int    i, j, k, l, m; // ii, jj, n;
-    int    iao, jao, ifo, jfo; // offset;
- // double sum;
-    double norm;
-
     // get new wf by projecting old wf onto new basis. element i will be:
     // wf_i(t2) =       |fo_i(t2)><fo_i(t2)|wf(t1)>
     // wf_i(t2) = sum_j |fo_i(t2)><fo_i(t2)|fo_j(t1)>*c_j
 
-    // exact way would be transformation of orthogonalized basis functions |fo_i> into AO basis. Then calculate overlap with last step as:  <fo_i_ao|fo_i_ao_old> = fo_i_ao^T * S_ao * fo_i_ao_old
-    // fast approximate version: use non-orthogonal FOs instead of orthogonalized ones to calculate <fo_i_ao|fo_i_ao_old>. -> is blockdiagonal matrix -> linear scaling
+    // exact way would be transformation of orthogonalized basis functions |fo_i> into AO basis.
+    // Then calculate overlap with last step as:  <fo_i_ao|fo_i_ao_old> = fo_i_ao^T * S_ao * fo_i_ao_old
+    // fast approximate version: use non-orthogonal FOs instead of orthogonalized ones to calculate <fo_i_ao|fo_i_ao_old>.
+    //    -> is blockdiagonal matrix -> linear scaling
     // furthermore <fo_i_ao|fo_i_ao_old> was already calculated by check_and_invert_orbital_phase().
-
-
 
     // save reference WF at t=0 to get the total change of the basis
     if (ct->first_step)
     {
-        for (i = 0; i < ct->sites; i++)
+        for (int i = 0; i < ct->sites; i++)
         {
-            for (iao = 0; iao < dftb->phase1[i].norb; iao++)
+            for (int iao = 0; iao < dftb->phase1[i].norb; iao++)
             {
-                for (jao = 0; jao < dftb->phase1[i].norb; jao++)
+                for (int jao = 0; jao < dftb->phase1[i].norb; jao++)
                 {
                     dftb->phase1[i].a_ref[iao][jao] = dftb->phase1[i].a[iao][jao];
                 }
@@ -576,100 +581,91 @@ void project_wf_on_new_basis(int step, dftb_t *dftb, charge_transfer_t *ct, FILE
     }
 
     // overlap with reference wf in t=0
-    for (k = 0; k < ct->sites; k++)
+    for (int k = 0; k < ct->sites; k++)
     {
-        for (l = 0; l < ct->site[k].homos; l++)
+        for (int l = 0; l < ct->site[k].homos; l++)
         {
-            for (m = 0; m < ct->site[k].homos; m++)
+            for (int m = 0; m < ct->site[k].homos; m++)
             {
-                i = dftb->phase2.ihomo[k]+l;
-                j = dftb->phase2.ihomo[k]+m;
+                int i = dftb->phase2.ihomo[k]+l;
+                int j = dftb->phase2.ihomo[k]+m;
                 dftb->orthogo.overlap_ref[i][j] = 0.0;
-                for (iao = 0; iao < dftb->phase1[k].norb; iao++)
+                for (int iao = 0; iao < dftb->phase1[k].norb; iao++)
                 {
-                    for (jao = 0; jao < dftb->phase1[k].norb; jao++)
+                    for (int jao = 0; jao < dftb->phase1[k].norb; jao++)
                     {
-                        ifo = ct->site[k].homo[l]-1;
-                        jfo = ct->site[k].homo[m]-1;
-                        dftb->orthogo.overlap_ref[i][j] += dftb->phase1[k].a[iao][ifo] * dftb->phase1[k].overl[iao][jao] * dftb->phase1[k].a_ref[jao][jfo];
+                        int ifo = ct->site[k].homo[l]-1;
+                        int jfo = ct->site[k].homo[m]-1;
+                        dftb->orthogo.overlap_ref[i][j] += dftb->phase1[k].a[iao][ifo]
+                            * dftb->phase1[k].overl[iao][jao] * dftb->phase1[k].a_ref[jao][jfo];
                     }
                 }
             }
         }
     }
 
-
     // calculate overlap with last step //
-    for (i = 0; i < ct->dim; i++)
+    for (int i = 0; i < ct->dim; i++)
     {
-        for (j = 0; j < ct->dim; j++)
+        for (int j = 0; j < ct->dim; j++)
         {
             dftb->orthogo.overlap[i][j] = 0.0;
         }
     }
-    for (k = 0; k < ct->sites; k++)
+    for (int k = 0; k < ct->sites; k++)
     {
-        for (l = 0; l < ct->site[k].homos; l++)
+        for (int l = 0; l < ct->site[k].homos; l++)
         {
-            for (m = 0; m < ct->site[k].homos; m++)
+            for (int m = 0; m < ct->site[k].homos; m++)
             {
-                i = dftb->phase2.ihomo[k]+l;
-                j = dftb->phase2.ihomo[k]+m;
+                int i = dftb->phase2.ihomo[k]+l;
+                int j = dftb->phase2.ihomo[k]+m;
                 dftb->orthogo.overlap[i][j] = ct->site[k].overlap[l][m];
             }
         }
     }
 
-/*
-         printf("Wave function before proj %d:\n", step);
-         for (i=0; i<ct->dim; i++)
-           printf("%10.7f %10.7f\n", ct->wf[i], ct->wf[i + ct->dim]);
- */
+ // printf("Wave function before proj %d:\n", step);
+ // for (int i=0; i<ct->dim; i++)
+ //      printf("%10.7f %10.7f\n", ct->wf[i], ct->wf[i + ct->dim]);
 
-
-    for (i = 0; i < ct->dim; i++)
+    for (int i = 0; i < ct->dim; i++)
     {
         ct->wf_old[i]         = ct->wf[i];
         ct->wf_old[i+ct->dim] = ct->wf[i+ct->dim];
         ct->wf[i]             = 0.0;
         ct->wf[i+ct->dim]     = 0.0;
     }
-    for (i = 0; i < ct->dim; i++)
+    for (int i = 0; i < ct->dim; i++)
     {
-        for (j = 0; j < ct->dim; j++)
+        for (int j = 0; j < ct->dim; j++)
         {
-            ct->wf[i]         += ct->wf_old[j] * dftb->orthogo.overlap[i][j];         //real part
+            ct->wf[i]         += ct->wf_old[j]         * dftb->orthogo.overlap[i][j]; //real part
             ct->wf[i+ct->dim] += ct->wf_old[j+ct->dim] * dftb->orthogo.overlap[i][j]; //imaginary part
         }
     }
 
-
-    // scale new wavefunction (reasons: projection is not complete) //
-    norm = 0;
-    for (i = 0; i < ct->dim; i++)
+    // scale new wavefunction (reasons: projection is not complete)
+    double norm = 0.;
+    for (int i = 0; i < ct->dim; i++)
     {
         norm += SQR(ct->wf[i]) + SQR(ct->wf[i+ct->dim]);
     }
     printf("norm changed to %f due to projection. Rescaling wavefunction\n", norm);
-    for (i = 0; i < 2*ct->dim; i++)
+    for (int i = 0; i < 2*ct->dim; i++)
     {
         ct->wf[i] /= sqrt(norm);
     }
 
-
-/*
-         printf("Wave function  after proj %d:\n", step);
-         for (i=0; i<ct->dim; i++)
-           printf("%10.7f %10.7f\n", ct->wf[i], ct->wf[i + ct->dim]);
- */
-
-
+ // printf("Wave function  after proj %d:\n", step);
+ // for (int i=0; i<ct->dim; i++)
+ //     printf("%10.7f %10.7f\n", ct->wf[i], ct->wf[i + ct->dim]);
 
     // OUTPUT INTO FILES//
     fprintf(f_ct_project_wf, "%10d ", step);
-    for (i = 0; i < ct->dim; i++)
+    for (int i = 0; i < ct->dim; i++)
     {
-        for (m = i; m < ct->dim; m++)
+        for (int m = i; m < ct->dim; m++)
         {
             fprintf(f_ct_project_wf, " %10.6f ", dftb->orthogo.overlap[i][m]);
         }
@@ -678,16 +674,13 @@ void project_wf_on_new_basis(int step, dftb_t *dftb, charge_transfer_t *ct, FILE
     fprintf(f_ct_project_wf, "\n");
 
     fprintf(f_ct_project_wf_ref, "%10d ", step);
-    for (i = 0; i < ct->dim; i++)
+    for (int i = 0; i < ct->dim; i++)
     {
-        for (m = i; m < ct->dim; m++)
+        for (int m = i; m < ct->dim; m++)
         {
             fprintf(f_ct_project_wf_ref, " %10.6f ", dftb->orthogo.overlap_ref[i][m]);
         }
     }
     fprintf(f_ct_project_wf_ref, "\n");
-
-
-    return;
 }
 

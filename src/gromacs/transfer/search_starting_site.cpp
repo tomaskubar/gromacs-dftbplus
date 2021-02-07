@@ -1,14 +1,23 @@
 #include "gromacs/transfer/transfer.h"
 
 
-void search_starting_site(matrix state_box, t_mdatoms *mdatoms, dftb_t *dftb, charge_transfer_t *ct, rvec *x_ct, char *slko_path, const gmx_mtop_t *top_global, rvec *gromacs_x)
+void search_starting_site(matrix                              state_box,
+                          t_mdatoms*                          mdatoms,
+                          const nonbonded_verlet_t*           nbv,
+                          const rvec*                         shift_vec,
+                          const t_commrec*                    cr,
+                          charge_transfer_t*                  ct,
+                          std::unique_ptr<QMMM_rec_transfer>* dftbplus_phase1,
+                          std::unique_ptr<QMMM_rec_transfer>& dftbplus_phase2,
+                          rvec*                               x_ct,
+                          const gmx_mtop_t*                   top_global,
+                          rvec*                               gromacs_x)
 {
     int    original_nsites, i, j, lowest_site, counter;
     double Elowest, Esite;
  // rvec  *dummy_x;
  // matrix dummy_matrix;
 
-    (void) slko_path;
     Elowest = 1000.0;
     lowest_site = -1;
 
@@ -22,19 +31,19 @@ void search_starting_site(matrix state_box, t_mdatoms *mdatoms, dftb_t *dftb, ch
         ct->site[0] = ct->pool_site[i];
         //printf("%d resnr %d addr %p\n",i, ct->pool_site[i].resnr, &(ct->pool_site[i].resnr) );
         //printf("%d resnr %d addr %p\n",i, ct->site[0].resnr, &(ct->site[0].resnr));
-        prepare_charge_transfer(state_box, mdatoms, dftb, ct, x_ct);
+        prepare_charge_transfer(state_box, mdatoms, true, nbv, shift_vec, cr, ct, dftbplus_phase1, dftbplus_phase2, x_ct);
      // run_dftb1(ct, dftb, 0); TODO DFTB+
         printf("in search_starting_site(): missing DFTB routine!\n");
         exit(-1);
         for (j = 0; j < ct->site[0].homos; j++)
         {
-            Esite  = dftb->phase1[0].ev[ct->site[0].homo[j]-1];
+     //     Esite  = dftb->phase1[0].ev[ct->site[0].homo[j]-1]; TODO DFTB+
             Esite *= ct->is_hole_transfer ? -1.0 : 1.0;
             if (Esite < Elowest)
             {
                 Elowest     = Esite;
                 lowest_site = i;
-                copy_dvec(dftb->phase1[0].com, ct->coc);
+                copy_dvec(ct->site[0].centerOfMass, ct->coc);
                 printf("found residue %d  MO %d  E = %f ha  COM[Angstrom] = %f %f %f\n", ct->pool_site[i].resnr, ct->pool_site[i].homo[j], Esite,  ct->coc[XX] * 0.52, ct->coc[YY] * 0.52, ct->coc[ZZ] * 0.52);
             }
         }

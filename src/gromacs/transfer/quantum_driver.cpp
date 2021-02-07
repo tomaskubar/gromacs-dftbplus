@@ -2240,14 +2240,14 @@ int do_fssh_johen(int step, charge_transfer_t *ct, dftb_t *dftb, t_state *state_
 // 0: isotropic rescaling; 1: along NAC; 2: Boltzmann corrections.
     if (ct->jobtype == cteBCJFSSH)
     {
-       dftb->do_ncv = 2;
+       ct->do_ncv = 2;
 // Boltzmann factor corrected hopping probability
        for (i = ct->surface+1; i < ct->dim; i++)
            probtmp1[i] *= exp(-(ct->ev_adiab[i] - ct->ev_adiab[ct->surface])/ct->fermi_kt);
     }
     else
     {
-       dftb->do_ncv = 1;
+       ct->do_ncv = 1;
     }
 
 // print out the surface probabilities
@@ -2270,7 +2270,7 @@ int do_fssh_johen(int step, charge_transfer_t *ct, dftb_t *dftb, t_state *state_
               hopsurf = i;
 
 // calculate the nonadibatic coupling vector for velocity adjustment
-              if (dftb->do_ncv == 1)
+              if (ct->do_ncv == 1)
               {
 
                  ct->ncv_isurf = ct->surface; ct->ncv_jsurf = hopsurf;
@@ -2384,7 +2384,7 @@ int do_fssh_johen(int step, charge_transfer_t *ct, dftb_t *dftb, t_state *state_
                      }
                  }
               }
-              else if (dftb->do_ncv == 0)
+              else if (ct->do_ncv == 0)
               {
 // compute kinetic energy
                  ekintot = 0.0;
@@ -2447,7 +2447,7 @@ int do_fssh_johen(int step, charge_transfer_t *ct, dftb_t *dftb, t_state *state_
         }
     }
 
-    dftb->do_ncv = 0;
+    ct->do_ncv = 0;
 
     printf("Current Surface: %d\n", ct->surface);
 
@@ -2855,9 +2855,9 @@ int do_self_consistent_restricted_decoherence_fssh(int step, charge_transfer_t *
            {
               hopsurf = i;
 // calculate the nonadibatic coupling vector for velocity adjustment
-              dftb->do_ncv = 1;
+              ct->do_ncv = 1;
 
-              if (dftb->do_ncv && hopsurf != new_surf)
+              if (ct->do_ncv && hopsurf != new_surf)
               {
                  ct->ncv_isurf = ct->surface; ct->ncv_jsurf = hopsurf;
 
@@ -2928,7 +2928,7 @@ int do_self_consistent_restricted_decoherence_fssh(int step, charge_transfer_t *
                      }
                  }
 
-                 dftb->do_ncv = 0;
+                 ct->do_ncv = 0;
               }
 
               if (hopsurf != ct->surface)
@@ -3292,9 +3292,9 @@ int do_crossing_corrected_fssh(int step, charge_transfer_t *ct, dftb_t *dftb, t_
            {
               hopsurf = i;
 // calculate the nonadibatic coupling vector for velocity adjustment
-              dftb->do_ncv = 1;
+              ct->do_ncv = 1;
 
-              if (dftb->do_ncv)
+              if (ct->do_ncv)
               {
                  ct->ncv_isurf = ct->surface; ct->ncv_jsurf = hopsurf;
 
@@ -3397,7 +3397,7 @@ int do_crossing_corrected_fssh(int step, charge_transfer_t *ct, dftb_t *dftb, t_
               ct->surface = hopsurf;
 
 // velocity adjustment
-              if (dftb->do_ncv)
+              if (ct->do_ncv)
               {
                  if (kai != 0.0)
                  {
@@ -3416,7 +3416,7 @@ int do_crossing_corrected_fssh(int step, charge_transfer_t *ct, dftb_t *dftb, t_
                         }
                     }
                  }
-                 dftb->do_ncv = 0;
+                 ct->do_ncv = 0;
               }
               break;
            }
@@ -3783,9 +3783,9 @@ int do_global_flux_fssh(int step, charge_transfer_t *ct, dftb_t *dftb, t_state *
            {
               hopsurf = i;
 
-              dftb->do_ncv = 1;
+              ct->do_ncv = 1;
 
-              if (dftb->do_ncv == 1)
+              if (ct->do_ncv == 1)
               {
                  ct->ncv_isurf = ct->surface; ct->ncv_jsurf = hopsurf;
 
@@ -3855,9 +3855,9 @@ int do_global_flux_fssh(int step, charge_transfer_t *ct, dftb_t *dftb, t_state *
                          }
                      }
                  }
-                 dftb->do_ncv = 0;
+                 ct->do_ncv = 0;
               }
-              else if (dftb->do_ncv == 2)
+              else if (ct->do_ncv == 2)
               {
                  random_number1 = drand48();
 
@@ -3870,7 +3870,7 @@ int do_global_flux_fssh(int step, charge_transfer_t *ct, dftb_t *dftb, t_state *
                  {
                     fprintf(f,"Hop from %d to %d succeeds! \n", ct->surface, hopsurf);
                  }
-                 dftb->do_ncv = 0;
+                 ct->do_ncv = 0;
               }
 
               if (hopsurf != ct->surface)
@@ -4188,16 +4188,16 @@ int do_global_flux_fssh(int step, charge_transfer_t *ct, dftb_t *dftb, t_state *
            {
               hopsurf = i;
 
-              dftb->do_ncv = 2;
+              ct->do_ncv = 2;
 
-              if (dftb->do_ncv == 2)
+              if (ct->do_ncv == 2)
               {
                  random_number1 = drand48();
 
                  if (random_number1 > exp(-(ct->ev_adiab[hopsurf] - ct->ev_adiab[ct->surface])/ct->fermi_kt))
                     hopsurf = ct->surface;
 
-                 dftb->do_ncv = 0;
+                 ct->do_ncv = 0;
               }
 
               if (hopsurf != ct->surface)
@@ -4519,9 +4519,9 @@ int do_decoherence_induced_fssh(int step, charge_transfer_t *ct, dftb_t *dftb, t
            {
               hopsurf = i;
 // calculate the nonadibatic coupling vector for velocity adjustment
-              dftb->do_ncv = 1;
+              ct->do_ncv = 1;
 
-              if (dftb->do_ncv)
+              if (ct->do_ncv)
               {
                  ct->ncv_isurf = ct->surface; ct->ncv_jsurf = hopsurf;
 
@@ -4583,7 +4583,7 @@ int do_decoherence_induced_fssh(int step, charge_transfer_t *ct, dftb_t *dftb, t
               ct->surface = hopsurf;
 
 // velocity adjustment
-              if (dftb->do_ncv)
+              if (ct->do_ncv)
               {
                  if (kai != 0.0)
                  {
@@ -4602,7 +4602,7 @@ int do_decoherence_induced_fssh(int step, charge_transfer_t *ct, dftb_t *dftb, t
                         }
                     }
                  }
-                 dftb->do_ncv = 0;
+                 ct->do_ncv = 0;
               }
               break;
            }

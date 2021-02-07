@@ -454,7 +454,7 @@ void get_nn_hamiltonian(charge_transfer_t *ct, t_state *state_global, t_mdatoms 
           //MK tag forces: set wf_factor = 1 for pure gradients w/o wf
           if (ct->pure_forces){
             wf_factor = 1.0;
-          }else if(dftb->do_ncv){
+          }else if(ct->do_ncv){
             wf_factor = ct->tfs_vector[ct->ncv_isurf][isite]*ct->tfs_vector[ct->ncv_jsurf][jsite];
           }else{
             wf_factor = ct->wf[isite]*ct->wf[jsite] + ct->wf[isite+ct->dim]*ct->wf[jsite+ct->dim];
@@ -525,7 +525,7 @@ void get_nn_hamiltonian(charge_transfer_t *ct, t_state *state_global, t_mdatoms 
           //MK tag forces: set wf_factor = 1 for pure gradients w/o wf
           if (ct->pure_forces){
             wf_factor = 1.0;
-          }else if (dftb->do_ncv){
+          }else if (ct->do_ncv){
             wf_factor = ct->tfs_vector[ct->ncv_isurf][ct->indFO[isite]]*ct->tfs_vector[ct->ncv_jsurf][ct->indFO[isite]];
           }else{
             wf_factor = (ct->wf[ct->indFO[isite]]*ct->wf[ct->indFO[isite]] + ct->wf[ct->indFO[isite]+ct->dim]*ct->wf[ct->indFO[isite]+ct->dim]);

@@ -53,7 +53,7 @@ void get_MM_params(charge_transfer_t *ct, dftb_t *dftb)
     {
        if (((ct->step % JFSSH_OFFDIAG_FORCE == 0 && ct->jobtype == cteJFSSH) || ct->jobtype == cteBCJFSSH) ||
            (ct->step % (JFSSH_OFFDIAG_FORCE/10) == 0 && ct->jobtype == cteSCCDYNAMIC) ||
-           (dftb->do_ncv == 1))
+           (ct->do_ncv == 1))
        {
            offdiag_gradient_homo(dftb, dftb->phase2.x, dftb->phase2.grad, ct);
            //for (i=0; i<dftb->phase2.nn; i++)

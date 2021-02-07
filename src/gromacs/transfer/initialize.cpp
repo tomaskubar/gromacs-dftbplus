@@ -3,36 +3,32 @@
 
 void ct_init_diis(charge_transfer_t *ct, ct_diis_t *diis)
 {
-    int i;
-
     diis->n_elem = ct->dim;
-    //diis->prev_q_input = (double**) malloc(DIIS_MAX_PREV_VECTORS * sizeof(double *));
-    //  diis->prev_q_input[0] = (double*) malloc(diis->n_elem * DIIS_MAX_PREV_VECTORS);
+ // diis->prev_q_input = (double**) malloc(DIIS_MAX_PREV_VECTORS * sizeof(double *));
+ // diis->prev_q_input[0] = (double*) malloc(diis->n_elem * DIIS_MAX_PREV_VECTORS);
     snew(diis->prev_q_input, DIIS_MAX_PREV_VECTORS);
     snew(diis->prev_q_input[0], diis->n_elem * DIIS_MAX_PREV_VECTORS);
-    for (i = 1; i < DIIS_MAX_PREV_VECTORS; i++)
+    for (int i = 1; i < DIIS_MAX_PREV_VECTORS; i++)
     {
         diis->prev_q_input[i] = diis->prev_q_input[0] + i * diis->n_elem;
     }
-    //diis->prev_q_diff = (double**) malloc(DIIS_MAX_PREV_VECTORS * sizeof(double *));
-    //  diis->prev_q_diff[0] = (double*) malloc(diis->n_elem * DIIS_MAX_PREV_VECTORS);
+ // diis->prev_q_diff = (double**) malloc(DIIS_MAX_PREV_VECTORS * sizeof(double *));
+ // diis->prev_q_diff[0] = (double*) malloc(diis->n_elem * DIIS_MAX_PREV_VECTORS);
     snew(diis->prev_q_diff, DIIS_MAX_PREV_VECTORS);
     snew(diis->prev_q_diff[0], diis->n_elem * DIIS_MAX_PREV_VECTORS);
-    for (i = 1; i < DIIS_MAX_PREV_VECTORS; i++)
+    for (int i = 1; i < DIIS_MAX_PREV_VECTORS; i++)
     {
         diis->prev_q_diff[i] = diis->prev_q_diff[0] + i * diis->n_elem;
     }
-    //diis->aa = (double *) malloc(SQR(DIIS_MAX_PREV_VECTORS + 1));
-    //diis->bb = (double *) malloc(DIIS_MAX_PREV_VECTORS + 1);
-    //diis->q_inp_result = (double *) malloc(ct->sites * sizeof(double));
-    //diis->q_diff = (double *) malloc(ct->sites * sizeof(double));
+ // diis->aa = (double *) malloc(SQR(DIIS_MAX_PREV_VECTORS + 1));
+ // diis->bb = (double *) malloc(DIIS_MAX_PREV_VECTORS + 1);
+ // diis->q_inp_result = (double *) malloc(ct->sites * sizeof(double));
+ // diis->q_diff = (double *) malloc(ct->sites * sizeof(double));
     snew(diis->aa, SQR(DIIS_MAX_PREV_VECTORS + 1));
     snew(diis->bb, DIIS_MAX_PREV_VECTORS + 1);
-    //snew(diis->q_inp_result, ct->sites);
-    //snew(diis->q_diff, ct->sites);
+ // snew(diis->q_inp_result, ct->sites);
+ // snew(diis->q_diff, ct->sites);
     snew(diis->fermi_coef, ct->dim);
-
-    return;
 }
 
 
@@ -47,8 +43,6 @@ void ct_init_broyden(charge_transfer_t *ct, dftb_broyden_t *broyd)
     snew(broyd->vector, ct->dim);
     snew(broyd->unit31, ct->dim);
     snew(broyd->unit32, ct->dim);
-
-    return;
 }
 
 
@@ -83,15 +77,11 @@ void ct_get_index(int isize[], int *index[])
     {
         index[0][j] = grps->a[grps->index[0]+j];
     }
-
-    return;
 }
 
 int ct_atom_in_group(int atom, int *list, int list_size)
 {
-    int i;
-
-    for (i = 0; i < list_size; i++)
+    for (int i = 0; i < list_size; i++)
     {
         if (atom == list[i])
         {
@@ -112,8 +102,7 @@ int searchkey(int lines, char input[MAXLINES][2][MAXWIDTH], char *key, char valu
 // value = (out) the corresponding value to key
 // required = (in) is the keyword required or optional for this type of calculation
 ////////////////////////////////////////////////////////////////////////
-    int line;
-    for (line = 0; line < lines; line++)
+    for (int line = 0; line < lines; line++)
     {
         if (strcmp(input[line][0], key) == 0)
         {
@@ -143,29 +132,25 @@ int read_file(char* file_name, char input[MAXLINES][2][MAXWIDTH], char possiblek
 // possiblekeys = (in) collection of every allowed key
 // nkeys     = (in) number of possible keys
 ///////////////////////////////////////////////////////
-    int   i, j;
-    int   lines, ch, line, len;
-    FILE *f;
-    char *s;
     //char input[MAXLINES][2][MAXWIDTH];
 
-    f = fopen(file_name, "r");
+    FILE *f = fopen(file_name, "r");
     if (f == NULL)
     {
         printf("%s not accessible, exiting!\n", file_name);
         exit(-1);
     }
     printf("Searching in file %s for:\n", file_name);
-    for (i = 0; i < nkeys; i++)
+    for (int i = 0; i < nkeys; i++)
     {
         printf("%20s:  %s\n", possiblekeys[i][0], possiblekeys[i][1]);
     }
 
     /* get length of input file */
-    lines = 0;
+    int lines = 0;
     while (!feof(f))
     {
-        ch = fgetc(f);
+        int ch = fgetc(f);
         if (ch == '\n')
         {
             lines++;
@@ -175,19 +160,18 @@ int read_file(char* file_name, char input[MAXLINES][2][MAXWIDTH], char possiblek
     fclose(f);
     f = fopen(file_name, "r");
 
-
     /* read input file */
-    for (line = 0; line < lines; line++)
+    for (int line = 0; line < lines; line++)
     {
-        //ch=fscanf(f, "%[;a-zA-Z0-9/] = %[-a-zA-Z0-9/{}. ]\n", input[line][0],  input[line][1]);
-        ch = fscanf(f, " %[^= \t\r] = %[^=\n\t\r] \n", input[line][0],  input[line][1]);
+        //ch=fscanf(f, "%[;a-zA-Z0-9/] = %[-a-zA-Z0-9/{}. ]\n", input[line][0], input[line][1]);
+        int ch = fscanf(f, " %[^= \t\r] = %[^=\n\t\r] \n", input[line][0], input[line][1]);
         if (ch != 2)
         {
             printf("READING ERROR in line %d.\n Use format 'keyword = value'.\n ", line+1); exit(0);
         }
 
         //remove trailing whitespace
-        s = input[line][1] + strlen(input[line][1]);
+        char *s = input[line][1] + strlen(input[line][1]);
         while (--s >= input[line][1])
         {
             if (!isspace(*s))
@@ -198,22 +182,22 @@ int read_file(char* file_name, char input[MAXLINES][2][MAXWIDTH], char possiblek
         }
 
         //convert all to lowercase for better handling (besides file and atom names)
-        len = strlen(input[line][0]);
-        for (i = 0; i < len; i++)
+        int len = strlen(input[line][0]);
+        for (int i = 0; i < len; i++)
         {
             input[line][0][i] = tolower((unsigned char)input[line][0][i]);
         }
         if ( (strcmp(input[line][0], "slkopath") && strcmp(input[line][0], "specfiles") && strncmp(input[line][0], "name", 4) ) )
         {
             len = strlen(input[line][1]);
-            for (i = 0; i < len; i++)
+            for (int i = 0; i < len; i++)
             {
                 input[line][1][i] = tolower((unsigned char)input[line][1][i]);
             }
         }
         // check input file
-        j = 1;
-        for (i = 0; i < nkeys; i++)
+        int j = 1;
+        for (int i = 0; i < nkeys; i++)
         {
             if (strcmp(input[line][0], possiblekeys[i][0]) == 0)
             {
@@ -232,7 +216,7 @@ int read_file(char* file_name, char input[MAXLINES][2][MAXWIDTH], char possiblek
     /* print copy of the input file */
     printf("---------------------\n");
     printf("INPUT:\n");
-    for (line = 0; line < lines; line++)
+    for (int line = 0; line < lines; line++)
     {
         printf("%s = %s\n", input[line][0], input[line][1]);
     }
@@ -251,11 +235,9 @@ int split_string_into_double(char value[MAXWIDTH], int n, double* target, char* 
 // target = (out) vector containing the individual doubles
 // name   = (in) name of the keyword whose corresponding value gets splitted
 //////////////////////////////////////////////////////////////////////////////////////////
-    int   i;
-    char *ptr;
 
-    i   = 0;
-    ptr = strtok(value, " ");
+    int i = 0;
+    char *ptr = strtok(value, " ");
     while (ptr != NULL)
     {
         target[i] = atof(ptr);
@@ -287,24 +269,24 @@ int split_string_into_int(char value[MAXWIDTH], int n, int* target, char* name)
 // target = (out) vector containing the individual inegers
 // name   = (in) name of the keyword whose corresponding value gets splitted
 //////////////////////////////////////////////////////////////////////////////////////////
-    int   i;
-    char *ptr;
 
-    i   = 0;
-    ptr = strtok(value, " ");
+    int i = 0;
+    char *ptr = strtok(value, " ");
     while (ptr != NULL)
     {
         target[i] = atoi(ptr);
-        ptr       = strtok (NULL, " ");
+        ptr       = strtok(NULL, " ");
         i++;
     }
     if (i > n)
     {
-        printf("TOO MANY ARGUMENTS FOR %s\n", name); exit(-1);
+        printf("TOO MANY ARGUMENTS FOR %s\n", name);
+        exit(-1);
     }
     else if (i < n)
     {
-        printf("TOO FEW ARGUMENTS FOR %s\n", name); exit(-1);
+        printf("TOO FEW ARGUMENTS FOR %s\n", name);
+        exit(-1);
     }
     else
     {
@@ -323,24 +305,24 @@ int split_string_into_string(char value[MAXWIDTH], int n, char target[][ELEMENTW
 // target = (out) vector containing the individual substrings
 // name   = (in) name of the keyword whose corresponding value gets splitted
 //////////////////////////////////////////////////////////////////////////////////////////
-    int   i;
-    char *ptr;
 
-    i   = 0;
-    ptr = strtok(value, " ");
+    int i = 0;
+    char *ptr = strtok(value, " ");
     while (ptr != NULL)
     {
         strcpy(target[i], ptr);
-        ptr = strtok (NULL, " ");
+        ptr = strtok(NULL, " ");
         i++;
     }
     if (i > n)
     {
-        printf("TOO MANY ARGUMENTS FOR %s\n", name); exit(-1);
+        printf("TOO MANY ARGUMENTS FOR %s\n", name);
+        exit(-1);
     }
     else if (i < n)
     {
-        printf("TOO FEW ARGUMENTS FOR %s\n", name); exit(-1);
+        printf("TOO FEW ARGUMENTS FOR %s\n", name);
+        exit(-1);
     }
     else
     {
@@ -379,12 +361,20 @@ int find_intersection(int size, int array1[], int array2[], int intersection_arr
  ***************************************/
 
 #if GMX_MPI
-void init_charge_transfer(t_atoms *atoms, const gmx_mtop_t *top_global, t_mdatoms *mdatoms, charge_transfer_t *ct, char *slko_path, t_state *state, int ct_mpi_rank)
-{
+void init_charge_transfer(t_atoms           *atoms,
+                          const gmx_mtop_t  *top_global,
+                          t_mdatoms         *mdatoms,
+                          charge_transfer_t *ct,
+                          t_state           *state,
+                          int                ct_mpi_rank)
 #else
-void init_charge_transfer(t_atoms *atoms, const gmx_mtop_t *top_global, t_mdatoms *mdatoms, charge_transfer_t *ct, char *slko_path, t_state *state)
-{
+void init_charge_transfer(t_atoms           *atoms,
+                          const gmx_mtop_t  *top_global,
+                          t_mdatoms         *mdatoms,
+                          charge_transfer_t *ct,
+                          t_state           *state)
 #endif
+{
 /* Initializes the charge transfer code. Reads in CT files, sets up the stuff that is fixed variables, allocates memory */
 
 // PARAMETERS:
@@ -392,7 +382,6 @@ void init_charge_transfer(t_atoms *atoms, const gmx_mtop_t *top_global, t_mdatom
 // top_global  = (in) GROMACS data structure, from which we only need total number of MM atoms
 // mdatoms     = (in) variable of GROMACS data-structure-type (we need atomic masses)
 // ct          = (out) main data structure with information about the charge transfer calculation
-// slko_path   = (out) path to the Slater-Koster files
 // state       = (in) GROMACS data structure that holds (among others) the coordinates of the MD system
 // ct_mpi_rank = (in) the rank of the process in MPI calculations (each process in MPI calculations can be destinguished by its value of ct_mpi_rank)
 //////////////////////////////////////////////////////////////////////////////////////////
@@ -410,10 +399,10 @@ void init_charge_transfer(t_atoms *atoms, const gmx_mtop_t *top_global, t_mdatom
         {"forcedoutput", "Output CT data to file independently of jobtype"},
         // {"sitetrainpath",  "{Path} to the training data for site energy"},
         // {"couplingtrainpath",  "{Path} to the training data for coupling"},
-    	// {"sigmacouplings",  "value of sigma for couplings-ml-model"},
-	    // {"sigmasites",  "value of sigma for sites-ml-model"},
-    	// {"ntraincouplings",  "number of training data for couplings-ml-model"},
-    	// {"ntrainsites",  "number of training data for sites-ml-model"},
+        // {"sigmacouplings",  "value of sigma for couplings-ml-model"},
+        // {"sigmasites",  "value of sigma for sites-ml-model"},
+        // {"ntraincouplings",  "number of training data for couplings-ml-model"},
+        // {"ntrainsites",  "number of training data for sites-ml-model"},
         {"frcoupling",  "freeze the electronic coupling to be average coupling"},
         {"slkopath",  "{Path} to directory of the DFTB Slater-Koster files"},
         {"chargecarrier",   "The charge carrier (electron/hole). Will effect sign of the Hamilton matrix and of the charges that are added to the force-field."},
@@ -466,21 +455,22 @@ void init_charge_transfer(t_atoms *atoms, const gmx_mtop_t *top_global, t_mdatom
         {"customocc", "list with nallorbitals elements defining a fixed occupation (e.g. 2 2 2 1 1 0 0 0)"}
     };
 
-
-    int        i, j, k, l, m, n, counter, *counter_array, counter_cplx, QMLAcounter, MMLAcounter, QMCAcounter, QMCApool[QMCASIZE], QMCApoolcounter, environment, environment_cplx, modif_cplx, counter_modif_cplx = 0,
-               mm_list_size, *mm_list;
+    int        i, j, k, l, m, n, counter, *counter_array, counter_cplx, QMLAcounter, MMLAcounter, QMCAcounter, QMCApool[QMCASIZE], QMCApoolcounter,
+               environment, environment_cplx, modif_cplx, counter_modif_cplx = 0, mm_list_size, *mm_list;
     double     sum, bond_length, bond_length_best, X[3], Y[3], magnitude, mass;
     dvec       bond;
     ct_site_t *site, s;
 
-    char       input1[MAXLINES][2][MAXWIDTH], input2[MAXLINES][2][MAXWIDTH]; // variables to store input files(charge-transfer.dat, and *.spec): several lines, 2 collumns (before and after '='), and string of several chars
+    // variables to store input files(charge-transfer.dat, and *.spec):
+    //   several lines, 2 columns (before and after '='), and string of several chars
+    char       input1[MAXLINES][2][MAXWIDTH], input2[MAXLINES][2][MAXWIDTH];
     char       dummy[MAXELEMENTS][ELEMENTWIDTH];
     int        lines1, lines2;
-//  names of files for machinelearning, W. X + M. K
+    // names of files for machine learning, W. X + M. K
     char       ml_coupling_model_path[MAX_PATH_LENGTH], ml_site_energy_model_path[MAX_PATH_LENGTH];
     char       ml_site_energy_para_path[MAX_PATH_LENGTH], ml_coupling_para_path[MAX_PATH_LENGTH];
-    // char       ml_coupling_train_path[MAX_PATH_LENGTH], ml_site_energy_train_path[MAX_PATH_LENGTH];
-    // char       ml_site_energy_para_path[MAX_PATH_LENGTH], ml_coupling_para_path[MAX_PATH_LENGTH];
+ // char       ml_coupling_train_path[MAX_PATH_LENGTH], ml_site_energy_train_path[MAX_PATH_LENGTH];
+ // char       ml_site_energy_para_path[MAX_PATH_LENGTH], ml_coupling_para_path[MAX_PATH_LENGTH];
 
     ct->first_step = 1;
 #if GMX_MPI
@@ -489,27 +479,25 @@ void init_charge_transfer(t_atoms *atoms, const gmx_mtop_t *top_global, t_mdatom
     printf("Initializing charge transfer\n");
 #endif
 
-
-
     /* Get input from file charge-transfer.dat */
     lines1 = read_file("charge-transfer.dat", input1, possiblekeys1, sizeof(possiblekeys1)/sizeof(possiblekeys1[0]));
-
-
 
     /* set default options */
 
     // either sensible values or "not defined"=-1 for values that have to be specified in the input file and will be checked later.
-    //ct->n_avg_ham = 1; // average hamilton over n_avg_ham steps to assimilate fast non-classical vibrations
-    //ct->esp_scaling_factor = 1.; // scaling of the electrostatic potential of the environment
-    //ct->opt_QMzone=0;
-    //ct->neg_imag_pot = 0; //negative imaginary potential to drain the charge at some sites
+ // ct->n_avg_ham = 1;           // average hamilton over n_avg_ham steps to assimilate fast non-classical vibrations
+ // ct->esp_scaling_factor = 1.; // scaling of the electrostatic potential of the environment
+ // ct->opt_QMzone=0;
+ // ct->neg_imag_pot = 0;        // negative imaginary potential to drain the charge at some sites
 
-/* evaluate input */
+    /* evaluate input */
 
     /* read in stuff that is always needed */
     /* read seed for random number*/
     if (searchkey(lines1, input1, "seed", value, 0))
+    {
        ct->rnseed = atoi(value);
+    }
 
     /* Generation of hamiltonian */
     searchkey(lines1, input1, "hamiltonian", value, 1);
@@ -546,87 +534,87 @@ void init_charge_transfer(t_atoms *atoms, const gmx_mtop_t *top_global, t_mdatom
     if (ct->hamiltonian_type == 1)
     {
 
-       if (searchkey(lines1, input1, "sitemodelpath", ml_site_energy_model_path, 0))
-       {
-          PRINTF("Training data for site energy file will be sought in %s\n", ml_site_energy_model_path);
-       }
-       else
-       {
-           PRINTF("No path for traning data for site energy ! \n");
-           exit(-1);
-       }
+        if (searchkey(lines1, input1, "sitemodelpath", ml_site_energy_model_path, 0))
+        {
+           PRINTF("Training data for site energy file will be sought in %s\n", ml_site_energy_model_path);
+        }
+        else
+        {
+            PRINTF("No path for traning data for site energy ! \n");
+            exit(-1);
+        }
 
-       if (searchkey(lines1, input1, "couplingmodelpath", ml_coupling_model_path, 0))
-       {
-          PRINTF("Training train for coupling file will be sought in %s\n", ml_coupling_model_path);
-       }
-       else
-       {
-           PRINTF("No path for traning data for couplings ! \n");
-           exit(-1);
-       }
+        if (searchkey(lines1, input1, "couplingmodelpath", ml_coupling_model_path, 0))
+        {
+           PRINTF("Training train for coupling file will be sought in %s\n", ml_coupling_model_path);
+        }
+        else
+        {
+            PRINTF("No path for traning data for couplings ! \n");
+            exit(-1);
+        }
 
-       if (searchkey(lines1, input1, "siteparapath", ml_site_energy_para_path, 0))
-       {
-          PRINTF("Hyperparameters for site energy file will be sought in %s\n", ml_site_energy_para_path);
-       }
-       else
-       {
-           PRINTF("No hyperparameters for site energy ! \n");
-           exit(-1);
-       }
+        if (searchkey(lines1, input1, "siteparapath", ml_site_energy_para_path, 0))
+        {
+           PRINTF("Hyperparameters for site energy file will be sought in %s\n", ml_site_energy_para_path);
+        }
+        else
+        {
+            PRINTF("No hyperparameters for site energy ! \n");
+            exit(-1);
+        }
 
-       if (searchkey(lines1, input1, "couplingparapath", ml_coupling_para_path, 0))
-       {
-          PRINTF("Hyperparameters for coupling file will be sought in %s\n", ml_coupling_para_path);
-       }
-       else
-       {
-           PRINTF("No hyperparameters for couplings ! \n");
-           exit(-1);
-       }
+        if (searchkey(lines1, input1, "couplingparapath", ml_coupling_para_path, 0))
+        {
+           PRINTF("Hyperparameters for coupling file will be sought in %s\n", ml_coupling_para_path);
+        }
+        else
+        {
+            PRINTF("No hyperparameters for couplings ! \n");
+            exit(-1);
+        }
 
-       // if (searchkey(lines1, input1, "sigmacouplings", value, 0))
-       // {
-       //    ct->sigma[1] = atof(value);
-       //    PRINTF("Value of sigma for coupling model %f\n", ct->sigma[1]);
-       // }
-       // else
-       // {
-       //     PRINTF("No width value for couplings ! \n");
-       //     exit(-1);
-       // }
-       //
-       // if (searchkey(lines1, input1, "sigmasites", value, 0))
-       // {
-       //    ct->sigma[0] = atof(value);
-       //    PRINTF("Value of sigma for site model %f\n", ct->sigma[0]);
-       // }
-       // else
-       // {
-       //     PRINTF("No width value for site energy ! \n");
-       //     exit(-1);
-       // }
-       // if (searchkey(lines1, input1, "ntrainsites", value, 0))
-       // {
-       //    ct->ntrain[0] = atof(value);
-       //    PRINTF("Number of training data for site model %s\n", value);
-       // }
-       // else
-       // {
-       //     PRINTF("Input number of training data for site model ! \n");
-       //     exit(-1);
-       // }
-       // if (searchkey(lines1, input1, "ntraincouplings", value, 0))
-       // {
-       //    ct->ntrain[1] = atof(value);
-       //    PRINTF("Number of training data for coupling model %s\n", value);
-       // }
-       // else
-       // {
-       //     PRINTF("Input number of training data for coupling model ! \n");
-       //     exit(-1);
-       // }
+     // if (searchkey(lines1, input1, "sigmacouplings", value, 0))
+     // {
+     //    ct->sigma[1] = atof(value);
+     //    PRINTF("Value of sigma for coupling model %f\n", ct->sigma[1]);
+     // }
+     // else
+     // {
+     //     PRINTF("No width value for couplings ! \n");
+     //     exit(-1);
+     // }
+     //
+     // if (searchkey(lines1, input1, "sigmasites", value, 0))
+     // {
+     //    ct->sigma[0] = atof(value);
+     //    PRINTF("Value of sigma for site model %f\n", ct->sigma[0]);
+     // }
+     // else
+     // {
+     //     PRINTF("No width value for site energy ! \n");
+     //     exit(-1);
+     // }
+     // if (searchkey(lines1, input1, "ntrainsites", value, 0))
+     // {
+     //    ct->ntrain[0] = atof(value);
+     //    PRINTF("Number of training data for site model %s\n", value);
+     // }
+     // else
+     // {
+     //     PRINTF("Input number of training data for site model ! \n");
+     //     exit(-1);
+     // }
+     // if (searchkey(lines1, input1, "ntraincouplings", value, 0))
+     // {
+     //    ct->ntrain[1] = atof(value);
+     //    PRINTF("Number of training data for coupling model %s\n", value);
+     // }
+     // else
+     // {
+     //     PRINTF("Input number of training data for coupling model ! \n");
+     //     exit(-1);
+     // }
     }
 
     if (searchkey(lines1, input1, "atomindex", value, 0))
@@ -655,9 +643,6 @@ void init_charge_transfer(t_atoms *atoms, const gmx_mtop_t *top_global, t_mdatom
     {
        ct->freeze_coupling = 0.0;
     }
-
-    searchkey(lines1, input1, "slkopath", slko_path, 1);
-    PRINTF("SLKO files will be sought in %s\n", slko_path);
 
     searchkey(lines1, input1, "chargecarrier", value, 1);
     if (strcmp(value, "hole") == 0)
@@ -721,7 +706,7 @@ void init_charge_transfer(t_atoms *atoms, const gmx_mtop_t *top_global, t_mdatom
             exit(-1);
             /* read the file "charge-transfer.ndx" here! */
             ct_get_index(&mm_list_size, &mm_list);
-            //for (i=0; i<mm_list_size; i++) PRINTF(" %d", mm_list[i]); PRINTF("\n");
+         // for (i=0; i<mm_list_size; i++) PRINTF(" %d", mm_list[i]); PRINTF("\n");
         }
         else if (strcmp(value, "pme") == 0)
         {
@@ -746,7 +731,7 @@ void init_charge_transfer(t_atoms *atoms, const gmx_mtop_t *top_global, t_mdatom
     }
     else
     {
-        ct->esp_scaling_factor = 1.0; //default
+        ct->esp_scaling_factor = 1.0; // default
     }
     if (searchkey(lines1, input1, "efield", value, 0))
     {
@@ -767,7 +752,7 @@ void init_charge_transfer(t_atoms *atoms, const gmx_mtop_t *top_global, t_mdatom
 
     searchkey(lines1, input1, "jobtype", value, 1);
 
-    ct->decoherence = 0;//default is propagator without decoherence
+    ct->decoherence = 0; // default is propagator without decoherence
     if (strcmp(value, "scc") == 0)
     {
         ct->jobtype = cteSCCDYNAMIC;
@@ -788,7 +773,7 @@ void init_charge_transfer(t_atoms *atoms, const gmx_mtop_t *top_global, t_mdatom
         ct->jobtype = cteADIABATIC;
         PRINTF("Adiabatic Born-Oppenheimer (SCF) dynamics of the hole\n");
     }
-    else if (strcmp(value, "bod") == 0) //JJK
+    else if (strcmp(value, "bod") == 0) // JJK
     {
         ct->jobtype = cteBORNOPPENHEIMER;
         PRINTF("Born-Oppenheimer dynamics with explicit following of the wave function\n");
@@ -820,12 +805,12 @@ void init_charge_transfer(t_atoms *atoms, const gmx_mtop_t *top_global, t_mdatom
     }
     else if (strcmp(value, "dlzsh") == 0)
     {
-        ct->jobtype = cteDLZSH; //lzsh is new one
+        ct->jobtype = cteDLZSH; // lzsh is new one
         PRINTF("Landau-Zener type surface hopping method based on original diabatic LZ formula \n");
     }
     else if (strcmp(value, "alzsh") == 0)
     {
-        ct->jobtype = cteALZSH; //lzsh is new one
+        ct->jobtype = cteALZSH; // lzsh is new one
         PRINTF("Landau-Zener type surface hopping method based on refomulated LZ formula \n");
     }
     else if (strcmp(value, "dfssh") == 0)
@@ -842,39 +827,39 @@ void init_charge_transfer(t_atoms *atoms, const gmx_mtop_t *top_global, t_mdatom
     }
     else if (strcmp(value, "bcjfssh") == 0)
     {
-      ct->jobtype = cteBCJFSSH;
-      PRINTF("Bolzmann corrected adiabatic fewest switches surface hopping method \n");
-      ct->use_strong_dec=1;
+        ct->jobtype = cteBCJFSSH;
+        PRINTF("Bolzmann corrected adiabatic fewest switches surface hopping method \n");
+        ct->use_strong_dec=1;
     }
     else if (strcmp(value, "scrdfssh") == 0)
     {
         ct->jobtype = cteSCRDFSSH;
         PRINTF("Self-consistent restricted-decohenrence fewest switches surface hopping method\n");
-	ct->use_strong_dec=1;
+        ct->use_strong_dec=1;
     }
     else if (strcmp(value, "gfsh") == 0)
     {
         ct->jobtype = cteGFSH;
         PRINTF("Global flux fewest switches surface hopping method\n");
-	ct->use_strong_dec=1;
+        ct->use_strong_dec=1;
     }
     else if (strcmp(value, "ccfssh") == 0)
     {
         ct->jobtype = cteCCFSSH;
         PRINTF("Crossing-corrected fewest switches surface hopping method\n");
-	ct->use_strong_dec=1;
+        ct->use_strong_dec=1;
     }
     else if (strcmp(value, "dish") == 0)
     {
         ct->jobtype = cteDISH;
         PRINTF("Decoherence induced fewest switches surface hopping method\n");
-	ct->use_strong_dec=1;
+        ct->use_strong_dec=1;
     }
     else if (strcmp(value, "tfl") == 0)
     {
-        ct->jobtype = cteTULLYLOC; //tfl is new one
+        ct->jobtype = cteTULLYLOC; // tfl is new one
         PRINTF("Tully's fewest switches surface hopping adapted for systems with localized, spatially spread-out adiab. states \n");
-	ct->use_strong_dec=1; // ugly Command by Julian needs to be 1 for dholub 15.08.18
+        ct->use_strong_dec=1; // ugly Command by Julian needs to be 1 for dholub 15.08.18
     }
     else if ((strcmp(value, "per") == 0 || strcmp(value, "ped") == 0))
     {
@@ -948,7 +933,7 @@ void init_charge_transfer(t_atoms *atoms, const gmx_mtop_t *top_global, t_mdatom
     }
     else
     {
-        ct->n_avg_ham = 1; //default
+        ct->n_avg_ham = 1; // default
     }
 
     if (searchkey(lines1, input1, "tfermi", value, 0))
@@ -964,7 +949,6 @@ void init_charge_transfer(t_atoms *atoms, const gmx_mtop_t *top_global, t_mdatom
     if (!(ct->jobtype == ctePARAMETERS || ct->jobtype == cteNEGFLORENTZ || ct->jobtype == cteNEGFLORENTZNONSCC ||
           ct->jobtype == cteESP || ct->jobtype == cteTDA))
     {
-
         if (searchkey(lines1, input1, "epol", value, 0))
         {
             if (strcmp(value, "imp") == 0)
@@ -1012,7 +996,7 @@ void init_charge_transfer(t_atoms *atoms, const gmx_mtop_t *top_global, t_mdatom
         }
         else
         {
-            ct->do_projection = 0; //default
+            ct->do_projection = 0; // default
             PRINTF("No projection applied\n");
         }
 
@@ -1028,7 +1012,7 @@ void init_charge_transfer(t_atoms *atoms, const gmx_mtop_t *top_global, t_mdatom
         }
         else
         {
-            ct->sic = 0.0; //default
+            ct->sic = 0.0; // default
             PRINTF("Omitting second-order terms.\n");
         }
         if (searchkey(lines1, input1, "internalrelax", value, 0))
@@ -1061,8 +1045,8 @@ void init_charge_transfer(t_atoms *atoms, const gmx_mtop_t *top_global, t_mdatom
                 ct->do_lambda_i = 0;
                 ct->lambda = atof(value)/HARTREE_TO_EV;
                 PRINTF("Emulation of inner-sphere reorganization energy with precalculated parameter of %f eV \n", atof(value));
-//                PRINTF("Did not understand relaxation model.\n");
-//                exit(-1);
+             // PRINTF("Did not understand relaxation model.\n");
+             // exit(-1);
             }
             if (ct->interval != 1)
             {
@@ -1077,7 +1061,7 @@ void init_charge_transfer(t_atoms *atoms, const gmx_mtop_t *top_global, t_mdatom
         }
         else
         {
-            ct->do_lambda_i = 0; //default
+            ct->do_lambda_i = 0; // default
             PRINTF("No inner-sphere reorganization energy\n");
         }
 
@@ -1101,7 +1085,7 @@ void init_charge_transfer(t_atoms *atoms, const gmx_mtop_t *top_global, t_mdatom
         }
         else
         {
-            ct->delta_q_mode = 0; //default
+            ct->delta_q_mode = 0; // default
             PRINTF("Representing the charge carrier with Mulliken charges.");
         }
     }
@@ -1187,7 +1171,7 @@ void init_charge_transfer(t_atoms *atoms, const gmx_mtop_t *top_global, t_mdatom
                 }
 
                 searchkey(lines2, input2, "naddchr", value, 1);
-                split_string_into_int(value, ct->sitetype[i].bonds, ct->sitetype[i].addchrs,  "naddchr");
+                split_string_into_int(value, ct->sitetype[i].bonds, ct->sitetype[i].addchrs, "naddchr");
                 counter = 0;
                 for (j = 0; j < ct->sitetype[i].bonds; j++)
                 {
@@ -1208,7 +1192,7 @@ void init_charge_transfer(t_atoms *atoms, const gmx_mtop_t *top_global, t_mdatom
                             l++;
                         }
                     }
-                    split_string_into_string(value, l, dummy,  "nameaddchr");
+                    split_string_into_string(value, l, dummy, "nameaddchr");
                     l = 0;
                     for (j = 0; j < ct->sitetype[i].bonds; j++)
                     {
@@ -1228,7 +1212,7 @@ void init_charge_transfer(t_atoms *atoms, const gmx_mtop_t *top_global, t_mdatom
             ct->sitetype[i].bonds = 0;
         }
         ct->sitetype[i].connections = 0; // not yet fully implemented. can maybe done without reading in
-        //PRINTF("Sitetype %d found to have %d connections to other fragments \n", i+1, ct->sitetype[i].connections );
+     // PRINTF("Sitetype %d found to have %d connections to other fragments \n", i+1, ct->sitetype[i].connections );
         snew(ct->sitetype[i].QMCA, ct->sitetype[i].connections);
         snew(ct->sitetype[i].QMCN, ct->sitetype[i].connections);
         for (j = 0; j < ct->sitetype[i].connections; j++)
@@ -1338,7 +1322,7 @@ void init_charge_transfer(t_atoms *atoms, const gmx_mtop_t *top_global, t_mdatom
         }
         else
         {
-            ct->opt_QMzone = 0; //default
+            ct->opt_QMzone = 0; // default
         }
         if (ct->sitetypes > 1 && (ct->pool_size != ct->sites))
         {
@@ -1364,7 +1348,9 @@ void init_charge_transfer(t_atoms *atoms, const gmx_mtop_t *top_global, t_mdatom
     for (i = 0; i < ct->pool_size; i++)
     {
         ct->pool_site[i].resnr = atoi(dummy[i]);
-        //ct->pool_site[i].resnr--; //apparently residues are numbered in gromacs starting from 0 but written out as starting from 1  CHANGED IN GROMACS4.6
+        // apparently residues are numbered in gromacs starting from 0 but written out as starting from 1
+        // CHANGED IN GROMACS 4.6
+     // ct->pool_site[i].resnr--;
     }
 
     searchkey(lines1, input1, "sitetypes", value, 1);
@@ -1372,7 +1358,8 @@ void init_charge_transfer(t_atoms *atoms, const gmx_mtop_t *top_global, t_mdatom
     for (i = 0; i < ct->pool_size; i++)
     {
         ct->pool_site[i].type = atoi(dummy[i]);
-        ct->pool_site[i].type--; //for convinient numbering in charge-transfer.dat from 1 to #_diffrent_sites
+        // for convenient numbering in charge-transfer.dat from 1 to #_different_sites
+        ct->pool_site[i].type--;
     }
 
     searchkey(lines1, input1, "sitescc", value, 1);
@@ -1405,7 +1392,7 @@ void init_charge_transfer(t_atoms *atoms, const gmx_mtop_t *top_global, t_mdatom
 
         l                       = ct->pool_site[i].resnr;              // resnr is parked in l. otherwise the resnr would get lost by copying sitetype to site.
         m                       = ct->pool_site[i].do_scc;             // do_SCC is parked in m. otherwise the resnr would get lost by copying sitetype to site.
-        ct->pool_site[i]        = ct->sitetype[ct->pool_site[i].type]; //not sure if copying is that easy. it is
+        ct->pool_site[i]        = ct->sitetype[ct->pool_site[i].type]; // not sure if copying is that easy. it is
         ct->pool_site[i].resnr  = l;
         ct->pool_site[i].do_scc = m;
 
@@ -1441,6 +1428,7 @@ void init_charge_transfer(t_atoms *atoms, const gmx_mtop_t *top_global, t_mdatom
 
         snew(ct->pool_site[i].atom, ct->sitetype[ct->pool_site[i].type].atoms);
         snew(ct->pool_site[i].atomtype, ct->sitetype[ct->pool_site[i].type].atoms);
+        snew(ct->pool_site[i].mass, ct->sitetype[ct->pool_site[i].type].atoms);
         snew(ct->pool_site[i].QMLA, ct->sitetype[ct->pool_site[i].type].bonds);
         snew(ct->pool_site[i].MMLA, ct->sitetype[ct->pool_site[i].type].bonds);
         snew(ct->pool_site[i].modif_extcharge, ct->sitetype[ct->pool_site[i].type].bonds);
@@ -1459,7 +1447,9 @@ void init_charge_transfer(t_atoms *atoms, const gmx_mtop_t *top_global, t_mdatom
             snew(ct->pool_site[i].QMCN[j], 2);
         }
         snew(ct->pool_site[i].com, 3);
-        //PRINTF("DATA %d %d %d %s %lf %d %d %d %lf %lf \n", ct->pool_site[i].atoms, ct->pool_site[i].bonds,ct->pool_site[i].nochrs[0],ct->pool_site[i].nochr[0][0],ct->pool_site[i].extracharge[0],ct->pool_site[i].addchrs[0],ct->pool_site[i].homos,ct->pool_site[i].homo[0],ct->pool_site[i].hubbard[0],ct->pool_site[i].lambda_i[0]);
+     // PRINTF("DATA %d %d %d %s %lf %d %d %d %lf %lf \n",
+     //        ct->pool_site[i].atoms,      ct->pool_site[i].bonds, ct->pool_site[i].nochrs[0], ct->pool_site[i].nochr[0][0], ct->pool_site[i].extracharge[0],
+     //        ct->pool_site[i].addchrs[0], ct->pool_site[i].homos, ct->pool_site[i].homo[0],   ct->pool_site[i].hubbard[0], ct->pool_site[i].lambda_i[0]);
     }
 
     /* get the number of extcharges */
@@ -1499,7 +1489,8 @@ void init_charge_transfer(t_atoms *atoms, const gmx_mtop_t *top_global, t_mdatom
                 break;
             case 2:
                 /* NUMBER OF EXTCHARGES HERE! */
-                printf("check if adaptive QM zone works with extcharge list\n"); exit(-1);
+                printf("check if adaptive QM zone works with extcharge list\n");
+                exit(-1);
                 site->extcharges = mm_list_size;
                 /* DO NOT SUBTRACT ANYTHING HERE, YET! */
                 break;
@@ -1512,7 +1503,9 @@ void init_charge_transfer(t_atoms *atoms, const gmx_mtop_t *top_global, t_mdatom
         snew(ct->extcharge_cplx, top_global->natoms);
         for (i = 0; i < ct->pool_size; i++)
         {
-            snew(ct->pool_site[i].extcharge, top_global->natoms);// we allocate array a little bit larger than needed (natoms instead of extcharges) and let remaining enrtries blank. This way we can build the intersection of these arrays in order to find the extcharges of the complex
+            // we allocate array a little bit larger than needed (natoms instead of extcharges) and let remaining enrtries blank.
+            // This way we can build the intersection of these arrays in order to find the extcharges of the complex
+            snew(ct->pool_site[i].extcharge, top_global->natoms);
         }
     }
 
@@ -1527,7 +1520,6 @@ void init_charge_transfer(t_atoms *atoms, const gmx_mtop_t *top_global, t_mdatom
     }
 
     // end build QM system
-
 
 
     /* set arrays regarding the complex */
@@ -1552,6 +1544,7 @@ void init_charge_transfer(t_atoms *atoms, const gmx_mtop_t *top_global, t_mdatom
     }
     snew(ct->atom_cplx, ct->atoms_cplx);
     snew(ct->atomtype_cplx, ct->atoms_cplx);
+    snew(ct->mass_cplx, ct->atoms_cplx);
     ct->modif_extcharges_cplx = counter;
     snew(ct->modif_extcharge_cplx, ct->modif_extcharges_cplx);
     for (i = 0; i < ct->modif_extcharges_cplx; i++)
@@ -1565,7 +1558,7 @@ void init_charge_transfer(t_atoms *atoms, const gmx_mtop_t *top_global, t_mdatom
         ct->hamiltonian[j] = ct->hamiltonian[0] + j * ct->dim;
     }
 
-// DFTB hamiltonian
+    // DFTB hamiltonian
     snew(ct->hamiltonian_dftb, ct->dim);
     snew(ct->hamiltonian_dftb[0], SQR(ct->dim));
     for (j = 1; j < ct->dim; j++)
@@ -1582,7 +1575,7 @@ void init_charge_transfer(t_atoms *atoms, const gmx_mtop_t *top_global, t_mdatom
         }
     }
 
-// store the factors to force sign of coupling to be positive/negative
+    // store the factors to force sign of coupling to be positive/negative
     snew(ct->positive_coupling_factor, ct->dim);
     snew(ct->positive_coupling_factor[0], SQR(ct->dim));
     for (j = 1; j < ct->dim; j++)
@@ -1590,11 +1583,12 @@ void init_charge_transfer(t_atoms *atoms, const gmx_mtop_t *top_global, t_mdatom
         ct->positive_coupling_factor[j] = ct->positive_coupling_factor[0] + j * ct->dim;
     }
 
-// machine learning
+
+    // machine learning
     if (ct->hamiltonian_type)
     {
 #if (GMX_TENSORFLOW)
-// ML hamiltonian
+       // ML hamiltonian
        snew(ct->hamiltonian_ml, ct->dim);
        snew(ct->hamiltonian_ml[0], SQR(ct->dim));
        for (j = 1; j < ct->dim; j++)
@@ -1602,7 +1596,7 @@ void init_charge_transfer(t_atoms *atoms, const gmx_mtop_t *top_global, t_mdatom
            ct->hamiltonian_ml[j] = ct->hamiltonian_ml[0] + j * ct->dim;
        }
 
-    // Neural Network initialization:
+       // Neural Network initialization:
        tf_model coupling_model_full;
        tf_model *coupling_model = &coupling_model_full;
        printf("initializing coupling model\n");
@@ -1726,7 +1720,7 @@ void init_charge_transfer(t_atoms *atoms, const gmx_mtop_t *top_global, t_mdatom
                 ct->survival     += ct->occupation[i];
             }
             PRINTF("Sum of occupations = %7.5f\n", ct->survival);
-            if (ct->survival < 0.99 || ct->survival > 1.01) //should be normalized, 0.01 tolerance
+            if (ct->survival < 0.99 || ct->survival > 1.01) // should be normalized, 0.01 tolerance
             {
                 PRINTF("WARNING: no normalized starting wave function was specified.\n");
                 exit(-1);
@@ -1748,7 +1742,9 @@ void init_charge_transfer(t_atoms *atoms, const gmx_mtop_t *top_global, t_mdatom
     {
         PRINTF("Charge taken out of the several FOs by way of negative imaginary potential,\n");
         PRINTF("NEVER TESTET IN THIS VERSION. CHECK SOURCE CODE BEFORE PROCEEDING!\n");
-        exit(-1); //TODO I somehow tried to adapt this feature. However, it was initially considered for one Orbital per site and I'm not sure if it will work with several FOs per site.
+        exit(-1); // TODO: I somehow tried to adapt this feature.
+                  // However, it was initially considered for one Orbital per site and
+                  // I'm not sure if it will work with several FOs per site.
         ct->neg_imag_pot = atoi(value);
         snew(ct->site_neg_imag_pot, ct->neg_imag_pot);
         snew(ct->site_annihilated_occupation, ct->neg_imag_pot);
@@ -1774,11 +1770,10 @@ void init_charge_transfer(t_atoms *atoms, const gmx_mtop_t *top_global, t_mdatom
     }
     else
     {
-        ct->neg_imag_pot = 0; //default
+        ct->neg_imag_pot = 0; // default
     }
 
     /* all read in and allocated at this point*/
-
 
 
     /* set constant hubbard elements */
@@ -1789,10 +1784,12 @@ void init_charge_transfer(t_atoms *atoms, const gmx_mtop_t *top_global, t_mdatom
         {
             for (k = 0; k < ct->site[i].homos - j; k++)
             {
-                ct->hubbard[counter][counter+k] = ct->sic * (ct->site[i].hubbard[j] + ct->site[i].hubbard[k])*0.5; //variation of MO-energy if an other orbital on this site is getting charged.
+                //variation of MO-energy if an other orbital on this site is getting charged.
+                ct->hubbard[counter][counter+k] = ct->sic * (ct->site[i].hubbard[j] + ct->site[i].hubbard[k])*0.5;
                 if (ct->do_epol == 1)
                 {
-                    ct->hubbard[counter][counter+k] -= 1.0/(2.0*ct->site[i].radius*NM_TO_BOHR)*(1.0-1.0/EPSILON_OP); //influence of electronic polarization
+                    //influence of electronic polarization
+                    ct->hubbard[counter][counter+k] -= 1.0/(2.0*ct->site[i].radius*NM_TO_BOHR)*(1.0-1.0/EPSILON_OP);
                 }
                 ct->hubbard[counter+k][counter] = ct->hubbard[counter][counter+k];
             }
@@ -1805,7 +1802,7 @@ void init_charge_transfer(t_atoms *atoms, const gmx_mtop_t *top_global, t_mdatom
     }
 
     /* want to introduce loop with an option 9.9.2016:
-        on -> old styl of assigning qm-zone
+        on -> old style of assigning qm-zone
         off-> new style : shall read a new file:
      */
     /* assign atoms */
@@ -1826,7 +1823,7 @@ void init_charge_transfer(t_atoms *atoms, const gmx_mtop_t *top_global, t_mdatom
             !strncmp((*(atoms->atomname[j])), "BQMC", 4) ||
             !strncmp((*(atoms->atomname[j])), "PQMC", 4) ||
             !strncmp((*(atoms->atomname[j])), "FQMC", 4) ||
-            !strncmp((*(atoms->atomname[j])), "CQMT", 4) || //CQMT "branching" atoms
+            !strncmp((*(atoms->atomname[j])), "CQMT", 4) || // CQMT "branching" atoms
             !strncmp((*(atoms->atomname[j])), "NQMT", 4) )
         {
             QMCApool[QMCApoolcounter] = j; //capping connection atoms are in different residues
@@ -1877,7 +1874,7 @@ void init_charge_transfer(t_atoms *atoms, const gmx_mtop_t *top_global, t_mdatom
                         case 'I': site->atomtype[counter] = 10; break;
                         default: PRINTF("Unknown atom type for atom %d (%s), exiting!\n", j, (*(atoms->atomname[j]))); exit(-1);
                     }
-                    //PRINTF("%5d (%5s, type %d)\n", site->atom[counter], (*(atoms->atomname[site->atom[counter]])), site->atomtype[counter]+1);
+                 // PRINTF("%5d (%5s, type %d)\n", site->atom[counter], (*(atoms->atomname[site->atom[counter]])), site->atomtype[counter]+1);
                     counter++;
                     QMLAcounter++;
                 }
@@ -1893,8 +1890,6 @@ void init_charge_transfer(t_atoms *atoms, const gmx_mtop_t *top_global, t_mdatom
                          !strncmp((*(atoms->atomname[j])), "KQMC", 4) ||
                          !strncmp((*(atoms->atomname[j])), "LQMC", 4) ||
                          !strncmp((*(atoms->atomname[j])), "NQMT", 4) )
-
-
                 {
                     ct->pool_site[i].QMCA[QMCAcounter] = counter;
                     ct->pool_site[i].atom[counter]     = j;
@@ -1913,10 +1908,10 @@ void init_charge_transfer(t_atoms *atoms, const gmx_mtop_t *top_global, t_mdatom
 
                         default: PRINTF("Unknown atom type for atom %d (%s), exiting!\n", j, (*(atoms->atomname[j]))); exit(-1);
                     }
-                    //PRINTF("%5d (%5s, type %d)\n", site->atom[counter], (*(atoms->atomname[site->atom[counter]])), site->atomtype[counter]+1);
+                 // PRINTF("%5d (%5s, type %d)\n", site->atom[counter], (*(atoms->atomname[site->atom[counter]])), site->atomtype[counter]+1);
                     counter++;
                     ///// find capping for connection atoms /////
-                    bond_length_best = 0.5; // = 0.5nm
+                    bond_length_best = 0.5; // = 0.5 nm
                     m                = -1;
                     n                = -1;
                     for (k = 0; k < QMCApoolcounter; k++)
@@ -1928,9 +1923,11 @@ void init_charge_transfer(t_atoms *atoms, const gmx_mtop_t *top_global, t_mdatom
                         }
                         dvec_sub(X, Y, bond);
                         bond_length = dnorm(bond);
-                        if (atoms->resinfo[atoms->atom[QMCApool[k]].resind].nr != site->resnr && bond_length < bond_length_best) //find best capping in neighboring residue
+                        // find best capping in neighboring residue
+                        if (atoms->resinfo[atoms->atom[QMCApool[k]].resind].nr != site->resnr && bond_length < bond_length_best)
                         {
-                            m                = QMCApool[k];                                                                      //atomnumber of best QMCA (k) for QMCA (j) is saved in m
+                            // atomnumber of best QMCA (k) for QMCA (j) is saved in m
+                            m                = QMCApool[k];
                             bond_length_best = bond_length;
                         }
                     }
@@ -1953,7 +1950,7 @@ void init_charge_transfer(t_atoms *atoms, const gmx_mtop_t *top_global, t_mdatom
                     if (!strncmp((*(atoms->atomname[j])), "CQMT", 4) ||
                         !strncmp((*(atoms->atomname[j])), "NQMT", 4)) /* search also second nearest neighbor */
                     {
-                        QMCAcounter--;                                //is the same connection
+                        QMCAcounter--;                                // is the same connection
                         bond_length_best = 0.5;
                         for (k = 0; k < QMCApoolcounter; k++)
                         {
@@ -1966,9 +1963,11 @@ void init_charge_transfer(t_atoms *atoms, const gmx_mtop_t *top_global, t_mdatom
                                 }
                                 dvec_sub(X, Y, bond);
                                 bond_length = dnorm(bond);
-                                if (atoms->resinfo[atoms->atom[QMCApool[k]].resind].nr != site->resnr && bond_length < bond_length_best) //find best capping in neighboring residue
+                                //find best capping in neighboring residue
+                                if (atoms->resinfo[atoms->atom[QMCApool[k]].resind].nr != site->resnr && bond_length < bond_length_best)
                                 {
-                                    n                = QMCApool[k];                                                                      //atomnumber of best QMCA (k) for QMCA (j) is saved in n
+                                    //atomnumber of best QMCA (k) for QMCA (j) is saved in n
+                                    n                = QMCApool[k];
                                     bond_length_best = bond_length;
                                 }
                             }
@@ -1997,15 +1996,13 @@ void init_charge_transfer(t_atoms *atoms, const gmx_mtop_t *top_global, t_mdatom
                          !strncmp((*(atoms->atomname[j])), "NQM", 3) ||
                          !strncmp((*(atoms->atomname[j])), "OQM", 3) ||
                          !strncmp((*(atoms->atomname[j])), "SQM", 3) ||
-                         !strncmp((*(atoms->atomname[j])), "KQM", 3) ||  // Br
-                         !strncmp((*(atoms->atomname[j])), "LQM", 3) ||	 // Cl
-                                                                       //!strncmp((*(atoms->atomname[j])), "YQM", 3) || // Y was special pseudo atom
+                         !strncmp((*(atoms->atomname[j])), "KQM", 3) || // Br
+                         !strncmp((*(atoms->atomname[j])), "LQM", 3) || // Cl
+                      // !strncmp((*(atoms->atomname[j])), "YQM", 3) || // Y was special pseudo atom
                          !strncmp((*(atoms->atomname[j])), "BQM", 3) ||
                          !strncmp((*(atoms->atomname[j])), "FQM", 3) ||
                          !strncmp((*(atoms->atomname[j])), "PQM", 3) ||
                          !strncmp((*(atoms->atomname[j])), "IQM", 3) )
-
-
                 {
                     site->atom[counter] = j;
                     switch ((*(atoms->atomname[j]))[0])
@@ -2043,11 +2040,12 @@ void init_charge_transfer(t_atoms *atoms, const gmx_mtop_t *top_global, t_mdatom
                         case 'I':
                             site->atomtype[counter] = 10;
                             break;
-
-                        //case 'Y' : site->atomtype[counter] = 6; break;
+                     // case 'Y':
+                     //     site->atomtype[counter] = 6;
+                     //     break;
                         default: PRINTF("Unknown atom type for atom %d (%s), exiting!\n", j, (*(atoms->atomname[j]))); exit(-1);
                     }
-                    //PRINTF("%5d (%5s, type %d)\n", site->atom[counter], (*(atoms->atomname[site->atom[counter]])), site->atomtype[counter]+1);
+                 // PRINTF("%5d (%5s, type %d)\n", site->atom[counter], (*(atoms->atomname[site->atom[counter]])), site->atomtype[counter]+1);
                     counter++;
                     counter_cplx++;
                 }
@@ -2068,7 +2066,7 @@ void init_charge_transfer(t_atoms *atoms, const gmx_mtop_t *top_global, t_mdatom
                     site->MMLA[MMLAcounter] = counter;
                     site->atom[counter]     = j;
                     site->atomtype[counter] = 1; /* the MM link atom will be substitute by a link hydrogen! */
-                    //PRINTF("%5d (%5s, type %d)\n", site->atom[counter], (*(atoms->atomname[site->atom[counter]])), site->atomtype[counter]+1);
+                 // PRINTF("%5d (%5s, type %d)\n", site->atom[counter], (*(atoms->atomname[site->atom[counter]])), site->atomtype[counter]+1);
                     counter++;
                     counter_cplx++;
                     MMLAcounter++;
@@ -2082,13 +2080,13 @@ void init_charge_transfer(t_atoms *atoms, const gmx_mtop_t *top_global, t_mdatom
                 }
             }
         }
-        //PRINTF("\n");
+     // PRINTF("\n");
         if (QMLAcounter != MMLAcounter)
         {
             PRINTF("Site %d found to have %d QM link atom(s) but %d MM link atom(s). \n", i, QMLAcounter, MMLAcounter);
             exit(-1);
         }
-    }//end atom selection
+    } //end atom selection
 
     /* get atoms of the complex */
     counter = 0;
@@ -2107,7 +2105,7 @@ void init_charge_transfer(t_atoms *atoms, const gmx_mtop_t *top_global, t_mdatom
     {
         for (j = 0; j < ct->pool_site[i].bonds; j++)
         {
-            bond_length_best = 0.5; // = 0.5nm
+            bond_length_best = 0.5; // = 0.5 nm
             m                = -1;
             for (k = 0; k < ct->pool_site[i].bonds; k++)
             {
@@ -2118,9 +2116,11 @@ void init_charge_transfer(t_atoms *atoms, const gmx_mtop_t *top_global, t_mdatom
                 }
                 dvec_sub(X, Y, bond);
                 bond_length = dnorm(bond);
-                if (bond_length < bond_length_best) //find best capping
+                //find best capping
+                if (bond_length < bond_length_best)
                 {
-                    m                = k;           //index of best MMLA (k) for QMLA (j) is saved in m
+                    //index of best MMLA (k) for QMLA (j) is saved in m
+                    m                = k;
                     bond_length_best = bond_length;
                 }
             }
@@ -2142,8 +2142,6 @@ void init_charge_transfer(t_atoms *atoms, const gmx_mtop_t *top_global, t_mdatom
         mass += mdatoms->massT[ct->pool_site[0].atom[j]];
     }
     ct->adapt_inv_tot_mass = 1.0 / mass;
-
-
 
     /////* select the external charges */////
     PRINTF("Assigning MM atoms.\n");
@@ -2169,22 +2167,25 @@ void init_charge_transfer(t_atoms *atoms, const gmx_mtop_t *top_global, t_mdatom
                 for (i = 0; i < ct->pool_size; i++)
                 {
                     site        = &(ct->pool_site[i]);
-                    environment = 1;                                             /* default: all atoms are environment */
-//PRINTF("j %d i %d atoms.atom[j].resnr %d ct->site[i].resnr %d \n" ,j, i, atoms.atom[j].resnr , ct->site[i].resnr);
-                    if (atoms->resinfo[atoms->atom[j].resind].nr == site->resnr) /* in same residue -> further investigations */
+                    environment = 1; // default: all atoms are environment
+                 // PRINTF("j %d i %d atoms.atom[j].resnr %d ct->site[i].resnr %d \n" ,j, i, atoms.atom[j].resnr , ct->site[i].resnr);
+                    // in the same residue -> further investigations
+                    if (atoms->resinfo[atoms->atom[j].resind].nr == site->resnr)
                     {
                         for (k = 0; k < site->bonds; k++)
                         {
                             for (l = 0; l < site->addchrs[k]; l++)
                             {
-                                if (!strcmp((*(atoms->atomname[j])), site->addchr[k][l])) /* charge will be modified to electro-neutralize */
+                                // charge will be modified to electro-neutralize
+                                if (!strcmp((*(atoms->atomname[j])), site->addchr[k][l]))
                                 {
                                     site->modif_extcharge[k][l] = counter_array[i];
                                 }
                             }
                             for (l = 0; l < site->nochrs[k]; l++)
                             {
-                                if (!strcmp((*(atoms->atomname[j])), site->nochr[k][l])) /* charge will be ignored */
+                                // charge will be ignored
+                                if (!strcmp((*(atoms->atomname[j])), site->nochr[k][l]))
                                 {
                                     environment = 0;
                                 }
@@ -2192,13 +2193,14 @@ void init_charge_transfer(t_atoms *atoms, const gmx_mtop_t *top_global, t_mdatom
                         }
                         for (k = 0; k < site->atoms; k++)
                         {
-                            if (j == site->atom[k]) /* exclude QM atoms */
+                            // exclude QM atoms
+                            if (j == site->atom[k])
                             {
                                 environment = 0;
                             }
                         }
                     }
-                    else /* atoms in neighboring residues are ignored if one connection atom of site i lies in this residue */
+                    else // atoms in neighboring residues are ignored if one connection atom of site i lies in this residue
                     {
                         for (k = 0; k < site->connections; k++)
                         {
@@ -2227,8 +2229,10 @@ void init_charge_transfer(t_atoms *atoms, const gmx_mtop_t *top_global, t_mdatom
         }
         for (i = 0; i < ct->sites; i++)
         {
-            k = find_intersection(top_global->natoms, ct->extcharge_cplx, ct->site[i].extcharge, ct->extcharge_cplx); // this should successively reduce the charges in ct->extcharge_cplx
-            for (j = k; j < top_global->natoms; j++)                                                                  // k elements are common in both arrays
+            // this should successively reduce the charges in ct->extcharge_cplx
+            k = find_intersection(top_global->natoms, ct->extcharge_cplx, ct->site[i].extcharge, ct->extcharge_cplx);
+            // k elements are common in both arrays
+            for (j = k; j < top_global->natoms; j++)
             {
                 ct->extcharge_cplx[j] = -1;
             }
@@ -2242,7 +2246,9 @@ void init_charge_transfer(t_atoms *atoms, const gmx_mtop_t *top_global, t_mdatom
                 {
                     for (k = 0; k < ct->site[i].addchrs[j]; k++)
                     {
-                        if (ct->extcharge_cplx[l] == ct->site[i].extcharge[ ct->site[i].modif_extcharge[j][k] ]) // if one of the extcharges of the complex is the same atom that was modified in the monomer calculation, then also modify it in the complex calculation.
+                        // if one of the extcharges of the complex is the same atom that was modified in the monomer calculation,
+                        //   then also modify it in the complex calculation.
+                        if (ct->extcharge_cplx[l] == ct->site[i].extcharge[ ct->site[i].modif_extcharge[j][k] ])
                         {
                             ct->modif_extcharge_cplx[counter] = l;
                             counter++;
@@ -2264,47 +2270,55 @@ void init_charge_transfer(t_atoms *atoms, const gmx_mtop_t *top_global, t_mdatom
                 {
                     if (ct->site[i].modif_extcharge[j][k] > -1)
                     {
-                        PRINTF("          modified extcharge for bond no. %5d: atom %5d - %s (residue %d)\n", j+1, ct->site[i].extcharge[ct->site[i].modif_extcharge[j][k]]+1,
-                               *(atoms->atomname[ct->site[i].extcharge[ct->site[i].modif_extcharge[j][k]]]), atoms->resinfo[atoms->atom[ct->site[i].extcharge[ct->site[i].modif_extcharge[j][k]]].resind].nr+1 );
+                        PRINTF("          modified extcharge for bond no. %5d: atom %5d - %s (residue %d)\n",
+                               j+1, ct->site[i].extcharge[ct->site[i].modif_extcharge[j][k]]+1,
+                               *(atoms->atomname[ct->site[i].extcharge[ct->site[i].modif_extcharge[j][k]]]),
+                               atoms->resinfo[atoms->atom[ct->site[i].extcharge[ct->site[i].modif_extcharge[j][k]]].resind].nr+1 );
                     }
                 }
             }
         }
         PRINTF("Complex: original group %d, (possibly) restricted to %d\n", ct->extcharges_cplx, counter_cplx);
-        //ct->extcharges_cplx = counter_cplx;
-        //if (counter_modif_cplx != 2*ct->sites) {
-        PRINTF("         number of atoms cutting QM/MM boundary = %d (there are %d sites)\n", counter_modif_cplx, ct->sites);
-        //  exit(-1);
-        //}
+     // ct->extcharges_cplx = counter_cplx;
+     // if (counter_modif_cplx != 2*ct->sites)
+     // {
+            PRINTF("         number of atoms cutting QM/MM boundary = %d (there are %d sites)\n", counter_modif_cplx, ct->sites);
+     //     exit(-1);
+     // }
         for (j = 0; j < counter_modif_cplx; j++)
         {
-            PRINTF("          modified extcharge no. %5d: atom %5d - %s (residue %d)\n", j+1, ct->extcharge_cplx[ct->modif_extcharge_cplx[j]]+1,
-                   *(atoms->atomname[ct->extcharge_cplx[ct->modif_extcharge_cplx[j]]]), atoms->resinfo[atoms->atom[ct->extcharge_cplx[ct->modif_extcharge_cplx[j]]].resind].nr+1);
+            PRINTF("          modified extcharge no. %5d: atom %5d - %s (residue %d)\n",
+                   j+1, ct->extcharge_cplx[ct->modif_extcharge_cplx[j]]+1,
+                   *(atoms->atomname[ct->extcharge_cplx[ct->modif_extcharge_cplx[j]]]),
+                   atoms->resinfo[atoms->atom[ct->extcharge_cplx[ct->modif_extcharge_cplx[j]]].resind].nr+1);
         }
 
-    }//end QMMM>0
+    } // end QMMM>0
 
 
     ///// JOB SPECIFIC PREPARATIONS /////
-    /* NEGF data */
-    /* TODO: THIS WAS ONLY COMMENTED OUT BECAUSE I HAVE NO IDEA ABOUT THESE CALCULATIONS. MAYBE IMPLEMENT NEGF CALCUlATIONS ALSO IN THE CURRENT CODE
-       if (ct->jobtype == cteNEGFLORENTZ || ct->jobtype == cteNEGFLORENTZNONSCC) {
-       snew(ct->negf_arrays, 1);
-       ct->negf_arrays->n[0] = ct->sites;
-       fscanf(f, "%ld\n", ct->negf_arrays->n_lorentz);
-       fscanf(f, "%lf %lf\n", ct->negf_arrays->e_f_left, ct->negf_arrays->e_f_right);
-       fscanf(f, "%lf %ld %ld\n", ct->negf_arrays->temp, ct->negf_arrays->n_poles_l, ct->negf_arrays->n_poles_r);
-       fscanf(f, "%lf %lf %lf\n", ct->negf_arrays->gam_l, ct->negf_arrays->eps_l, ct->negf_arrays->w0_l);
-       fscanf(f, "%lf %lf %lf\n", ct->negf_arrays->gam_r, ct->negf_arrays->eps_r, ct->negf_arrays->w0_r);
-       PRINTF("Parameters read for the non-eq. Green's functions:\n");
-       PRINTF("  n = %ld, n_lorentz = %ld\n", ct->negf_arrays->n[0], ct->negf_arrays->n_lorentz[0]);
-       PRINTF("  e_f_left = %lf, e_f_right = %lf\n", ct->negf_arrays->e_f_left[0], ct->negf_arrays->e_f_right[0]);
-       PRINTF("  temp = %lf, n_poles_l = %ld, n_poles_r = %ld\n", ct->negf_arrays->temp[0], ct->negf_arrays->n_poles_l[0], ct->negf_arrays->n_poles_r[0]);
-       PRINTF("  gam_l = %lf, eps_l = %lf, w0_l = %lf\n", ct->negf_arrays->gam_l[0], ct->negf_arrays->eps_l[0], ct->negf_arrays->w0_l[0]);
-       PRINTF("  gam_r = %lf, eps_r = %lf, w0_r = %lf\n", ct->negf_arrays->gam_r[0], ct->negf_arrays->eps_r[0], ct->negf_arrays->w0_r[0]);
-       }*/
 
-    /* NEGF initialization including initial density matrix */
+    // NEGF data
+    /* TODO: THIS WAS ONLY COMMENTED OUT BECAUSE I HAVE NO IDEA ABOUT THESE CALCULATIONS.
+             MAYBE IMPLEMENT NEGF CALCUlATIONS ALSO IN THE CURRENT CODE
+    if (ct->jobtype == cteNEGFLORENTZ || ct->jobtype == cteNEGFLORENTZNONSCC)
+    {
+        snew(ct->negf_arrays, 1);
+        ct->negf_arrays->n[0] = ct->sites;
+        fscanf(f, "%ld\n", ct->negf_arrays->n_lorentz);
+        fscanf(f, "%lf %lf\n", ct->negf_arrays->e_f_left, ct->negf_arrays->e_f_right);
+        fscanf(f, "%lf %ld %ld\n", ct->negf_arrays->temp, ct->negf_arrays->n_poles_l, ct->negf_arrays->n_poles_r);
+        fscanf(f, "%lf %lf %lf\n", ct->negf_arrays->gam_l, ct->negf_arrays->eps_l, ct->negf_arrays->w0_l);
+        fscanf(f, "%lf %lf %lf\n", ct->negf_arrays->gam_r, ct->negf_arrays->eps_r, ct->negf_arrays->w0_r);
+        PRINTF("Parameters read for the non-eq. Green's functions:\n");
+        PRINTF("  n = %ld, n_lorentz = %ld\n", ct->negf_arrays->n[0], ct->negf_arrays->n_lorentz[0]);
+        PRINTF("  e_f_left = %lf, e_f_right = %lf\n", ct->negf_arrays->e_f_left[0], ct->negf_arrays->e_f_right[0]);
+        PRINTF("  temp = %lf, n_poles_l = %ld, n_poles_r = %ld\n", ct->negf_arrays->temp[0], ct->negf_arrays->n_poles_l[0], ct->negf_arrays->n_poles_r[0]);
+        PRINTF("  gam_l = %lf, eps_l = %lf, w0_l = %lf\n", ct->negf_arrays->gam_l[0], ct->negf_arrays->eps_l[0], ct->negf_arrays->w0_l[0]);
+        PRINTF("  gam_r = %lf, eps_r = %lf, w0_r = %lf\n", ct->negf_arrays->gam_r[0], ct->negf_arrays->eps_r[0], ct->negf_arrays->w0_r[0]);
+    }
+
+    // NEGF initialization including initial density matrix
     if (ct->jobtype == cteNEGFLORENTZ || ct->jobtype == cteNEGFLORENTZNONSCC)
     {
         PRINTF("Initializing the NEGF calculation\n");
@@ -2313,21 +2327,24 @@ void init_charge_transfer(t_atoms *atoms, const gmx_mtop_t *top_global, t_mdatom
 #endif
         negf_init_arrays(ct->negf_arrays, &(ct->rk_timestep), ct->wf);
     }
+    */
 
-    /* DO HERE PREPARATIONS FOR BORNOPPENHEIMER! */
+    // DO HERE PREPARATIONS FOR BORNOPPENHEIMER!
     if (ct->jobtype == cteBORNOPPENHEIMER)
     {
         snew(ct->born_overlap, ct->dim);
     }
 
-    /* DO HERE PREPARATIONS FOR TFL! */ //imported by J.J. Kranz Frenkel Version 2018
-    if (ct->jobtype == cteSCCDYNAMIC || ct->jobtype == cteCPFSCCDYNAMIC || ct->jobtype == cteDDBSCCDYNAMIC || ct->jobtype == cteDLZSH || ct->jobtype == cteALZSH || ct->jobtype == cteDFSSH || ct->jobtype == cteJFSSH || ct->jobtype == cteBCJFSSH || ct->jobtype == cteSCRDFSSH || ct->jobtype == cteCCFSSH || ct->jobtype == cteGFSH || ct->jobtype == cteDISH   || ct->jobtype == cteSCRDFSSH || ct->jobtype == cteTULLYLOC)
+    // DO HERE PREPARATIONS FOR TFL! // imported by J.J. Kranz Frenkel Version 2018
+    if (ct->jobtype == cteSCCDYNAMIC || ct->jobtype == cteCPFSCCDYNAMIC || ct->jobtype == cteDDBSCCDYNAMIC ||
+        ct->jobtype == cteDLZSH || ct->jobtype == cteALZSH || ct->jobtype == cteDFSSH || ct->jobtype == cteJFSSH ||
+        ct->jobtype == cteBCJFSSH || ct->jobtype == cteSCRDFSSH || ct->jobtype == cteCCFSSH || ct->jobtype == cteGFSH ||
+        ct->jobtype == cteDISH || ct->jobtype == cteSCRDFSSH || ct->jobtype == cteTULLYLOC)
     {
         ct->surface = 0;
 
         snew(ct->tfs_popul, 2*ct->dim); /* complex array: Re(0), Re(1), ..., Re(n-1), Im(0), Im(1), ..., Im(n-1) */
         snew(ct->tfs_diab, 2*ct->dim);
-
 
         /* initial conditions - ground state occupied */
         ct->tfs_popul[0] = 1.; //changed if specific wf choosend as startign point
@@ -2386,7 +2403,7 @@ void init_charge_transfer(t_atoms *atoms, const gmx_mtop_t *top_global, t_mdatom
             ct->tfl_mean_ham_full[j] = ct->tfl_mean_ham_full[0] + j * ct->dim;
         }
 
-// add nonadiabatic coupling vector bewteen pre_surf and hop_surf, W.X, Nov.2018
+        // add nonadiabatic coupling vector between pre_surf and hop_surf, W.X, Nov.2018
         snew(ct->tfs_ncv, ct->sites);
         for (i = 0; i < ct->sites; i++)
         {
@@ -2395,7 +2412,6 @@ void init_charge_transfer(t_atoms *atoms, const gmx_mtop_t *top_global, t_mdatom
             for (j = 0; j < ct->site[i].atoms; j++)
             {
                 snew(ct->tfs_ncv[i][j], DIM);
-
             }
         }
         snew(ct->v1, ct->sites);
@@ -2406,7 +2422,6 @@ void init_charge_transfer(t_atoms *atoms, const gmx_mtop_t *top_global, t_mdatom
             for (j = 0; j < ct->site[i].atoms; j++)
             {
                 snew(ct->v1[i][j], DIM);
-
             }
         }
         snew(ct->v2, ct->sites);
@@ -2417,18 +2432,17 @@ void init_charge_transfer(t_atoms *atoms, const gmx_mtop_t *top_global, t_mdatom
             for (j = 0; j < ct->site[i].atoms; j++)
             {
                 snew(ct->v2[i][j], DIM);
-
             }
         }
 
-//  adiabatic energies at previous time step and two time steps before
+        // adiabatic energies at previous time step and two time steps before
         snew(ct->ev_adiab_old2, ct->dim);
         snew(ct->ev_adiab_old, ct->dim);
         snew(ct->tfl_old_ham, SQR(ct->dim));
         snew(ct->tfl_old_ham_adiab, SQR(ct->dim));
 
-//        srand48(123);
-//        srand((unsigned)time(NULL));
+     // srand48(123);
+     // srand((unsigned)time(NULL));
         srand48(ct->rnseed);
 
         snew(ct->fo_overlap, ct->dim); /* tfs_overlap[j][k]: <tfs_vector_old[j] | tfs_vector[k]> */
@@ -2557,40 +2571,45 @@ void init_charge_transfer(t_atoms *atoms, const gmx_mtop_t *top_global, t_mdatom
     printf("Completed charge transfer initialization\n");
 #endif
 
-
 /*
-   // Print out (nearly) all stuff that was read in
-   for (k=0; k<ct->pool_size; k++){
-    s=ct->pool_site[k];
-    PRINTF("%d %d %d %d %d %d %d %d %d %f %d %d\n", s.type, s.resnr, s.atoms, s.bonds, s.connections, s.homos,s.extcharges, s.nel, s.norb, s.radius, s.do_scc, s.active);
-    for (i=0; i<s.atoms; i++){
-      PRINTF("%d %d \n", s.atom[i], s.atomtype[i]);
+    // Print out (nearly) all stuff that was read in
+    for (k=0; k<ct->pool_size; k++)
+    {
+        s=ct->pool_site[k];
+        PRINTF("%d %d %d %d %d %d %d %d %d %f %d %d\n",
+               s.type, s.resnr, s.atoms, s.bonds, s.connections, s.homos,
+               s.extcharges, s.nel, s.norb, s.radius, s.do_scc, s.active);
+        for (i=0; i<s.atoms; i++)
+        {
+            PRINTF("%d %d \n", s.atom[i], s.atomtype[i]);
+        }
+        for (i=0; i<s.bonds; i++)
+        {
+            PRINTF("%d %d %d \n", s.QMLA[i], s.MMLA[i], s.nochrs[i]);
+            for (j=0; j<s.nochrs[i]; j++)
+                PRINTF("%s\n", s.nochr[i][j]);
+            for (j=0; j<s.addchrs[i]; j++)
+                PRINTF("%s %d\n", s.addchr[i][j], s.modif_extcharge[i][j]);
+        }
+        for (i=0; i<s.extcharges; i++)
+            PRINTF("%d ", s.extcharge[i]);
+        for (i=0; i<s.homos; i++)
+            PRINTF("%d %f %f\n", s.homo[i], s.hubbard[i], s.lambda_i[i]);
     }
-    for (i=0; i<s.bonds; i++){
-      PRINTF("%d %d %d \n", s.QMLA[i], s.MMLA[i], s.nochrs[i]);
-      for (j=0; j<s.nochrs[i]; j++)
-        PRINTF("%s\n", s.nochr[i][j]);
-      for (j=0; j<s.addchrs[i]; j++)
-        PRINTF("%s %d\n", s.addchr[i][j], s.modif_extcharge[i][j]);
-    }
-    for (i=0; i<s.extcharges; i++)
-      PRINTF("%d ", s.extcharge[i]);
-    for (i=0; i<s.homos; i++){
-      PRINTF("%d %f %f\n", s.homo[i], s.hubbard[i], s.lambda_i[i]);
-    }
-   }
-   PRINTF("%d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d \n", ct->jobtype, ct->interval, ct->qmmm, ct->sitetypes, ct->sites, ct->dim, ct->is_hole_transfer, ct->atoms_cplx, ct->extcharges_cplx, ct->modif_extcharges_cplx, ct->n_avg_ham, ct->do_lambda_i, ct->do_epol, ct->decoherence, ct->pool_size, ct->opt_QMzone);
-   PRINTF("%f %f %f %f %f    %f %f %f\n", ct->offdiag_scaling, ct->sic, ct->esp_scaling_factor, ct->telec, ct->fermi_kt, ct->efield[0],ct->efield[1],ct->efield[2]);
-   for (i=0; i<ct->atoms_cplx; i++)
-    PRINTF("%d %d \n", ct->atom_cplx[i], ct->atomtype_cplx[i]);
-   for (i=0; i<ct->extcharges_cplx; i++)
-    PRINTF("%d ", ct->extcharge_cplx[i]);
-   for (i=0; i<ct->modif_extcharges_cplx; i++)
-    PRINTF("%d ", ct->modif_extcharge_cplx[i]);
-   for (i=0; i< ct->dim; i++)
-    PRINTF("%f %f \n", ct->wf[i], ct->wf[i+ct->dim]);
-
- */
+    PRINTF("%d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d \n",
+           ct->jobtype, ct->interval, ct->qmmm, ct->sitetypes, ct->sites, ct->dim, ct->is_hole_transfer, ct->atoms_cplx,
+           ct->extcharges_cplx, ct->modif_extcharges_cplx, ct->n_avg_ham, ct->do_lambda_i, ct->do_epol, ct->decoherence, ct->pool_size, ct->opt_QMzone);
+    PRINTF("%f %f %f %f %f    %f %f %f\n",
+           ct->offdiag_scaling, ct->sic, ct->esp_scaling_factor, ct->telec, ct->fermi_kt, ct->efield[0], ct->efield[1], ct->efield[2]);
+    for (i=0; i<ct->atoms_cplx; i++)
+        PRINTF("%d %d \n", ct->atom_cplx[i], ct->atomtype_cplx[i]);
+    for (i=0; i<ct->extcharges_cplx; i++)
+        PRINTF("%d ", ct->extcharge_cplx[i]);
+    for (i=0; i<ct->modif_extcharges_cplx; i++)
+        PRINTF("%d ", ct->modif_extcharge_cplx[i]);
+    for (i=0; i< ct->dim; i++)
+        PRINTF("%f %f \n", ct->wf[i], ct->wf[i+ct->dim]);
+*/
 
     return;
 }

@@ -59,6 +59,8 @@
 #include "gromacs/utility/real.h"
 #include "gromacs/utility/smalloc.h"
 
+#include "gromacs/transfer/qmmm.h"
+
 #if GMX_MPI
 #define PRINTF(...) if (ct_mpi_rank == 0) printf(__VA_ARGS__)
 #else
@@ -71,7 +73,6 @@
 
 //////// DFTB/QM parameters ///////
 #define DFTB_MAXTYPES (11)     /* number of chemical elements known to DFTB - C,H,N,O,S,F,Br,Cl,B,P,I */
-                              /* Br,Cl */
 #define MAX_PATH_LENGTH (288) /* max length of the string, which holds the path to the SLKO files */
 #define LDIM (9)              /* size of profylactic arrays - 1 s, 3 p and 5 d orbital components = 9 */
 #define MAXITER_BROYDEN (80)  /* max number of iterations for self consitent charge calculations with the broyden method */
@@ -81,13 +82,13 @@
 
 
 ///// GAFF parameter used in the construction of link hydrogen atoms /////
-   // the length of the bond in Angstrom
-#define CH_BOND_LENGTH (1.093)
-#define NH_BOND_LENGTH (1.018)
-#define OH_BOND_LENGTH (0.974)
-#define SH_BOND_LENGTH (1.353)
-#define BH_BOND_LENGTH (1.190)
-#define PH_BOND_LENGTH (1.420)
+   // the length of the bond in Angstrom -- NEW PROGRAM: KEEP IT IN nanometer!
+#define CH_BOND_LENGTH (0.1093)
+#define NH_BOND_LENGTH (0.1018)
+#define OH_BOND_LENGTH (0.0974)
+#define SH_BOND_LENGTH (0.1353)
+#define BH_BOND_LENGTH (0.1190)
+#define PH_BOND_LENGTH (0.1420)
 
 
 //// Conversion Factors ////
@@ -151,15 +152,12 @@
 #define SQR(x) ((x)*(x))
 
 
-
-
 ///// Old DNA/TRP/TYR stuff  /////
 //#define HUBBARD_ADENINE (0.208)
 //#define HUBBARD_GUANINE (0.205)
 //#define EXTCHARGE_SHIFT (0.06080)
 //#define LAMBDA_I (0.008452341) // inner-sphere reorganization energy of a nucleobase. 0.23 eV in hartree units
 //#define SIC_COEFFICIENT (0.2) // self-interaction correction - only 20 % of the QQ interaction involved. Now you have to give the SIC coefficient in the input
-
 
 
 /* some simple custom data types */
@@ -193,7 +191,11 @@ typedef struct {
 #endif
 
 /* available jobtypes */
-enum { cteSCCDYNAMIC, cteCPFSCCDYNAMIC, cteDDBSCCDYNAMIC, cteADIABATIC, cteBORNOPPENHEIMER, cteNONSCCDYNAMIC, ctePARAMETERS, cteADNONSCC, cteNOMOVEMENT, cteSURFACEHOPPING, cteFERMI, cteFERMIADIABATIC, cteFERMISFHOPPING, cteTULLYFEWESTSWITCHES, cteDLZSH,  cteALZSH, cteDFSSH, cteJFSSH, cteBCJFSSH, cteSCRDFSSH, cteCCFSSH, cteDISH, cteGFSH, cteTULLYLOC, cteTULLYDIA, ctePERSICOSFHOPPING, cteNEGFLORENTZ, cteNEGFLORENTZNONSCC, cteESP, cteTDA, ctePREZHDOSFHOPPING, cteNR };
+enum { cteSCCDYNAMIC, cteCPFSCCDYNAMIC, cteDDBSCCDYNAMIC, cteADIABATIC, cteBORNOPPENHEIMER, cteNONSCCDYNAMIC, ctePARAMETERS, cteADNONSCC,
+       cteNOMOVEMENT, cteSURFACEHOPPING, cteFERMI, cteFERMIADIABATIC, cteFERMISFHOPPING, cteTULLYFEWESTSWITCHES, cteDLZSH,  cteALZSH,
+       cteDFSSH, cteJFSSH, cteBCJFSSH, cteSCRDFSSH, cteCCFSSH, cteDISH, cteGFSH, cteTULLYLOC, cteTULLYDIA, ctePERSICOSFHOPPING, cteNEGFLORENTZ,
+       cteNEGFLORENTZNONSCC, cteESP, cteTDA, ctePREZHDOSFHOPPING,
+       cteNR };
 
 typedef struct {
   /* data structure for non-equilibrium greens function calculation. I guess this was used for calculating transmissions in DNA between electrodes */
@@ -242,6 +244,10 @@ typedef struct {
   int *atom;           /* lists of atoms (atomnumbers) */
   int *atomtype;       /* atomtypes corresponding to atomnumbers */
 		       /* C=0; H=1; N=2; O=3; */
+  double *mass;
+  double inv_tot_mass;
+  dvec centerOfMass;
+  double esp;
   int bonds;           /* number of bonds cut by QM/MM boundary. the following variables have one array for each bond. */
   int *QMLA;           /* position of QM link atom in list "atom" */
   int *MMLA;           /* position of MM link atom in list "atom" */
@@ -298,7 +304,7 @@ typedef struct {
 } align_t;
 
 
-typedef struct {
+typedef struct charge_transfer_t {
   /* main data structure of the charge transfer code */
   int jobtype;         /* cteXXX */
   int interval;        /* how often should the parameters be calculated? */
@@ -327,6 +333,9 @@ typedef struct {
                        /* contains C1q in place of link hydrogens */
   int *atomtype_cplx;  /* similarly as in the previous case */
                        /* C=0; H=1; N=2; O=3; */
+  double *mass_cplx;
+  double inv_tot_mass_cplx;
+  dvec centerOfMassCplx;
   int extcharges_cplx; /* number of extcharges for the complex */
 //  int **extcharge;     /* lists of extcharges - one array for each site */                         NOW IN STRUCT SITE
   int *extcharge_cplx; /* list of extcharges - for the complex */
@@ -497,6 +506,7 @@ typedef struct {
   int **pair_index;
   double ***deriv_offdiag;
 
+  int do_ncv;  // determine whether the nonadiabatic coupling vectors are calculated
 } charge_transfer_t;
 
 typedef struct {
@@ -513,6 +523,7 @@ typedef struct {
   double *fermi_coef;
 } ct_diis_t;
 
+// TODO: REMOVE ONE OF THE BROYDEN STRUCTURE TYPES?
 typedef struct {
   /* data structure for BROYDEN charge convergence method used to converge coarse grained FO Hamiltonian */
   int i_iter;                  // actual iteration
@@ -595,14 +606,15 @@ typedef struct {
          *qmat, // NNDIM  /* number of valence electrons on each atom in present SCC iteration */
          *qmold, // NNDIM /* number of valence electrons on each atom in last SCC iteration */
          *qmulli, // MDIM !!! /* help vector needed for mulliken charge calculation */
- //        *d_qmulli, // atomic delta q, calculated via mulliken charges
+ //      *d_qmulli, // atomic delta q, calculated via mulliken charges
          au[LDIM][LDIM], /* auxiliary matrix in which the Hamilton matrix between two atoms is read in from the slater koster files */
          bu[LDIM][LDIM], /* auxiliary matrix in which the overlap matrix between two atoms is read in from the slater koster files */
          auh[LDIM][LDIM], //needed for gradient calculation (lambda_i)
          buh[LDIM][LDIM], //needed for gradient calculation (lambda_i)
         auhh[LDIM][LDIM], // new jjk
          buhh[LDIM][LDIM], // new jjk
-         **a, // MDIM MDIM /* first this is the charge dependent (DFTB2) Hamilton matrix of the fragment (in AO basis). After diagonalization these are the eigenvectors*/
+         **a, // MDIM MDIM // first this is the charge dependent (DFTB2) Hamilton matrix of the fragment (in AO basis).
+                           // After diagonalization these are the eigenvectors
          **a_old, // MDIM MDIM /* eigenvectors of the last MD step */
          **a_ref, // MDIM MDIM /* used to store the eigenvectors of a reference snapshot (first MD step)*/
          **b, // MDIM MDIM /* overlap matrix */
@@ -688,6 +700,7 @@ typedef struct {
   ////tddftb
   double **zeta;  //Zeta(A,B) fct., made to equal gammamat
 } dftb_phase2_t;
+
 typedef struct {
   //beware: for matrix no [i][j] dereference provided, use [i*dim+j] or flipped for col. major
   int nn;       //number of atoms   [whole block new in jjk]
@@ -742,67 +755,107 @@ typedef struct {
 
 
 typedef struct {
-  /* main data structure for DFTB related stuff */
-  int lmax[DFTB_MAXTYPES];       /* number of shells for each atom type */
-  double racc, dacc;             /* machine accuracy */
-  //double ****skhtab1, ****skstab1,
-  //double (*(skhtab1[10]))[DFTB_MAXTYPES][DFTB_MAXTYPES], (*(skstab1[10]))[DFTB_MAXTYPES][DFTB_MAXTYPES],
-  tendoubles *skhtab1[DFTB_MAXTYPES][DFTB_MAXTYPES], *skstab1[DFTB_MAXTYPES][DFTB_MAXTYPES];
-  double skself1[DFTB_MAXTYPES][3], dr1[DFTB_MAXTYPES][DFTB_MAXTYPES],
-    qzero1[DFTB_MAXTYPES], uhubb1[DFTB_MAXTYPES]; /* SLKO parameters for DFTB phase 1 */
-  int dim1[DFTB_MAXTYPES][DFTB_MAXTYPES];
-  //double ****skhtab2, ****skstab2,
-  //double (*(skhtab2[10]))[DFTB_MAXTYPES][DFTB_MAXTYPES], (*(skstab2[10]))[DFTB_MAXTYPES][DFTB_MAXTYPES],
-  tendoubles *skhtab2[DFTB_MAXTYPES][DFTB_MAXTYPES], *skstab2[DFTB_MAXTYPES][DFTB_MAXTYPES];
-  double skself2[DFTB_MAXTYPES][3], dr2[DFTB_MAXTYPES][DFTB_MAXTYPES],
-    qzero2[DFTB_MAXTYPES], uhubb2[DFTB_MAXTYPES]; /* SLKO parameters for DFTB phase 2 */
-  int dim2[DFTB_MAXTYPES][DFTB_MAXTYPES];
-  dftb_phase1_t *phase1;
-  tddft_phase1_t *tddft_phase1;   //new jjk
-  dftb_phase2_t phase2;
-  dftb_broyden_t *broyden;
-  dftb_orthogo_t orthogo;
-  double *tddft_work; //memory for tddft diagonalization new jjk
-  matrix box_pme;
-  real ewaldcoeff_pme, rcoulomb_pme;
-  int nstlist_pme, lastlist_pme;
-  double ** overl_test; //just for testing stuff
-  int **nl;  //neighbor list matrix of all QM atoms (dim atoms_cplx*atoms_cplx). is there any matrix element between them?
-  int do_ncv;  // determine whether the nonadiabatic coupling vectors are calculated
+    /* main data structure for DFTB related stuff */
+    int lmax[DFTB_MAXTYPES];       /* number of shells for each atom type */
+    double racc, dacc;             /* machine accuracy */
+    //double ****skhtab1, ****skstab1,
+    //double (*(skhtab1[10]))[DFTB_MAXTYPES][DFTB_MAXTYPES], (*(skstab1[10]))[DFTB_MAXTYPES][DFTB_MAXTYPES],
+    tendoubles *skhtab1[DFTB_MAXTYPES][DFTB_MAXTYPES], *skstab1[DFTB_MAXTYPES][DFTB_MAXTYPES];
+    double skself1[DFTB_MAXTYPES][3], dr1[DFTB_MAXTYPES][DFTB_MAXTYPES],
+      qzero1[DFTB_MAXTYPES], uhubb1[DFTB_MAXTYPES]; /* SLKO parameters for DFTB phase 1 */
+    int dim1[DFTB_MAXTYPES][DFTB_MAXTYPES];
+    //double ****skhtab2, ****skstab2,
+    //double (*(skhtab2[10]))[DFTB_MAXTYPES][DFTB_MAXTYPES], (*(skstab2[10]))[DFTB_MAXTYPES][DFTB_MAXTYPES],
+    tendoubles *skhtab2[DFTB_MAXTYPES][DFTB_MAXTYPES], *skstab2[DFTB_MAXTYPES][DFTB_MAXTYPES];
+    double skself2[DFTB_MAXTYPES][3], dr2[DFTB_MAXTYPES][DFTB_MAXTYPES],
+      qzero2[DFTB_MAXTYPES], uhubb2[DFTB_MAXTYPES]; /* SLKO parameters for DFTB phase 2 */
+    int dim2[DFTB_MAXTYPES][DFTB_MAXTYPES];
+    dftb_phase1_t *phase1;
+    tddft_phase1_t *tddft_phase1;   //new jjk
+    dftb_phase2_t phase2;
+    dftb_broyden_t *broyden;
+    dftb_orthogo_t orthogo;
+    double *tddft_work; //memory for tddft diagonalization new jjk
+    matrix box_pme;
+    real ewaldcoeff_pme, rcoulomb_pme;
+    int nstlist_pme, lastlist_pme;
+    double ** overl_test; //just for testing stuff
+    int **nl;  //neighbor list matrix of all QM atoms (dim atoms_cplx*atoms_cplx). is there any matrix element between them?
 } dftb_t;
 
 
 #if GMX_MPI
-void init_charge_transfer(t_atoms *atoms, const gmx_mtop_t *top_global, t_mdatoms *mdatoms, charge_transfer_t *ct, char *slko_path, t_state *state, int ct_mpi_rank);
-//void init_dftb(t_mdatoms *mdatoms, dftb_t *dftb, charge_transfer_t *ct, char *slko_path, int ct_mpi_rank);
+void init_charge_transfer(t_atoms *atoms, const gmx_mtop_t *top_global, t_mdatoms *mdatoms, charge_transfer_t *ct, t_state *state, int ct_mpi_rank);
+//void init_dftb(t_mdatoms *mdatoms, dftb_t *dftb, charge_transfer_t *ct, int ct_mpi_rank);
 //void init_dftb_pme(dftb_t *dftb, charge_transfer_t *ct, t_inputrec *ir, int ct_mpi_rank);
 //void do_neighborlist_for_dftb(charge_transfer_t *ct, dftb_t *dftb, rvec *x, int ct_mpi_rank, int ct_mpi_size);
 #else
-void init_charge_transfer(t_atoms *atoms, const gmx_mtop_t *top_global, t_mdatoms *mdatoms, charge_transfer_t *ct, char *slko_path, t_state *state);
-//void init_dftb(t_mdatoms *mdatoms, dftb_t *dftb, charge_transfer_t *ct, char *slko_path);
+void init_charge_transfer(t_atoms *atoms, const gmx_mtop_t *top_global, t_mdatoms *mdatoms, charge_transfer_t *ct, t_state *state);
+//void init_dftb(t_mdatoms *mdatoms, dftb_t *dftb, charge_transfer_t *ct);
 //void init_dftb_pme(dftb_t *dftb, charge_transfer_t *ct, t_inputrec *ir);
 //void do_neighborlist_for_dftb(charge_transfer_t *ct, dftb_t *dftb, rvec *x);
 #endif
 void init_dftb_stub(dftb_t *dftb, charge_transfer_t *ct);
-
-void prepare_charge_transfer(matrix state_box, t_mdatoms *mdatoms, dftb_t *dftb, charge_transfer_t *ct, rvec *x_ct);
 void ct_init_diis(charge_transfer_t *ct, ct_diis_t *diis);
 void ct_init_broyden(charge_transfer_t *ct, dftb_broyden_t *broy);
 
+//void prepare_charge_transfer(matrix state_box, t_mdatoms *mdatoms, dftb_t *dftb, charge_transfer_t *ct, rvec *x_ct);
+void prepare_charge_transfer(const matrix                        state_box,
+                             const t_mdatoms*                    mdatoms,
+                             const bool                          bNS,
+                             const nonbonded_verlet_t*           nbv,
+                             const rvec*                         shift_rvec,
+                             const t_commrec*                    cr,
+                             charge_transfer_t*                  ct,
+                             std::unique_ptr<QMMM_rec_transfer>* dftbplus_phase1,
+                             std::unique_ptr<QMMM_rec_transfer>& dftbplus_phase2,
+                             rvec*                               x_ct);
+
 #if GMX_MPI
-void do_dftb_phase1(charge_transfer_t *ct, dftb_t *dftb, MPI_Comm ct_mpi_comm, int ct_mpi_rank, int ct_mpi_size);
+void do_dftb_phase1(charge_transfer_t*                                ct,
+                    std::vector<std::unique_ptr<QMMM_rec_transfer> >& dftbplus_phase1,
+                    const t_commrec*                                  cr,
+                    rvec                                              f[],
+                    t_nrnb*                                           nrnb,
+                    gmx_wallcycle_t                                   wcycle,
+                    MPI_Comm                                          ct_mpi_comm,
+                    int                                               ct_mpi_rank,
+                    int                                               ct_mpi_size);
+void do_esp_only(charge_transfer_t*                                ct,
+                 std::vector<std::unique_ptr<QMMM_rec_transfer> >& dftbplus_phase1,
+                 const t_commrec*                                  cr,
+                 real*                                             q,
+                 t_nrnb*                                           nrnb,
+                 gmx_wallcycle_t                                   wcycle,
+                 MPI_Comm                                          ct_mpi_comm,
+                 int                                               ct_mpi_rank,
+                 int                                               ct_mpi_size);
 void get_MM_params(charge_transfer_t *ct, dftb_t *dftb, MPI_Comm ct_mpi_comm, int ct_mpi_rank, int ct_mpi_size);
 void do_tddft_phase1(charge_transfer_t *ct, dftb_t *dftb, MPI_Comm ct_mpi_comm, int ct_mpi_rank, int ct_mpi_size);
 void prep_exc_state_forces(charge_transfer_t *ct, dftb_t *dftb, MPI_Comm ct_mpi_comm, int ct_mpi_rank, int ct_mpi_size);
 void calc_tddft_forces(charge_transfer_t *ct, dftb_t *dftb, MPI_Comm ct_mpi_comm, int ct_mpi_rank, int ct_mpi_size);
-void do_esp_only(charge_transfer_t *ct, dftb_t *dftb, real *q, MPI_Comm ct_mpi_comm, int ct_mpi_rank, int ct_mpi_size);
 #else
-void do_dftb_phase1(charge_transfer_t *ct, dftb_t *dftb);
+void do_dftb_phase1(charge_transfer_t*                                ct,
+                    std::vector<std::unique_ptr<QMMM_rec_transfer> >& dftbplus_phase1,
+                    const t_commrec*                                  cr,
+                    rvec                                              f[],
+                    t_nrnb*                                           nrnb,
+                    gmx_wallcycle_t                                   wcycle);
+void do_esp_only(charge_transfer_t*                                ct,
+                 std::vector<std::unique_ptr<QMMM_rec_transfer> >& dftbplus_phase1,
+                 const t_commrec*                                  cr,
+                 real*                                             q,
+                 t_nrnb*                                           nrnb,
+                 gmx_wallcycle_t                                   wcycle);
 void get_MM_params(charge_transfer_t *ct, dftb_t *dftb);
 void do_tddft_phase1(charge_transfer_t *ct, dftb_t *dftb);// new jjk
-void do_esp_only(charge_transfer_t *ct, dftb_t *dftb, real *q);
 #endif
-void do_dftb_phase2(charge_transfer_t *ct, dftb_t *dftb);
+void do_dftb_phase2(charge_transfer_t*                ct,
+                    std::unique_ptr<QMMM_rec_transfer>& dftbplus_phase2,
+                    const t_commrec*                  cr,
+                    rvec                              f[],
+                    t_nrnb*                           nrnb,
+                    gmx_wallcycle_t                   wcycle);
 void calc_zeta(charge_transfer_t *ct, dftb_t *dftb);  //for tddft exciton treatment  new jjk
 
 /*
@@ -859,7 +912,17 @@ void additional_gradient_homo(dftb_t *dftb, dvec *x, dvec *grad, charge_transfer
 void additional_gradient_homo_new(dftb_t *dftb, dvec *x, dvec *grad, charge_transfer_t *ct, int site_i);
 //int do_prezhdo_sfhopping(charge_transfer_t *ct, dftb_broyden_t *broyd, double *fermi_coeff, FILE *f, FILE *f2, FILE *f3);
 //void adapt_QMzone(charge_transfer_t *ct, rvec *x_ct); //new jjk
-void search_starting_site(matrix state_box, t_mdatoms *mdatoms, dftb_t *dftb, charge_transfer_t *ct, rvec *x_ct, char *slko_path, const gmx_mtop_t *top_global, rvec *gromacs_x);
+void search_starting_site(matrix                              state_box,
+                          t_mdatoms*                          mdatoms,
+                          const nonbonded_verlet_t*           nbv,
+                          const rvec*                         shift_vec,
+                          const t_commrec*                    cr,
+                          charge_transfer_t*                  ct,
+                          std::unique_ptr<QMMM_rec_transfer>* dftbplus_phase1,
+                          std::unique_ptr<QMMM_rec_transfer>& dftbplus_phase2,
+                          rvec*                               x_ct,
+                          const gmx_mtop_t*                   top_global,
+                          rvec*                               gromacs_x);
 int adapt_QMzone(charge_transfer_t *ct, rvec *x_ct, t_mdatoms *mdatoms, const gmx_mtop_t *top_global, matrix state_box, rvec *gromacs_x);
 int find_intersection(int size, int array1[], int array2[], int intersection_array[]);
 

@@ -225,90 +225,77 @@ void gmx::LegacySimulator::do_md()
      * TRANSFER *
      ************/
 
-    charge_transfer_t *ct=NULL;
-    dftb_t *dftb=NULL;
-    char slko_path[MAX_PATH_LENGTH];
+    // TODO: maybe this should be ct_broyden_t? or rename the type dftb_broyden_t?
     dftb_broyden_t *ct_broyden=NULL;
     ct_diis_t *ct_diis=NULL;
-    FILE *f_tb_hamiltonian=NULL, *f_tb_hamiltonian_ml=NULL, *f_tb_hamiltonian_hub=NULL, *f_tb_hubbard=NULL, *f_tb_occupation=NULL, *f_ct_esp=NULL, *f_ct_shift=NULL, *f_ct_energy=NULL,
-         *f_ct_adiabatic=NULL, *f_ct_exp_adiab=NULL, *f_ct_surfacehopping=NULL, *f_ct_nonadiab_coupling=NULL, *f_ct_state_vectors=NULL, *f_ct_orbital=NULL, *f_ct_current=NULL,
-         *f_ct_project_wf=NULL,*f_ct_project_wf_ref=NULL, *f_ct_spec=NULL, *f_ct_spec_evec=NULL,
+    FILE *f_tb_hamiltonian=NULL, *f_tb_hamiltonian_ml=NULL, *f_tb_hamiltonian_hub=NULL, *f_tb_hubbard=NULL, *f_tb_occupation=NULL, *f_ct_esp=NULL,
+         *f_ct_shift=NULL, *f_ct_energy=NULL, *f_ct_adiabatic=NULL, *f_ct_exp_adiab=NULL, *f_ct_surfacehopping=NULL, *f_ct_nonadiab_coupling=NULL,
+         *f_ct_state_vectors=NULL, *f_ct_orbital=NULL, *f_ct_current=NULL, *f_ct_project_wf=NULL, *f_ct_project_wf_ref=NULL, *f_ct_spec=NULL, *f_ct_spec_evec=NULL,
       // *f_ct_overlap_fo=NULL,*f_ct_overlap_fo_ref=NULL, *f_ct_ortho_ev=NULL, *f_ct_fo_ref=NULL,
-         *f_ct_tda=NULL, *f_tb_wfprops=NULL, *f_ct_startwf=NULL, *f_ct_active=NULL, *f_tb_com=NULL, *f_tb_spread=NULL, *f_tb_diapop=NULL, *f_tb_adiapop=NULL, *f_tb_occupation_adiab=NULL, *f_tb_diag_force=NULL, *f_tb_offdiag_force=NULL;
+         *f_ct_tda=NULL, *f_tb_wfprops=NULL, *f_ct_startwf=NULL, *f_ct_active=NULL, *f_tb_com=NULL, *f_tb_spread=NULL, *f_tb_diapop=NULL,
+         *f_tb_adiapop=NULL, *f_tb_occupation_adiab=NULL, *f_tb_diag_force=NULL, *f_tb_offdiag_force=NULL;
 
-
- // double shiftE;
-    double occup_sqr_sum;
-    int j,k,l,n,iatom;
 #if GMX_MPI
     MPI_Comm ct_mpi_comm;
     MPI_Status ct_mpi_status;
-    int *ct_mpi_gathered, nprocessed;
+    int *ct_mpi_gathered; //, nprocessed;
     if (DOMAINDECOMP(cr)){
-      printf("CT-code has to be tested with Domain decomposition\n");
-      //printf("CT-code works only with particle decomposition (mdrun -pd)\n");
-      exit(-1);
+        printf("CT-code has to be tested with Domain decomposition\n");
+     // printf("CT-code works only with particle decomposition (mdrun -pd)\n");
+        exit(-1);
     }
-    int ct_mpi_rank=0, ct_mpi_size=0, return_value;
+    int ct_mpi_rank=0, ct_mpi_size=0;
 #endif
- // double ct_value, ct_energy1, ct_energy2, fraction_being_annihilated, ekin, ptot, tau;
-    double ct_energy, pop, ekintot, decay_rate;
- // double hamtmp1, hamtmp2, de;
-    dvec bond, std, msd;
-    rvec *x_ct;
-    int  counter, counter2; //, iao, jao;
-    t_atoms *ct_atoms; //, *ct_atoms2, ct_atoms3;
-    double tda, original_delta_t;
 
     static struct timespec time_1, time_end;
 
-    // int pair_index[14][6];
-    //
-    // for (i=0;i<14;i++)
-    //     for (j=0;j<6;j++)
-    //         pair_index[i][j] = 0;
-    //
-    // pair_index[0][0] = 1;
-    // pair_index[0][1] = 2;
-    // pair_index[0][2] = 3;
-    // pair_index[0][3] = 10;
-    // pair_index[0][4] = 11;
-    //
-    // pair_index[1][0] = 3;
-    // pair_index[1][1] = 4;
-    // pair_index[1][2] = 10;
-    // pair_index[1][3] = 11;
-    //
-    // pair_index[2][0] = 3;
-    // pair_index[2][1] = 5;
-    // pair_index[2][2] = 7;
-    // pair_index[2][3] = 8;
-    //
-    // pair_index[3][0] = 4;
-    // pair_index[3][1] = 5;
-    // pair_index[3][2] = 6;
-    // pair_index[3][3] = 7;
-    // pair_index[3][4] = 8;
-    // pair_index[3][5] = 9;
-    //
-    // pair_index[4][0] = 6;
-    // pair_index[4][1] = 8;
-    // pair_index[4][2] = 9;
-    //
-    // pair_index[5][0] = 6;
-    // pair_index[5][1] = 12;
-    // pair_index[5][2] = 13;
-    //
-    // pair_index[6][0] = 12;
-    // pair_index[6][1] = 13;
-    //
-    // pair_index[7][0] = 8;
-    //
-    // pair_index[8][0] = 9;
-    //
-    // pair_index[10][0] = 11;
-    //
-    // pair_index[12][0] = 13;
+ // int pair_index[14][6];
+ //
+ // for (i=0;i<14;i++)
+ //     for (j=0;j<6;j++)
+ //         pair_index[i][j] = 0;
+ //
+ // pair_index[0][0] = 1;
+ // pair_index[0][1] = 2;
+ // pair_index[0][2] = 3;
+ // pair_index[0][3] = 10;
+ // pair_index[0][4] = 11;
+ //
+ // pair_index[1][0] = 3;
+ // pair_index[1][1] = 4;
+ // pair_index[1][2] = 10;
+ // pair_index[1][3] = 11;
+ //
+ // pair_index[2][0] = 3;
+ // pair_index[2][1] = 5;
+ // pair_index[2][2] = 7;
+ // pair_index[2][3] = 8;
+ //
+ // pair_index[3][0] = 4;
+ // pair_index[3][1] = 5;
+ // pair_index[3][2] = 6;
+ // pair_index[3][3] = 7;
+ // pair_index[3][4] = 8;
+ // pair_index[3][5] = 9;
+ //
+ // pair_index[4][0] = 6;
+ // pair_index[4][1] = 8;
+ // pair_index[4][2] = 9;
+ //
+ // pair_index[5][0] = 6;
+ // pair_index[5][1] = 12;
+ // pair_index[5][2] = 13;
+ //
+ // pair_index[6][0] = 12;
+ // pair_index[6][1] = 13;
+ //
+ // pair_index[7][0] = 8;
+ //
+ // pair_index[8][0] = 9;
+ //
+ // pair_index[10][0] = 11;
+ //
+ // pair_index[12][0] = 13;
 
     /****************
      * END TRANSFER *
@@ -858,93 +845,176 @@ void gmx::LegacySimulator::do_md()
     ct_mpi_comm = MPI_COMM_WORLD;
     ct_mpi_size = cr->nnodes;
     ct_mpi_rank = cr->nodeid;
-    if (ct_mpi_size>1 && ct_mpi_rank==0) snew(ct_mpi_gathered, ct_mpi_size);
+    if (ct_mpi_size>1 && ct_mpi_rank==0)
+    {
+        snew(ct_mpi_gathered, ct_mpi_size);
+    }
     printf("MPI Initialization on node %d of %d done\n", ct_mpi_rank+1, ct_mpi_size);
 #endif
 
-    snew(ct_atoms,1);
+    t_atoms *ct_atoms; //, *ct_atoms2, ct_atoms3;
+    snew(ct_atoms, 1);
 
 #if GMX_MPI
-  if (ct_mpi_rank == 0) {
-      *ct_atoms = gmx_mtop_global_atoms(top_global); //expands the topology. now arrays in struct t_atoms contain all atoms. in top_global they are grouped together in moltypes. only possible on rank0. relevant data has to be sent to other nodes.
-      snew(ct_atoms->pdbinfo, ct_atoms->nr); //pdb files can be handy for special output where e.g. charge is written in bfactor which can be visualized with VMD
+    if (ct_mpi_rank == 0)
+    {
+        *ct_atoms = gmx_mtop_global_atoms(top_global); // expands the topology. now arrays in struct t_atoms contain all atoms.
+                                                     // in top_global they are grouped together in moltypes. only possible on rank0.
+                                                     // relevant data have to be sent to all other nodes.
+        snew(ct_atoms->pdbinfo, ct_atoms->nr); // pdb files can be handy for special output where e.g. charge is written in bfactor
+                                             // which can be visualized with VMD
 
-    if(PROTEIN){
-      printf("start protein preprocessing\n");
-      //snew(ct_atoms2,1);
-      //init_t_atoms(ct_atoms2, ct_atoms->nr, FALSE);
-      //ct_atoms = protein_preprocessor(ct_atoms, state_global); //changes residues and atomnames for proteins
-      printf("protein preprocessing done\n");
-      for (j=0; j<ct_atoms->nr; j++){
-        //printf("CHECK %s %s\n",*(ct_atoms->atomname[j]), *(ct_atoms->atomname[j]));
-        //printf("CHECK %d %d\n",ct_atoms->atom[j].resind, ct_atoms->atom[j].resind );
-       // printf("CHECK %s %s\n",*(ct_atoms->resinfo[ct_atoms->atom[j].resind].name), *(ct_atoms->resinfo[ct_atoms->atom[j].resind].name) );
-      }/*
-      FILE *f_ct_preprocessor=NULL;
-      f_ct_preprocessor = fopen("preprocessor.gro", "w");
-      fprintf(f_ct_preprocessor,"gro file with new residues\n %d\n", ct_atoms->nr);
-      for (j=0; j<ct_atoms->nr; j++)
-      fprintf(f_ct_preprocessor, "%5d%-5.5s%5.5s%5d %lf %lf %lf\n", ct_atoms->atom[j].resind%100000, "NEW", *(ct_atoms->atomname[j]), (j+1)%100000, state_global->x[j][XX], state_global->x[j][YY], state_global->x[j][ZZ]);
-      fclose(f_ct_preprocessor);
-*/
- //     write_sto_conf("preprocessor.gro", ".gro file to check residues", ct_atoms,  state_global->x, NULL, -1, NULL);
+        if (PROTEIN)
+        {
+            printf("start protein preprocessing\n");
+         // snew(ct_atoms2,1);
+         // init_t_atoms(ct_atoms2, ct_atoms->nr, FALSE);
+         // ct_atoms = protein_preprocessor(ct_atoms, state_global); //changes residues and atomnames for proteins
+            printf("protein preprocessing done\n");
+            for (j=0; j<ct_atoms->nr; j++)
+            {
+             // printf("CHECK %s %s\n",*(ct_atoms->atomname[j]), *(ct_atoms->atomname[j]));
+             // printf("CHECK %d %d\n",ct_atoms->atom[j].resind, ct_atoms->atom[j].resind );
+             // printf("CHECK %s %s\n",*(ct_atoms->resinfo[ct_atoms->atom[j].resind].name), *(ct_atoms->resinfo[ct_atoms->atom[j].resind].name) );
+            }
+/*
+            FILE *f_ct_preprocessor=NULL;
+            f_ct_preprocessor = fopen("preprocessor.gro", "w");
+            fprintf(f_ct_preprocessor, "gro file with new residues\n %d\n", ct_atoms->nr);
+            for (j=0; j<ct_atoms->nr; j++)
+                fprintf(f_ct_preprocessor, "%5d%-5.5s%5.5s%5d %lf %lf %lf\n", ct_atoms->atom[j].resind%100000, "NEW",
+                        *(ct_atoms->atomname[j]), (j+1)%100000, state_global->x[j][XX], state_global->x[j][YY], state_global->x[j][ZZ]);
+            fclose(f_ct_preprocessor);
+*/         
+         // write_sto_conf("preprocessor.gro", ".gro file to check residues", ct_atoms,  state_global->x, NULL, -1, NULL);
+        }
+
+        for (i=1; i < ct_mpi_size; i++)
+        {
+            MPI_Send(&ct_atoms->nres, 1, MPI_INT, i, 200+i, ct_mpi_comm);
+            MPI_Send(&ct_atoms->nr, 1, MPI_INT, i, 300+i, ct_mpi_comm);
+            for (j=0; j < ct_atoms->nr; j++)
+            {
+                MPI_Send(*ct_atoms->atomname[j],  6 , MPI_CHAR, i, (i)*1000000+j, ct_mpi_comm);
+            }
+            MPI_Send(ct_atoms->atom, ct_atoms->nr * sizeof(ct_atoms->atom[0]), MPI_CHAR, i, 400+i, ct_mpi_comm);
+            MPI_Send(ct_atoms->resinfo, ct_atoms->nres * sizeof(ct_atoms->resinfo[0]), MPI_CHAR, i, 500+i, ct_mpi_comm);
+        }
     }
+    else
+    {
+        MPI_Recv(&ct_atoms->nr, 1, MPI_INT, 0, 300+ct_mpi_rank, ct_mpi_comm, &ct_mpi_status);
+        printf("nr %d\n",ct_atoms->nr);
+        snew(ct_atoms->atom, ct_atoms->nr);
+        snew(ct_atoms->atomname, ct_atoms->nr);
+        for (j=0; j < ct_atoms->nr; j++)
+        {
+            snew(ct_atoms->atomname[j], 1);
+            snew(ct_atoms->atomname[j][0], 6);
+        }
+        MPI_Recv(&ct_atoms->nres, 1, MPI_INT, 0, 200+ct_mpi_rank, ct_mpi_comm, &ct_mpi_status);
+     // printf("nres %d\n",ct_atoms->nres);
+        snew(ct_atoms->resinfo, ct_atoms->nres);
 
-    for (i=1; i < ct_mpi_size; i++){
-      MPI_Send(&ct_atoms->nres, 1, MPI_INT, i, 200+i, ct_mpi_comm);
-      MPI_Send(&ct_atoms->nr, 1, MPI_INT, i, 300+i, ct_mpi_comm);
-      for (j=0; j < ct_atoms->nr; j++){
-        MPI_Send(*ct_atoms->atomname[j],  6 , MPI_CHAR, i, (i)*1000000+j, ct_mpi_comm);
-      }
-      MPI_Send(ct_atoms->atom, ct_atoms->nr * sizeof(ct_atoms->atom[0]), MPI_CHAR, i, 400+i, ct_mpi_comm);
-      MPI_Send(ct_atoms->resinfo, ct_atoms->nres * sizeof(ct_atoms->resinfo[0]), MPI_CHAR, i, 500+i, ct_mpi_comm);
+        for (j=0; j < ct_atoms->nr; j++)
+        {
+            MPI_Recv(*ct_atoms->atomname[j],  6 , MPI_CHAR, 0, (ct_mpi_rank)*1000000+j, ct_mpi_comm, &ct_mpi_status);
+         // printf("%5s\n",*(ct_atoms->atomname[j]));
+        }
+        MPI_Recv(ct_atoms->atom, ct_atoms->nr * sizeof(ct_atoms->atom[0]), MPI_CHAR, 0, 400+ct_mpi_rank, ct_mpi_comm, &ct_mpi_status);
+        MPI_Recv(ct_atoms->resinfo, ct_atoms->nres * sizeof(ct_atoms->resinfo[0]), MPI_CHAR, 0, 500+ct_mpi_rank , ct_mpi_comm, &ct_mpi_status);
     }
-  } else {
-      MPI_Recv(&ct_atoms->nr, 1, MPI_INT, 0, 300+ct_mpi_rank, ct_mpi_comm, &ct_mpi_status);
-   printf("nr %d\n",ct_atoms->nr);
-      snew(ct_atoms->atom, ct_atoms->nr);
-      snew(ct_atoms->atomname, ct_atoms->nr);
-      for (j=0; j < ct_atoms->nr; j++){
-        snew(ct_atoms->atomname[j], 1);
-        snew(ct_atoms->atomname[j][0], 6);
-      }
-      MPI_Recv(&ct_atoms->nres, 1, MPI_INT, 0, 200+ct_mpi_rank, ct_mpi_comm, &ct_mpi_status);
-   //printf("nres %d\n",ct_atoms->nres);
-      snew(ct_atoms->resinfo, ct_atoms->nres);
-
-      for (j=0; j < ct_atoms->nr; j++){
-        MPI_Recv(*ct_atoms->atomname[j],  6 , MPI_CHAR, 0, (ct_mpi_rank)*1000000+j, ct_mpi_comm, &ct_mpi_status);
-   //printf("%5s\n",*(ct_atoms->atomname[j]));
-      }
-      MPI_Recv(ct_atoms->atom, ct_atoms->nr * sizeof(ct_atoms->atom[0]), MPI_CHAR, 0, 400+ct_mpi_rank, ct_mpi_comm, &ct_mpi_status);
-      MPI_Recv(ct_atoms->resinfo, ct_atoms->nres * sizeof(ct_atoms->resinfo[0]) , MPI_CHAR, 0, 500+ct_mpi_rank , ct_mpi_comm, &ct_mpi_status);
-  }
-
 #else
-  *ct_atoms = gmx_mtop_global_atoms(top_global);
-  if(PROTEIN){
     *ct_atoms = gmx_mtop_global_atoms(top_global);
-    ct_atoms = protein_preprocessor(ct_atoms,state_global); //changes residues for proteins
-  }
+    if (PROTEIN) {
+        *ct_atoms = gmx_mtop_global_atoms(top_global);
+        ct_atoms = protein_preprocessor(ct_atoms, state_global); //changes residues for proteins
+    }
 #endif
 
+    // TRANSFER data structure
+
+    charge_transfer_t *ct=NULL;
     snew(ct, 1);
-    snew(dftb, 1);
-    snew(x_ct, state_global->natoms);
+
+#if GMX_MPI
+    init_charge_transfer(ct_atoms, top_global, mdatoms, ct, state, ct_mpi_rank);
+#else
+    init_charge_transfer(ct_atoms, top_global, mdatoms, ct, state);
+#endif
     ct->rk_timestep = ir->delta_t * PS_TO_AU;
     printf("Time step for quantum mechanics: %f ps = %f a.u.\n", ct->rk_timestep / PS_TO_AU, ct->rk_timestep);
 
+    // data structures for QM/MM and DFTB+
+    int qmmmVariant;
+    bool dipCorrection = false;
+    switch (ct->qmmm) {
+        case 0:  qmmmVariant = 0; break; // vacuo, no QM/MM
+        case 1:  qmmmVariant = 2; break; // cut-off, apply the switch version of Gromacs
+        case 2:  qmmmVariant = 2; break; // dtto, however only considering MM atoms from a specified list
+                                         // TODO: maybe what was intended is the *complete* list?
+                                         // that might require an additional value of qmmmVariant - but it would be easy
+        case 3:  qmmmVariant = 1; break; // PME, currently always without dipole correction
+        default: printf("Impossible value of QM/MM variant (%d), exiting.\n", ct->qmmm); exit(-1);
+    }
+
+    std::vector<int> qmAtoms, atomicnumberQM;
+    std::vector<std::unique_ptr<QMMM_rec_transfer> > dftbplus_phase1;
+    dftbplus_phase1.resize(ct->sites);
+    for (int i = 0; i < ct->sites; i++)
+    {
+        // figure out the atomic numbers from atomtypes (that are stored in the CT structure);
+        qmAtoms.clear();
+        atomicnumberQM.clear();
+        double totMass = 0.;
+        for (int j = 0; j<ct->site[i].atoms; j++)
+        {
+            qmAtoms.push_back(ct->site[i].atom[j]);
+         // atomicnumberQM.push_back(atomtype_to_atomicnumber(ct->site[i].atomtype[j]));
+            int atomicnumber;
+            double atomicmass;
+            atomtype_to_atomicnumber(ct->site[i].atomtype[j], atomicnumber, atomicmass);
+            atomicnumberQM.push_back(atomicnumber);
+            ct->site[i].mass[j] = atomicmass;
+            totMass += atomicmass;
+        }
+        dftbplus_phase1[i] = std::make_unique<QMMM_rec_transfer>(cr, ir, fr, state_global->natoms, qmAtoms, atomicnumberQM, qmmmVariant, dipCorrection);
+        ct->site[i].inv_tot_mass = 1. / totMass;
+    }
+    qmAtoms.clear();
+    atomicnumberQM.clear();
+    double totMassCplx;
+    for (int j = 0; j<ct->atoms_cplx; j++)
+    {
+        qmAtoms.push_back(ct->atom_cplx[j]);
+     // atomicnumberQM.push_back(atomtype_to_atomicnumber(ct->atomtype_cplx[j]));
+        int atomicnumber;
+        double atomicmass;
+        atomtype_to_atomicnumber(ct->atomtype_cplx[j], atomicnumber, atomicmass);
+        atomicnumberQM.push_back(atomicnumber);
+        ct->mass_cplx[j] = atomicmass;
+        totMassCplx += atomicmass;
+    }
+    std::unique_ptr<QMMM_rec_transfer> dftbplus_phase2 =
+                          std::make_unique<QMMM_rec_transfer>(cr, ir, fr, state_global->natoms, qmAtoms, atomicnumberQM, qmmmVariant, dipCorrection);
+    ct->inv_tot_mass_cplx = 1. / totMassCplx;
 #if GMX_MPI
-    init_charge_transfer(ct_atoms, top_global, mdatoms, ct, slko_path, state, ct_mpi_rank);
- // init_dftb(mdatoms, dftb, ct, slko_path, ct_mpi_rank); TODO DFTB+
+    init_qmmmrec_transfer(dftbplus_phase1.data(), dftbplus_phase2, ct, cr, ir->rcoulomb, ir->ewald_rtol, ct_mpi_rank);
 #else
-    init_charge_transfer(ct_atoms, top_global, mdatoms, ct, slko_path, state);
- // init_dftb(mdatoms, dftb, ct, slko_path); TODO DFTB+
+    init_qmmmrec_transfer(dftbplus_phase1.data(), dftbplus_phase2, ct, cr, ir->rcoulomb, ir->ewald_rtol);
 #endif
+
+    dftb_t *dftb;
+    snew(dftb, 1);
     init_dftb_stub(dftb, ct); // allocate the neighborlist array
 
+    // end QM/MM and DFTB+
+
+    rvec *x_ct;
+    snew(x_ct, state_global->natoms);
+
     if (ct->jobtype == cteBORNOPPENHEIMER) {
-      original_delta_t = ir->delta_t;
+      double original_delta_t = ir->delta_t;
       (void) original_delta_t;
     }
 /*
@@ -960,100 +1030,138 @@ void gmx::LegacySimulator::do_md()
     if (ct_mpi_rank == 0) {
 #endif
 
-      if (ct->jobtype != cteESP || ct->force_output == 1) {
+    if (ct->jobtype != cteESP || ct->force_output == 1)
+    {
         if (ct->jobtype==cteNOMOVEMENT || ct->force_output == 1)
         {
-          f_tb_com = fopen("TB_COM.xvg" , "w"); /* dholub */
-
-          if (ct->hamiltonian_type)
-          {
-            f_tb_hamiltonian_ml = fopen("TB_HAMILTONIAN_ML.xvg", "w");
-          }
-          else
-          {
-            f_tb_hamiltonian = fopen("TB_HAMILTONIAN.xvg", "w");
-          }
-          // MK tag printout
-          f_tb_diag_force = fopen("TB_DIAG_FORCE.xvg", "w");
-          f_tb_offdiag_force = fopen("TB_OFFDIAG_FORCE.xvg", "w");
+            f_tb_com = fopen("TB_COM.xvg" , "w"); /* dholub */
+            
+            if (ct->hamiltonian_type)
+            {
+                f_tb_hamiltonian_ml = fopen("TB_HAMILTONIAN_ML.xvg", "w");
+            }
+            else
+            {
+                f_tb_hamiltonian = fopen("TB_HAMILTONIAN.xvg", "w");
+            }
+            // MK tag printout
+            f_tb_diag_force = fopen("TB_DIAG_FORCE.xvg", "w");
+            f_tb_offdiag_force = fopen("TB_OFFDIAG_FORCE.xvg", "w");
         }
 
+     // f_ct_ortho_ev = fopen("CT_ORTHO_EV.xvg", "w");
+     // f_ct_overlap_fo = fopen("CT_OVERLAP_FO.xvg", "w");
+     // f_ct_overlap_fo_ref = fopen("CT_OVERLAP_FO_REF.xvg", "w");
 
-//          f_ct_ortho_ev = fopen("CT_ORTHO_EV.xvg", "w");
-//          f_ct_overlap_fo = fopen("CT_OVERLAP_FO.xvg", "w");
-//          f_ct_overlap_fo_ref = fopen("CT_OVERLAP_FO_REF.xvg", "w");
-
-          if (ct->jobtype==ctePARAMETERS){
+        if (ct->jobtype==ctePARAMETERS)
+        {
             f_ct_spec = fopen("CT_SPEC.xvg", "w");
             f_ct_spec_evec = fopen("CT_SPEC_EVEC.xvg", "w");
-          }
-          if (ct->do_projection){
+        }
+        if (ct->do_projection)
+        {
             f_ct_project_wf = fopen("CT_PROJECT_WF.xvg", "w");
             f_ct_project_wf_ref = fopen("CT_PROJECT_WF_REF.xvg", "w");
-          }
-          if (ct->jobtype==cteTDA)
+        }
+        if (ct->jobtype==cteTDA)
             f_ct_tda = fopen("CT_TDA.xvg", "w");
 
         }
-        if (ct->qmmm > 0) {
-          f_ct_esp = fopen("CT_ESP.xvg", "w");
+        if (ct->qmmm > 0)
+            f_ct_esp = fopen("CT_ESP.xvg", "w");
+
+        if (ct->jobtype==cteSCCDYNAMIC || ct->jobtype==cteCPFSCCDYNAMIC || ct->jobtype==cteDDBSCCDYNAMIC || ct->jobtype==cteNONSCCDYNAMIC ||
+            ct->jobtype==cteADIABATIC || ct->jobtype==cteADNONSCC || ct->jobtype==cteFERMIADIABATIC || ct->jobtype == cteBORNOPPENHEIMER ||
+            ct->jobtype==cteDLZSH || ct->jobtype==cteALZSH || ct->jobtype==cteDFSSH || ct->jobtype==cteJFSSH || ct->jobtype==cteBCJFSSH ||
+            ct->jobtype==cteSCRDFSSH || ct->jobtype==cteCCFSSH || ct->jobtype==cteGFSH || ct->jobtype==cteDISH  || ct->jobtype==cteSCRDFSSH ||
+            ct->jobtype==cteTULLYLOC || ct->jobtype==ctePERSICOSFHOPPING || ct->jobtype==cteNEGFLORENTZ || ct->jobtype==cteNEGFLORENTZNONSCC ||
+            ct->jobtype==ctePREZHDOSFHOPPING)
+        {
+            f_tb_occupation = fopen("TB_OCCUPATION.xvg", "w");
+            f_tb_wfprops = fopen("TB_WFPROPS.xvg", "w");
+            f_tb_spread = fopen("TB_SPREAD.xvg" , "w");
         }
 
-        if (ct->jobtype==cteSCCDYNAMIC || ct->jobtype==cteCPFSCCDYNAMIC || ct->jobtype==cteDDBSCCDYNAMIC || ct->jobtype==cteNONSCCDYNAMIC || ct->jobtype==cteADIABATIC || ct->jobtype==cteADNONSCC || ct->jobtype==cteFERMIADIABATIC || ct->jobtype == cteBORNOPPENHEIMER || ct->jobtype==cteDLZSH || ct->jobtype==cteALZSH || ct->jobtype==cteDFSSH || ct->jobtype==cteJFSSH || ct->jobtype==cteBCJFSSH || ct->jobtype==cteSCRDFSSH || ct->jobtype==cteCCFSSH || ct->jobtype==cteGFSH || ct->jobtype==cteDISH  || ct->jobtype==cteSCRDFSSH ||  ct->jobtype==cteTULLYLOC || ct->jobtype==ctePERSICOSFHOPPING || ct->jobtype==cteNEGFLORENTZ || ct->jobtype==cteNEGFLORENTZNONSCC || ct->jobtype==ctePREZHDOSFHOPPING) {
-
-          f_tb_occupation = fopen("TB_OCCUPATION.xvg", "w");
-          f_tb_wfprops = fopen("TB_WFPROPS.xvg", "w");
-      f_tb_spread = fopen("TB_SPREAD.xvg" , "w");
-    }
-
-        if (ct->jobtype==cteJFSSH || ct->jobtype==cteBCJFSSH || ct->jobtype==cteSCRDFSSH || ct->jobtype==cteCCFSSH || ct->jobtype==cteGFSH || ct->jobtype==cteDISH  || ct->jobtype==cteSCRDFSSH || ct->jobtype==cteTULLYLOC) {
-             f_tb_occupation_adiab = fopen("TB_OCCUPATION_ADIAB.xvg", "w");
-             f_tb_diapop = fopen("TB_DIABPOP.xvg", "w");
-             f_tb_adiapop = fopen("TB_ADIABPOP.xvg", "w");
+        if (ct->jobtype==cteJFSSH || ct->jobtype==cteBCJFSSH || ct->jobtype==cteSCRDFSSH || ct->jobtype==cteCCFSSH || ct->jobtype==cteGFSH ||
+            ct->jobtype==cteDISH  || ct->jobtype==cteSCRDFSSH || ct->jobtype==cteTULLYLOC)
+        {
+            f_tb_occupation_adiab = fopen("TB_OCCUPATION_ADIAB.xvg", "w");
+            f_tb_diapop = fopen("TB_DIABPOP.xvg", "w");
+            f_tb_adiapop = fopen("TB_ADIABPOP.xvg", "w");
         }
 
-        if (ct->jobtype==cteSCCDYNAMIC || ct->jobtype==cteCPFSCCDYNAMIC || ct->jobtype==cteDDBSCCDYNAMIC || ct->jobtype==cteNONSCCDYNAMIC || ct->jobtype==cteADIABATIC || ct->jobtype==cteADNONSCC || ct->jobtype==cteNOMOVEMENT ||
-              ct->jobtype==cteFERMIADIABATIC || ct->jobtype == cteBORNOPPENHEIMER  || ct->jobtype==cteDLZSH || ct->jobtype==cteALZSH || ct->jobtype==cteDFSSH || ct->jobtype==cteJFSSH || ct->jobtype==cteBCJFSSH || ct->jobtype==cteSCRDFSSH || ct->jobtype==cteCCFSSH || ct->jobtype==cteGFSH || ct->jobtype==cteDISH  || ct->jobtype==cteSCRDFSSH ||  ct->jobtype==cteTULLYLOC || ct->jobtype==ctePERSICOSFHOPPING) {
-          f_ct_energy = fopen("CT_ENERGY.xvg", "w");
+        if (ct->jobtype==cteSCCDYNAMIC || ct->jobtype==cteCPFSCCDYNAMIC || ct->jobtype==cteDDBSCCDYNAMIC || ct->jobtype==cteNONSCCDYNAMIC ||
+            ct->jobtype==cteADIABATIC || ct->jobtype==cteADNONSCC || ct->jobtype==cteNOMOVEMENT || ct->jobtype==cteFERMIADIABATIC ||
+            ct->jobtype == cteBORNOPPENHEIMER  || ct->jobtype==cteDLZSH || ct->jobtype==cteALZSH || ct->jobtype==cteDFSSH || ct->jobtype==cteJFSSH ||
+            ct->jobtype==cteBCJFSSH || ct->jobtype==cteSCRDFSSH || ct->jobtype==cteCCFSSH || ct->jobtype==cteGFSH || ct->jobtype==cteDISH ||
+            ct->jobtype==cteSCRDFSSH ||  ct->jobtype==cteTULLYLOC || ct->jobtype==ctePERSICOSFHOPPING)
+        {
+            f_ct_energy = fopen("CT_ENERGY.xvg", "w");
         }
-//        if (ct->jobtype==cteSCCDYNAMIC || ct->jobtype==cteCPFSCCDYNAMIC || ct->jobtype==cteDDBSCCDYNAMIC || ct->jobtype==cteADIABATIC || ct->jobtype==cteNOMOVEMENT ||
-//              ct->jobtype==cteFERMIADIABATIC || ct->jobtype == cteBORNOPPENHEIMER  || ct->jobtype==cteDLZSH || ct->jobtype==cteALZSH || ct->jobtype==cteDFSSH || ct->jobtype==cteJFSSH || ct->jobtype==cteBCJFSSH || ct->jobtype==cteSCRDFSSH || ct->jobtype==cteCCFSSH || ct->jobtype==cteGFSH || ct->jobtype==cteDISH  || ct->jobtype==cteSCRDFSSH ||  ct->jobtype==cteTULLYLOC || ct->jobtype==ctePERSICOSFHOPPING ||
-//              ct->jobtype==cteNEGFLORENTZ) {
-//          f_tb_hamiltonian_hub = fopen("TB_HAMILTONIAN_HUB.xvg", "w");
-//          f_tb_hubbard = fopen("TB_HUBBARD.xvg", "w");
-//        }
-        if (ct->jobtype==cteSCCDYNAMIC || ct->jobtype==cteCPFSCCDYNAMIC || ct->jobtype==cteDDBSCCDYNAMIC || ct->jobtype==cteNONSCCDYNAMIC || ct->jobtype==cteADIABATIC || ct->jobtype==cteADNONSCC ) {
-          snew(ct_diis, 1);
-          ct_init_diis(ct, ct_diis);
-          snew(ct->q_act, ct->dim);
-          snew(ct->q_old, ct->dim);
+
+     // if (ct->jobtype==cteSCCDYNAMIC || ct->jobtype==cteCPFSCCDYNAMIC || ct->jobtype==cteDDBSCCDYNAMIC || ct->jobtype==cteADIABATIC ||
+     //     ct->jobtype==cteNOMOVEMENT || ct->jobtype==cteFERMIADIABATIC || ct->jobtype == cteBORNOPPENHEIMER  || ct->jobtype==cteDLZSH ||
+     //     ct->jobtype==cteALZSH || ct->jobtype==cteDFSSH || ct->jobtype==cteJFSSH || ct->jobtype==cteBCJFSSH || ct->jobtype==cteSCRDFSSH ||
+     //     ct->jobtype==cteCCFSSH || ct->jobtype==cteGFSH || ct->jobtype==cteDISH  || ct->jobtype==cteSCRDFSSH ||  ct->jobtype==cteTULLYLOC ||
+     //     ct->jobtype==ctePERSICOSFHOPPING || ct->jobtype==cteNEGFLORENTZ)
+     // {
+     //     f_tb_hamiltonian_hub = fopen("TB_HAMILTONIAN_HUB.xvg", "w");
+     //     f_tb_hubbard = fopen("TB_HUBBARD.xvg", "w");
+     // }
+
+        if (ct->jobtype==cteSCCDYNAMIC || ct->jobtype==cteCPFSCCDYNAMIC || ct->jobtype==cteDDBSCCDYNAMIC || ct->jobtype==cteNONSCCDYNAMIC ||
+            ct->jobtype==cteADIABATIC || ct->jobtype==cteADNONSCC )
+        {
+            snew(ct_diis, 1);
+            ct_init_diis(ct, ct_diis);
+            snew(ct->q_act, ct->dim);
+            snew(ct->q_old, ct->dim);
         }
-        if (ct->jobtype==cteSCCDYNAMIC || ct->jobtype==cteCPFSCCDYNAMIC || ct->jobtype==cteDDBSCCDYNAMIC || ct->jobtype==cteNONSCCDYNAMIC || ct->jobtype==cteFERMIADIABATIC || ct->jobtype == cteBORNOPPENHEIMER || ct->jobtype==cteDLZSH || ct->jobtype==cteALZSH || ct->jobtype==cteDFSSH || ct->jobtype==cteJFSSH || ct->jobtype==cteBCJFSSH || ct->jobtype==cteSCRDFSSH || ct->jobtype==cteCCFSSH || ct->jobtype==cteGFSH || ct->jobtype==cteDISH  || ct->jobtype==cteSCRDFSSH ||
-              ct->jobtype==cteTULLYLOC || ct->jobtype==ctePERSICOSFHOPPING || ct->jobtype==cteNOMOVEMENT || ct->jobtype==ctePREZHDOSFHOPPING) { //we need here also NOMOVEMENT if no correct wave function is specified and one has to take lowest eigenvalue instead
-          snew(ct_broyden, 1);
-          ct_init_broyden(ct, ct_broyden);
-          snew(ct->q_act, ct->dim);
-          snew(ct->q_old, ct->dim);
+
+        if (ct->jobtype==cteSCCDYNAMIC || ct->jobtype==cteCPFSCCDYNAMIC || ct->jobtype==cteDDBSCCDYNAMIC || ct->jobtype==cteNONSCCDYNAMIC ||
+            ct->jobtype==cteFERMIADIABATIC || ct->jobtype == cteBORNOPPENHEIMER || ct->jobtype==cteDLZSH || ct->jobtype==cteALZSH ||
+            ct->jobtype==cteDFSSH || ct->jobtype==cteJFSSH || ct->jobtype==cteBCJFSSH || ct->jobtype==cteSCRDFSSH || ct->jobtype==cteCCFSSH ||
+            ct->jobtype==cteGFSH || ct->jobtype==cteDISH  || ct->jobtype==cteSCRDFSSH || ct->jobtype==cteTULLYLOC || ct->jobtype==ctePERSICOSFHOPPING ||
+            ct->jobtype==cteNOMOVEMENT || ct->jobtype==ctePREZHDOSFHOPPING) // we need here also NOMOVEMENT if no correct wave function is specified
+                                                                            // and one has to take the lowest eigenvalue instead
+        { 
+            snew(ct_broyden, 1);
+            ct_init_broyden(ct, ct_broyden);
+            snew(ct->q_act, ct->dim);
+            snew(ct->q_old, ct->dim);
         }
+
         if (ct->jobtype==cteADIABATIC || ct->jobtype==cteFERMIADIABATIC || ct->jobtype == cteBORNOPPENHEIMER) {
-          f_ct_adiabatic = fopen("CT_ADIABATIC.xvg", "w");
+            f_ct_adiabatic = fopen("CT_ADIABATIC.xvg", "w");
         }
-//        if (ct->jobtype==cteSCCDYNAMIC || ct->jobtype==cteCPFSCCDYNAMIC || ct->jobtype==cteDDBSCCDYNAMIC || ct->jobtype==cteNONSCCDYNAMIC) {
-//          f_ct_exp_adiab = fopen("CT_EXPANS_IN_ADIAB_STATES.xvg", "w");
-//        }
-        if (ct->jobtype==cteDLZSH || ct->jobtype==cteALZSH || ct->jobtype==cteDFSSH || ct->jobtype==cteJFSSH || ct->jobtype==cteBCJFSSH || ct->jobtype==cteSCRDFSSH || ct->jobtype==cteCCFSSH || ct->jobtype==cteGFSH || ct->jobtype==cteDISH  || ct->jobtype==cteSCRDFSSH ||  ct->jobtype==cteTULLYLOC || ct->jobtype==ctePERSICOSFHOPPING || ct->jobtype==ctePREZHDOSFHOPPING) {
-         f_ct_surfacehopping = fopen("CT_SURFACE_HOPPING.xvg", "w");
+
+     // if (ct->jobtype==cteSCCDYNAMIC || ct->jobtype==cteCPFSCCDYNAMIC || ct->jobtype==cteDDBSCCDYNAMIC || ct->jobtype==cteNONSCCDYNAMIC) {
+     //     f_ct_exp_adiab = fopen("CT_EXPANS_IN_ADIAB_STATES.xvg", "w");
+     // }
+
+        if (ct->jobtype==cteDLZSH || ct->jobtype==cteALZSH || ct->jobtype==cteDFSSH || ct->jobtype==cteJFSSH || ct->jobtype==cteBCJFSSH ||
+            ct->jobtype==cteSCRDFSSH || ct->jobtype==cteCCFSSH || ct->jobtype==cteGFSH || ct->jobtype==cteDISH  || ct->jobtype==cteSCRDFSSH ||
+            ct->jobtype==cteTULLYLOC || ct->jobtype==ctePERSICOSFHOPPING || ct->jobtype==ctePREZHDOSFHOPPING)
+        {
+            f_ct_surfacehopping = fopen("CT_SURFACE_HOPPING.xvg", "w");
         }
-//        if (ct->jobtype==cteDLZSH || ct->jobtype==cteALZSH || ct->jobtype==cteDFSSH || ct->jobtype==cteJFSSH || ct->jobtype==cteBCJFSSH || ct->jobtype==cteSCRDFSSH || ct->jobtype==cteCCFSSH || ct->jobtype==cteGFSH || ct->jobtype==cteDISH  || ct->jobtype==cteSCRDFSSH ||  ct->jobtype==cteTULLYLOC  || ct->jobtype==ctePERSICOSFHOPPING || ct->jobtype==ctePREZHDOSFHOPPING) {
-//          f_ct_nonadiab_coupling = fopen("CT_NONADIAB_COUPLING.xvg", "w");
-//          f_ct_state_vectors = fopen("CT_STATE_VECTORS.xvg", "w");
-//        }
-//        if (ct->jobtype==ctePARAMETERS || ct->jobtype==cteNOMOVEMENT) {
-//          f_ct_orbital = fopen("CT_ORBITAL.xvg", "w");
-//        }
+
+     // if (ct->jobtype==cteDLZSH || ct->jobtype==cteALZSH || ct->jobtype==cteDFSSH || ct->jobtype==cteJFSSH || ct->jobtype==cteBCJFSSH ||
+     //     ct->jobtype==cteSCRDFSSH || ct->jobtype==cteCCFSSH || ct->jobtype==cteGFSH || ct->jobtype==cteDISH  || ct->jobtype==cteSCRDFSSH ||
+     //     ct->jobtype==cteTULLYLOC  || ct->jobtype==ctePERSICOSFHOPPING || ct->jobtype==ctePREZHDOSFHOPPING)
+     // {
+     //     f_ct_nonadiab_coupling = fopen("CT_NONADIAB_COUPLING.xvg", "w");
+     //     f_ct_state_vectors = fopen("CT_STATE_VECTORS.xvg", "w");
+     // }
+
+     // if (ct->jobtype==ctePARAMETERS || ct->jobtype==cteNOMOVEMENT) {
+     //     f_ct_orbital = fopen("CT_ORBITAL.xvg", "w");
+     // }
+
         if (ct->jobtype==cteNEGFLORENTZ || ct->jobtype==cteNEGFLORENTZNONSCC) {
           f_ct_current = fopen("CT_CURRENT.xvg", "w");
         }
+
         if (ct->pool_size > ct->sites){
           f_ct_active = fopen("CT_ACTIVE.xvg", "w");
         }
@@ -1284,1001 +1392,1151 @@ void gmx::LegacySimulator::do_md()
 
         clock_gettime(CLOCK_MONOTONIC, &time_1); //is here to measure the time of al QM stuff in one step
 
-        /* do it all if we have a real simulation, or we want to calculate parameters in this step */
-        /* now with NOMOVEMENT just the propagation is stopped.whith LIQM internal relaxation is still there every ct->interval step*/
+        // do it all if we have a real simulation, or we want to calculate parameters in this step
+        // now with NOMOVEMENT just the propagation is stopped.
+        // with LIQM internal relaxation is still there every ct->interval step
+        // (this if-clause will be referred to as the INITIAL IF)
         if ((ct->jobtype != ctePARAMETERS && ct->jobtype != cteNOMOVEMENT && ct->jobtype != cteESP && ct->jobtype != cteTDA) || step % ct->interval == 0)
-        //if ((ct->jobtype != ctePARAMETERS && ct->jobtype != cteESP && ct->jobtype != cteTDA) || step % ct->interval == 0)
+     // if ((ct->jobtype != ctePARAMETERS && ct->jobtype != cteESP && ct->jobtype != cteTDA) || step % ct->interval == 0)
         {
-            /* RESTORE THE ORIGINAL CHARGES ON THE NUCLEOBASES - NO MAPPING OF THE HOLE
-             * ... IN ORDER TO AVOID DOUBLE COUNTING OF THE ELECTROSTATIC INTERACTION
-             * THIS WILL BE TAKEN INTO ACCOUNT WITHIN THE TIGHT-BINDING HAMILTONIAN!
-             */
-            for (i=0; i<ct->sites; i++)
-            for (m=0; m<ct->site[i].atoms; m++)
-                mdatoms->chargeA[ct->site[i].atom[m]] = ct_atoms->atom[ct->site[i].atom[m]].q;    //A.HECK
+            // RESTORE THE ORIGINAL CHARGES ON THE NUCLEOBASES - NO MAPPING OF THE HOLE
+            // ... IN ORDER TO AVOID DOUBLE COUNTING OF THE ELECTROSTATIC INTERACTION
+            // THIS WILL BE TAKEN INTO ACCOUNT WITHIN THE TIGHT-BINDING HAMILTONIAN!
+
+            for (int i=0; i<ct->sites; i++)
+                for (int m=0; m<ct->site[i].atoms; m++)
+                    mdatoms->chargeA[ct->site[i].atom[m]] = ct_atoms->atom[ct->site[i].atom[m]].q;    // A.HECK
 
             /* collect the coordinates from all MPI threads */
             transfer_collect_x(cr, state, state_global);
-
-            /* collect the coordinates from all MPI threads */
             if (!PAR(cr) || MASTER(cr))
             {
-            for (i=0; i<top_global->natoms; i++)
-                copy_rvec(state_global->x[i], x_ct[i]);
+                for (i=0; i<top_global->natoms; i++)
+                    copy_rvec(state_global->x[i], x_ct[i]);
             }
 
 #if GMX_MPI
             if (MASTER(cr))
             {
                 do_pbc_mtop(ir->pbcType, state->box, top_global, x_ct);
-                // make molecules whole -> no dipole , but now we no longer build pbc for every site
+                // make molecules whole -> no dipole, but now we no longer build pbc for every site
                 // edit: for MD we will use site energies obtained in phase1 for CT-Hamiltonian.
                 //       in phase 2 different sites have different environments (QM vs MM) and therefore enrgies (very bad!).
-                //edit2: now we need again whole molecules to calculate correct COM distance for adaptive QM zones.
-                for (i=1; i<ct_mpi_size; i++)
+                // edit2: now we need again whole molecules to calculate correct COM distance for adaptive QM zones.
+                for (int i=1; i<ct_mpi_size; i++)
                 {
                     MPI_Send(x_ct, 3 * top_global->natoms, GMX_MPI_REAL, i, 300+i, ct_mpi_comm);
-    //                        printf("Data of size %d sent to rank %d\n", 3 * top_global->natoms, i);
+                 // printf("Data of size %d sent to rank %d\n", 3 * top_global->natoms, i);
                 }
             }
             else
             {
-                return_value = MPI_Recv(x_ct, 3 * top_global->natoms, GMX_MPI_REAL, 0, 300 + ct_mpi_rank, ct_mpi_comm, &ct_mpi_status);
+                int return_value = MPI_Recv(x_ct, 3 * top_global->natoms, GMX_MPI_REAL, 0, 300 + ct_mpi_rank, ct_mpi_comm, &ct_mpi_status);
                 if (return_value)
                     printf("Error receiving data on rank %d\n", ct_mpi_rank);
-    //                    else
-    //                        printf("Data of size %d received on rank %d\n", 3 * top_global->natoms, ct_mpi_rank);
+             // else
+             //     printf("Data of size %d received on rank %d\n", 3 * top_global->natoms, ct_mpi_rank);
             }
-            //for (i=0; i<10; i++)
-            //{
-            //    printf("rank%d atom%d %12.7f%12.7f%12.7f\n", ct_mpi_rank, i, x_ct[i][XX]*10, x_ct[i][YY]*10, x_ct[i][ZZ]*10);
-            //}
+         // for (int i=0; i<10; i++)
+         // {
+         //     printf("rank%d atom%d %12.7f%12.7f%12.7f\n", ct_mpi_rank, i, x_ct[i][XX]*10, x_ct[i][YY]*10, x_ct[i][ZZ]*10);
+         // }
 #endif
 
-    /* optimize QM zone at the beginning */
-        if(ct->pool_size > ct->sites && ct_mpi_size > 1 ){
-          printf("Adaptive QM zone works only without MPI\n");//TODO: implement MPI version (segfaults arise later in adapt_QMzone)
-          exit(-1);
-        }
-        if(ct->opt_QMzone && ct->first_step){
-      transfer_collect_x(cr, state, state_global);
-      for (i=0; i<top_global->natoms; i++)
-        copy_rvec(state_global->x[i], x_ct[i]);
-          search_starting_site(state->box, mdatoms, dftb, ct, x_ct, slko_path, top_global, state_global->x.rvec_array());
-        }
-
-   printf("start prepare at %f\n", (double) clock()/CLOCKS_PER_SEC);
-      prepare_charge_transfer(state->box, mdatoms, dftb, ct, x_ct);
-   printf("stop prepare at %f\n", (double) clock()/CLOCKS_PER_SEC);
+            // optimize QM zone at the beginning
+#if GMX_MPI    
+            if (ct->pool_size > ct->sites && ct_mpi_size > 1 )
+            {
+                printf("Adaptive QM zone works only without MPI\n"); //TODO: implement MPI version (segfaults arise later in adapt_QMzone)
+                exit(-1);
+            }
+#endif
+            if(ct->opt_QMzone && ct->first_step)
+            {
+                transfer_collect_x(cr, state, state_global);
+                for (int i=0; i<top_global->natoms; i++)
+                copy_rvec(state_global->x[i], x_ct[i]);
+                search_starting_site(state->box, mdatoms, fr->nbv.get(), fr->shift_vec, cr, ct, dftbplus_phase1.data(), dftbplus_phase2,
+                                     x_ct, top_global, state_global->x.rvec_array());
+            }
+        
+            // TODO: maybe do this AFTER the call to do_force() because the neighbor lists are only ready then?
+            printf("start prepare at %f\n", (double) clock()/CLOCKS_PER_SEC);
+            prepare_charge_transfer(state->box, mdatoms, bNS, fr->nbv.get(), fr->shift_vec, cr, ct, dftbplus_phase1.data(), dftbplus_phase2, x_ct);
+            printf("stop prepare at %f\n", (double) clock()/CLOCKS_PER_SEC);
 
 #if GMX_MPI
-    if (ct->hamiltonian_type == 0){
-       /* removed -- TODO check if something similar is needed for DFTB+
-       if (ct->qmmm == 3) {
-         if (step - dftb->lastlist_pme >= dftb->nstlist_pme) {
-           do_neighborlist_for_dftb(ct, dftb, state->x, ct_mpi_rank, ct_mpi_size);
-           dftb->lastlist_pme = step;
-         }
-         do_pme_for_dftb_part1(ct, dftb, ct_mpi_rank, ct_mpi_size);
-         printf("stop pme-preparation at %f\n", (double) clock()/CLOCKS_PER_SEC);
-       }
-       */
-       if (ct->jobtype != cteESP) {
-         do_dftb_phase1(ct, dftb, ct_mpi_comm, ct_mpi_rank, ct_mpi_size);
-       } else {
-         do_esp_only(ct, dftb, mdatoms->chargeA, ct_mpi_comm, ct_mpi_rank, ct_mpi_size);
-       }
-           // broadcast the results if all calculations have finished. broadcaster is rank "i % ct_mpi_size" (there was phase1 performed)
-           MPI_Barrier(ct_mpi_comm);
-           for (i=0; i<ct->sites; i++){
-           //printf("Bcast at rank %d at %f\n", ct_mpi_rank, (double) clock()/CLOCKS_PER_SEC);
-           MPI_Bcast(dftb->phase1[i].a[0], SQR(dftb->phase1[i].norb),          MPI_DOUBLE, i % ct_mpi_size, ct_mpi_comm);//needed to build the coarse grained hamilton matrix at main node
-           MPI_Bcast(dftb->phase1[i].overl[0], SQR(dftb->phase1[i].norb),      MPI_DOUBLE, i % ct_mpi_size, ct_mpi_comm);//needed in check_and_invert_orbital_phase
-           MPI_Bcast(dftb->phase1[i].qmat, dftb->phase1[i].nn,                 MPI_DOUBLE, i % ct_mpi_size, ct_mpi_comm);// "
-           MPI_Bcast(dftb->phase1[i].ev, dftb->phase1[i].norb,                 MPI_DOUBLE, i % ct_mpi_size, ct_mpi_comm);// "
-           //printf("after Bcast at rank %d at %f\n",i % ct_mpi_size, (double) clock()/CLOCKS_PER_SEC);
-           }
-           MPI_Barrier(ct_mpi_comm); //wait until broadcasting has finished
-
-          if (ct_mpi_rank == 0 && ct->jobtype != cteESP){
-              check_and_invert_orbital_phase(dftb->phase1, ct, state_global, mdatoms);
-//              check_and_invert_orbital_phase(dftb->phase1, ct); //calc sign on master since we need later also the obtained overlap in project_wf_on_new_basis().
-              do_dftb_phase2(ct, dftb);
-           }
-    }
+            if (ct->hamiltonian_type == 0)
+            {
+                rvec* force_dftb; // TODO - allocate and check the use
+                /* removed -- TODO check if anything similar is needed for DFTB+
+                if (ct->qmmm == 3)
+                {
+                    if (step - dftb->lastlist_pme >= dftb->nstlist_pme)
+                    {
+                        do_neighborlist_for_dftb(ct, dftb, state->x, ct_mpi_rank, ct_mpi_size);
+                        dftb->lastlist_pme = step;
+                    }
+                    do_pme_for_dftb_part1(ct, dftb, ct_mpi_rank, ct_mpi_size);
+                    printf("stop pme-preparation at %f\n", (double) clock()/CLOCKS_PER_SEC);
+                }
+                */
+                if (ct->jobtype != cteESP)
+                {
+                 // do_dftb_phase1(ct, dftb, ct_mpi_comm, ct_mpi_rank, ct_mpi_size);
+                    do_dftb_phase1(ct, dftbplus_phase1, cr, force_dftb, nrnb, wcycle, ct_mpi_comm, ct_mpi_rank, ct_mpi_size);
+                }
+                else
+                {
+                    do_esp_only(ct, dftbplus_phase1, cr, mdatoms->chargeA, nrnb, wcycle, ct_mpi_comm, ct_mpi_rank, ct_mpi_size);
+                }
+                // broadcast the results if all calculations have finished. broadcaster is rank "i % ct_mpi_size" (there was phase1 performed)
+                MPI_Barrier(ct_mpi_comm);
+                for (i=0; i<ct->sites; i++)
+                {
+                 // printf("Bcast at rank %d at %f\n", ct_mpi_rank, (double) clock()/CLOCKS_PER_SEC);
+                    // needed to build the coarse grained hamilton matrix at main node
+                    MPI_Bcast(dftb->phase1[i].a[0], SQR(dftb->phase1[i].norb),          MPI_DOUBLE, i % ct_mpi_size, ct_mpi_comm);
+                    // needed in check_and_invert_orbital_phase
+                    MPI_Bcast(dftb->phase1[i].overl[0], SQR(dftb->phase1[i].norb),      MPI_DOUBLE, i % ct_mpi_size, ct_mpi_comm);
+                    // dtto
+                    MPI_Bcast(dftb->phase1[i].qmat, dftb->phase1[i].nn,                 MPI_DOUBLE, i % ct_mpi_size, ct_mpi_comm);
+                    // dtto
+                    MPI_Bcast(dftb->phase1[i].ev, dftb->phase1[i].norb,                 MPI_DOUBLE, i % ct_mpi_size, ct_mpi_comm);
+                 // printf("after Bcast at rank %d at %f\n",i % ct_mpi_size, (double) clock()/CLOCKS_PER_SEC);
+                }
+                MPI_Barrier(ct_mpi_comm); //wait until broadcasting has finished
+          
+                if (ct_mpi_rank == 0 && ct->jobtype != cteESP)
+                {
+                    check_and_invert_orbital_phase(dftb->phase1, ct, state_global, mdatoms);
+                    // calc sign on master since we need later also the obtained overlap in project_wf_on_new_basis().
+                 // check_and_invert_orbital_phase(dftb->phase1, ct);
+                    do_dftb_phase2(ct, dftbplus_phase2, cr, force_dftb, nrnb, wcycle);
+                }
+            }
 #else
-    if (ct->hamiltonian_type == 0)
-     {
-       /* removed -- TODO check if something similar is needed for DFTB+
-       if (ct->qmmm == 3) {
-         if (step - dftb->lastlist_pme >= dftb->nstlist_pme) {
-           do_neighborlist_for_dftb(ct, dftb, state->x.rvec_array());
-           dftb->lastlist_pme = step;
-         }
-         do_pme_for_dftb_part1(ct, dftb);
-       }
-       */
-       if (ct->jobtype != cteESP) {
-         do_dftb_phase1(ct, dftb);
-         check_and_invert_orbital_phase(dftb->phase1, ct, state_global, mdatoms);
-         // copying of charges and PME for 2nd phase comes here !!!
-         do_dftb_phase2(ct, dftb);
-       } else {
-         do_esp_only(ct, dftb, mdatoms->chargeA);
-       }
-    }
+            if (ct->hamiltonian_type == 0)
+            {
+                rvec* force_dftb; // TODO - allocate and check the use
+                /* removed -- TODO check if something similar is needed for DFTB+
+                if (ct->qmmm == 3)
+                {
+                     if (step - dftb->lastlist_pme >= dftb->nstlist_pme)
+                     {
+                         do_neighborlist_for_dftb(ct, dftb, state->x.rvec_array());
+                         dftb->lastlist_pme = step;
+                     }
+                     do_pme_for_dftb_part1(ct, dftb);
+                }
+                */
+                if (ct->jobtype != cteESP)
+                {
+                    do_dftb_phase1(ct, dftbplus_phase1, cr, force_dftb, nrnb, wcycle);
+                    check_and_invert_orbital_phase(dftb->phase1, ct, state_global, mdatoms);
+                    // copying of charges and PME for 2nd phase comes here !!!
+                    do_dftb_phase2(ct, dftbplus_phase2, cr, force_dftb, nrnb, wcycle);
+                }
+                else
+                {
+                    do_esp_only(ct, dftbplus_phase1, cr, mdatoms->chargeA, nrnb, wcycle);
+                }
+            }
 #endif
 
-///////////////////////////////////////////
-// write interesting data in pbd file as bfactor in order to combine structre and property.
-/*
-for (i=0; i<ct->sites; i++)
-for (j=0; j<ct->site[i].atoms; j++){
- ct_atoms->pdbinfo[ct->site[i].atom[j]].bfac=0;
-for (k=0; k<ct->site[i].homos; k++){
- //partial charges
- //ct_atoms->pdbinfo[ct->site[i].atom[j]].bfac =(real) (dftb->phase1[i].qmat[j] - dftb->qzero1[dftb->phase1[i].izp[j]]);
- //delta charges
- ct_atoms->pdbinfo[ct->site[i].atom[j]].bfac +=(real) ct->site[i].delta_q[k][j];
-}
-}
-write_sto_conf("CT.pdb", "written by charge transfer code", ct_atoms, x_ct, NULL, 0, NULL);
-*/
-//write_out_MOs(step, x_ct, ct_atoms, dftb, ct);
-//////////////////////////////////////////
+            ///////////////////////////////////////////
+            // write interesting data in PDB file as bfactor in order to combine structre and property.
+            /*
+            for (int i=0; i<ct->sites; i++)
+            for (int j=0; j<ct->site[i].atoms; j++)
+            {
+                ct_atoms->pdbinfo[ct->site[i].atom[j]].bfac=0;
+                for (int k=0; k<ct->site[i].homos; k++){
+                    // partial charges
+                 // ct_atoms->pdbinfo[ct->site[i].atom[j]].bfac =(real) (dftb->phase1[i].qmat[j] - dftb->qzero1[dftb->phase1[i].izp[j]]);
+                    // delta charges
+                    ct_atoms->pdbinfo[ct->site[i].atom[j]].bfac +=(real) ct->site[i].delta_q[k][j];
+                }
+            }
+            write_sto_conf("CT.pdb", "written by charge transfer code", ct_atoms, x_ct, NULL, 0, NULL);
+            */
+            // write_out_MOs(step, x_ct, ct_atoms, dftb, ct);
+            //////////////////////////////////////////
 
 #if GMX_MPI
-       if (ct_mpi_rank == 0) {
+            if (ct_mpi_rank == 0)
+            {
 #endif
 
-       if (ct->jobtype != cteESP)
-           {
-// Calculate Hamiltonian by machine learning
-              if (ct->hamiltonian_type)
-              {
-                 //get_ml_hamiltonian(ct, state_global, mdatoms);
-                 for (i=0; i < dftb->phase2.nn; i++){
-                   for (m=0; m < DIM; m++){
-                     dftb->phase2.grad[i][m] = 0;
-                   }
-                 }
-                 get_nn_hamiltonian(ct, state_global, mdatoms, dftb);
-
-                 for (i = 0; i < ct->dim; i++)
-                 {
-                     for (j = i; j < ct->dim; j++)
-                     {
-                         //printf("ML: %f \n",ct->hamiltonian_ml[i][j]);
-                         ct->hamiltonian[i][j] = ct->hamiltonian_ml[i][j];
-                         ct->hamiltonian[j][i] = ct->hamiltonian[i][j];
-                     }
-                 }
-
-                 printf("sucessfully calculated hamiltonian\n");
-
-                 if (ct->jobtype==cteNOMOVEMENT || ct->force_output == 1)
-                 {
-                     printf("printing ml hamiltonian\n");
-                     fprintf(f_tb_hamiltonian_ml, "%8.2f", t*1000);
-                     for (i = 0; i < ct->dim; i++)
-                       for (m = i; m < ct->dim; m++)
-                           fprintf(f_tb_hamiltonian_ml, "%15.8f", ct->hamiltonian[i][m] * HARTREE_TO_EV);
-                     fprintf(f_tb_hamiltonian_ml, "\n");
-                 }
-              }
-              else
-              {
-                 ct_assemble_hamiltonian(ct, dftb); //now including averaging
-/*         for (i=0; i<ct->dim; i++) {
-               ct->hamiltonian[i][i] = (ct->is_hole_transfer==1) ? -dftb->phase2.THamilOrtho[i][i] : dftb->phase2.THamilOrtho[i][i];
-           for (j=i+1; j<ct->dim; j++) {
-                 //ct->hamiltonian[i][j] = ct->hamiltonian[j][i] = dftb->phase2.THamilOrtho[i][j] * ct->offdiag_scaling; //  1.0 or 1.540 scaling factor according to J. Chem. Phys. 140, 104105 (2014)
-                 ct->hamiltonian[i][j] = ct->hamiltonian[j][i] = (ct->is_hole_transfer==1) ? -dftb->phase2.THamilOrtho[i][j] * ct->offdiag_scaling:  dftb->phase2.THamilOrtho[i][j] * ct->offdiag_scaling; //  1.0 or 1.540 scaling factor according to J. Chem. Phys. 140, 104105 (2014) // this is the right way to do it. without changing off-diagonal elements the eigenvalues of the CG Ham are not necessarily -eigenvalue of electron transfer.
+            if (ct->jobtype != cteESP)
+            {
+                // Calculate Hamiltonian by machine learning
+                if (ct->hamiltonian_type)
+                {
+                 // get_ml_hamiltonian(ct, state_global, mdatoms);
+                    for (int i=0; i < dftb->phase2.nn; i++)
+                        for (int m=0; m < DIM; m++)
+                        {
+                            dftb->phase2.grad[i][m] = 0;
+                        }
+                    get_nn_hamiltonian(ct, state_global, mdatoms, dftb);
+          
+                    for (int i = 0; i < ct->dim; i++)
+                    {
+                        for (int j = i; j < ct->dim; j++)
+                        {
+                         // printf("ML: %f \n",ct->hamiltonian_ml[i][j]);
+                            ct->hamiltonian[i][j] = ct->hamiltonian_ml[i][j];
+                            ct->hamiltonian[j][i] = ct->hamiltonian[i][j];
+                        }
+                    }
+          
+                    printf("sucessfully calculated hamiltonian\n");
+                   
+                    if (ct->jobtype==cteNOMOVEMENT || ct->force_output == 1)
+                    {
+                        printf("printing ml hamiltonian\n");
+                        fprintf(f_tb_hamiltonian_ml, "%8.2f", t*1000);
+                        for (int i = 0; i < ct->dim; i++)
+                            for (int m = i; m < ct->dim; m++)
+                                fprintf(f_tb_hamiltonian_ml, "%15.8f", ct->hamiltonian[i][m] * HARTREE_TO_EV);
+                        fprintf(f_tb_hamiltonian_ml, "\n");
+                    }
                }
-             }
-*/
-                 if (ct->first_step)
-                 {
-
-                    for (i = 0; i < ct->dim; i++)
-                       for (j = 0; j < ct->dim; j++)
-                          ct->positive_coupling_factor[i][j] = 1.0;
-
-/*                    int na = 12, nb = 15;
-
-                    for (i = 0; i < na; i++)
-                       for (j = 0; j < nb; j++)
-                           for (k = j+1; k < nb; k++)
-                               ct->positive_coupling_factor[i*nb+j][i*nb+k] = -1.0;
-*/
-                 }
-
-                 for (i = 0; i < ct->dim; i++)
-                 {
-                     for (j = i; j < ct->dim; j++)
-                     {
-                         ct->hamiltonian[i][j] = ct->hamiltonian_dftb[i][j]*ct->positive_coupling_factor[i][j];
-                 //        printf("%f\n", ct->hamiltonian[i][j]);
-                         ct->hamiltonian[j][i] = ct->hamiltonian[i][j];
-                     }
-                 }
-
-                  if (ct->jobtype==cteNOMOVEMENT || ct->force_output == 1)
-                  {
-                     fprintf(f_tb_hamiltonian, "%8.2f", t*1000);
-                     for (i = 0; i < ct->dim; i++)
-                       for (m = i; m < ct->dim; m++)
-                           fprintf(f_tb_hamiltonian, "%15.8f", ct->hamiltonian[i][m] * HARTREE_TO_EV);
-                     fprintf(f_tb_hamiltonian, "\n");
-                 }
-
-              }
-       }
-
-    //overlap ///////////////////////////////////////////////////////
-
-      // write overlap matrix for first site
-/*      i=0;
-      fprintf(f_ct_overlap_fo, "%10d ", step);
-      for (j = 0; j < ct->site[i].homos; j++)
-      for (k = j; k < ct->site[i].homos; k++)
-      fprintf(f_ct_overlap_fo, " %10.6f ",ct->site[i].overlap[j][k]);
-  fprintf(f_ct_overlap_fo, "  \n");
-  i=0;
-  fprintf(f_ct_overlap_fo_ref, "%10d ", step);
-  for (j = 0; j < ct->site[i].homos; j++)
-  for (k = j; k < ct->site[i].homos; k++)
-      fprintf(f_ct_overlap_fo_ref, " %10.6f ",ct->site[i].overlap_ref[j][k]);
-  fprintf(f_ct_overlap_fo_ref, "  \n");
-*/
-
-//spectrum////////////////////
-  if (ct->jobtype==ctePARAMETERS){ //&& ct->first_step == 1){
-    get_spectrum(ct,dftb);
-   //fprintf(f_ct_spec, "energy eigen values of FO Hamiltonian:\n");
-   fprintf(f_ct_spec, "%10ld", step);
-   fprintf(f_ct_spec_evec, "%10ld", step);
-
-   for (i=0; i<ct->dim; i++)
-     fprintf(f_ct_spec, " %10.6f ", ct->ev_spec[i] * HARTREE_TO_EV);
-   fprintf(f_ct_spec, "\n");
-
-   for (i=0; i<ct->dim; i++)
-     for (j=0; j<ct->dim; j++)
-     fprintf(f_ct_spec_evec, " %10.6f ", ct->evec_spec[j+i*ct->dim] ) ; //prints all evecs in one line
-   fprintf(f_ct_spec_evec, "\n");
-  }
-/////////////////////////////////////////////////////////////
-
-
-  // CONSTRUCT THE HUBBARD MATRIX
-  // now here because hubbard matrix depends on delta_q calculated by get_delta_q.
-
-  if (ct->jobtype==cteSCCDYNAMIC || ct->jobtype==cteCPFSCCDYNAMIC || ct->jobtype==cteDDBSCCDYNAMIC || ct->jobtype==cteADIABATIC || ct->jobtype==cteNOMOVEMENT ||
-        ct->jobtype == cteFERMIADIABATIC || ct->jobtype == cteBORNOPPENHEIMER  || ct->jobtype==cteDLZSH || ct->jobtype==cteALZSH || ct->jobtype==cteDFSSH || ct->jobtype==cteJFSSH || ct->jobtype==cteBCJFSSH || ct->jobtype==cteSCRDFSSH || ct->jobtype==cteCCFSSH || ct->jobtype==cteGFSH || ct->jobtype==cteDISH  || ct->jobtype==cteSCRDFSSH ||  ct->jobtype==cteTULLYLOC || ct->jobtype == ctePERSICOSFHOPPING) {
-    // diag: Hubbard params of nucleobases (constant - do not calculate)
-/*
-    // offdiag: 1/r_ij for nucleobases (original code)
-    counter=-1;
-    for (i=0; i<ct->sites; i++)
-    for (k=0; k<ct->site[i].homos; k++){
-      counter2=-1;
-      counter++;
-      for (j=0; j<ct->sites; j++) {
-      dvec_sub(dftb->phase1[i].com, dftb->phase1[j].com, bond);
-      for (l=0; l<ct->site[j].homos; l++){
-        counter2++;
-        if(j==i) continue;
-        // approximation of nucleobases as single charged points
-        ct->hubbard[counter][counter2] = ct->hubbard[counter2][counter] = ct->sic / dnorm(bond);
-      }
-      }
-    }
-*/
-    // offdiag: sum_AB[ (dq_iA * dq_jB)/r_AB  (improved code)
-    counter=-1;
-    for (i=0; i<ct->sites; i++)
-    for (k=0; k<ct->site[i].homos; k++){
-      counter2=-1;
-      counter++;
-      for (j=0; j<ct->sites; j++)
-      for (l=0; l<ct->site[j].homos; l++){
-          counter2++;
-          if(j==i) continue;
-          ct->hubbard[counter][counter2]=0;
-          for (m=0; m < ct->site[i].atoms; m++)
-          for (n=0; n < ct->site[j].atoms; n++){
-            dvec_sub(dftb->phase1[i].x[m], dftb->phase1[j].x[n], bond);
-            ct->hubbard[counter][counter2] += ct->sic * ct->site[i].delta_q[k][m] * ct->site[j].delta_q[l][n] / dnorm(bond);
-
-          }
-          if (ct->do_epol == 1)
-            ct->hubbard[counter][counter2]= (1.0/EPSILON_OP)*ct->hubbard[counter][counter2];
-      }
-    }
-/*
-//test: calculate diag elements on the fly    THIS IS WRONG (also overwrites fixed hubbard diagonals eg. lambda_i)
-    counter=0;
-    for (i=0; i<ct->sites; i++)
-    for (j=0; j<ct->site[i].homos; j++){
-      ct->hubbard[counter][counter] = 0.0;
-      for (k=0; k<ct->site[i].atoms; k++)
-      for (l=k; l<ct->site[i].atoms; l++)
-        ct->hubbard[counter][counter] += ct->site[i].delta_q[j][k]*ct->site[i].delta_q[j][l]* (k>l ? dftb->phase1[i].gammamat[k][l] : dftb->phase1[i].gammamat[l][k]);
-      counter++;
-    }
-//end test */
-  } else {
-    for (i=0; i<ct->dim; i++)
-      for (j=0; j<ct->dim; j++)
-        ct->hubbard[i][j] = 0.e0;
-  }
-
- /*
-  printf("\n HUBBARD MATRIX \n");
-  for (i=0; i< ct->dim; i++){
-    for (j=0; j< ct->dim; j++)
-      printf("%f ", ct->hubbard[i][j]);
-    printf("\n");
-  }
- // */
-
-       if(ct->do_projection){
-         printf("start project at %f\n", (double) clock()/CLOCKS_PER_SEC);
-         project_wf_on_new_basis(step, dftb, ct, f_ct_project_wf, f_ct_project_wf_ref );
-         printf("stop project at %f\n", (double) clock()/CLOCKS_PER_SEC);
-       }
-
-   if (ct->sic > 0.0 && (ct->jobtype==cteSCCDYNAMIC || ct->jobtype==cteCPFSCCDYNAMIC || ct->jobtype==cteDDBSCCDYNAMIC || ct->jobtype==cteADIABATIC || ct->jobtype==cteNOMOVEMENT ||
-         ct->jobtype==cteFERMIADIABATIC || ct->jobtype == cteBORNOPPENHEIMER  || ct->jobtype==cteDLZSH || ct->jobtype==cteALZSH || ct->jobtype==cteDFSSH || ct->jobtype==cteJFSSH || ct->jobtype==cteBCJFSSH || ct->jobtype==cteSCRDFSSH || ct->jobtype==cteCCFSSH || ct->jobtype==cteGFSH || ct->jobtype==cteDISH  || ct->jobtype==cteSCRDFSSH ||  ct->jobtype==cteTULLYLOC || ct->jobtype==ctePERSICOSFHOPPING ||
-         ct->jobtype==cteNEGFLORENTZ) ) {
-//     fprintf(f_tb_hamiltonian_hub, "%10d", step);
-//     fprintf(f_tb_hubbard, "%10d", step);
-     for (i=0; i<ct->dim; i++) {
-       ct->hamiltonian_mod[i] = 0.0;
-       for (m=0; m<ct->dim; m++)
-         ct->hamiltonian_mod[i] += ct->hubbard[i][m] * ct->occupation[m];
-//       fprintf(f_tb_hamiltonian_hub, " %10.6f", ct->hamiltonian_mod[i] * HARTREE_TO_EV);
-//       for (m=i; m<ct->dim; m++)
- //        fprintf(f_tb_hubbard, " %10.6f", ct->hubbard[i][m]);
-     }
-//     fprintf(f_tb_hamiltonian_hub, "\n");
-//     fprintf(f_tb_hubbard, "\n");
-   }
-
-   if (ct->jobtype==cteADIABATIC || ct->jobtype==cteFERMIADIABATIC || ct->jobtype == cteBORNOPPENHEIMER) {
-     fprintf(f_ct_adiabatic, "%10ld ", step);
-   }
-
-   printf("start dynamic at %f \n", (double) clock()/CLOCKS_PER_SEC);
-   dftb->do_ncv = 0;
-   ct->step = step;
-   if(step>=ct->n_avg_ham-1) //start propagation only after the running average is stable. steps starts from zero and we want to perform propagation in the first step if there is no averaging ct->n_avg=1
-   switch (ct->jobtype) {
-     case cteSCCDYNAMIC:
-     case cteCPFSCCDYNAMIC:
-     case cteDDBSCCDYNAMIC:
-     case cteNONSCCDYNAMIC:
-
-       /* evaluate the amount of annihilated charge due to neg. imag. potentials */
-       for (i=0; i<ct->neg_imag_pot; i++)
- ct->site_annihilated_occupation[i] += 2 * ct->neg_imag_pot_rate_constant * PS_TO_AU * ct->occupation[ct->site_neg_imag_pot[i]] * ir->delta_t;
-       /* additional option:  take lowest eigenvector as starting function */
-       if (ct->adiabstart && ct->first_step ){
-         f_ct_startwf = fopen ("CT_STARTWF.xvg", "w" );
-         ct->fermi_kt = BOLTZMANN_HARTREE_KELVIN * 300; // T=300K helps converging
-         if(do_adiab_fermi_onestate(ct, ct_broyden, ct_broyden->df , f_ct_startwf) == 1){
-           printf("ERROR: calculation of lowest eigenvalue did not converge.\n");
-           exit(-1);
-         }
-         fclose(f_ct_startwf);
-       }
-       /* print out the wave function */
-       if ((ir->nstxout > 0 && step % ir->nstxout == 0) || (ir->nstxout_compressed > 0 && step % ir->nstxout_compressed == 0)) {
-         printf("Wave function before step %ld:\n", step);
-         for (i=0; i<ct->dim; i++)
-           printf("%10.7f %10.7f\n", ct->wf[i], ct->wf[i + ct->dim]);
-       }
-       /* SCC dynamics -- perform the integration with RKsuite
-        * (the neg-imag-potential capability is included in do_rksuite() )
-        */
-
-       if(ct->do_projection){
-         printf("start project at %f\n", (double) clock()/CLOCKS_PER_SEC);
-         project_wf_on_new_basis(step, dftb, ct, f_ct_project_wf, f_ct_project_wf_ref );
-         printf("stop project at %f\n", (double) clock()/CLOCKS_PER_SEC);
-       }
-
-// Weiwei, coherence penalty functional and decoherence detailed balance
-       if (ct->jobtype==cteCPFSCCDYNAMIC || ct->jobtype==cteDDBSCCDYNAMIC)
-       {
-           for (i = 0; i < ct->dim; i++)
-               ct->occupation[i] = SQR(ct->wf[i]) + SQR(ct->wf[i+ct->dim]);
-/*
-           if (ct->jobtype==cteDDBSCCDYNAMIC)
-           {
-              for (i=0; i<ct->dim; i++)
-              {
-                  for (j=i+1; j<ct->dim; j++)
-                  {
-                      de = ct->hamiltonian[i][i] - ct->hamiltonian[j][j];
-
-                      hamtmp1 = sqrt(ct->occupation[j]*2.0/(1.0 + exp( de/ct->fermi_kt)));
-                      hamtmp2 = sqrt(ct->occupation[i]*2.0/(1.0 + exp(-de/ct->fermi_kt)));
-
-                      ct->hamiltonian[i][j] *= fabs(hamtmp1 - hamtmp2);
-                      ct->hamiltonian[j][i]  = ct->hamiltonian[i][j];
-                  }
-              }
-           }
-*/
-// coherence penalty functional correction
-           ekintot = 0.0;
-           for (iatom = 0; iatom < mdatoms->homenr; iatom++)
-           {
-               for (k = 0; k < ct->sites; k++)
+               else
                {
-                   for (l = 0; l < ct->site[k].atoms; l++)
+                   ct_assemble_hamiltonian(ct, dftb); // now including averaging
+                   /*
+                   for (i=0; i<ct->dim; i++)
                    {
-                       if (iatom == ct->site[k].atom[l])
+                       ct->hamiltonian[i][i] = (ct->is_hole_transfer==1) ? -dftb->phase2.THamilOrtho[i][i] : dftb->phase2.THamilOrtho[i][i];
+                       for (j=i+1; j<ct->dim; j++)
                        {
-                          for (m = 0; m < DIM; m++)
-                              ekintot += 0.5*dftb->phase1[k].mass[l]*AMU_TO_AU*SQR(state_global->v[iatom][m]*NM_TO_BOHR/PS_TO_AU);
-                       }
-                   }
-               }
-           }
+                           // 1.0 or 1.540 scaling factor according to J. Chem. Phys. 140, 104105 (2014)
+                        // ct->hamiltonian[i][j] = ct->hamiltonian[j][i] = dftb->phase2.THamilOrtho[i][j] * ct->offdiag_scaling;
+                           ct->hamiltonian[i][j] = ct->hamiltonian[j][i] = (ct->is_hole_transfer==1) ?
+                                      -dftb->phase2.THamilOrtho[i][j] * ct->offdiag_scaling:  dftb->phase2.THamilOrtho[i][j] * ct->offdiag_scaling;
+                           // 1.0 or 1.540 scaling factor according to J. Chem. Phys. 140, 104105 (2014)
+                           // this is the right way to do it. without changing off-diagonal elements
+                           //    the eigenvalues of the CG Ham are not necessarily -eigenvalue of electron transfer.
+                        }
+                    }
+                    */
+                    if (ct->first_step)
+                    {
+                        for (int i = 0; i < ct->dim; i++)
+                            for (int j = 0; j < ct->dim; j++)
+                                ct->positive_coupling_factor[i][j] = 1.0;
+          
+                     // int na = 12, nb = 15;
+                     // for (int i = 0; i < na; i++)
+                     //     for (int j = 0; j < nb; j++)
+                     //         for (int k = j+1; k < nb; k++)
+                     //             ct->positive_coupling_factor[i*nb+j][i*nb+k] = -1.0;
+                    }
+          
+                    for (int i = 0; i < ct->dim; i++)
+                    {
+                        for (int j = i; j < ct->dim; j++)
+                        {
+                            ct->hamiltonian[i][j] = ct->hamiltonian_dftb[i][j]*ct->positive_coupling_factor[i][j];
+                         // printf("%f\n", ct->hamiltonian[i][j]);
+                            ct->hamiltonian[j][i] = ct->hamiltonian[i][j];
+                        }
+                    }
+          
+                    if (ct->jobtype==cteNOMOVEMENT || ct->force_output == 1)
+                    {
+                        fprintf(f_tb_hamiltonian, "%8.2f", t*1000);
+                        for (int i = 0; i < ct->dim; i++)
+                            for (int m = i; m < ct->dim; m++)
+                                fprintf(f_tb_hamiltonian, "%15.8f", ct->hamiltonian[i][m] * HARTREE_TO_EV);
+                        fprintf(f_tb_hamiltonian, "\n");
+                    }
+                } // if Hamiltonian type
+            } // if jobtype != ESP
 
-//           ct->dephasing_rate = 1.0/20.0*0.0241;
+            //overlap ///////////////////////////////////////////////////////
 
-           for (i = 0; i < ct->dim; i++)
-           {
-               for (j = 0; j < ct->dim; j++)
-               {
-                   if (j != i)
-                   {
-      //                decay_rate = dephasing_rate;
-                      decay_rate = fabs(ct->hamiltonian[i][i] - ct->hamiltonian[j][j])/(1.0 + 0.1/ekintot);
+            // write overlap matrix for first site
+         // {
+         //     int i=0;
+         //     fprintf(f_ct_overlap_fo, "%10d ", step);
+         //     for (int j = 0; j < ct->site[i].homos; j++)
+         //         for (int k = j; k < ct->site[i].homos; k++)
+         //             fprintf(f_ct_overlap_fo, " %10.6f ", ct->site[i].overlap[j][k]);
+         //     fprintf(f_ct_overlap_fo, "  \n");
+         //
+         //  // int i=0;
+         //     fprintf(f_ct_overlap_fo_ref, "%10d ", step);
+         //     for (int j = 0; j < ct->site[i].homos; j++)
+         //         for (int k = j; k < ct->site[i].homos; k++)
+         //             fprintf(f_ct_overlap_fo_ref, " %10.6f ", ct->site[i].overlap_ref[j][k]);
+         //     fprintf(f_ct_overlap_fo_ref, "  \n");
+         // }
 
-                      ct->hamiltonian[i][j] += ct->occupation[i]*ct->occupation[j]*decay_rate;
+            //spectrum////////////////////
+            if (ct->jobtype==ctePARAMETERS) // && ct->first_step == 1)
+            {
+                get_spectrum(ct,dftb);
+             // fprintf(f_ct_spec, "energy eigen values of FO Hamiltonian:\n");
+                fprintf(f_ct_spec, "%10ld", step);
+                fprintf(f_ct_spec_evec, "%10ld", step);
 
-                   }
-               }
-           }
+                for (int i=0; i<ct->dim; i++)
+                    fprintf(f_ct_spec, " %10.6f ", ct->ev_spec[i] * HARTREE_TO_EV);
+                fprintf(f_ct_spec, "\n");
+               
+                for (int i=0; i<ct->dim; i++)
+                    for (int j=0; j<ct->dim; j++)
+                        fprintf(f_ct_spec_evec, " %10.6f ", ct->evec_spec[j+i*ct->dim] ) ; //prints all evecs in one line
+                fprintf(f_ct_spec_evec, "\n");
+            }
+/////////////////////////////////////////////////////////////////////
 
+
+            // CONSTRUCT THE HUBBARD MATRIX
+            // now here because hubbard matrix depends on delta_q calculated by get_delta_q.
+
+            if (ct->jobtype==cteSCCDYNAMIC || ct->jobtype==cteCPFSCCDYNAMIC || ct->jobtype==cteDDBSCCDYNAMIC || ct->jobtype==cteADIABATIC ||
+                ct->jobtype==cteNOMOVEMENT || ct->jobtype == cteFERMIADIABATIC || ct->jobtype == cteBORNOPPENHEIMER || ct->jobtype==cteDLZSH ||
+                ct->jobtype==cteALZSH || ct->jobtype==cteDFSSH || ct->jobtype==cteJFSSH || ct->jobtype==cteBCJFSSH || ct->jobtype==cteSCRDFSSH ||
+                ct->jobtype==cteCCFSSH || ct->jobtype==cteGFSH || ct->jobtype==cteDISH || ct->jobtype==cteSCRDFSSH || ct->jobtype==cteTULLYLOC ||
+                ct->jobtype==ctePERSICOSFHOPPING)
+            {
+                // diag: Hubbard params of nucleobases (constant - do not calculate)
+
+                // offdiag: 1/r_ij for nucleobases (original code)
+             // {
+             //     int counter = -1;
+             //     for (int i=0; i<ct->sites; i++)
+             //         for (int k=0; k<ct->site[i].homos; k++)
+             //         {
+             //             int counter2=-1;
+             //             counter++;
+             //             for (j=0; j<ct->sites; j++)
+             //             {
+             //                 dvec_sub(dftb->phase1[i].com, dftb->phase1[j].com, bond);
+             //                 for (int l=0; l<ct->site[j].homos; l++)
+             //                 {
+             //                     counter2++;
+             //                     if (j==i)
+             //                         continue;
+             //                     // approximation of nucleobases as single charged points
+             //                     ct->hubbard[counter][counter2] = ct->hubbard[counter2][counter] = ct->sic / dnorm(bond);
+             //                 }
+             //             }
+             //         }
+             // }
+
+                // offdiag: sum_AB[ (dq_iA * dq_jB)/r_AB  (improved code)
+                {
+                    int counter=-1;
+                    for (int i=0; i<ct->sites; i++)
+                        for (int k=0; k<ct->site[i].homos; k++)
+                        {
+                            int counter2=-1;
+                            counter++;
+                            for (int j=0; j<ct->sites; j++)
+                                for (int l=0; l<ct->site[j].homos; l++)
+                                {
+                                    counter2++;
+                                    if (j==i)
+                                        continue;
+                                    ct->hubbard[counter][counter2]=0;
+                                    for (int m=0; m < ct->site[i].atoms; m++)
+                                        for (int n=0; n < ct->site[j].atoms; n++)
+                                        {
+                                            dvec bond;
+                                            // TODO: use the QM system coordinates in dftbplus_phase1[i]->qm instead
+                                            dvec_sub(dftb->phase1[i].x[m], dftb->phase1[j].x[n], bond);
+                                            ct->hubbard[counter][counter2] += ct->sic * ct->site[i].delta_q[k][m] * ct->site[j].delta_q[l][n] / dnorm(bond);
+                                        }
+                                    if (ct->do_epol == 1)
+                                        ct->hubbard[counter][counter2]= (1.0/EPSILON_OP)*ct->hubbard[counter][counter2];
+                                }
+                        }
+                } // block
+
+                // test: calculate diag elements on the fly    THIS IS WRONG (also overwrites fixed hubbard diagonals eg. lambda_i)
+             // {
+             //     int counter=0;
+             //     for (i=0; i<ct->sites; i++)
+             //         for (j=0; j<ct->site[i].homos; j++)
+             //         {
+             //             ct->hubbard[counter][counter] = 0.0;
+             //             for (k=0; k<ct->site[i].atoms; k++)
+             //                 for (l=k; l<ct->site[i].atoms; l++)
+             //                     ct->hubbard[counter][counter] += ct->site[i].delta_q[j][k]*ct->site[i].delta_q[j][l] *
+             //                                      (k>l ? dftb->phase1[i].gammamat[k][l] : dftb->phase1[i].gammamat[l][k]);
+             //             counter++;
+             //         }
+             // }
+
+            } // if jobtype
+            else
+            {
+                for (int i=0; i<ct->dim; i++)
+                    for (int j=0; j<ct->dim; j++)
+                        ct->hubbard[i][j] = 0.e0;
+            } // else (if jobtype)
+
+         // printf("\n HUBBARD MATRIX \n");
+         // for (int i=0; i< ct->dim; i++)
+         // {
+         //     for (int j=0; j< ct->dim; j++)
+         //         printf("%f ", ct->hubbard[i][j]);
+         //     printf("\n");
+         // }
+
+            if (ct->do_projection)
+            {
+                printf("start project at %f\n", (double) clock()/CLOCKS_PER_SEC);
+                project_wf_on_new_basis(step, dftb, ct, f_ct_project_wf, f_ct_project_wf_ref); // TODO: change to DFTB+
+                printf("stop project at %f\n", (double) clock()/CLOCKS_PER_SEC);
+            }
+
+            if (ct->sic > 0.0 && (ct->jobtype==cteSCCDYNAMIC || ct->jobtype==cteCPFSCCDYNAMIC || ct->jobtype==cteDDBSCCDYNAMIC ||
+                                  ct->jobtype==cteADIABATIC || ct->jobtype==cteNOMOVEMENT || ct->jobtype==cteFERMIADIABATIC ||
+                                  ct->jobtype==cteBORNOPPENHEIMER || ct->jobtype==cteDLZSH || ct->jobtype==cteALZSH || ct->jobtype==cteDFSSH ||
+                                  ct->jobtype==cteJFSSH || ct->jobtype==cteBCJFSSH || ct->jobtype==cteSCRDFSSH || ct->jobtype==cteCCFSSH ||
+                                  ct->jobtype==cteGFSH || ct->jobtype==cteDISH || ct->jobtype==cteSCRDFSSH ||  ct->jobtype==cteTULLYLOC ||
+                                  ct->jobtype==ctePERSICOSFHOPPING || ct->jobtype==cteNEGFLORENTZ) )
+            {
+             // fprintf(f_tb_hamiltonian_hub, "%10d", step);
+             // fprintf(f_tb_hubbard, "%10d", step);
+                for (int i=0; i<ct->dim; i++)
+                {
+                    ct->hamiltonian_mod[i] = 0.0;
+                    for (int m=0; m<ct->dim; m++)
+                        ct->hamiltonian_mod[i] += ct->hubbard[i][m] * ct->occupation[m];
+                 // fprintf(f_tb_hamiltonian_hub, " %10.6f", ct->hamiltonian_mod[i] * HARTREE_TO_EV);
+                 // for (int m=i; m<ct->dim; m++)
+                 //     fprintf(f_tb_hubbard, " %10.6f", ct->hubbard[i][m]);
+                }
+             // fprintf(f_tb_hamiltonian_hub, "\n");
+             // fprintf(f_tb_hubbard, "\n");
+            }
+
+            if (ct->jobtype==cteADIABATIC || ct->jobtype==cteFERMIADIABATIC || ct->jobtype == cteBORNOPPENHEIMER)
+            {
+                fprintf(f_ct_adiabatic, "%10ld ", step);
+            }
+
+            printf("start dynamic at %f \n", (double) clock()/CLOCKS_PER_SEC);
+            ct->do_ncv = 0;
+            ct->step = step;
+            // start propagation only after the running average is stable. steps starts from zero and we want to perform propagation
+            //    in the first step if there is no averaging ct->n_avg=1
+            if (step >= ct->n_avg_ham-1)
+            switch (ct->jobtype)
+            {
+            case cteSCCDYNAMIC:
+            case cteCPFSCCDYNAMIC:
+            case cteDDBSCCDYNAMIC:
+            case cteNONSCCDYNAMIC:
+
+                // evaluate the amount of annihilated charge due to neg. imag. potentials
+                for (int i=0; i<ct->neg_imag_pot; i++)
+                    ct->site_annihilated_occupation[i] += 2 * ct->neg_imag_pot_rate_constant * PS_TO_AU * ct->occupation[ct->site_neg_imag_pot[i]] * ir->delta_t;
+                // additional option:  take lowest eigenvector as starting function
+                if (ct->adiabstart && ct->first_step )
+                {
+                    f_ct_startwf = fopen ("CT_STARTWF.xvg", "w" );
+                    ct->fermi_kt = BOLTZMANN_HARTREE_KELVIN * 300; // T=300K helps converging
+                    if (do_adiab_fermi_onestate(ct, ct_broyden, ct_broyden->df , f_ct_startwf) == 1)
+                    {
+                        printf("ERROR: calculation of lowest eigenvalue did not converge.\n");
+                        exit(-1);
+                    }
+                    fclose(f_ct_startwf);
+                }
+                // print out the wave function
+                if ((ir->nstxout > 0 && step % ir->nstxout == 0) || (ir->nstxout_compressed > 0 && step % ir->nstxout_compressed == 0))
+                {
+                    printf("Wave function before step %ld:\n", step);
+                    for (int i=0; i<ct->dim; i++)
+                        printf("%10.7f %10.7f\n", ct->wf[i], ct->wf[i + ct->dim]);
+                }
+
+                // SCC dynamics -- perform the integration with RKsuite
+                // (the neg-imag-potential capability is included in do_rksuite() )
+
+                if (ct->do_projection)
+                {
+                    printf("start project at %f\n", (double) clock()/CLOCKS_PER_SEC);
+                    project_wf_on_new_basis(step, dftb, ct, f_ct_project_wf, f_ct_project_wf_ref);
+                    printf("stop project at %f\n", (double) clock()/CLOCKS_PER_SEC);
+                }
+
+                // Weiwei, coherence penalty functional and decoherence detailed balance
+                if (ct->jobtype==cteCPFSCCDYNAMIC || ct->jobtype==cteDDBSCCDYNAMIC)
+                {
+                    for (int i = 0; i < ct->dim; i++)
+                        ct->occupation[i] = SQR(ct->wf[i]) + SQR(ct->wf[i+ct->dim]);
+
+                 // if (ct->jobtype==cteDDBSCCDYNAMIC)
+                 // {
+                 //     for (int i=0; i<ct->dim; i++)
+                 //     {
+                 //         for (int j=i+1; j<ct->dim; j++)
+                 //         {
+                 //             double de = ct->hamiltonian[i][i] - ct->hamiltonian[j][j];
+                 //
+                 //             double hamtmp1 = sqrt(ct->occupation[j]*2.0/(1.0 + exp( de/ct->fermi_kt)));
+                 //             double hamtmp2 = sqrt(ct->occupation[i]*2.0/(1.0 + exp(-de/ct->fermi_kt)));
+                 //
+                 //             ct->hamiltonian[i][j] *= fabs(hamtmp1 - hamtmp2);
+                 //             ct->hamiltonian[j][i]  = ct->hamiltonian[i][j];
+                 //         }
+                 //     }
+                 // }
+
+                    // coherence penalty functional correction
+                    double ekintot = 0.0;
+                    for (int iatom = 0; iatom < mdatoms->homenr; iatom++)
+                    {
+                        for (int k = 0; k < ct->sites; k++)
+                        {
+                            for (int l = 0; l < ct->site[k].atoms; l++)
+                            {
+                                if (iatom == ct->site[k].atom[l])
+                                {
+                                    for (int m = 0; m < DIM; m++)
+                                        ekintot += 0.5 * ct->site[k].mass[l] * AMU_TO_AU * SQR(state_global->v[iatom][m] * NM_TO_BOHR/PS_TO_AU);
+                                     // ekintot += 0.5 * dftb->phase1[k].mass[l] * AMU_TO_AU * SQR(state_global->v[iatom][m] * NM_TO_BOHR/PS_TO_AU);
+                                }
+                            }
+                        }
+                    }
+
+                 // ct->dephasing_rate = 1.0/20.0*0.0241;
+
+                    for (int i = 0; i < ct->dim; i++)
+                    {
+                        for (int j = 0; j < ct->dim; j++)
+                        {
+                            if (j != i)
+                            {
+                             // double decay_rate = dephasing_rate;
+                                double decay_rate = fabs(ct->hamiltonian[i][i] - ct->hamiltonian[j][j])/(1.0 + 0.1/ekintot);
+                                ct->hamiltonian[i][j] += ct->occupation[i] * ct->occupation[j] * decay_rate;
+                            }
+                        }
+                    }
+                } // coherence penalty
+
+                // solve TDSE
+                /*
+                if (step == 0)
+                {
+                    for (int i = 0; i < 2*ct->dim; i++)
+                        ct->tfs_diab[i] = ct->wf[i];
+                }
+                else
+                {
+                    double tdse_timestep = 1.e-4 * PS_TO_AU;
+                    int nstep = (int) (ct->rk_timestep/tdse_timestep);
+                    double rk_timestep0 = ct->rk_timestep;
+                    ct->rk_timestep = tdse_timestep;
+
+                    for (int istep = 0; istep < nstep; istep++)
+                    {
+                        // linear interpolation for Hamiltonian
+                        double cur_weight = (double) istep / (double) nstep;
+                        for (int i = 0; i < ct->dim; i++)
+                            for (int j = 0; j < ct->dim; j++)
+                                ct->tfl_mean_ham_full[i][j] = (1.0 - cur_weight)*ct->tfl_old_ham[i*ct->dim+j] + cur_weight*ct->hamiltonian[i][j];
+
+                        // propagate the TDSE in the diabatic representation
+                        do_rksuite_diab(ct);
+                     // RK5th(ct);
+                    }
+                    ct->rk_timestep = rk_timestep0;
+                }
+
+                for (int i = 0; i < 2*ct->dim; i++)
+                    ct->wf[i] = ct->tfs_diab[i];
+
+                // store hamiltonian as old_ham
+                for (int i = 0; i < SQR(ct->dim); i++)
+                    ct->tfl_old_ham[i] = *(ct->hamiltonian[0]+i);
+                */
+
+                do_rksuite(ct);
+
+                // the coefficients of decomposition into adiabatic states
+             // fprintf(f_ct_exp_adiab, "%10d ", step);
+             // do_wf_decomp_evec(ct, ct_diis, f_ct_exp_adiab);
+
+                if (ct->jobtype==cteCPFSCCDYNAMIC || ct->jobtype==cteDDBSCCDYNAMIC)
+                {
+                    for (int i=0; i<ct->dim; i++)
+                        for (int j=i+1; j<ct->dim; j++)
+                        {
+                            ct->hamiltonian[i][j] = ct->hamiltonian_type == 0 ? ct->hamiltonian_dftb[i][j] : ct->hamiltonian_ml[i][j];
+                            ct->hamiltonian[j][i] = ct->hamiltonian[i][j];
+                        }
+                }
+
+             // do_wf_decomp_evec_fermi(ct, ct_broyden, ct_broyden->df, f_ct_exp_adiab);
+                break;
+
+            case cteADIABATIC:
+            case cteADNONSCC:
+
+                // adiabatic dynamics -- find the wavefunction that minimizes the energy
+             // do_adiabatic(ct, ct_diis, f_ct_adiabatic);
+                if (do_adiabatic(ct, ct_diis, f_ct_adiabatic))
+                {
+                    fprintf(stderr, "Adiabatic - DIIS not converged in step %ld\n", step);
+                 // fprintf(f_ct_adiabatic, "Adiabatic - Broyden not converged\n");
+                }
+                break;
+
+            case cteFERMIADIABATIC:
+
+                if (do_adiab_fermi_onestate(ct, ct_broyden, ct_broyden->df, f_ct_adiabatic))
+                {
+                     fprintf(stderr, "Fermi distribution based Broyden not converged in step %ld\n", step);
+                }
+                break;
+
+            case cteBORNOPPENHEIMER:   //JJK
+
+                // scale timestep with overlap^2. i.e. take smaller steps if wf is changing strongly
+                do_born_oppenheimer(ct, ct_broyden, ct_broyden->df, f_ct_adiabatic);
+
+                // scale timestep with overlap^2. i.e. take smaller steps if wf is changing strongly
+             // ir->delta_t = do_born_oppenheimer(ct, ct_broyden, ct_broyden->df , f_ct_adiabatic);
+             // printf("delta_t %f\n", ir->delta_t);
+
+             // if(ir->delta_t < 0)
+             // {
+             //     fprintf(stderr, "Fermi distribution based Broyden not converged in step %d\n", step);
+             // }
+             // else
+             // {
+             //     ir->delta_t *=original_delta_t;
+             //     printf("original delta_t %f\n", original_delta_t);
+             // }
+
+                // maybe problematic since       t         = t0 + step*ir->delta_t;
+             // ct->rk_timestep = ir->delta_t * PS_TO_AU;
+                break;
+
+            // Landau-Zener surface hopping method (diabatic LZ formula)
+            case cteDLZSH:
+                printf("Beginning propagation and hopping routine\n");
+                if (step == 0)
+                    fprintf(f_ct_surfacehopping,"%8s %16s %16s %16s %20s \n","#Time","InitSurf","HopSurf","Prob","RandNum");
+                do_lzsh_diab(step, ct, dftb, state_global, mdatoms, x_ct, f_ct_surfacehopping);
+                break;
+
+            // Landau-Zener surface hopping method (adiabatic LZ formula)
+            case cteALZSH:
+                printf("Beginning propagation and hopping routine\n");
+                if (step == 0)
+                    fprintf(f_ct_surfacehopping,"%8s %16s %16s %16s %20s \n","#Time","InitSurf","HopSurf","Prob","RandNum");
+                do_lzsh_adiab(step, ct, f_ct_surfacehopping);
+                break;
+
+            // diabatic FSSH
+            case cteDFSSH:
+                printf("Beginning propagation and hopping routine\n");
+                if (step == 0)
+                    fprintf(f_ct_surfacehopping,"%8s %16s %16s %16s %20s \n","#Time","InitSurf","HopSurf","Prob","RandNum");
+                do_fssh_diab(step, ct, dftb, state_global, mdatoms, f_ct_surfacehopping);
+                break;
+
+            // FSSH by Jochen Blumberger
+            case cteJFSSH:
+                printf("Beginning propagation and hopping routine\n");
+                if (step == 0)
+                    fprintf(f_ct_surfacehopping,"%8s %16s %16s %16s %20s \n","#Time","InitSurf","HopSurf","Prob","RandNum");
+#if GMX_MPI
+                do_fssh_johen(step, ct, dftb, state_global, mdatoms, f_ct_surfacehopping, ct_mpi_comm, ct_mpi_rank, ct_mpi_size);
+#else
+                do_fssh_johen(step, ct, dftb, state_global, mdatoms, f_ct_surfacehopping);
+#endif
+                break;
+
+            // Bolzmann corrected JFSSH
+            case cteBCJFSSH:
+                printf("Beginning propagation and hopping routine\n");
+                if (step == 0)
+                    fprintf(f_ct_surfacehopping,"%8s %16s %16s %16s %20s \n","#Time","InitSurf","HopSurf","Prob","RandNum");
+#if GMX_MPI
+                do_fssh_johen(step, ct, dftb, state_global, mdatoms, f_ct_surfacehopping, ct_mpi_comm, ct_mpi_rank, ct_mpi_size);
+#else
+                do_fssh_johen(step, ct, dftb, state_global, mdatoms, f_ct_surfacehopping);
+#endif
+                break;
+
+            // self-consistent restricted-decoherence FSSH by Wang
+            case cteSCRDFSSH:
+                printf("Beginning propagation and hopping routine\n");
+                if (step == 0)
+                    fprintf(f_ct_surfacehopping,"%8s %16s %16s %16s %20s \n","#Time","InitSurf","HopSurf","Prob","RandNum");
+#if GMX_MPI
+                do_self_consistent_restricted_decoherence_fssh(step, ct, dftb, state_global, mdatoms, f_ct_surfacehopping, ct_mpi_comm, ct_mpi_rank, ct_mpi_size);
+#else
+                do_self_consistent_restricted_decoherence_fssh(step, ct, dftb, state_global, mdatoms, f_ct_surfacehopping);
+#endif
+                break;
+
+            // crossing-corrected FSSH by Wang
+            case cteCCFSSH:
+                printf("Beginning propagation and hopping routine\n");
+                if (step == 0)
+                    fprintf(f_ct_surfacehopping,"%8s %16s %16s %16s %20s \n","#Time","InitSurf","HopSurf","Prob","RandNum");
+#if GMX_MPI
+                do_crossing_corrected_fssh(step, ct, dftb, state_global, mdatoms, f_ct_surfacehopping, ct_mpi_comm, ct_mpi_rank, ct_mpi_size);
+#else
+                do_crossing_corrected_fssh(step, ct, dftb, state_global, mdatoms, f_ct_surfacehopping);
+#endif
+                break;
+
+            // global flux FSSH by prezhdo
+            case cteGFSH:
+                printf("Beginning propagation and hopping routine\n");
+                if (step == 0)
+                    fprintf(f_ct_surfacehopping,"%8s %16s %16s %16s %20s \n","#Time","InitSurf","HopSurf","Prob","RandNum");
+#if GMX_MPI
+                do_global_flux_fssh(step, ct, dftb, state_global, mdatoms, f_ct_surfacehopping, ct_mpi_comm, ct_mpi_rank, ct_mpi_size);
+#else
+                do_global_flux_fssh(step, ct, dftb, state_global, mdatoms, f_ct_surfacehopping);
+#endif
+                break;
+
+            // decoherence induced FSSH by prezhdo
+            case cteDISH:
+                printf("Beginning propagation and hopping routine\n");
+                if (step == 0)
+                    fprintf(f_ct_surfacehopping,"%8s %16s %16s %16s %20s \n","#Time","InitSurf","HopSurf","Prob","RandNum");
+#if GMX_MPI
+                do_decoherence_induced_fssh(step, ct, dftb, state_global, mdatoms, f_ct_surfacehopping, ct_mpi_comm, ct_mpi_rank, ct_mpi_size);
+#else
+                do_decoherence_induced_fssh(step, ct, dftb, state_global, mdatoms, f_ct_surfacehopping);
+#endif
+                break;
+
+            case cteTULLYLOC: //new one of JJK
+                printf("Beginning propagation and hopping routine\n");
+                if (step == 0)
+                    fprintf(f_ct_surfacehopping,"%8s %16s %16s %16s %20s \n","#Time","InitSurf","HopSurf","Prob","RandNum");
+             // fprintf(f_ct_surfacehopping, "%10d ", step);   //maybe replace step with time, maybe move into function
+             // fprintf(f_ct_nonadiab_coupling, "%10d ", step);
+             // do_tully_local(ct, ct_broyden, ct_broyden->df, f_ct_surfacehopping, f_ct_nonadiab_coupling);
+                do_tully_local(step, ct, dftb, state_global, mdatoms, f_ct_surfacehopping);
+                break;
+
+            case ctePERSICOSFHOPPING:
+                fprintf(f_ct_surfacehopping, "%10ld ", step);
+             // fprintf(f_ct_nonadiab_coupling, "%10d ", step);
+             // fprintf(f_ct_state_vectors, "%10ld ", step);
+                printf("%10ld ", step);
+                // new corrected version. adapted but not tested yet
+                do_persico_diabatic_sfhopping_new(ct, ct_broyden, ct_broyden->df, f_ct_surfacehopping, f_ct_nonadiab_coupling, f_ct_state_vectors);
+             // do_persico_diabatic_sfhopping(ct, ct_broyden, ct_broyden->df, f_ct_surfacehopping, f_ct_nonadiab_coupling);
+                break;
+
+            case cteNEGFLORENTZ:
+            case cteNEGFLORENTZNONSCC:
+                negf_propagate(ct);
+                fprintf(f_ct_current, "%10ld %12.5e %12.5e %12.5e\n", step, ct->negf_arrays->current[0], ct->negf_arrays->current[1], ct->negf_arrays->current[2]);
+                break;
+
+            case ctePARAMETERS:
+                break;
+
+            case cteNOMOVEMENT:
+                if (ct->first_step)
+                {
+                    ct->survival=0;
+                    for (i=0; i<ct->dim; i++)
+                        ct->survival += SQR(ct->wf[i]) + SQR(ct->wf[i+ct->dim]);
+                    if (ct->survival < 0.99) // should be normalized, 0.01 tolerance
+                    { 
+                        printf("WARNING: no correct starting wave function was specified. Lowest eigenvalue will be taken instead.\n");
+                        f_ct_startwf = fopen ("CT_STARTWF.xvg", "w");
+                        ct->fermi_kt = BOLTZMANN_HARTREE_KELVIN * 300; // T=300K helps converging
+                        if (do_adiab_fermi_onestate(ct, ct_broyden, ct_broyden->df, f_ct_startwf) == 1)
+                        {
+                            printf("ERROR: calculation of lowest eigenvalue did not converge.\n");
+                            exit(-1);
+                        }
+                        fclose(f_ct_startwf);
+                    }
+                }
+                break;
+
+            case cteESP:
+                // nothing to do
+                break;
+
+            case cteTDA:
+                // call the procedure inside the fprintf command (maybe not so nice :-/ )
+                fprintf(f_ct_tda, "%10ld %15.12f \n", step, calc_tda(ct) * HARTREE_TO_EV);
+                break;
+
+            case ctePREZHDOSFHOPPING:
+                printf("%10ld ", step);
+                fprintf(f_ct_surfacehopping, "%10ld ", step);
+             // fprintf(f_ct_nonadiab_coupling, "%10d ", step);
+             // fprintf(f_ct_state_vectors, "%10ld ", step);
+                do_prezhdo_sfhopping(ct, ct_broyden, ct_broyden->df, f_ct_surfacehopping, f_ct_nonadiab_coupling, f_ct_state_vectors);
+                break;
+
+            } // switch jobtype
+            printf("stop dynamic at %f\n", (double) clock()/CLOCKS_PER_SEC);
+
+            // store auxiliary arrays and arrays for time derivative of FMOs at preceding step - Weiwei X Mar 2019
+            /*
+            for (i=0; i<SQR(ct->dim); i++)
+                dftb->orthogo.sij_old[i] = dftb->orthogo.sij[i];
+
+            for (i=0; i<dftb->phase2.norb; i++)
+                for (j=0; j<ct->dim; j++)
+                    dftb->orthogo.fmo_old[i][j] = dftb->orthogo.fmo[i][j];
+
+            for (i=0; i<dftb->phase2.norb; i++)
+                for (j=0; j<dftb->phase2.norb; j++)
+                    dftb->orthogo.sao_old[i][j] = dftb->orthogo.sao[i][j];
+            */
+
+            if (ct->jobtype==cteADIABATIC || ct->jobtype==cteFERMIADIABATIC || ct->jobtype == cteBORNOPPENHEIMER) {
+                fprintf(f_ct_adiabatic, "\n");
+            }
+
+            // calculate and print out the occupations  dholub may18 added tullydia
+            if (ct->jobtype==cteSCCDYNAMIC || ct->jobtype==cteCPFSCCDYNAMIC || ct->jobtype==cteDDBSCCDYNAMIC || ct->jobtype==cteNONSCCDYNAMIC ||
+                ct->jobtype==cteADIABATIC || ct->jobtype==cteADNONSCC || ct->jobtype==cteFERMIADIABATIC || ct->jobtype == cteBORNOPPENHEIMER ||
+                ct->jobtype==cteDLZSH || ct->jobtype==cteALZSH || ct->jobtype==cteDFSSH || ct->jobtype==cteJFSSH || ct->jobtype==cteBCJFSSH ||
+                ct->jobtype==cteSCRDFSSH || ct->jobtype==cteCCFSSH || ct->jobtype==cteGFSH || ct->jobtype==cteDISH || ct->jobtype==cteSCRDFSSH ||
+                ct->jobtype==cteTULLYLOC || ct->jobtype==ctePERSICOSFHOPPING || ct->jobtype==cteNEGFLORENTZ || ct->jobtype==cteNEGFLORENTZNONSCC ||
+                ct->jobtype==ctePREZHDOSFHOPPING)
+            {
+                ct->survival = 0.0;
+                fprintf(f_tb_occupation, "%8.2f", t*1000); //1000=converting ps to fs
+
+                for (int i=0; i<ct->dim; i++)
+                {
+                    // diabatic occupations
+                    if (ct->jobtype==cteDLZSH || ct->jobtype==cteDFSSH )
+                    {
+                        ct->occupation[i] = i == ct->surface ? 1.0 : 0.0;
+                    }
+                    else
+                    {
+                        ct->occupation[i] = SQR(ct->wf[i]) + SQR(ct->wf[i+ct->dim]);
+                        ct->survival += ct->occupation[i];
+                    }
+                    fprintf(f_tb_occupation, "%10.5f", ct->occupation[i]);
+                }
+                fprintf(f_tb_occupation, "%10.5f", ct->survival);
+
+                if (ct->jobtype==cteSCCDYNAMIC || ct->jobtype==cteCPFSCCDYNAMIC || ct->jobtype==cteDDBSCCDYNAMIC || ct->jobtype==cteNONSCCDYNAMIC)
+                    for (i=0; i<ct->neg_imag_pot; i++)
+                        fprintf(f_tb_occupation, "%10.5f", ct->site_annihilated_occupation[i]);
+
+                fprintf(f_tb_occupation, "\n");
+            }
+
+            if (ct->jobtype==cteDLZSH || ct->jobtype==cteALZSH || ct->jobtype==cteDFSSH || ct->jobtype==cteJFSSH || ct->jobtype==cteBCJFSSH ||
+                ct->jobtype==cteSCRDFSSH || ct->jobtype==cteCCFSSH || ct->jobtype==cteGFSH || ct->jobtype==cteDISH  || ct->jobtype==cteSCRDFSSH ||
+                ct->jobtype==cteTULLYLOC)
+            {
+                fprintf(f_tb_occupation_adiab, "%8.2f", t*1000); //1000=converting ps to fs
+
+                for (int i=0; i<ct->dim; i++)
+                {
+                    double pop;
+                    // adiabatic population due to adiabatic occupations
+                    if (ct->jobtype==cteDLZSH || ct->jobtype==cteDFSSH )
+                    {
+                        pop = SQR(ct->tfs_vector[i][ct->surface]);
+                    }
+                    else
+                    {
+                        pop = i == ct->surface ? 1.0 : 0.0;
+                    }
+                    fprintf(f_tb_occupation_adiab, "%10.5f", pop);
+                }
+                fprintf(f_tb_occupation_adiab, "\n");
+            }
+
+            if (ct->jobtype==cteJFSSH || ct->jobtype==cteBCJFSSH || ct->jobtype==cteSCRDFSSH || ct->jobtype==cteCCFSSH || ct->jobtype==cteGFSH ||
+                ct->jobtype==cteDISH  || ct->jobtype==cteSCRDFSSH || ct->jobtype==cteTULLYLOC)
+            {
+                fprintf(f_tb_diapop, "%8.2f", t*1000); //1000=converting ps to fs
+                fprintf(f_tb_adiapop, "%8.2f", t*1000); //1000=converting ps to fs
+               
+                for (int i=0; i<ct->dim; i++) {
+                    // adiabatic population due to adiabatic occupations
+                    fprintf(f_tb_diapop, "%10.5f", SQR(ct->tfs_diab[i])+SQR(ct->tfs_diab[i+ct->dim]));
+                    fprintf(f_tb_adiapop, "%10.5f", SQR(ct->tfs_popul[i])+SQR(ct->tfs_popul[i+ct->dim]));
+                }
+                fprintf(f_tb_diapop, "\n");
+                fprintf(f_tb_adiapop, "\n");
+            }
+
+            if (ct->jobtype==cteNOMOVEMENT)
+            {
+                // calculate and print TB_COM
+                // print out the center of mass (in angstrom) of each site.
+                // needed for following the charge through amorphous materials
+                fprintf(f_tb_com, "%8.2f", t*1000);
+                for (int i=0; i<ct->sites; i++)
+                    // coordinates of COM in Angstrom
+                    fprintf(f_tb_com, "%15.5f %15.5f %15.5f   ",
+                        10*ct->site[i].centerOfMass[0], 10*ct->site[i].centerOfMass[1], 10*ct->site[i].centerOfMass[2]);
+                fprintf(f_tb_com, "\n");
+            }
+
+            if (ct->jobtype==cteSCCDYNAMIC || ct->jobtype==cteCPFSCCDYNAMIC || ct->jobtype==cteDDBSCCDYNAMIC || ct->jobtype==cteNONSCCDYNAMIC ||
+                ct->jobtype==cteADIABATIC || ct->jobtype==cteADNONSCC || ct->jobtype==cteFERMIADIABATIC || ct->jobtype == cteBORNOPPENHEIMER ||
+                ct->jobtype==cteDLZSH || ct->jobtype==cteALZSH || ct->jobtype==cteDFSSH || ct->jobtype==cteJFSSH || ct->jobtype==cteBCJFSSH ||
+                ct->jobtype==cteSCRDFSSH || ct->jobtype==cteCCFSSH || ct->jobtype==cteGFSH || ct->jobtype==cteDISH  || ct->jobtype==cteSCRDFSSH ||
+                ct->jobtype==cteTULLYLOC || ct->jobtype==ctePERSICOSFHOPPING || ct->jobtype==cteNEGFLORENTZ || ct->jobtype==cteNEGFLORENTZNONSCC ||
+                ct->jobtype==ctePREZHDOSFHOPPING)
+            {
+                // Inverse participation ratio from Wang (J.Chem.Phys. 148, 104106, 2018)
+                fprintf(f_tb_spread, "%10.3f", t*1000); //1000=converting ps to fs
+
+                double occup_sqr_sum = 0.;
+
+                for (int i=0; i<ct->dim; i++)
+                {
+                    if (ct->jobtype==cteDFSSH)
+                        ct->occupation[i] = SQR(ct->tfs_diab[i]) + SQR(ct->tfs_diab[i+ct->dim]);
+                    else
+                        ct->occupation[i] = SQR(ct->wf[i]) + SQR(ct->wf[i+ct->dim]);
+                    occup_sqr_sum += SQR(ct->occupation[i]);
+                }
+                fprintf(f_tb_spread, "%11.5f \n", 1./occup_sqr_sum);
+
+                // IPR-Jochen (J.Phys.Chem.Lett. 9, 3116, 2018)
+             // double occup_sqr_sum = 0.;
+             // for (int i=0; i<ct->dim; i++)
+             // {
+             //     occup_sqr_sum += SQR(SQR(ct->tfs_diab[i]) + SQR(ct->tfs_diab[i+ct->dim]));
+             // }
+             // fprintf(f_tb_spread, "%12.8f", 1./occup_sqr_sum);
+            }
+
+            // print out the ESP
+            if (ct->qmmm > 0)
+            {
+                fprintf(f_ct_esp, "%10ld", step);
+                for (int i=0; i<ct->sites; i++)
+                {
+                    fprintf(f_ct_esp, " %9.5f", dftb->phase1[i].esp * AU_OF_ESP_TO_VOLT);
+                    // For comparison (debug) purposes,
+                    // calculate the SCC-DFTB external shift
+                    // (be averaging over the atoms, mass weighted)
+                    // Maybe output this instead of ESP!
+                 // shiftE = 0.0;
+                 // for (j=0; j<dftb->phase1[i].nn; j++)
+                 //   shiftE += dftb->phase1[i].mass[j] * dftb->phase1[i].shiftE[j];
+                 // shiftE *= dftb->phase1[i].inv_tot_mass;
+                 // fprintf(f_ct_shift, " %9.5f", shiftE * AU_OF_ESP_TO_VOLT);
+                }
+                fprintf(f_ct_esp, "\n");
+            }
+
+            // print out center, standard deviation (width) and mean square displacement (needed for mobility) of the charge
+            if (ct->jobtype==cteSCCDYNAMIC || ct->jobtype==cteCPFSCCDYNAMIC || ct->jobtype==cteDDBSCCDYNAMIC || ct->jobtype==cteNONSCCDYNAMIC ||
+                ct->jobtype==cteADIABATIC || ct->jobtype==cteADNONSCC || ct->jobtype==cteFERMIADIABATIC || ct->jobtype == cteBORNOPPENHEIMER ||
+                ct->jobtype==cteDLZSH || ct->jobtype==cteALZSH || ct->jobtype==cteDFSSH || ct->jobtype==cteJFSSH || ct->jobtype==cteBCJFSSH ||
+                ct->jobtype==cteSCRDFSSH || ct->jobtype==cteCCFSSH || ct->jobtype==cteGFSH || ct->jobtype==cteDISH  || ct->jobtype==cteSCRDFSSH ||
+                ct->jobtype==cteTULLYLOC || ct->jobtype==ctePERSICOSFHOPPING || ct->jobtype==cteNEGFLORENTZ || ct->jobtype==cteNEGFLORENTZNONSCC ||
+                ct->jobtype==ctePREZHDOSFHOPPING)
+            {
+                // COC: <psi|R|psi>                             = sum_i occ_i(t)*R_i(t)             // R is operator that gives COM of site i (R_i)
+                // MSD: <psi(t)|(R-R0)^2|psi(t)>                = sum_i occ_i(t)*[R_i(t)-*R0)]^2    // R0 is position (COC) of the WF at t=0
+                // MSD-Johen: <psi(t)|R|psi(t)>^2               = sum_i occ_i(t)*[R_i(t)]^2
+                // MSD-Wang: <psi_adia(t)|(R-R0)^2|psi_adia(t)> = sum_i vec_i(t)^2*[R_i(t)-*R0)]^2  // R0 is position (COC) of the WF at t=0
+                // STD: sqrt(<psi|R^2|psi> - (<psi|R|psi>)^2)   = sqrt(  sum_i [occ_i(t)*R_i^2(t)- (occ_i(t)*R_i(t))^2]  )
+
+                dvec std, msd;
+
+                for (int i=0; i<ct->dim; i++)
+                ct->occupation[i] = SQR(ct->wf[i]) + SQR(ct->wf[i+ct->dim]);
+                int counter=0;
+                clear_dvec(ct->coc);
+
+                for (int i=0; i<ct->sites; i++)
+                {
+                    for (int j=0; j<ct->site[i].homos; j++){
+                       ct->coc[XX]+=ct->occupation[counter]*ct->site[i].centerOfMass[XX];
+                       ct->coc[YY]+=ct->occupation[counter]*ct->site[i].centerOfMass[YY];
+                       ct->coc[ZZ]+=ct->occupation[counter]*ct->site[i].centerOfMass[ZZ];
+                       counter++;
+                    }
+                }
+                if (ct->first_step)
+                    copy_dvec(ct->coc, ct->coc_start);
+             
+                counter=0;
+                clear_dvec(std);
+                clear_dvec(msd);
+
+                // MSD
+                msd[XX] = SQR(ct->coc[XX] - ct->coc_start[XX]);
+                msd[YY] = SQR(ct->coc[YY] - ct->coc_start[YY]);
+                msd[ZZ] = SQR(ct->coc[ZZ] - ct->coc_start[ZZ]);
+
+                /*
+                for (int i=0; i<ct->sites; i++)
+                    for (int j=0; j<ct->site[i].homos; j++)
+                    {
+                        msd[XX]+=ct->occupation[counter]*SQR(dftb->phase1[i].com[XX]-ct->coc_start[XX]);
+                        msd[YY]+=ct->occupation[counter]*SQR(dftb->phase1[i].com[YY]-ct->coc_start[YY]);
+                        msd[ZZ]+=ct->occupation[counter]*SQR(dftb->phase1[i].com[ZZ]-ct->coc_start[ZZ]);
+                        counter++;
+                    }
+                */
+                fprintf(f_tb_wfprops, "%8.2f  %15.5f %15.5f  %15.5f %15.5f %15.5f %15.5f", t*1000,
+                                      ct->coc[XX], ct->coc[YY], ct->coc[ZZ], msd[XX], msd[YY], msd[ZZ]); // TODO: note - this is now in nm units
+
+                clear_dvec(msd);
+
+                for (int i=0; i<ct->sites; i++)
+                    for (int j=0; j<ct->site[i].homos; j++)
+                    {
+                        msd[XX]+=ct->occupation[counter]*SQR(ct->site[i].centerOfMass[XX] - ct->coc_start[XX]);
+                        msd[YY]+=ct->occupation[counter]*SQR(ct->site[i].centerOfMass[YY] - ct->coc_start[YY]);
+                        msd[ZZ]+=ct->occupation[counter]*SQR(ct->site[i].centerOfMass[ZZ] - ct->coc_start[ZZ]);
+                        counter++;
+                    }
+                fprintf(f_tb_wfprops, "%15.5f %15.5f %15.5f \n", msd[XX], msd[YY], msd[ZZ]); // TODO: note - this is now in nm units
+            }
+
+#if GMX_MPI
+            } // if (ct_mpi_rank == 0)
+
+            if (ct->jobtype==cteSCCDYNAMIC || ct->jobtype==cteCPFSCCDYNAMIC || ct->jobtype==cteDDBSCCDYNAMIC || ct->jobtype==cteADIABATIC ||
+                ct->jobtype==cteNONSCCDYNAMIC || ct->jobtype==cteADNONSCC || ct->jobtype==cteFERMIADIABATIC || ct->jobtype == cteBORNOPPENHEIMER ||
+                ct->jobtype==cteDLZSH || ct->jobtype==cteALZSH || ct->jobtype==cteDFSSH || ct->jobtype==cteJFSSH || ct->jobtype==cteBCJFSSH ||
+                ct->jobtype==cteSCRDFSSH || ct->jobtype==cteCCFSSH || ct->jobtype==cteGFSH || ct->jobtype==cteDISH  || ct->jobtype==cteSCRDFSSH ||
+                ct->jobtype==cteTULLYLOC || ct->jobtype==ctePERSICOSFHOPPING || ct->jobtype==cteNEGFLORENTZ)
+            {
+                // communicate the occupations and wavefunction to the slaves
+                if (ct_mpi_rank == 0)
+                {
+                    for (int i=1; i<ct_mpi_size; i++)
+                        MPI_Send(ct->occupation, ct->dim, MPI_DOUBLE, i, 200+i, ct_mpi_comm);
+                }
+                else
+                {
+                    MPI_Recv(ct->occupation, ct->dim, MPI_DOUBLE, 0, 200+ct_mpi_rank, ct_mpi_comm, &ct_mpi_status);
+                    ct->survival = 0.0;
+                    for (int i=0; i<ct->dim; i++)
+                        ct->survival += ct->occupation[i];
+                }
+              
+                if (ct_mpi_rank == 0)
+                {
+                    for (int i=1; i<ct_mpi_size; i++)
+                        MPI_Send(ct->wf, 2*ct->dim, MPI_DOUBLE, i, 300+i, ct_mpi_comm);
+                }
+                else
+                {
+                    MPI_Recv(ct->wf, 2*ct->dim, MPI_DOUBLE, 0, 300+ct_mpi_rank, ct_mpi_comm, &ct_mpi_status);
+                }
+            }
+#endif
+
+            /*
+            // if we have neg. imag. potential and the survival is under the threshold, finish!
+            if (ct->jobtype==cteSCCDYNAMIC || ct->jobtype==cteCPFSCCDYNAMIC || ct->jobtype==cteDDBSCCDYNAMIC || ct->jobtype==cteNONSCCDYNAMIC)
+                if (ct->survival < ct->survival_threshold) 
+                {
+#if GMX_MPI
+                    if (ct_mpi_rank == 0)
+#endif
+                    fprintf(stderr, "Survival of %f dropped under the threshold (%f) at step %d, terminating!\n",
+                                       ct->survival, ct->survival_threshold, step);
+                    bGotTermSignal = TRUE;
+                }
+            */
+
+        } // INITIAL IF
+
+        if (ct->jobtype==cteSCCDYNAMIC || ct->jobtype==cteCPFSCCDYNAMIC || ct->jobtype==cteDDBSCCDYNAMIC || ct->jobtype==cteADIABATIC ||
+            ct->jobtype==cteNOMOVEMENT  || ct->jobtype==cteFERMIADIABATIC  || ct->jobtype == cteBORNOPPENHEIMER || ct->jobtype==cteDLZSH ||
+            ct->jobtype==cteALZSH || ct->jobtype==cteDFSSH || ct->jobtype==cteJFSSH || ct->jobtype==cteBCJFSSH || ct->jobtype==cteSCRDFSSH ||
+            ct->jobtype==cteCCFSSH || ct->jobtype==cteGFSH || ct->jobtype==cteDISH  || ct->jobtype==cteSCRDFSSH || ct->jobtype==cteTULLYLOC ||
+            ct->jobtype==ctePERSICOSFHOPPING || ct->jobtype==cteNEGFLORENTZ)
+        {
+#if GMX_MPI
+            get_MM_params(ct, dftb, ct_mpi_comm, ct_mpi_rank, ct_mpi_size);
+            MPI_Barrier(ct_mpi_comm);
+            for (i=0; i<ct->sites; i++)
+            {
+                //needed to build the hubbard matrix at main node
+                MPI_Bcast(ct->site[i].delta_q[0], ct->site[i].homos*ct->site[i].atoms, MPI_DOUBLE, i % ct_mpi_size, ct_mpi_comm);
+                if ( ct->do_lambda_i >= 2 )
+                    //needed to add forces for explicit lambda_i //try to send rvec -> 3*double. have to  test
+                    MPI_Bcast(dftb->phase1[i].grad[0], 3*dftb->phase1[i].nn,             MPI_DOUBLE, i % ct_mpi_size, ct_mpi_comm);
+                if (ct->qmmm == 3)
+                    MPI_Bcast(&(dftb->phase1[i].esp), 1,  MPI_DOUBLE, i % ct_mpi_size, ct_mpi_comm);
+            }
+            if ( ct->do_lambda_i >= 3 )
+                MPI_Bcast(dftb->phase2.grad[0],  3*dftb->phase2.nn, MPI_DOUBLE, 0, ct_mpi_comm );
+            MPI_Barrier(ct_mpi_comm);
+#else
+            get_MM_params(ct, dftb);
+#endif
+
+            if (! (ct->do_lambda_i == 0 && ct->jobtype==cteNOMOVEMENT))
+            {
+                // map the charge carrier on the atomic charges - first check the charges
+                int counter=0;
+                for (int i=0; i<ct->sites; i++)
+                {
+                 // printf("Site %d, charges top_global and mdatoms\n", i);
+                    for (int m=0; m<ct->site[i].atoms; m++)
+                    {
+                        mdatoms->chargeA[ct->site[i].atom[m]] = ct_atoms->atom[ct->site[i].atom[m]].q;
+                     // printf("q %f\n",mdatoms->chargeA[ct->site[i].atom[m]]);
+                    }
+                    for (int j=0; j<ct->site[i].homos; j++)
+                    {
+                        for (int m=0; m<ct->site[i].atoms; m++)
+                        {
+                            mdatoms->chargeA[ct->site[i].atom[m]] += ct->occupation[counter] * ct->site[i].delta_q[j][m];
+                        }
+                        counter++;
+                    }
+                 // for (int m=0; m<ct->site[i].atoms; m++)
+                 //     printf("rank%d %3d %8.5f %8.5f\n", ct_mpi_rank, ct->site[i].atom[m], ct_atoms.atom[ct->site[i].atom[m]].q,
+                 //                                             mdatoms->chargeA[ct->site[i].atom[m]]);
+                }
+            }
         }
 
-// solve TDSE
-/*       if (step == 0)
-       {
-          for (i = 0; i < 2*ct->dim; i++)
-              ct->tfs_diab[i] = ct->wf[i];
-       }
-       else
-       {
-          int istep, nstep;
-          double cur_weight, rk_timestep0;
-          double tdse_timestep = 1.e-4*PS_TO_AU;
-
-          nstep = (int)(ct->rk_timestep/tdse_timestep);
-          rk_timestep0 = ct->rk_timestep;
-          ct->rk_timestep = tdse_timestep;
-          for (istep = 0; istep < nstep; istep++)
-          {
-// linear interpolation for Hamiltonian
-              cur_weight = (double)istep/(double)nstep;
-              for (i = 0; i < ct->dim; i++)
-                  for (j = 0; j < ct->dim; j++)
-                      ct->tfl_mean_ham_full[i][j] = (1.0 - cur_weight)*ct->tfl_old_ham[i*ct->dim+j] + cur_weight*ct->hamiltonian[i][j];
-
-//// propagate the TDSE in the diabatic representation
-              do_rksuite_diab(ct);
-//              RK5th(ct);
-          }
-          ct->rk_timestep = rk_timestep0;
-       }
-
-       for (i = 0; i < 2*ct->dim; i++)
-           ct->wf[i] = ct->tfs_diab[i];
-
-//store hamiltonian as old_ham
-       for (i = 0; i < SQR(ct->dim); i++)
-           ct->tfl_old_ham[i] = *(ct->hamiltonian[0]+i);
-*/
-
-       do_rksuite(ct);
-       /* the coefficients of decomposition into adiabatic states */
-//       fprintf(f_ct_exp_adiab, "%10d ", step);
-       //do_wf_decomp_evec(ct, ct_diis, f_ct_exp_adiab);
-       if (ct->jobtype==cteCPFSCCDYNAMIC || ct->jobtype==cteDDBSCCDYNAMIC)
-       {
-           for (i=0; i<ct->dim; i++)
-               for (j=i+1; j<ct->dim; j++)
-               {
-                   ct->hamiltonian[i][j] = ct->hamiltonian_type == 0 ? ct->hamiltonian_dftb[i][j] : ct->hamiltonian_ml[i][j];
-                   ct->hamiltonian[j][i] = ct->hamiltonian[i][j];
-               }
-
+        /* print out active QM zone and set new QM zone if charge moved to the border */
+        if (ct->jobtype==cteSCCDYNAMIC || ct->jobtype==cteCPFSCCDYNAMIC || ct->jobtype==cteDDBSCCDYNAMIC || ct->jobtype==cteNONSCCDYNAMIC)
+        {
+            if(ct->pool_size > ct->sites)
+            {
+                fprintf(f_ct_active, "%ld  ", step);
+                for (int i=0; i<ct->sites; i++)
+                    fprintf(f_ct_active, " %d", ct->site[i].resnr);
+                fprintf(f_ct_active, "\n");
+                while (adapt_QMzone(ct,x_ct, mdatoms, top_global, state->box, state_global->x.rvec_array()))
+                {}
+            }
         }
 
-//       do_wf_decomp_evec_fermi(ct, ct_broyden, ct_broyden->df, f_ct_exp_adiab);
-       break;
-     case cteADIABATIC:
-     case cteADNONSCC:
-       /* adiabatic dynamics -- find the wavefunction that minimizes the energy */
-       //do_adiabatic(ct, ct_diis, f_ct_adiabatic);
-       if (do_adiabatic(ct, ct_diis, f_ct_adiabatic)) {
-         fprintf(stderr, "Adiabatic - DIIS not converged in step %ld\n", step);
-         //fprintf(f_ct_adiabatic, "Adiabatic - Broyden not converged\n");
-       }
-       break;
-     case cteFERMIADIABATIC:
-       if (do_adiab_fermi_onestate(ct, ct_broyden, ct_broyden->df, f_ct_adiabatic)) {
-         fprintf(stderr, "Fermi distribution based Broyden not converged in step %ld\n", step);
-       }
-       break;
-     case cteBORNOPPENHEIMER:   //JJK
-       do_born_oppenheimer(ct, ct_broyden, ct_broyden->df , f_ct_adiabatic); //scale timestep with overlap^2. i.e. take smaller steps if wf is changing strongly
-       //ir->delta_t=do_born_oppenheimer(ct, ct_broyden, ct_broyden->df , f_ct_adiabatic); //scale timestep with overlap^2. i.e. take smaller steps if wf is changing strongly
-//printf("delta_t %f\n", ir->delta_t);
-       //if(ir->delta_t < 0){
-       //  fprintf(stderr, "Fermi distribution based Broyden not converged in step %d\n", step);
-       //} else {ir->delta_t *=original_delta_t;
-//printf("original delta_t %f\n", original_delta_t);
-       //}
-
-       // maybe problematic since       t         = t0 + step*ir->delta_t;
-       //ct->rk_timestep = ir->delta_t * PS_TO_AU;
-     break;
-
-// Landau-Zener surface hopping method (diabatic LZ formula)
-     case cteDLZSH:
-       printf("Beginning propagation and hopping routine\n");
-       if (step == 0)
-          fprintf(f_ct_surfacehopping,"%8s %16s %16s %16s %20s \n","#Time","InitSurf","HopSurf","Prob","RandNum");
-       do_lzsh_diab(step, ct, dftb, state_global, mdatoms, x_ct, f_ct_surfacehopping);
-       break;
-// Landau-Zener surface hopping method (adiabatic LZ formula)
-     case cteALZSH:
-       printf("Beginning propagation and hopping routine\n");
-       if (step == 0)
-          fprintf(f_ct_surfacehopping,"%8s %16s %16s %16s %20s \n","#Time","InitSurf","HopSurf","Prob","RandNum");
-       do_lzsh_adiab(step, ct, f_ct_surfacehopping);
-       break;
-// diabatic FSSH
-     case cteDFSSH:
-       printf("Beginning propagation and hopping routine\n");
-       if (step == 0)
-          fprintf(f_ct_surfacehopping,"%8s %16s %16s %16s %20s \n","#Time","InitSurf","HopSurf","Prob","RandNum");
-       do_fssh_diab(step, ct, dftb, state_global, mdatoms, f_ct_surfacehopping);
-       break;
-// FSSH by Johen Blumberger
-     case cteJFSSH:
-       printf("Beginning propagation and hopping routine\n");
-       if (step == 0)
-          fprintf(f_ct_surfacehopping,"%8s %16s %16s %16s %20s \n","#Time","InitSurf","HopSurf","Prob","RandNum");
+        clock_gettime(CLOCK_MONOTONIC, &time_end);
 #if GMX_MPI
-       do_fssh_johen(step, ct, dftb, state_global, mdatoms, f_ct_surfacehopping, ct_mpi_comm, ct_mpi_rank, ct_mpi_size);
-#else
-       do_fssh_johen(step, ct, dftb, state_global, mdatoms, f_ct_surfacehopping);
+        if (ct_mpi_rank==0)
 #endif
-       break;
-// Bolzmann corrected JFSSH
-     case cteBCJFSSH:
-       printf("Beginning propagation and hopping routine\n");
-       if (step == 0)
-          fprintf(f_ct_surfacehopping,"%8s %16s %16s %16s %20s \n","#Time","InitSurf","HopSurf","Prob","RandNum");
-#if GMX_MPI
-       do_fssh_johen(step, ct, dftb, state_global, mdatoms, f_ct_surfacehopping, ct_mpi_comm, ct_mpi_rank, ct_mpi_size);
-#else
-       do_fssh_johen(step, ct, dftb, state_global, mdatoms, f_ct_surfacehopping);
-#endif
-       break;
-// self-consistent restricted-decoherence FSSH by Wang
-     case cteSCRDFSSH:
-       printf("Beginning propagation and hopping routine\n");
-       if (step == 0)
-          fprintf(f_ct_surfacehopping,"%8s %16s %16s %16s %20s \n","#Time","InitSurf","HopSurf","Prob","RandNum");
-#if GMX_MPI
-       do_self_consistent_restricted_decoherence_fssh(step, ct, dftb, state_global, mdatoms, f_ct_surfacehopping, ct_mpi_comm, ct_mpi_rank, ct_mpi_size);
-#else
-       do_self_consistent_restricted_decoherence_fssh(step, ct, dftb, state_global, mdatoms, f_ct_surfacehopping);
-#endif
-       break;
-// corrsing-corrected FSSH by Wang
-     case cteCCFSSH:
-       printf("Beginning propagation and hopping routine\n");
-       if (step == 0)
-          fprintf(f_ct_surfacehopping,"%8s %16s %16s %16s %20s \n","#Time","InitSurf","HopSurf","Prob","RandNum");
-#if GMX_MPI
-       do_crossing_corrected_fssh(step, ct, dftb, state_global, mdatoms, f_ct_surfacehopping, ct_mpi_comm, ct_mpi_rank, ct_mpi_size);
-#else
-       do_crossing_corrected_fssh(step, ct, dftb, state_global, mdatoms, f_ct_surfacehopping);
-#endif
-       break;
-// global flux FSSH by prezhdo
-     case cteGFSH:
-       printf("Beginning propagation and hopping routine\n");
-       if (step == 0)
-          fprintf(f_ct_surfacehopping,"%8s %16s %16s %16s %20s \n","#Time","InitSurf","HopSurf","Prob","RandNum");
-#if GMX_MPI
-       do_global_flux_fssh(step, ct, dftb, state_global, mdatoms, f_ct_surfacehopping, ct_mpi_comm, ct_mpi_rank, ct_mpi_size);
-#else
-       do_global_flux_fssh(step, ct, dftb, state_global, mdatoms, f_ct_surfacehopping);
-#endif
-       break;
-// decohenrence induced FSSH by prezhdo
-     case cteDISH:
-       printf("Beginning propagation and hopping routine\n");
-       if (step == 0)
-          fprintf(f_ct_surfacehopping,"%8s %16s %16s %16s %20s \n","#Time","InitSurf","HopSurf","Prob","RandNum");
-#if GMX_MPI
-       do_decoherence_induced_fssh(step, ct, dftb, state_global, mdatoms, f_ct_surfacehopping, ct_mpi_comm, ct_mpi_rank, ct_mpi_size);
-#else
-       do_decoherence_induced_fssh(step, ct, dftb, state_global, mdatoms, f_ct_surfacehopping);
-#endif
-       break;
-     case cteTULLYLOC: //new one of JJK
-       printf("Beginning propagation and hopping routine\n");
-       if (step == 0)
-          fprintf(f_ct_surfacehopping,"%8s %16s %16s %16s %20s \n","#Time","InitSurf","HopSurf","Prob","RandNum");
-//       fprintf(f_ct_surfacehopping, "%10d ", step);   //maybe replace step with time,mabye move into function
-//       fprintf(f_ct_nonadiab_coupling, "%10d ", step);
-//       do_tully_local(ct, ct_broyden, ct_broyden->df, f_ct_surfacehopping, f_ct_nonadiab_coupling);
-       do_tully_local(step, ct, dftb, state_global, mdatoms, f_ct_surfacehopping);
-       break;
-     case ctePERSICOSFHOPPING:
-       fprintf(f_ct_surfacehopping, "%10ld ", step);
-//       fprintf(f_ct_nonadiab_coupling, "%10d ", step);
-       fprintf(f_ct_state_vectors, "%10ld ", step);
-       printf("%10ld ", step);
-       do_persico_diabatic_sfhopping_new(ct, ct_broyden, ct_broyden->df, f_ct_surfacehopping, f_ct_nonadiab_coupling, f_ct_state_vectors); //new corrected version. adapted but not tested yet
-       //do_persico_diabatic_sfhopping(ct, ct_broyden, ct_broyden->df, f_ct_surfacehopping, f_ct_nonadiab_coupling);
-       break;
-     case cteNEGFLORENTZ:
-     case cteNEGFLORENTZNONSCC:
-       negf_propagate(ct);
-       fprintf(f_ct_current, "%10ld %12.5e %12.5e %12.5e\n", step, ct->negf_arrays->current[0], ct->negf_arrays->current[1], ct->negf_arrays->current[2]);
-       break;
-     case ctePARAMETERS:
-       break;
-     case cteNOMOVEMENT:
-       if ( ct->first_step ){
-         ct->survival=0;
-         for (i=0; i<ct->dim; i++)
-           ct->survival += SQR(ct->wf[i]) + SQR(ct->wf[i+ct->dim]);
-         if (ct->survival < 0.99 ){ //should be normalized, 0.01 tolerance
-           printf("WARNING: no correct starting wave function was specified. Lowest eigenvalue will be taken instead.\n");
-           f_ct_startwf = fopen ("CT_STARTWF.xvg", "w");
-           ct->fermi_kt = BOLTZMANN_HARTREE_KELVIN * 300; // T=300K helps converging
-           if(do_adiab_fermi_onestate(ct, ct_broyden, ct_broyden->df , f_ct_startwf) == 1){
-             printf("ERROR: calculation of lowest eigenvalue did not converge.\n");
-             exit(-1);
-           }
-           fclose(f_ct_startwf);
-         }
-       }
-       break;
-     case cteESP:
-       /* nothing to do */
-       break;
-     case cteTDA:
-       tda=calc_tda(ct);
-       fprintf(f_ct_tda, "%10ld %15.12f \n", step, tda*HARTREE_TO_EV);
-       break;
-     case ctePREZHDOSFHOPPING:
-       printf("%10ld ", step);
-       fprintf(f_ct_surfacehopping, "%10ld ", step);
-//       fprintf(f_ct_nonadiab_coupling, "%10d ", step);
-       fprintf(f_ct_state_vectors, "%10ld ", step);
-       do_prezhdo_sfhopping(ct, ct_broyden, ct_broyden->df, f_ct_surfacehopping, f_ct_nonadiab_coupling, f_ct_state_vectors);
-       break;
-   }
-   printf("stop dynamic at %f\n", (double) clock()/CLOCKS_PER_SEC);
-
-// store auxiliary arrays and arrays for time derivative of FMOs at preceding step - Weiwei X Mar 2019
-/*    for (i=0; i<SQR(ct->dim); i++)
-        dftb->orthogo.sij_old[i] = dftb->orthogo.sij[i];
-
-    for (i=0; i<dftb->phase2.norb; i++)
-      for (j=0; j<ct->dim; j++)
-          dftb->orthogo.fmo_old[i][j] = dftb->orthogo.fmo[i][j];
-
-    for (i=0; i<dftb->phase2.norb; i++)
-      for (j=0; j<dftb->phase2.norb; j++)
-         dftb->orthogo.sao_old[i][j] = dftb->orthogo.sao[i][j];
-*/
-
-   if (ct->jobtype==cteADIABATIC || ct->jobtype==cteFERMIADIABATIC || ct->jobtype == cteBORNOPPENHEIMER) {
-     fprintf(f_ct_adiabatic, "\n");
-   }
-
-   if (ct->jobtype==cteSCCDYNAMIC || ct->jobtype==cteCPFSCCDYNAMIC || ct->jobtype==cteDDBSCCDYNAMIC || ct->jobtype==cteNONSCCDYNAMIC || ct->jobtype==cteADIABATIC || ct->jobtype==cteADNONSCC  || ct->jobtype==cteFERMIADIABATIC || ct->jobtype == cteBORNOPPENHEIMER || ct->jobtype==cteDLZSH || ct->jobtype==cteALZSH || ct->jobtype==cteDFSSH || ct->jobtype==cteJFSSH || ct->jobtype==cteBCJFSSH || ct->jobtype==cteSCRDFSSH || ct->jobtype==cteCCFSSH || ct->jobtype==cteGFSH || ct->jobtype==cteDISH  || ct->jobtype==cteSCRDFSSH || ct->jobtype==cteTULLYLOC || ct->jobtype==ctePERSICOSFHOPPING || ct->jobtype==cteNEGFLORENTZ || ct->jobtype==cteNEGFLORENTZNONSCC || ct->jobtype==ctePREZHDOSFHOPPING) {
-
-    //  calculate and print out the occupations  dholub may18 added tullydia
-
-     ct->survival = 0.0;
-     fprintf(f_tb_occupation, "%8.2f", t*1000); //1000=converting ps to fs
-
-     for (i=0; i<ct->dim; i++) {
-// diabatic occupations
-       if (ct->jobtype==cteDLZSH || ct->jobtype==cteDFSSH )
-       {
-          ct->occupation[i] = i == ct->surface ? 1.0 : 0.0;
-       }
-       else
-       {
-          ct->occupation[i] = SQR(ct->wf[i]) + SQR(ct->wf[i+ct->dim]);
-          ct->survival += ct->occupation[i];
-       }
-
-       fprintf(f_tb_occupation, "%10.5f", ct->occupation[i]);
-     }
-     fprintf(f_tb_occupation, "%10.5f", ct->survival);
-
-     if (ct->jobtype==cteSCCDYNAMIC || ct->jobtype==cteCPFSCCDYNAMIC || ct->jobtype==cteDDBSCCDYNAMIC || ct->jobtype==cteNONSCCDYNAMIC  )
-       for (i=0; i<ct->neg_imag_pot; i++)
-         fprintf(f_tb_occupation, "%10.5f", ct->site_annihilated_occupation[i]);
-
-     fprintf(f_tb_occupation, "\n");
-   }
-
-   if (ct->jobtype==cteDLZSH || ct->jobtype==cteALZSH || ct->jobtype==cteDFSSH || ct->jobtype==cteJFSSH || ct->jobtype==cteBCJFSSH || ct->jobtype==cteSCRDFSSH || ct->jobtype==cteCCFSSH || ct->jobtype==cteGFSH || ct->jobtype==cteDISH  || ct->jobtype==cteSCRDFSSH || ct->jobtype==cteTULLYLOC) {
-
-     fprintf(f_tb_occupation_adiab, "%8.2f", t*1000); //1000=converting ps to fs
-
-     for (i=0; i<ct->dim; i++) {
-// adiabatic population due to adiabatic occupations
-       if (ct->jobtype==cteDLZSH || ct->jobtype==cteDFSSH )
-       {
-          pop = SQR(ct->tfs_vector[i][ct->surface]);
-       }
-       else
-       {
-          pop = i == ct->surface ? 1.0 : 0.0;
-       }
-
-       fprintf(f_tb_occupation_adiab, "%10.5f", pop);
-     }
-     fprintf(f_tb_occupation_adiab, "\n");
-   }
-
-   if (ct->jobtype==cteJFSSH || ct->jobtype==cteBCJFSSH || ct->jobtype==cteSCRDFSSH || ct->jobtype==cteCCFSSH || ct->jobtype==cteGFSH || ct->jobtype==cteDISH  || ct->jobtype==cteSCRDFSSH || ct->jobtype==cteTULLYLOC) {
-
-     fprintf(f_tb_diapop, "%8.2f", t*1000); //1000=converting ps to fs
-     fprintf(f_tb_adiapop, "%8.2f", t*1000); //1000=converting ps to fs
-
-     for (i=0; i<ct->dim; i++) {
-// adiabatic population due to adiabatic occupations
-       fprintf(f_tb_diapop, "%10.5f", SQR(ct->tfs_diab[i])+SQR(ct->tfs_diab[i+ct->dim]));
-       fprintf(f_tb_adiapop, "%10.5f", SQR(ct->tfs_popul[i])+SQR(ct->tfs_popul[i+ct->dim]));
-     }
-     fprintf(f_tb_diapop, "\n");
-     fprintf(f_tb_adiapop, "\n");
-   }
-
-   if (ct->jobtype==cteNOMOVEMENT) {
-  /* calculate and print TB_COM */
-   /*print out the center of mass (in angstrom) of each site. needed for following the charge through amorphous materials*/
-    fprintf(f_tb_com, "%8.2f", t*1000);
-    for (i=0; i<ct->sites; i++)
-        fprintf(f_tb_com, "%15.5f %15.5f %15.5f   ", 10*dftb->phase1[i].com[0]/NM_TO_BOHR, 10*dftb->phase1[i].com[1]/NM_TO_BOHR, 10*dftb->phase1[i].com[2]/NM_TO_BOHR); //coordinates of COM in Angstrom
-    fprintf(f_tb_com, "\n");
- }
-
-   if (ct->jobtype==cteSCCDYNAMIC || ct->jobtype==cteCPFSCCDYNAMIC || ct->jobtype==cteDDBSCCDYNAMIC || ct->jobtype==cteNONSCCDYNAMIC || ct->jobtype==cteADIABATIC || ct->jobtype==cteADNONSCC  ||   ct->jobtype==cteFERMIADIABATIC || ct->jobtype == cteBORNOPPENHEIMER || ct->jobtype==cteDLZSH || ct->jobtype==cteALZSH || ct->jobtype==cteDFSSH || ct->jobtype==cteJFSSH || ct->jobtype==cteBCJFSSH || ct->jobtype==cteSCRDFSSH || ct->jobtype==cteCCFSSH || ct->jobtype==cteGFSH || ct->jobtype==cteDISH  || ct->jobtype==cteSCRDFSSH ||  ct->jobtype==cteTULLYLOC || ct->jobtype==ctePERSICOSFHOPPING || ct->jobtype==cteNEGFLORENTZ || ct->jobtype==cteNEGFLORENTZNONSCC || ct->jobtype==ctePREZHDOSFHOPPING) {
-
-// Inverse participation ratio from Wang (J.Chem.Phys. 148, 104106, 2018)
-      fprintf(f_tb_spread, "%10.3f", t*1000); //1000=converting ps to fs
-
-      occup_sqr_sum = 0.;
-
-      for (i=0; i<ct->dim; i++)
-      {
-          if (ct->jobtype==cteDFSSH)
-             ct->occupation[i] = SQR(ct->tfs_diab[i]) + SQR(ct->tfs_diab[i+ct->dim]);
-          else
-             ct->occupation[i] = SQR(ct->wf[i]) + SQR(ct->wf[i+ct->dim]);
-
-          occup_sqr_sum += SQR(ct->occupation[i]);
-      }
-
-      fprintf(f_tb_spread, "%11.5f \n", 1./occup_sqr_sum);
-
-// IPR-Johen (J.Phys.Chem.Lett. 9, 3116, 2018)
-/*      occup_sqr_sum = 0.;
-      for (i=0; i<ct->dim; i++)
-      {
-          occup_sqr_sum += SQR(SQR(ct->tfs_diab[i]) + SQR(ct->tfs_diab[i+ct->dim]));
-      }
-
-      fprintf(f_tb_spread, "%12.8f", 1./occup_sqr_sum);
-*/
- }
-    /* print out the ESP */
-   if (ct->qmmm > 0) {
-     fprintf(f_ct_esp, "%10ld", step);
-     for (i=0; i<ct->sites; i++) {
-       fprintf(f_ct_esp, " %9.5f", dftb->phase1[i].esp * AU_OF_ESP_TO_VOLT);
-       /* For comparison (debug) purposes,
-        * calculate the SCC-DFTB external shift
-        * (be averaging over the atoms, mass weighted)
-        */
-       /* Maybe output this instead of ESP! */
-//     shiftE = 0.0;
-//     for (j=0; j<dftb->phase1[i].nn; j++)
-//       shiftE += dftb->phase1[i].mass[j] * dftb->phase1[i].shiftE[j];
-//     shiftE *= dftb->phase1[i].inv_tot_mass;
-//     fprintf(f_ct_shift, " %9.5f", shiftE * AU_OF_ESP_TO_VOLT);
-     }
-     fprintf(f_ct_esp, "\n");
-   }
-
-   /* print out center, standard deviation (width) and mean square displacement (needed for mobility) of the charge */
-   if (ct->jobtype==cteSCCDYNAMIC || ct->jobtype==cteCPFSCCDYNAMIC || ct->jobtype==cteDDBSCCDYNAMIC || ct->jobtype==cteNONSCCDYNAMIC || ct->jobtype==cteADIABATIC || ct->jobtype==cteADNONSCC ||
-       ct->jobtype==cteFERMIADIABATIC || ct->jobtype == cteBORNOPPENHEIMER  || ct->jobtype==cteDLZSH || ct->jobtype==cteALZSH || ct->jobtype==cteDFSSH || ct->jobtype==cteJFSSH || ct->jobtype==cteBCJFSSH || ct->jobtype==cteSCRDFSSH || ct->jobtype==cteCCFSSH || ct->jobtype==cteGFSH || ct->jobtype==cteDISH  || ct->jobtype==cteSCRDFSSH ||
-       ct->jobtype==cteTULLYLOC || ct->jobtype==ctePERSICOSFHOPPING || ct->jobtype==cteNEGFLORENTZ || ct->jobtype==cteNEGFLORENTZNONSCC || ct->jobtype==ctePREZHDOSFHOPPING)
-   {
-      // COC: <psi|R|psi>                 = sum_i occ_i(t)*R_i(t)  // R is operator that gives COM of site i (R_i)
-      // MSD: <psi(t)|(R-R0)^2|psi(t)>             = sum_i occ_i(t)*[R_i(t)-*R0)]^2    //R0 is position (COC) of the WF at t=0
-      // MSD-Johen: <psi(t)|R|psi(t)>^2             = sum_i occ_i(t)*[R_i(t)]^2
-      // MSD-Wang: <psi_adia(t)|(R-R0)^2|psi_adia(t)>   = sum_i vec_i(t)^2*[R_i(t)-*R0)]^2    //R0 is position (COC) of the WF at t=0
-      // STD: sqrt(<psi|R^2|psi> - (<psi|R|psi>)^2)         = sqrt(  sum_i [occ_i(t)*R_i^2(t)- (occ_i(t)*R_i(t))^2]  )
-
-     for (i=0; i<ct->dim; i++)
-       ct->occupation[i] = SQR(ct->wf[i]) + SQR(ct->wf[i+ct->dim]);
-     counter=0;
-     clear_dvec(ct->coc);
-     for (i=0; i<ct->sites; i++)
-     {
-        for (j=0; j<ct->site[i].homos; j++){
-          ct->coc[XX]+=ct->occupation[counter]*dftb->phase1[i].com[XX];
-          ct->coc[YY]+=ct->occupation[counter]*dftb->phase1[i].com[YY];
-          ct->coc[ZZ]+=ct->occupation[counter]*dftb->phase1[i].com[ZZ];
-          counter++;
-        }
-     }
-     if(ct->first_step)
-       copy_dvec(ct->coc, ct->coc_start);
-
-     counter=0;
-     clear_dvec(std);
-     clear_dvec(msd);
-
- // MSD
-     msd[XX] = SQR(ct->coc[XX] - ct->coc_start[XX]);
-     msd[YY] = SQR(ct->coc[YY] - ct->coc_start[YY]);
-     msd[ZZ] = SQR(ct->coc[ZZ] - ct->coc_start[ZZ]);
-
-/*     for (i=0; i<ct->sites; i++)
-     for (j=0; j<ct->site[i].homos; j++)
-     {
-
-         msd[XX]+=ct->occupation[counter]*SQR(dftb->phase1[i].com[XX]-ct->coc_start[XX]);
-         msd[YY]+=ct->occupation[counter]*SQR(dftb->phase1[i].com[YY]-ct->coc_start[YY]);
-
-         msd[ZZ]+=ct->occupation[counter]*SQR(dftb->phase1[i].com[ZZ]-ct->coc_start[ZZ]);
-         counter++;
-      }
-*/
-      fprintf(f_tb_wfprops, "%8.2f  %15.5f %15.5f  %15.5f %15.5f %15.5f %15.5f",t*1000, ct->coc[XX], ct->coc[YY], ct->coc[ZZ], msd[XX],msd[YY],msd[ZZ]);
-
-     clear_dvec(msd);
-
-     for (i=0; i<ct->sites; i++)
-     for (j=0; j<ct->site[i].homos; j++)
-     {
-
-         msd[XX]+=ct->occupation[counter]*SQR(dftb->phase1[i].com[XX]-ct->coc_start[XX]);
-         msd[YY]+=ct->occupation[counter]*SQR(dftb->phase1[i].com[YY]-ct->coc_start[YY]);
-
-         msd[ZZ]+=ct->occupation[counter]*SQR(dftb->phase1[i].com[ZZ]-ct->coc_start[ZZ]);
-         counter++;
-      }
-
-      fprintf(f_tb_wfprops, "%15.5f %15.5f %15.5f \n", msd[XX],msd[YY],msd[ZZ]);
-   }
-
-#if GMX_MPI
-   } /* if (ct_mpi_rank == 0) */
-
-   if (ct->jobtype==cteSCCDYNAMIC || ct->jobtype==cteCPFSCCDYNAMIC || ct->jobtype==cteDDBSCCDYNAMIC || ct->jobtype==cteADIABATIC || ct->jobtype==cteNONSCCDYNAMIC || ct->jobtype==cteADNONSCC ||
-          ct->jobtype==cteFERMIADIABATIC || ct->jobtype == cteBORNOPPENHEIMER  || ct->jobtype==cteDLZSH || ct->jobtype==cteALZSH || ct->jobtype==cteDFSSH || ct->jobtype==cteJFSSH || ct->jobtype==cteBCJFSSH || ct->jobtype==cteSCRDFSSH || ct->jobtype==cteCCFSSH || ct->jobtype==cteGFSH || ct->jobtype==cteDISH  || ct->jobtype==cteSCRDFSSH || ct->jobtype==cteTULLYLOC || ct->jobtype==ctePERSICOSFHOPPING ||
-         ct->jobtype==cteNEGFLORENTZ) {
-     /* communicate the occupations and wavefunction to the slaves */
-     if (ct_mpi_rank == 0) {
-       for (i=1; i<ct_mpi_size; i++)
-         MPI_Send(ct->occupation, ct->dim, MPI_DOUBLE, i, 200+i, ct_mpi_comm);
-     } else {
-       MPI_Recv(ct->occupation, ct->dim, MPI_DOUBLE, 0, 200+ct_mpi_rank, ct_mpi_comm, &ct_mpi_status);
-       ct->survival = 0.0;
-       for (i=0; i<ct->dim; i++)
-         ct->survival += ct->occupation[i];
-     }
-
-     if (ct_mpi_rank == 0) {
-       for (i=1; i<ct_mpi_size; i++)
-         MPI_Send(ct->wf, 2*ct->dim, MPI_DOUBLE, i, 300+i, ct_mpi_comm);
-     } else {
-       MPI_Recv(ct->wf, 2*ct->dim, MPI_DOUBLE, 0, 300+ct_mpi_rank, ct_mpi_comm, &ct_mpi_status);
-     }
-   }
-#endif
-
-  /* if we have neg. imag. potential and the survival is under the threshold, finish!
-  if (ct->jobtype==cteSCCDYNAMIC || ct->jobtype==cteCPFSCCDYNAMIC || ct->jobtype==cteDDBSCCDYNAMIC || ct->jobtype==cteNONSCCDYNAMIC)
-    if (ct->survival < ct->survival_threshold) {
-#if GMX_MPI
-      if (ct_mpi_rank == 0)
-#endif
-      fprintf(stderr, "Survival of %f dropped under the threshold (%f) at step %d, terminating!\n",
-        ct->survival, ct->survival_threshold, step);
-      bGotTermSignal = TRUE;
-    }
-  */
-
-  } /* initial if */
-
-  if (ct->jobtype==cteSCCDYNAMIC || ct->jobtype==cteCPFSCCDYNAMIC || ct->jobtype==cteDDBSCCDYNAMIC || ct->jobtype==cteADIABATIC || ct->jobtype==cteNOMOVEMENT  ||
-        ct->jobtype==cteFERMIADIABATIC  || ct->jobtype == cteBORNOPPENHEIMER  || ct->jobtype==cteDLZSH || ct->jobtype==cteALZSH || ct->jobtype==cteDFSSH || ct->jobtype==cteJFSSH || ct->jobtype==cteBCJFSSH || ct->jobtype==cteSCRDFSSH || ct->jobtype==cteCCFSSH || ct->jobtype==cteGFSH || ct->jobtype==cteDISH  || ct->jobtype==cteSCRDFSSH || ct->jobtype==cteTULLYLOC || ct->jobtype==ctePERSICOSFHOPPING || ct->jobtype==cteNEGFLORENTZ) {
-
-#if GMX_MPI
-    get_MM_params(ct, dftb, ct_mpi_comm, ct_mpi_rank, ct_mpi_size);
-    MPI_Barrier(ct_mpi_comm);
-    for (i=0; i<ct->sites; i++){
-      MPI_Bcast(ct->site[i].delta_q[0], ct->site[i].homos*ct->site[i].atoms, MPI_DOUBLE, i % ct_mpi_size, ct_mpi_comm); //needed to build the hubbard matrix at main node
-      if ( ct->do_lambda_i >= 2 )
-        MPI_Bcast(dftb->phase1[i].grad[0], 3*dftb->phase1[i].nn,             MPI_DOUBLE, i % ct_mpi_size, ct_mpi_comm);//needed to add forces for explicit lambda_i //try to send rvec -> 3*double. have to  test
-      if (ct->qmmm == 3)
-        MPI_Bcast(&(dftb->phase1[i].esp), 1,  MPI_DOUBLE, i % ct_mpi_size, ct_mpi_comm);
-    }
-    if ( ct->do_lambda_i >= 3 )
-      MPI_Bcast(dftb->phase2.grad[0],  3*dftb->phase2.nn, MPI_DOUBLE, 0, ct_mpi_comm );
-
-    MPI_Barrier(ct_mpi_comm);
-#else
-    get_MM_params(ct, dftb);
-#endif
-
-    if (! (ct->do_lambda_i == 0 && ct->jobtype==cteNOMOVEMENT))
-    {
-       /* map the charge carrier on the atomic charges - first check the charges */
-       counter=0;
-       for (i=0; i<ct->sites; i++) {
-         // printf("Site %d, charges top_global and mdatoms\n", i);
-         for (m=0; m<ct->site[i].atoms; m++) {
-           mdatoms->chargeA[ct->site[i].atom[m]] = ct_atoms->atom[ct->site[i].atom[m]].q;
-   //printf("q %f\n",mdatoms->chargeA[ct->site[i].atom[m]]);
-         }
-         for (j=0; j<ct->site[i].homos; j++){
-           for (m=0; m<ct->site[i].atoms; m++){
-             mdatoms->chargeA[ct->site[i].atom[m]] += ct->occupation[counter] * ct->site[i].delta_q[j][m];
-           }
-           counter++;
-         }
-         //for (m=0; m<ct->site[i].atoms; m++)
-          // printf("rank%d %3d %8.5f %8.5f\n",ct_mpi_rank, ct->site[i].atom[m], ct_atoms.atom[ct->site[i].atom[m]].q, mdatoms->chargeA[ct->site[i].atom[m]]);
-       }
-    }
-  }
-
-  /* print out active QM zone and set new QM zone if charge moved to the border */
-  if (ct->jobtype==cteSCCDYNAMIC || ct->jobtype==cteCPFSCCDYNAMIC || ct->jobtype==cteDDBSCCDYNAMIC || ct->jobtype==cteNONSCCDYNAMIC){
-    if(ct->pool_size > ct->sites){
-      fprintf(f_ct_active, "%ld  ", step);
-      for (i=0; i<ct->sites; i++){
-        fprintf(f_ct_active, " %d", ct->site[i].resnr);
-      }
-      fprintf(f_ct_active, "\n");
-
-      while(adapt_QMzone(ct,x_ct, mdatoms, top_global, state->box, state_global->x.rvec_array())){}
-    }
-  }
-
-   clock_gettime(CLOCK_MONOTONIC, &time_end);
-   if (ct_mpi_rank==0)
-     print_time_difference("TOTAL QM TIME[ns]:", time_1, time_end);
-  ct->first_step = 0;
+        print_time_difference("TOTAL QM TIME[ns]:", time_1, time_end);
+        ct->first_step = 0;
 
         /****************
          * END TRANSFER *
@@ -2422,98 +2680,100 @@ write_sto_conf("CT.pdb", "written by charge transfer code", ct_atoms, x_ct, NULL
         // forces should be added somewhere INSIDE do_force(), probably do_force_lowlevel()
 
         {
-          auto forceView = &f.view();
-          auto forceData = forceView->forceWithPadding().unpaddedArrayRef().data();
+            auto forceView = &f.view();
+            auto forceData = forceView->forceWithPadding().unpaddedArrayRef().data();
 
-            if ( ct->do_lambda_i==2 || ct->do_lambda_i==3)
-              for(i=0; i<mdatoms->homenr; i++) //iterate over home atoms
-              {
-               for(j=0; j<ct->sites; j++)
-               for(k=0; k<ct->site[j].atoms; k++)
-               if(i==ct->site[j].atom[k]){ //atom is at home on this node
+            if (ct->do_lambda_i==2 || ct->do_lambda_i==3)
+                for (int i=0; i<mdatoms->homenr; i++) //iterate over home atoms
+                {
+                    for (int j=0; j<ct->sites; j++)
+                        for (int k=0; k<ct->site[j].atoms; k++)
+                            if (i==ct->site[j].atom[k])
+                            { // atom is at home on this node
+                                for (int l=0; l<DIM; l++)
+                                {
+                                    forceData[i][l] -= (real) HARTREE_BOHR2MD * dftb->phase1[j].grad[k][l];
+                                 // printf("atom i %d MM force %lf   QM force %lf \n", i, f[i][l], -(real) HARTREE_BOHR2MD * dftb->phase1[j].grad[k][l]);
+                                 // fshift[i][j] = (real) HARTREE_BOHR2MD * dftb1.grad[i][j]; TODO: what is fshift? this is used in QMMM gromacs code
+                                }
+                            }
+                }
 
-                 for(l=0; l<DIM; l++) {
-                   forceData[i][l] -= (real) HARTREE_BOHR2MD * dftb->phase1[j].grad[k][l];
-                   //printf("atom i %d MM force %lf   QM force %lf \n", i, f[i][l], -(real) HARTREE_BOHR2MD * dftb->phase1[j].grad[k][l]);
-                   //fshift[i][j] = (real) HARTREE_BOHR2MD * dftb1.grad[i][j]; TODO: what is fshift? this is used in QMMM gromacs code
-                 }
-               }
-              }
-
-            if ( ct->do_lambda_i==3)
-              for(i=0; i<mdatoms->homenr; i++){
-               counter=0;
-               for(j=0; j<ct->sites; j++)
-               for(k=0; k<ct->site[j].atoms; k++){
-                 if(i==ct->site[j].atom[k]){ //atom is at home on this node
-
-                   for(l=0; l<DIM; l++) {
-                     forceData[i][l] -= (real) HARTREE_BOHR2MD * dftb->phase2.grad[counter][l];
-                     //printf("atom i %d MM force %lf   QM force %lf \n", i, f[i][l], -(real) HARTREE_BOHR2MD * dftb->phase1[j].grad[k][l]);
-                   }
-                 }
-                counter++;
-               }
-              }
+            if (ct->do_lambda_i==3)
+                for(int i=0; i<mdatoms->homenr; i++)
+                {
+                    int counter=0;
+                    for (int j=0; j<ct->sites; j++)
+                        for(int k=0; k<ct->site[j].atoms; k++)
+                        {
+                            if (i==ct->site[j].atom[k])
+                            { //atom is at home on this node
+                                for (int l=0; l<DIM; l++)
+                                {
+                                    forceData[i][l] -= (real) HARTREE_BOHR2MD * dftb->phase2.grad[counter][l];
+                                 // printf("atom i %d MM force %lf   QM force %lf \n", i, f[i][l], -(real) HARTREE_BOHR2MD * dftb->phase1[j].grad[k][l]);
+                                }
+                            }
+                            counter++;
+                        }
+                }
             }
 
             // MK tag printout
             if (ct->jobtype==cteNOMOVEMENT || ct->force_output==1)
             {
-              printf("Printing Forces to File\n");
-              int charge;
-
-              long glo_idx;
-              for (j=0; j<ct->sites; j++)
-              {
-                //fprintf(f_tb_diag_force, "%16.8f\n", ct->hamiltonian[j][j]);
-                for (k=0; k<ct->site[j].atoms; k++)
+                printf("Printing Forces to File\n");
+               
+                for (int j=0; j<ct->sites; j++)
                 {
-                  glo_idx = ct->site[j].atom[k];
-                  switch (ct->site[j].atomtype[k])
-                  {
-                    case 0: charge = 6; break; // C
-                    case 1: charge = 1; break; // H
-                  }
-                  //printf("pos %f %f %f\n", state_global->x[glo_idx][0]*10, state_global->x[glo_idx][1]*10,state_global->x[glo_idx][2]*10);
-                  //printf("frc %f %f %f\n", dftb->phase1[j].grad[k][0],dftb->phase1[j].grad[k][1], dftb->phase1[j].grad[k][2]);
-                  fprintf(f_tb_diag_force, "%1d%16.8f%16.8f%16.8f%16.8f%16.8f%16.8f\n", charge,
-                          state_global->x[glo_idx][0]*10, state_global->x[glo_idx][1]*10,state_global->x[glo_idx][2]*10,
-                          dftb->phase1[j].grad[k][0],dftb->phase1[j].grad[k][1],dftb->phase1[j].grad[k][2]);
-                }
-
-                fprintf(f_tb_diag_force, "\n");
-
-              }
-
-              //fprintf(f_tb_offdiag_force, "%16.8f\n",ct->hamiltonian[0][1]);
-
-              for(i=0; i<mdatoms->homenr;i++)
-              {
-                counter=0;
-                for(j=0; j<ct->sites; j++)
-                  {
-                    for(k=0; k<ct->site[j].atoms; k++)
+                 // fprintf(f_tb_diag_force, "%16.8f\n", ct->hamiltonian[j][j]);
+                    for (int k=0; k<ct->site[j].atoms; k++)
                     {
-                      if(i==ct->site[j].atom[k]) //atom is at home on this node
-                      {
+                        long glo_idx = ct->site[j].atom[k];
+                        int charge;
                         switch (ct->site[j].atomtype[k])
                         {
-                          case 0: charge = 6; break; // C
-                          case 1: charge = 1; break; // H
+                            case 0: charge = 6; break; // C
+                            case 1: charge = 1; break; // H
                         }
-                        //printf("frc %f %f %f\n", dftb->phase2.grad[counter][0],dftb->phase2.grad[counter][1], dftb->phase2.grad[counter][2]);
-                        fprintf(f_tb_offdiag_force, "%1d%16.8f%16.8f%16.8f%16.8f%16.8f%16.8f\n",
-                                charge, state_global->x[i][0]*10, state_global->x[i][1]*10, state_global->x[i][2]*10,
-                                dftb->phase2.grad[counter][0], dftb->phase2.grad[counter][1], dftb->phase2.grad[counter][2]);
-                      }
-                    counter++;
+                     // printf("pos %f %f %f\n", state_global->x[glo_idx][0]*10, state_global->x[glo_idx][1]*10,state_global->x[glo_idx][2]*10);
+                     // printf("frc %f %f %f\n", dftb->phase1[j].grad[k][0],dftb->phase1[j].grad[k][1], dftb->phase1[j].grad[k][2]);
+                        fprintf(f_tb_diag_force, "%1d%16.8f%16.8f%16.8f%16.8f%16.8f%16.8f\n", charge,
+                                state_global->x[glo_idx][0]*10, state_global->x[glo_idx][1]*10,state_global->x[glo_idx][2]*10,
+                                dftb->phase1[j].grad[k][0],dftb->phase1[j].grad[k][1],dftb->phase1[j].grad[k][2]);
                     }
-                 }
-              }
+               
+                    fprintf(f_tb_diag_force, "\n");
+                }
 
-              fprintf(f_tb_diag_force, "\n");
-              fprintf(f_tb_offdiag_force, "\n");
+             // fprintf(f_tb_offdiag_force, "%16.8f\n",ct->hamiltonian[0][1]);
+
+                for (int i=0; i<mdatoms->homenr;i++)
+                {
+                    int counter=0;
+                    for (int j=0; j<ct->sites; j++)
+                    {
+                        for (int k=0; k<ct->site[j].atoms; k++)
+                        {
+                            if (i==ct->site[j].atom[k]) //atom is at home on this node
+                            {
+                                int charge;
+                                switch (ct->site[j].atomtype[k])
+                                {
+                                    case 0: charge = 6; break; // C
+                                    case 1: charge = 1; break; // H
+                                }
+                             // printf("frc %f %f %f\n", dftb->phase2.grad[counter][0],dftb->phase2.grad[counter][1], dftb->phase2.grad[counter][2]);
+                                fprintf(f_tb_offdiag_force, "%1d%16.8f%16.8f%16.8f%16.8f%16.8f%16.8f\n",
+                                    charge, state_global->x[i][0]*10, state_global->x[i][1]*10, state_global->x[i][2]*10,
+                                    dftb->phase2.grad[counter][0], dftb->phase2.grad[counter][1], dftb->phase2.grad[counter][2]);
+                            }
+                            counter++;
+                        }
+                    }
+                }
+                fprintf(f_tb_diag_force, "\n");
+                fprintf(f_tb_offdiag_force, "\n");
             }
 
         /****************
@@ -2927,50 +3187,60 @@ write_sto_conf("CT.pdb", "written by charge transfer code", ct_atoms, x_ct, NULL
 #if GMX_MPI
         if (ct_mpi_rank == 0) {
 #endif
-        if (ct->jobtype==cteNONSCCDYNAMIC || ct->jobtype==cteADNONSCC || ct->jobtype==cteNOMOVEMENT || ct->jobtype==cteSCCDYNAMIC || ct->jobtype==cteCPFSCCDYNAMIC || ct->jobtype==cteDDBSCCDYNAMIC || ct->jobtype==cteADIABATIC ||  ct->jobtype==cteFERMIADIABATIC || ct->jobtype == cteBORNOPPENHEIMER  || ct->jobtype==cteDLZSH || ct->jobtype==cteALZSH || ct->jobtype==cteDFSSH || ct->jobtype==cteJFSSH || ct->jobtype==cteBCJFSSH || ct->jobtype==cteSCRDFSSH || ct->jobtype==cteCCFSSH || ct->jobtype==cteGFSH || ct->jobtype==cteDISH  || ct->jobtype==cteSCRDFSSH || ct->jobtype==cteTULLYLOC || ct->jobtype==ctePERSICOSFHOPPING) {
-         /* calculate the QM energy
- //new jjk dholub may18
-          * attention - the correct expression must be used for that!
-          * THIS MAY BE WRONG FOR cteFERMI, WHERE WE MIX THE ADIABATIC STATES AND
-          *     CONSTRUCT ARTIFICIAL ct->wf !
-          */
-//         ct_energy = ct_energy1 = ct_energy2 = 0.0;
-//         for (i=0; i<ct->dim; i++)
-//           for (m=0; m<ct->dim; m++) {
-             /* TB Hamiltonian */
-//             ct_energy1 += ct->hamiltonian[i][m] * (ct->wf[i] * ct->wf[m] + ct->wf[i + ct->dim] * ct->wf[m + ct->dim]);
-             /* Hubbard / gamma terms */
-//             ct_energy2 += 0.5 * ct->hubbard[i][m] * (SQR(ct->wf[i]) + SQR(ct->wf[i + ct->dim])) * (SQR(ct->wf[m]) + SQR(ct->wf[m + ct->dim]));
-//           }
-//         ct_energy = ct_energy1 + ct_energy2;
-         /* output both MM and QM energy */
-           fprintf(f_ct_energy, "%8.2f", t*1000);
+        if (ct->jobtype==cteNONSCCDYNAMIC || ct->jobtype==cteADNONSCC || ct->jobtype==cteNOMOVEMENT || ct->jobtype==cteSCCDYNAMIC ||
+            ct->jobtype==cteCPFSCCDYNAMIC || ct->jobtype==cteDDBSCCDYNAMIC || ct->jobtype==cteADIABATIC || ct->jobtype==cteFERMIADIABATIC ||
+            ct->jobtype==cteBORNOPPENHEIMER  || ct->jobtype==cteDLZSH || ct->jobtype==cteALZSH || ct->jobtype==cteDFSSH || ct->jobtype==cteJFSSH ||
+            ct->jobtype==cteBCJFSSH || ct->jobtype==cteSCRDFSSH || ct->jobtype==cteCCFSSH || ct->jobtype==cteGFSH || ct->jobtype==cteDISH ||
+            ct->jobtype==cteSCRDFSSH || ct->jobtype==cteTULLYLOC || ct->jobtype==ctePERSICOSFHOPPING)
+        {
+            /* calculate the QM energy
+            //new jjk dholub may18
+             * attention - the correct expression must be used for that!
+             * THIS MAY BE WRONG FOR cteFERMI, WHERE WE MIX THE ADIABATIC STATES AND
+             *     CONSTRUCT ARTIFICIAL ct->wf !
+             */
+         // double ct_energy = 0.0, ct_energy1 = 0.0, ct_energy2 = 0.0;
+         // for (int i=0; i<ct->dim; i++)
+         //     for (int m=0; m<ct->dim; m++)
+         //     {
+                    /* TB Hamiltonian */
+         //         ct_energy1 += ct->hamiltonian[i][m] * (ct->wf[i] * ct->wf[m] + ct->wf[i + ct->dim] * ct->wf[m + ct->dim]);
+                    /* Hubbard / gamma terms */
+         //         ct_energy2 += 0.5 * ct->hubbard[i][m] * (SQR(ct->wf[i]) + SQR(ct->wf[i + ct->dim])) * (SQR(ct->wf[m]) + SQR(ct->wf[m + ct->dim]));
+         //     }
+         // ct_energy = ct_energy1 + ct_energy2;
+            /* output both MM and QM energy */
+            fprintf(f_ct_energy, "%8.2f", t*1000);
 
-           if (ct->jobtype==cteDFSSH || ct->jobtype==cteDLZSH)
-           {
-              fprintf(f_ct_energy, "%12.5f ", ct->hamiltonian[ct->surface][ct->surface]*27.2114);
-              for (i=0; i < ct->dim; i++)
-                  fprintf(f_ct_energy, "%12.5f", ct->hamiltonian[i][i]*27.2114);
-           }
-           else if (ct->jobtype==cteSCCDYNAMIC || ct->jobtype==cteNONSCCDYNAMIC || ct->jobtype==cteADNONSCC || ct->jobtype==cteCPFSCCDYNAMIC || ct->jobtype==cteDDBSCCDYNAMIC || ct->jobtype==cteNOMOVEMENT)
-           {
-              ct_energy = 0.0;
-              for (i = 0; i < ct->dim; i++)
-                  for (m = 0; m < ct->dim; m++)
-                      ct_energy += ct->hamiltonian[i][m] * (ct->wf[i] * ct->wf[m] + ct->wf[i + ct->dim] * ct->wf[m + ct->dim]);
-
-              fprintf(f_ct_energy, "%12.5f", ct_energy*27.2114);
-
-//              fprintf(f_ct_energy, "%12.5f %12.5f %12.5f %12.5f %12.5f", ct->hamiltonian[14][14]*27.2114, ct->hamiltonian[15][15]*27.2114, ct->hamiltonian[16][16]*27.2114, ct->hamiltonian[14][15]*27.2114, ct->hamiltonian[15][16]*27.2114);
-           }
-           else
-           {
-              fprintf(f_ct_energy, "%12.5f ", ct->ev_adiab[ct->surface]*27.2114);
-              for (i=0; i < ct->dim; i++)
-                  fprintf(f_ct_energy, "%12.5f", ct->ev_adiab[i]*27.2114);
-           }
-           fprintf(f_ct_energy, "\n");
-//         fprintf(f_ct_energy, "%10d %12.7f %12.7f %12.7f %12.7f %12.7f\n", step, ct_energy1, ct_energy2, ct_energy, enerd->term[F_ETOT] * KJMOL_TO_HARTREE, enerd->term[F_ETOT] * KJMOL_TO_HARTREE + ct_energy);
+            if (ct->jobtype==cteDFSSH || ct->jobtype==cteDLZSH)
+            {
+                fprintf(f_ct_energy, "%12.5f ", ct->hamiltonian[ct->surface][ct->surface]*27.2114);
+                for (int i=0; i < ct->dim; i++)
+                    fprintf(f_ct_energy, "%12.5f", ct->hamiltonian[i][i]*27.2114);
+            }
+            else if (ct->jobtype==cteSCCDYNAMIC || ct->jobtype==cteNONSCCDYNAMIC || ct->jobtype==cteADNONSCC || ct->jobtype==cteCPFSCCDYNAMIC ||
+                     ct->jobtype==cteDDBSCCDYNAMIC || ct->jobtype==cteNOMOVEMENT)
+            {
+                double ct_energy = 0.0;
+                for (int i = 0; i < ct->dim; i++)
+                    for (int m = 0; m < ct->dim; m++)
+                        ct_energy += ct->hamiltonian[i][m] * (ct->wf[i] * ct->wf[m] + ct->wf[i + ct->dim] * ct->wf[m + ct->dim]);
+                fprintf(f_ct_energy, "%12.5f", ct_energy*27.2114);
+          
+             // fprintf(f_ct_energy, "%12.5f %12.5f %12.5f %12.5f %12.5f",
+             //         ct->hamiltonian[14][14]*27.2114, ct->hamiltonian[15][15]*27.2114, ct->hamiltonian[16][16]*27.2114,
+             //         ct->hamiltonian[14][15]*27.2114, ct->hamiltonian[15][16]*27.2114);
+            }
+            else
+            {
+                fprintf(f_ct_energy, "%12.5f ", ct->ev_adiab[ct->surface]*27.2114);
+                for (int i=0; i < ct->dim; i++)
+                    fprintf(f_ct_energy, "%12.5f", ct->ev_adiab[i]*27.2114);
+            }
+            fprintf(f_ct_energy, "\n");
+         // fprintf(f_ct_energy, "%10d %12.7f %12.7f %12.7f %12.7f %12.7f\n",
+         //                      step, ct_energy1, ct_energy2, ct_energy, enerd->term[F_ETOT] * KJMOL_TO_HARTREE,
+         //                      enerd->term[F_ETOT] * KJMOL_TO_HARTREE + ct_energy);
         }
 #if GMX_MPI
         }

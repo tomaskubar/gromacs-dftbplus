@@ -106,7 +106,7 @@ void offdiag_gradient_homo(dftb_t *dftb, dvec *x, dvec *grad, charge_transfer_t 
   }
 */
 
-  if (dftb->do_ncv)
+  if (ct->do_ncv)
   {
       m=0;
       for (site_i=0; site_i < ct->sites ; site_i++)
@@ -283,7 +283,7 @@ void usual_gradient_homo(dftb_t *dftb, dvec *x, dvec *grad, charge_transfer_t *c
       if (fabs(dftb1.b[m][n]) < dftb->dacc)
         dftb1.b[m][n] = 0.e0;
   */
-  if (dftb->do_ncv)
+  if (ct->do_ncv)
   {
   //new b matrix including off-diagonal elements originating from two orbitals on the same site.
      for (i=0; i<ct->site[site_i].homos; i++)
