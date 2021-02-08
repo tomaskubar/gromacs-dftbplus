@@ -346,6 +346,44 @@ void dftbp_get_stress_tensor(DftbPlus *instance, double *stresstensor);
  */
 void dftbp_get_gross_charges(DftbPlus *instance, double *charges);
 
+/**
+ * Queries the nr. of orbitals in the system.
+ *
+ * \param[inout] instance Handler of the DFTB+ instance.
+ *
+ * \return Nr. of orbitals
+ */
+int dftbp_get_nr_orbitals(DftbPlus *instance);
+
+/**
+ * Queries the eigenvalues / orbital energies
+ *
+ * \param[inout] instance Handler of the DFTB+ instance.
+ *
+ * \param[out] eigVal Eigenvalues of orbitals.  Shape [norb]. Unit: Hartree
+ */
+void dftbp_get_eigenvalues(DftbPlus *instance, double *eigVal);
+
+/**
+ * Queries the eigenvalues / orbital energies
+ *
+ * \param[inout] instance Handler of the DFTB+ instance.
+ *
+ * \param[out] eigVec Eigenvectors / coefficients of orbitals.  Shape [norb,norb].
+ */
+void dftbp_get_eigenvectors(DftbPlus *instance, double *eigVec);
+
+/**
+ * Queries the eigenvalues / orbital energies
+ *
+ * \param[inout] instance Handler of the DFTB+ instance.
+ *
+ * \param[out] hamil Self-consistent Hamiltonian matrix.  Shape [norb,norb].
+ *
+ * \param[out] overl Overlap matrix.  Shape [norb,norb].
+ */
+void dftbp_get_hamil_overl(DftbPlus *instance, double *hamil, double *overl);
+
 }
 
 #endif

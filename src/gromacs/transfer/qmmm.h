@@ -61,6 +61,7 @@ enum class PbcType : int;
 
 struct DftbPlusTransfer;
 //struct Context;
+struct ct_site_t;
 struct charge_transfer_t;
 
 class QMMM_PME_transfer {
@@ -336,6 +337,10 @@ call_dftbplus_transfer(QMMM_rec_transfer*   qr,
                        rvec                 f[],
                        t_nrnb*              nrnb,
                        gmx_wallcycle_t      wcycle);
+
+void
+after_dftbplus_phase1(QMMM_rec_transfer* qr,
+                      ct_site_t*         site);
 
 void initialize_context_transfer(Context*           cont,
                                  int                nrQMatoms,

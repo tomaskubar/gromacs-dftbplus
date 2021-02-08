@@ -62,7 +62,8 @@
 #include "gromacs/pbcutil/pbc.h"
 
 #include "gromacs/transfer/qmmm.h"
-//#include "gromacs/transfer/qm_dftbplus.h"
+#include "gromacs/transfer/qm_dftbplus.h"
+#include "gromacs/transfer/transfer.h"
 
 typedef struct Context {
   bool               pme;
@@ -439,6 +440,33 @@ real call_dftbplus_transfer(QMMM_rec_transfer*   qr,
 
     return (real) QMener * HARTREE2KJ * AVOGADRO;
 } /* call_dftbplus */
+
+void after_dftbplus_phase1(QMMM_rec_transfer* qr,
+                           ct_site_t*         site)
+{
+ // int nAtom = qr->qm->nrQMatoms_get();
+    int nAtom = dftbp_get_nr_atoms(qr->qm->dpcalc);
+    int nOrb = dftbp_get_nr_orbitals(qr->qm->dpcalc);
+
+    if (!(site->phase1_charges))
+        snew(site->phase1_charges, nAtom);
+    if (!(site->phase1_eigvals))
+        snew(site->phase1_eigvals, nOrb);
+    if (!(site->phase1_eigvecs))
+        snew(site->phase1_eigvecs, nOrb*nOrb);
+    if (!(site->phase1_hamil))
+        snew(site->phase1_hamil, nOrb*nOrb);
+    if (!(site->phase1_overl))
+        snew(site->phase1_overl, nOrb*nOrb);
+    if (!(site->phase1_grad))
+        snew(site->phase1_grad, 3*nAtom);
+
+    dftbp_get_gross_charges(qr->qm->dpcalc, site->phase1_charges);
+    dftbp_get_eigenvalues(qr->qm->dpcalc, site->phase1_eigvals);
+    dftbp_get_eigenvectors(qr->qm->dpcalc, site->phase1_eigvecs);
+    dftbp_get_hamil_overl(qr->qm->dpcalc, site->phase1_hamil, site->phase1_overl);
+    dftbp_get_gradients(qr->qm->dpcalc, site->phase1_grad);
+}
 
 /* end of dftbplus sub routines */
 

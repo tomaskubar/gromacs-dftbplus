@@ -236,7 +236,7 @@ typedef struct {
 } ct_per_orthogo_t;
 
 
-typedef struct {
+typedef struct ct_site_t {
   /* data structure that stores information about one fragment */
   int type;            /* specific type of this site */
   int resnr;           /* residue number */
@@ -289,6 +289,14 @@ typedef struct {
   double *custom_occ;  /* occupation vector e.g. ...2, 2, 2, 1, 1, 0, 0... for system where one electron from HOMO "gets excited" into LUMO*/
   double *com;         /* center of mass[bohr]. needed to decide if site should become active or not */
   int active;          /* switch 0/1 that determines if site is part of the QM calculation or just inactive member of the pool */
+
+  // arrays to store information from phase1, to be communicated to phase2
+  double *phase1_charges,
+         *phase1_eigvals,
+         *phase1_eigvecs,
+         *phase1_hamil,
+         *phase1_overl,
+         *phase1_grad;
 } ct_site_t;
 
 typedef struct {

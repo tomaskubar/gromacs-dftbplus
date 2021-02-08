@@ -1485,6 +1485,8 @@ void gmx::LegacySimulator::do_md()
                 {
                  // do_dftb_phase1(ct, dftb, ct_mpi_comm, ct_mpi_rank, ct_mpi_size);
                     do_dftb_phase1(ct, dftbplus_phase1, cr, force_dftb, nrnb, wcycle, ct_mpi_comm, ct_mpi_rank, ct_mpi_size);
+                    for (iSite=0; iSite<ct->sites; iSite++)
+                        after_dftbplus_phase1(dftbpluse_phase1[iSite].get(), ct->site[iSite]);
                 }
                 else
                 {
@@ -1533,6 +1535,8 @@ void gmx::LegacySimulator::do_md()
                 if (ct->jobtype != cteESP)
                 {
                     do_dftb_phase1(ct, dftbplus_phase1, cr, force_dftb, nrnb, wcycle);
+                    for (int iSite=0; iSite<ct->sites; iSite++)
+                        after_dftbplus_phase1(dftbplus_phase1[iSite].get(), &(ct->site[iSite]));
                     check_and_invert_orbital_phase(dftb->phase1, ct, state_global, mdatoms);
                     // copying of charges and PME for 2nd phase comes here !!!
                     do_dftb_phase2(ct, dftbplus_phase2, cr, force_dftb, nrnb, wcycle);
