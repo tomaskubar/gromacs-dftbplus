@@ -711,7 +711,7 @@ void QMMM_rec_transfer::update_QMMMrec_verlet_ns(const t_commrec*          cr,
     }
 } // update_QMMMrec_verlet_ns
 
-real QMMM_rec_transfer::calculate_QMMM(const t_commrec*      cr,
+void QMMM_rec_transfer::calculate_QMMM(const t_commrec*      cr,
                                        gmx::ForceWithVirial* forceWithVirial,
                                        t_nrnb*               nrnb,
                                        gmx_wallcycle_t       wcycle)
@@ -724,7 +724,7 @@ real QMMM_rec_transfer::calculate_QMMM(const t_commrec*      cr,
  // forces.resize(qm->nrQMatoms);
     std::vector<rvec> forces(qm->nrQMatoms);
 
-    real QMener = call_dftbplus_transfer(this, cr, forces.data(), nrnb, wcycle);
+    call_dftbplus_transfer(this, cr, forces.data(), nrnb, wcycle);
 
     for (int i = 0; i < qm->nrQMatoms; i++)
     {
@@ -736,7 +736,5 @@ real QMMM_rec_transfer::calculate_QMMM(const t_commrec*      cr,
     }
 
     // NO MM FORCES ARE NEEDED -- RIGHT?
-
-    return QMener;
 } // calculate_QMMM
 

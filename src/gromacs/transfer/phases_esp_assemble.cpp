@@ -2,6 +2,8 @@
 
 
 #if GMX_MPI
+
+/*
 void do_dftb_phase1(charge_transfer_t*                                ct,
                     std::vector<std::unique_ptr<QMMM_rec_transfer> >& dftbplus_phase1,
                     const t_commrec*                                  cr,
@@ -22,13 +24,13 @@ void do_dftb_phase1(charge_transfer_t*                                ct,
         {
          // printf("Doing residue %d at rank %d\n", ct->site[i].resnr, ct_mpi_rank);
          // run_dftb1(ct, dftb, i); TODO DFTB+
-            double QMener = call_dftbplus_transfer(dftbplus_phase1[i].get(), cr, f, nrnb, wcycle);
-            (void) QMener;
+            call_dftbplus_transfer(dftbplus_phase1[i].get(), cr, f, nrnb, wcycle);
         }
     }
 
     printf("do_dftb_phase1 end at rank %d at %f\n", ct_mpi_rank, (double) clock()/CLOCKS_PER_SEC);
 }
+*/
 
 void do_esp_only(charge_transfer_t*                                ct,
                  std::vector<std::unique_ptr<QMMM_rec_transfer> >& dftbplus_phase1,
@@ -78,6 +80,7 @@ void do_esp_only(charge_transfer_t*                                ct,
 
 #else
 
+/*
 void do_dftb_phase1(charge_transfer_t*                                ct,
                     std::vector<std::unique_ptr<QMMM_rec_transfer> >& dftbplus_phase1,
                     const t_commrec*                                  cr,
@@ -90,12 +93,12 @@ void do_dftb_phase1(charge_transfer_t*                                ct,
     for (int i = 0; i < ct->sites; i++)
     {
      // run_dftb1(ct, dftb, i); TODO DFTB+
-        double QMener = call_dftbplus_transfer(dftbplus_phase1[i].get(), cr, f, nrnb, wcycle);
-        (void) QMener;
+        call_dftbplus_transfer(dftbplus_phase1[i].get(), cr, f, nrnb, wcycle);
     }
 
     printf("do_dftb_phase1 end   at %f\n", (double) clock()/CLOCKS_PER_SEC);
 }
+*/
 
 void do_esp_only(charge_transfer_t*                                ct,
                  std::vector<std::unique_ptr<QMMM_rec_transfer> >& dftbplus_phase1,
@@ -136,6 +139,7 @@ void do_esp_only(charge_transfer_t*                                ct,
 }
 #endif
 
+/*
 void do_dftb_phase2(charge_transfer_t*               ct,
                     std::unique_ptr<QMMM_rec_transfer>& dftbplus_phase2,
                     const t_commrec*                 cr,
@@ -148,12 +152,11 @@ void do_dftb_phase2(charge_transfer_t*               ct,
     printf("do_dftb_phase2 start at %f\n", (double) clock()/CLOCKS_PER_SEC);
 
  // run_dftb2(ct, dftb); TODO DFTB+
-    double QMener = call_dftbplus_transfer(dftbplus_phase2.get(), cr, f, nrnb, wcycle);
-    (void) QMener;
+    call_dftbplus_transfer(dftbplus_phase2.get(), cr, f, nrnb, wcycle);
 
     printf("do_dftb_phase2 end   at %f\n", (double) clock()/CLOCKS_PER_SEC);
 }
-
+*/
 
 void ct_assemble_hamiltonian(charge_transfer_t *ct, dftb_t *dftb)
 {

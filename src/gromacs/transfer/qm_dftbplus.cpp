@@ -298,14 +298,12 @@ void init_dftbplus_transfer(QMMM_rec_transfer*   qr,
     return;
 } /* init_dftbplus */
 
-real call_dftbplus_transfer(QMMM_rec_transfer*   qr,
+void call_dftbplus_transfer(QMMM_rec_transfer*   qr,
                             const t_commrec*     cr,
                             rvec*                f,
 		                    t_nrnb*              nrnb,
                             gmx_wallcycle_t      wcycle)
 {
-    double QMener;
-
     qr->qm->dftbContext->nrnb = nrnb;
     int n = qr->qm->nrQMatoms_get();
 
@@ -386,7 +384,9 @@ real call_dftbplus_transfer(QMMM_rec_transfer*   qr,
     wallcycle_start(wcycle, ewcQM);
     dftbp_set_coords(qr->qm->dpcalc, x); // unit OK
     dftbp_set_external_potential(qr->qm->dpcalc, pot, potgrad); // unit and sign OK
+    double QMener;
     dftbp_get_energy(qr->qm->dpcalc, &QMener); // unit OK
+    (void) QMener;
     dftbp_get_gross_charges(qr->qm->dpcalc, q);
  // for (int i=0; i<n; i++)
  //     printf("%d %6.3f\n", i+1, q[i]);
@@ -437,8 +437,6 @@ real call_dftbplus_transfer(QMMM_rec_transfer*   qr,
     sfree(q);
     sfree(pot_sr);
     sfree(pot_lr);
-
-    return (real) QMener * HARTREE2KJ * AVOGADRO;
 } /* call_dftbplus */
 
 void after_dftbplus_phase1(QMMM_rec_transfer* qr,

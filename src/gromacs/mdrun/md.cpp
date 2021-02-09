@@ -1483,8 +1483,18 @@ void gmx::LegacySimulator::do_md()
                 */
                 if (ct->jobtype != cteESP)
                 {
-                 // do_dftb_phase1(ct, dftb, ct_mpi_comm, ct_mpi_rank, ct_mpi_size);
-                    do_dftb_phase1(ct, dftbplus_phase1, cr, force_dftb, nrnb, wcycle, ct_mpi_comm, ct_mpi_rank, ct_mpi_size);
+                    // PHASE 1
+                    printf("do_dftb_phase1 start at rank %d at %f\n", ct_mpi_rank, (double) clock()/CLOCKS_PER_SEC);
+                    for (int iSite = 0; iSite < ct->sites; iSite++)
+                    {
+                        if (iSite % ct_mpi_size == ct_mpi_rank)
+                        {
+                         // printf("Doing residue %d at rank %d\n", ct->site[iSite].resnr, ct_mpi_rank);
+                            call_dftbplus_transfer(dftbplus_phase1[iSite].get(), cr, f, nrnb, wcycle);
+                        }
+                    }
+                    printf("do_dftb_phase1 end at rank %d at %f\n", ct_mpi_rank, (double) clock()/CLOCKS_PER_SEC);
+                 // do_dftb_phase1(ct, dftbplus_phase1, cr, force_dftb, nrnb, wcycle, ct_mpi_comm, ct_mpi_rank, ct_mpi_size);
                     for (iSite=0; iSite<ct->sites; iSite++)
                         after_dftbplus_phase1(dftbpluse_phase1[iSite].get(), ct->site[iSite]);
                 }
@@ -1511,10 +1521,15 @@ void gmx::LegacySimulator::do_md()
           
                 if (ct_mpi_rank == 0 && ct->jobtype != cteESP)
                 {
-                    check_and_invert_orbital_phase(dftb->phase1, ct, state_global, mdatoms);
+                    // CHECK THE ORBITALS
                     // calc sign on master since we need later also the obtained overlap in project_wf_on_new_basis().
-                 // check_and_invert_orbital_phase(dftb->phase1, ct);
-                    do_dftb_phase2(ct, dftbplus_phase2, cr, force_dftb, nrnb, wcycle);
+                    check_and_invert_orbital_phase(dftb->phase1, ct, state_global, mdatoms);
+
+                    // PHASE 2
+                 // do_dftb_phase2(ct, dftbplus_phase2, cr, force_dftb, nrnb, wcycle);
+                    printf("do_dftb_phase2 start at %f\n", (double) clock()/CLOCKS_PER_SEC);
+                    call_dftbplus_transfer(dftbplus_phase2.get(), cr, force_dftb, nrnb, wcycle);
+                    printf("do_dftb_phase2 end   at %f\n", (double) clock()/CLOCKS_PER_SEC);
                 }
             }
 #else
@@ -1534,12 +1549,26 @@ void gmx::LegacySimulator::do_md()
                 */
                 if (ct->jobtype != cteESP)
                 {
-                    do_dftb_phase1(ct, dftbplus_phase1, cr, force_dftb, nrnb, wcycle);
+                    // PHASE 1
+                 // do_dftb_phase1(ct, dftbplus_phase1, cr, force_dftb, nrnb, wcycle);
+                    printf("do_dftb_phase1 start at %f\n", (double) clock()/CLOCKS_PER_SEC);
+                    for (int iSite = 0; iSite < ct->sites; iSite++)
+                    {
+                        call_dftbplus_transfer(dftbplus_phase1[iSite].get(), cr, force_dftb, nrnb, wcycle);
+                    }
+                    printf("do_dftb_phase1 end   at %f\n", (double) clock()/CLOCKS_PER_SEC);
                     for (int iSite=0; iSite<ct->sites; iSite++)
                         after_dftbplus_phase1(dftbplus_phase1[iSite].get(), &(ct->site[iSite]));
+
+                    // CHECK THE ORBITALS
                     check_and_invert_orbital_phase(dftb->phase1, ct, state_global, mdatoms);
-                    // copying of charges and PME for 2nd phase comes here !!!
-                    do_dftb_phase2(ct, dftbplus_phase2, cr, force_dftb, nrnb, wcycle);
+
+                    // PHASE 2
+                    // copying of charges and PME for 2nd phase comes here !!! TODO
+                 // do_dftb_phase2(ct, dftbplus_phase2, cr, force_dftb, nrnb, wcycle);
+                    printf("do_dftb_phase2 start at %f\n", (double) clock()/CLOCKS_PER_SEC);
+                    call_dftbplus_transfer(dftbplus_phase2.get(), cr, force_dftb, nrnb, wcycle);
+                    printf("do_dftb_phase2 end   at %f\n", (double) clock()/CLOCKS_PER_SEC);
                 }
                 else
                 {

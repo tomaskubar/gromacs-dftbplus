@@ -820,6 +820,7 @@ void prepare_charge_transfer(const matrix                        state_box,
                              rvec*                               x_ct);
 
 #if GMX_MPI
+/*
 void do_dftb_phase1(charge_transfer_t*                                ct,
                     std::vector<std::unique_ptr<QMMM_rec_transfer> >& dftbplus_phase1,
                     const t_commrec*                                  cr,
@@ -829,6 +830,7 @@ void do_dftb_phase1(charge_transfer_t*                                ct,
                     MPI_Comm                                          ct_mpi_comm,
                     int                                               ct_mpi_rank,
                     int                                               ct_mpi_size);
+*/
 void do_esp_only(charge_transfer_t*                                ct,
                  std::vector<std::unique_ptr<QMMM_rec_transfer> >& dftbplus_phase1,
                  const t_commrec*                                  cr,
@@ -843,12 +845,14 @@ void do_tddft_phase1(charge_transfer_t *ct, dftb_t *dftb, MPI_Comm ct_mpi_comm, 
 void prep_exc_state_forces(charge_transfer_t *ct, dftb_t *dftb, MPI_Comm ct_mpi_comm, int ct_mpi_rank, int ct_mpi_size);
 void calc_tddft_forces(charge_transfer_t *ct, dftb_t *dftb, MPI_Comm ct_mpi_comm, int ct_mpi_rank, int ct_mpi_size);
 #else
+/*
 void do_dftb_phase1(charge_transfer_t*                                ct,
                     std::vector<std::unique_ptr<QMMM_rec_transfer> >& dftbplus_phase1,
                     const t_commrec*                                  cr,
                     rvec                                              f[],
                     t_nrnb*                                           nrnb,
                     gmx_wallcycle_t                                   wcycle);
+*/
 void do_esp_only(charge_transfer_t*                                ct,
                  std::vector<std::unique_ptr<QMMM_rec_transfer> >& dftbplus_phase1,
                  const t_commrec*                                  cr,
@@ -858,12 +862,14 @@ void do_esp_only(charge_transfer_t*                                ct,
 void get_MM_params(charge_transfer_t *ct, dftb_t *dftb);
 void do_tddft_phase1(charge_transfer_t *ct, dftb_t *dftb);// new jjk
 #endif
+/*
 void do_dftb_phase2(charge_transfer_t*                ct,
                     std::unique_ptr<QMMM_rec_transfer>& dftbplus_phase2,
                     const t_commrec*                  cr,
                     rvec                              f[],
                     t_nrnb*                           nrnb,
                     gmx_wallcycle_t                   wcycle);
+*/
 void calc_zeta(charge_transfer_t *ct, dftb_t *dftb);  //for tddft exciton treatment  new jjk
 
 /*

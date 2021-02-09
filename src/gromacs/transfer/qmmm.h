@@ -141,7 +141,7 @@ private:
                                        QMMM_rec_transfer*   qr,
                                        const t_inputrec*    ir,
                                        const t_commrec*     cr);
-    friend real call_dftbplus_transfer(QMMM_rec_transfer* qr,
+    friend void call_dftbplus_transfer(QMMM_rec_transfer* qr,
                                        const t_commrec*   cr,
                                        rvec              f[],
                                        t_nrnb*           nrnb,
@@ -281,7 +281,7 @@ public:
                         rvec*             MMgrad,
                         rvec*             MMgrad_full);
 
-    real calculate_QMMM(const t_commrec*           cr,
+    void calculate_QMMM(const t_commrec*           cr,
                         gmx::ForceWithVirial*      forceWithVirial,
                               t_nrnb*              nrnb,
                               gmx_wallcycle_t      wcycle);
@@ -331,7 +331,7 @@ init_dftbplus_transfer(QMMM_QMrec_transfer* qm,
                        const t_inputrec*    ir,
                        const t_commrec*     cr);
 
-real
+void
 call_dftbplus_transfer(QMMM_rec_transfer*   qr,
                        const t_commrec*     cr,
                        rvec                 f[],

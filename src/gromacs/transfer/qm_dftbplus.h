@@ -46,7 +46,7 @@ init_dftbplus_transfer(QMMM_rec_transfer* qr,
                        const real         ewald_rtol,
                        const t_commrec*   cr);
 
-real
+void
 call_dftbplus_transfer(QMMM_rec_transfer*   qr,
                        const t_commrec*     cr,
                        rvec                 f[],
