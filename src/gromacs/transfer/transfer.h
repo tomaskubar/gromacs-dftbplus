@@ -887,7 +887,7 @@ int run_dftb2(charge_transfer_t *ct, dftb_t *dftb);
 //int run_dftb2_mpi(charge_transfer_t *ct, dftb_t *dftb, MPI_Comm ct_mpi_comm, int ct_mpi_rank, int ct_mpi_size, MPI_Status ct_mpi_status );
 */
 
-void ct_assemble_hamiltonian(charge_transfer_t *ct, dftb_t *dftb);
+void ct_assemble_hamiltonian(charge_transfer_t *ct); //, dftb_t *dftb);
 /* void ct_integrate_tdse(charge_transfer_t *ct, double twant); */
 
 /* do_rksuite.cpp */
@@ -914,7 +914,7 @@ t_atoms gmx_mtop_global_atoms(const gmx_mtop_t *mtop);
 void get_delta_q(dftb_t *dftb, charge_transfer_t *ct, int i);
 void get_internal_forces(dftb_t *dftb, charge_transfer_t *ct, int site_i);
 void write_out_MOs(int step,rvec x_ct, t_atoms *ct_atoms, dftb_t *dftb, charge_transfer_t *ct);
-void get_spectrum(charge_transfer_t *ct, dftb_t *dftb);
+void get_spectrum(charge_transfer_t *ct); //, dftb_t *dftb);
 void sort_mobasis(dftb_t *dftb, charge_transfer_t *ct, int i);
 void get_alignment_matrix(align_t arrays, double **overlap, long n );      //new jjk
 t_atoms* protein_preprocessor(t_atoms *atoms, t_state *state_global);

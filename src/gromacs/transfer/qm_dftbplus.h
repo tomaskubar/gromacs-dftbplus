@@ -39,19 +39,35 @@
 
 class QMMM_rec_transfer;
 class QMMM_QMrec_transfer;
+struct charge_transfer_t;
 
 void
 init_dftbplus_transfer(QMMM_rec_transfer* qr,
                        const real         rcoulomb,
                        const real         ewald_rtol,
-                       const t_commrec*   cr);
+                       const t_commrec*   cr,
+                       const int          phase,
+                       const int          iSite);
 
 void
-call_dftbplus_transfer(QMMM_rec_transfer*   qr,
-                       const t_commrec*     cr,
-                       rvec                 f[],
-                       t_nrnb*              nrnb,
-                       gmx_wallcycle_t      wcycle);
+call_dftbplus_transfer_phase1(QMMM_rec_transfer*   qr,
+                              const t_commrec*     cr,
+                              rvec                 f[],
+                              t_nrnb*              nrnb,
+                              gmx_wallcycle_t      wcycle);
+
+void
+assemble_dftbplus_transfer_phase2(std::unique_ptr<QMMM_rec_transfer>& qr_phase2,
+                                  std::unique_ptr<QMMM_rec_transfer>* qr_phase1,
+                                  charge_transfer_t*                  ct);
+
+void
+call_dftbplus_transfer_phase2(QMMM_rec_transfer*   qr,
+                              const t_commrec*     cr,
+                              int                  dim,
+                              double*              TijOrtho,
+                              t_nrnb*              nrnb,
+                              gmx_wallcycle_t      wcycle);
 
 struct Context;
 

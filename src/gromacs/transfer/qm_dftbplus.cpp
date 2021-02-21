@@ -185,7 +185,9 @@ extern "C" void calcqmextpotgrad_transfer(void *refptr, double *q, double *extpo
 void init_dftbplus_transfer(QMMM_rec_transfer*   qr,
                             const real           rcoulomb,
                             const real           ewald_rtol,
-                            const t_commrec*     cr)
+                            const t_commrec*     cr,
+                            const int            phase,
+                            const int            iSite)
 {
     QMMM_QMrec_transfer* qm = qr->qm.get();
     // variables
@@ -204,12 +206,14 @@ void init_dftbplus_transfer(QMMM_rec_transfer*   qr,
           "Y ", "Zr", "Nb", "Mo", "Tc", "Ru", "Rh", "Pd", "Ag", "Cd",
                       "In", "Sn", "Sb", "Te", "I",  "Xe" };
 
-    static DftbPlus  calculator;
     DftbPlusInput    input;
     DftbPlusAtomList atomList;
 
-    // TODO: Replace "calculator" with "qm->dpcalc", which needs to be allocated first
-    //       Otherwise, there may be a problem with "calculator" begin static!
+    // static DftbPlus calculator has been replaced with "qm->dpcalc",
+    //   which needs to be allocated first
+    // Otherwise, it would not be possible to introduce several different instances of calculator
+    //   for the different QM regions (FMO sites / fragments)
+    snew(qm->dpcalc, 1);
 
     /* This structure will be passed through DFTB+
      *   into the Gromacs calculator calcQMextPot
@@ -219,12 +223,29 @@ void init_dftbplus_transfer(QMMM_rec_transfer*   qr,
     snew(qm->dftbContext, 1);
     initialize_context_transfer(qm->dftbContext, qm->nrQMatoms_get(), qm->qmmm_variant_get(), qr, rcoulomb, ewald_rtol, cr); //, wcycle);
 
+    /* File names */
+    char infilename[16];
+    char outfilename[100];
+    switch (phase) {
+        case 1:
+        sprintf(infilename, "dftb_phase1.hsd");
+        sprintf(outfilename, "dftb_phase1_%03d.out", iSite);
+        break;
+        case 2:
+        sprintf(infilename, "dftb_phase2.hsd");
+        sprintf(outfilename, "dftb_phase2.out");
+        break;
+        default:
+        printf("Impossible phase (%d) for DFTB, exiting...\n", phase);
+        exit(-1);
+    }
+
     /* Initialize the DFTB+ calculator */
-    dftbp_init(&calculator, "dftb_in.out");
+    dftbp_init(qm->dpcalc, outfilename);
     printf("DFTB+ calculator has been created!\n");
 
     /* Parse the input file and store the input-tree */
-    dftbp_get_input_from_file(&calculator, "dftb_in.hsd", &input);
+    dftbp_get_input_from_file(qm->dpcalc, infilename, &input);
     printf("DFTB+ input has been read!\n");
 
     /* Pass the list of QM atoms to DFTB+ */
@@ -277,11 +298,8 @@ void init_dftbplus_transfer(QMMM_rec_transfer*   qr,
     sfree(ptrSpecies);
 
     /* Set up the calculator by processing the input tree */
-    dftbp_process_input(&calculator, &input, &atomList);
+    dftbp_process_input(qm->dpcalc, &input, &atomList);
     printf("DFTB+ input has been processed!\n");
-
-    snew(qm->dpcalc, 1);
-    qm->dpcalc = &calculator;
 
     /* Register the callback functions which calculate
      * the external potential and its gradient
@@ -295,14 +313,17 @@ void init_dftbplus_transfer(QMMM_rec_transfer*   qr,
      * based on what we have in the Gromacs topology!
      */
 
-    return;
-} /* init_dftbplus */
+    /* Allocate space for the pointers to data from phase 1 DFTB FMO */
+    snew(qm->phase1, 1);
 
-void call_dftbplus_transfer(QMMM_rec_transfer*   qr,
-                            const t_commrec*     cr,
-                            rvec*                f,
-		                    t_nrnb*              nrnb,
-                            gmx_wallcycle_t      wcycle)
+    return;
+} /* init_dftbplus_transfer */
+
+void call_dftbplus_transfer_phase1(QMMM_rec_transfer*   qr,
+                                   const t_commrec*     cr,
+                                   rvec*                f,
+		                           t_nrnb*              nrnb,
+                                   gmx_wallcycle_t      wcycle)
 {
     qr->qm->dftbContext->nrnb = nrnb;
     int n = qr->qm->nrQMatoms_get();
@@ -387,6 +408,7 @@ void call_dftbplus_transfer(QMMM_rec_transfer*   qr,
     double QMener;
     dftbp_get_energy(qr->qm->dpcalc, &QMener); // unit OK
     (void) QMener;
+    dftbp_get_pointers_phase1(qr->qm->dpcalc, qr->qm->phase1);
     dftbp_get_gross_charges(qr->qm->dpcalc, q);
  // for (int i=0; i<n; i++)
  //     printf("%d %6.3f\n", i+1, q[i]);
@@ -437,7 +459,104 @@ void call_dftbplus_transfer(QMMM_rec_transfer*   qr,
     sfree(q);
     sfree(pot_sr);
     sfree(pot_lr);
-} /* call_dftbplus */
+} /* call_dftbplus_transfer_phase1 */
+
+void assemble_dftbplus_transfer_phase2(std::unique_ptr<QMMM_rec_transfer>& qr_phase2,
+                                       std::unique_ptr<QMMM_rec_transfer>* qr_phase1,
+                                       charge_transfer_t*                  ct)
+{
+    dftbp_init_pointers_phase1(qr_phase2->qm->dpcalc, &(ct->sites));
+    for (int iSite=0; iSite<ct->sites; iSite++)
+    {
+        // TODO: list of HOMOs needs to be built and passed!
+        int homos = ct->site[iSite].homos;
+        int ihomo = ct->site[iSite].homo[0];
+        dftbp_set_pointers_phase1(qr_phase2->qm->dpcalc, &iSite, qr_phase1[iSite]->qm->phase1, &homos, &ihomo);
+    }
+} /* assemble_dftbplus_transfer_phase2 */
+
+void call_dftbplus_transfer_phase2(QMMM_rec_transfer*   qr,
+                                   const t_commrec*     cr,
+                                   int                  dim,
+                                   double*              TijOrtho,
+		                           t_nrnb*              nrnb,
+                                   gmx_wallcycle_t      wcycle)
+{
+    qr->qm->dftbContext->nrnb = nrnb;
+    int n = qr->qm->nrQMatoms_get();
+
+    double *x, *pot, *potgrad; // real instead of rvec, to help pass data to fortran
+    real *pot_sr = nullptr, *pot_lr = nullptr;
+    rvec *QMgrad = nullptr;
+
+    snew(x, 3*n);
+    snew(pot, n);
+    snew(potgrad, 3*n); // dummy parameter; not used at this moment
+    for (int i=0; i<3*n; i++)
+        potgrad[i] = 0.;
+    snew(pot_sr, n);
+    snew(pot_lr, n);
+
+    for (int i=0; i<n; i++)
+    {
+        for (int j=0; j<DIM; j++)
+        {
+            x[3*i+j] = qr->qm->xQM_get(i,j) / BOHR2NM; // to bohr units for DFTB+
+        }
+    }
+
+    /* calculate the QM/MM electrostatics beforehand with Gromacs!
+     * with cut-off treatment, this will be the entire QM/MM
+     * with PME, this will only include MM atoms,
+     *    and the contribution from QM atoms will be added in every SCC iteration
+     */
+    qr->calculate_SR_QM_MM(qr->qm->qmmm_variant_get(), pot_sr);
+    if (qr->qm->qmmm_variant_get() == eqmmmPME)
+    {
+     // gmx_pme_init_qmmm(&(qr->pme->pmedata), true, fr->pmedata);
+        qr->calculate_LR_QM_MM(cr, nrnb, wcycle, *qr->pmedata, pot_lr);
+        for (int i=0; i<n; i++)
+        {
+            pot[i] = (double) - (pot_sr[i] + pot_lr[i]);
+        }
+    }
+    else
+    {
+        for (int i=0; i<n; i++)
+        {
+            pot_lr[i] = 0.;
+            pot[i] = (double) - pot_sr[i];
+        }
+    }
+    // save the potential in the QMMM_QMrec structure
+    for (int j=0; j<n; j++)
+    {
+        qr->qm->pot_qmmm_set(j, (double) - pot[j] * HARTREE_TO_EV); // in volt units
+    }
+
+    /* Set up the data structures needed for the PME calculation
+	 *   of QM--imageQM electrostatics.
+	 * During the iterative SCC calculation, this routine will be called
+	 *   directly from DFTB+, and will use those data structures.
+	 */
+ //  calcQMextPotPME(nullptr, nullptr, true, lPme, fr, cr, wcycle, fr->rcoulomb, fr->ewaldcoeff_q);
+    /* This was already done in the initialization procedure! */
+
+    /* DFTB+ calculation itself */
+    wallcycle_start(wcycle, ewcQM);
+    dftbp_set_coords(qr->qm->dpcalc, x); // unit OK
+    dftbp_set_external_potential(qr->qm->dpcalc, pot, potgrad); // unit and sign OK
+    dftbp_get_fmo_hamiltonian(qr->qm->dpcalc, &dim, TijOrtho); // unit OK
+    wallcycle_stop(wcycle, ewcQM);
+
+    sfree(QMgrad);
+
+    sfree(x);
+    sfree(pot);
+    sfree(potgrad);
+    sfree(pot_sr);
+    sfree(pot_lr);
+} /* call_dftbplus_transfer_phase2 */
 
 void after_dftbplus_phase1(QMMM_rec_transfer* qr,
                            ct_site_t*         site)

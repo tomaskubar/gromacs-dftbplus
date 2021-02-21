@@ -251,6 +251,7 @@ void QMMM_QMrec_transfer::init_QMrec(const std::vector<int>& qmAtoms,
                                      const t_inputrec*       ir)
 {
     nrQMatoms = qmAtoms.size();
+    printf("nrQMatoms = %d\n", nrQMatoms);
     snew(xQM, nrQMatoms);
     snew(indexQM, nrQMatoms);
     snew(shiftQM, nrQMatoms);
@@ -384,7 +385,9 @@ QMMM_rec_transfer::QMMM_rec_transfer(const t_commrec*  cr,
                                      std::vector<int>& qmAtoms,
                                      std::vector<int>& atomicnumberQM_in,
                                      const int         qmmmVariant_in,
-                                     const bool        dipCorrection)
+                                     const bool        dipCorrection,
+                                     const int         phase,
+                                     const int         iSite)
 {
     // Put the atom numbers of atoms that belong to the QM group
     // into an array that will be copied later to QMMMrec->indexQM[..].
@@ -493,7 +496,7 @@ QMMM_rec_transfer::QMMM_rec_transfer(const t_commrec*  cr,
     }
     snew(qm->QMcharges, qm->nrQMatoms);
 
-    init_dftbplus_transfer(this, ir->rcoulomb, ir->ewald_rtol, cr);
+    init_dftbplus_transfer(this, ir->rcoulomb, ir->ewald_rtol, cr, phase, iSite);
 } // init_QMMMrec_transfer
 
 
@@ -710,7 +713,7 @@ void QMMM_rec_transfer::update_QMMMrec_verlet_ns(const t_commrec*          cr,
 	    exit(-1);
     }
 } // update_QMMMrec_verlet_ns
-
+/*
 void QMMM_rec_transfer::calculate_QMMM(const t_commrec*      cr,
                                        gmx::ForceWithVirial* forceWithVirial,
                                        t_nrnb*               nrnb,
@@ -737,4 +740,4 @@ void QMMM_rec_transfer::calculate_QMMM(const t_commrec*      cr,
 
     // NO MM FORCES ARE NEEDED -- RIGHT?
 } // calculate_QMMM
-
+*/

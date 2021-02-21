@@ -978,7 +978,7 @@ void gmx::LegacySimulator::do_md()
             ct->site[i].mass[j] = atomicmass;
             totMass += atomicmass;
         }
-        dftbplus_phase1[i] = std::make_unique<QMMM_rec_transfer>(cr, ir, fr, state_global->natoms, qmAtoms, atomicnumberQM, qmmmVariant, dipCorrection);
+        dftbplus_phase1[i] = std::make_unique<QMMM_rec_transfer>(cr, ir, fr, state_global->natoms, qmAtoms, atomicnumberQM, qmmmVariant, dipCorrection, 1, i);
         ct->site[i].inv_tot_mass = 1. / totMass;
     }
     qmAtoms.clear();
@@ -996,13 +996,15 @@ void gmx::LegacySimulator::do_md()
         totMassCplx += atomicmass;
     }
     std::unique_ptr<QMMM_rec_transfer> dftbplus_phase2 =
-                          std::make_unique<QMMM_rec_transfer>(cr, ir, fr, state_global->natoms, qmAtoms, atomicnumberQM, qmmmVariant, dipCorrection);
+                          std::make_unique<QMMM_rec_transfer>(cr, ir, fr, state_global->natoms, qmAtoms, atomicnumberQM, qmmmVariant, dipCorrection, 2, 0);
     ct->inv_tot_mass_cplx = 1. / totMassCplx;
+    /* THIS ALREADY HAS BEEN CALLED IN THE CONSTRUCTOR OF QMMM_rec_transfer!
 #if GMX_MPI
     init_qmmmrec_transfer(dftbplus_phase1.data(), dftbplus_phase2, ct, cr, ir->rcoulomb, ir->ewald_rtol, ct_mpi_rank);
 #else
     init_qmmmrec_transfer(dftbplus_phase1.data(), dftbplus_phase2, ct, cr, ir->rcoulomb, ir->ewald_rtol);
 #endif
+    */
 
     dftb_t *dftb;
     snew(dftb, 1);
@@ -1057,6 +1059,17 @@ void gmx::LegacySimulator::do_md()
         {
             f_ct_spec = fopen("CT_SPEC.xvg", "w");
             f_ct_spec_evec = fopen("CT_SPEC_EVEC.xvg", "w");
+            if (ct->force_output != 1)
+            {
+                if (ct->hamiltonian_type)
+                {
+                    f_tb_hamiltonian_ml = fopen("TB_HAMILTONIAN_ML.xvg", "w");
+                }
+                else
+                {
+                    f_tb_hamiltonian = fopen("TB_HAMILTONIAN.xvg", "w");
+                }
+            }
         }
         if (ct->do_projection)
         {
@@ -1495,8 +1508,8 @@ void gmx::LegacySimulator::do_md()
                     }
                     printf("do_dftb_phase1 end at rank %d at %f\n", ct_mpi_rank, (double) clock()/CLOCKS_PER_SEC);
                  // do_dftb_phase1(ct, dftbplus_phase1, cr, force_dftb, nrnb, wcycle, ct_mpi_comm, ct_mpi_rank, ct_mpi_size);
-                    for (iSite=0; iSite<ct->sites; iSite++)
-                        after_dftbplus_phase1(dftbpluse_phase1[iSite].get(), ct->site[iSite]);
+                  //for (iSite=0; iSite<ct->sites; iSite++)
+                  //    after_dftbplus_phase1(dftbpluse_phase1[iSite].get(), ct->site[iSite]);
                 }
                 else
                 {
@@ -1535,7 +1548,7 @@ void gmx::LegacySimulator::do_md()
 #else
             if (ct->hamiltonian_type == 0)
             {
-                rvec* force_dftb; // TODO - allocate and check the use
+                rvec* force_dftb; // TODO - check the use
                 /* removed -- TODO check if something similar is needed for DFTB+
                 if (ct->qmmm == 3)
                 {
@@ -1554,20 +1567,30 @@ void gmx::LegacySimulator::do_md()
                     printf("do_dftb_phase1 start at %f\n", (double) clock()/CLOCKS_PER_SEC);
                     for (int iSite = 0; iSite < ct->sites; iSite++)
                     {
-                        call_dftbplus_transfer(dftbplus_phase1[iSite].get(), cr, force_dftb, nrnb, wcycle);
+                        printf("phase 1 FMO for site/fragment no. %d of %d\n", iSite, ct->sites);
+                        snew(force_dftb, ct->site[iSite].atoms);
+                        call_dftbplus_transfer_phase1(dftbplus_phase1[iSite].get(), cr, force_dftb, nrnb, wcycle);
+                        sfree(force_dftb); // release memory here as forces are not needed for now - TODO
                     }
                     printf("do_dftb_phase1 end   at %f\n", (double) clock()/CLOCKS_PER_SEC);
-                    for (int iSite=0; iSite<ct->sites; iSite++)
-                        after_dftbplus_phase1(dftbplus_phase1[iSite].get(), &(ct->site[iSite]));
+                  //for (int iSite=0; iSite<ct->sites; iSite++)
+                  //    after_dftbplus_phase1(dftbplus_phase1[iSite].get(), &(ct->site[iSite]));
 
                     // CHECK THE ORBITALS
-                    check_and_invert_orbital_phase(dftb->phase1, ct, state_global, mdatoms);
+                  //check_and_invert_orbital_phase(dftb->phase1, ct, state_global, mdatoms);
 
                     // PHASE 2
-                    // copying of charges and PME for 2nd phase comes here !!! TODO
+                    // copying of charges and PME for 2nd phase comes here !!!
+                    assemble_dftbplus_transfer_phase2(dftbplus_phase2, dftbplus_phase1.data(), ct);
                  // do_dftb_phase2(ct, dftbplus_phase2, cr, force_dftb, nrnb, wcycle);
                     printf("do_dftb_phase2 start at %f\n", (double) clock()/CLOCKS_PER_SEC);
-                    call_dftbplus_transfer(dftbplus_phase2.get(), cr, force_dftb, nrnb, wcycle);
+                    double *hamiltonian_array;
+                    snew(hamiltonian_array, SQR(ct->dim));
+                    call_dftbplus_transfer_phase2(dftbplus_phase2.get(), cr, ct->dim, hamiltonian_array, nrnb, wcycle);
+                    for (int i=0; i<ct->dim; i++)
+                        for (int j=0; j<ct->dim; j++)
+                            ct->hamiltonian[i][j] = hamiltonian_array[i * ct->dim + j];
+                    sfree(hamiltonian_array);
                     printf("do_dftb_phase2 end   at %f\n", (double) clock()/CLOCKS_PER_SEC);
                 }
                 else
@@ -1638,7 +1661,8 @@ void gmx::LegacySimulator::do_md()
                }
                else
                {
-                   ct_assemble_hamiltonian(ct, dftb); // now including averaging
+                   // this includes time averaging of the Hamiltonian
+                   ct_assemble_hamiltonian(ct); //, dftb); // now including averaging
                    /*
                    for (i=0; i<ct->dim; i++)
                    {
@@ -1678,7 +1702,8 @@ void gmx::LegacySimulator::do_md()
                         }
                     }
           
-                    if (ct->jobtype==cteNOMOVEMENT || ct->force_output == 1)
+                 // if (ct->jobtype==cteNOMOVEMENT || ct->force_output == 1)
+                    if (f_tb_hamiltonian)
                     {
                         fprintf(f_tb_hamiltonian, "%8.2f", t*1000);
                         for (int i = 0; i < ct->dim; i++)
@@ -1711,7 +1736,7 @@ void gmx::LegacySimulator::do_md()
             //spectrum////////////////////
             if (ct->jobtype==ctePARAMETERS) // && ct->first_step == 1)
             {
-                get_spectrum(ct,dftb);
+                get_spectrum(ct); // ,dftb);
              // fprintf(f_ct_spec, "energy eigen values of FO Hamiltonian:\n");
                 fprintf(f_ct_spec, "%10ld", step);
                 fprintf(f_ct_spec_evec, "%10ld", step);
@@ -1782,7 +1807,10 @@ void gmx::LegacySimulator::do_md()
                                         {
                                             dvec bond;
                                             // TODO: use the QM system coordinates in dftbplus_phase1[i]->qm instead
-                                            dvec_sub(dftb->phase1[i].x[m], dftb->phase1[j].x[n], bond);
+                                         // dvec_sub(dftb->phase1[i].x[m], dftb->phase1[j].x[n], bond);
+                                            bond[0] = dftbplus_phase1[i]->qm->xQM_get(m,0) - dftbplus_phase1[j]->qm->xQM_get(n,0);
+                                            bond[1] = dftbplus_phase1[i]->qm->xQM_get(m,1) - dftbplus_phase1[j]->qm->xQM_get(n,1);
+                                            bond[2] = dftbplus_phase1[i]->qm->xQM_get(m,2) - dftbplus_phase1[j]->qm->xQM_get(n,2);
                                             ct->hubbard[counter][counter2] += ct->sic * ct->site[i].delta_q[k][m] * ct->site[j].delta_q[l][n] / dnorm(bond);
                                         }
                                     if (ct->do_epol == 1)
@@ -2727,7 +2755,8 @@ void gmx::LegacySimulator::do_md()
                                 {
                                     forceData[i][l] -= (real) HARTREE_BOHR2MD * dftb->phase1[j].grad[k][l];
                                  // printf("atom i %d MM force %lf   QM force %lf \n", i, f[i][l], -(real) HARTREE_BOHR2MD * dftb->phase1[j].grad[k][l]);
-                                 // fshift[i][j] = (real) HARTREE_BOHR2MD * dftb1.grad[i][j]; TODO: what is fshift? this is used in QMMM gromacs code
+                                    // TODO: what is fshift? this is used in QMMM gromacs code
+                                 // fshift[i][j] = (real) HARTREE_BOHR2MD * dftb1.grad[i][j];
                                 }
                             }
                 }

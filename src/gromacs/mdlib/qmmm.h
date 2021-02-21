@@ -64,6 +64,7 @@ enum class PbcType : int;
 
 struct DftbPlus;
 struct Context;
+struct DftbPlusPhase1;
 
 // THIS STRUCTURE IS TENTATIVE,
 // JUST FOR THE BEGINNING.

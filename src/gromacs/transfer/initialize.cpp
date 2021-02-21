@@ -2610,9 +2610,7 @@ void init_charge_transfer(t_atoms           *atoms,
     for (i=0; i< ct->dim; i++)
         PRINTF("%f %f \n", ct->wf[i], ct->wf[i+ct->dim]);
 */
-
-    return;
-}
+} // init_charge_transfer
 
 void init_dftb_stub(dftb_t *dftb, charge_transfer_t *ct)
 {

@@ -137,19 +137,22 @@ private:
                     const t_inputrec*       ir);
 
     friend class QMMM_rec_transfer;
-    friend void init_dftbplus_transfer(QMMM_QMrec_transfer* qm,
-                                       QMMM_rec_transfer*   qr,
-                                       const t_inputrec*    ir,
-                                       const t_commrec*     cr);
-    friend void call_dftbplus_transfer(QMMM_rec_transfer* qr,
+    friend void init_dftbplus_transfer(QMMM_rec_transfer* qr,
+                                       const real         rcoulomb,
+                                       const real         ewald_rtol,
                                        const t_commrec*   cr,
-                                       rvec              f[],
-                                       t_nrnb*           nrnb,
-                                       gmx_wallcycle_t   wcycle);
+                                       const int          phase,
+                                       const int          iSite);
+  //friend void call_dftbplus_transfer(QMMM_rec_transfer* qr,
+  //                                   const t_commrec*   cr,
+  //                                   rvec              f[],
+  //                                   t_nrnb*           nrnb,
+  //                                   gmx_wallcycle_t   wcycle);
 
 public:
     DftbPlus        *dpcalc;        // DFTB+ calculator
     Context         *dftbContext;   // some data for DFTB+, referenced to by DFTB through *dpcalc
+    DftbPlusPhase1  *phase1;
 
     rvec*            xQM;            // shifted to center of box
 
@@ -226,7 +229,9 @@ public:
                       std::vector<int>& qmAtoms,
                       std::vector<int>& atomicnumberQM,
                       const int         qmmmVariant_in,
-                      const bool        dipCorrection);
+                      const bool        dipCorrection,
+                      const int         phase,
+                      const int         iSite);
     // From topology->atoms.atomname and topology->atoms.atomtype
     //   the atom names and types are read;
     // From inputrec->QMcharge resp. inputrec->QMmult the nelecs are determined
@@ -281,10 +286,12 @@ public:
                         rvec*             MMgrad,
                         rvec*             MMgrad_full);
 
+    /*
     void calculate_QMMM(const t_commrec*           cr,
                         gmx::ForceWithVirial*      forceWithVirial,
                               t_nrnb*              nrnb,
                               gmx_wallcycle_t      wcycle);
+    */
 } ;
 
 /* Auxiliary functions */
@@ -304,7 +311,7 @@ void put_cluster_in_MMlist_verlet(int                             ck, // cluster
 */
 
 /* DFTB+ function/s */
-
+/*
 #if (GMX_MPI)
 void init_qmmmrec_transfer(std::unique_ptr<QMMM_rec_transfer>* dftbplus_phase1,
                            std::unique_ptr<QMMM_rec_transfer>& dftbplus_phase2,
@@ -321,22 +328,36 @@ void init_qmmmrec_transfer(std::unique_ptr<QMMM_rec_transfer>* dftbplus_phase1,
                            const real          rcoulomb,
                            const real          ewald_rtol);
 #endif
-
+*/
 
 /* Functions defined in qm_dftbplus.cpp */
 
 void
-init_dftbplus_transfer(QMMM_QMrec_transfer* qm,
-                       QMMM_rec_transfer*   qr,
-                       const t_inputrec*    ir,
-                       const t_commrec*     cr);
+init_dftbplus_transfer(QMMM_rec_transfer* qr,
+                       const real         rcoulomb,
+                       const real         ewald_rtol,
+                       const t_commrec*   cr,
+                       const int          phase,
+                       const int          iSite);
 
 void
-call_dftbplus_transfer(QMMM_rec_transfer*   qr,
-                       const t_commrec*     cr,
-                       rvec                 f[],
-                       t_nrnb*              nrnb,
-                       gmx_wallcycle_t      wcycle);
+call_dftbplus_transfer_phase1(QMMM_rec_transfer*   qr,
+                              const t_commrec*     cr,
+                              rvec                 f[],
+                              t_nrnb*              nrnb,
+                              gmx_wallcycle_t      wcycle);
+
+void
+assemble_dftbplus_transfer_phase2(QMMM_rec_transfer* qr,
+                                  QMMM_rec_transfer* qr1[],
+                                  charge_transfer_t* ct);
+
+void
+call_dftbplus_transfer_phase2(QMMM_rec_transfer*   qr,
+                              const t_commrec*     cr,
+                              double*              TijOrtho,
+                              t_nrnb*              nrnb,
+                              gmx_wallcycle_t      wcycle);
 
 void
 after_dftbplus_phase1(QMMM_rec_transfer* qr,

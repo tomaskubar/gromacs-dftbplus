@@ -117,6 +117,16 @@ typedef struct DftbPlus {
 
 
 /**
+ * Type containing the data to be passed from FMO DFTB phase 1 to phase 2
+ *
+ * Used by DFTB+ as an opaque handler. Do not manipulate the content of this type directly!
+ */
+typedef struct DftbPlusPhase1{
+  void *pDftbPlusPhase1;
+} DftbPlusPhase1;
+
+
+/**
  * Callback function signature for calculating external population dependant potential.
  *
  * DFTB+ would call it whenever the population has changed and the population dependant external
@@ -383,6 +393,14 @@ void dftbp_get_eigenvectors(DftbPlus *instance, double *eigVec);
  * \param[out] overl Overlap matrix.  Shape [norb,norb].
  */
 void dftbp_get_hamil_overl(DftbPlus *instance, double *hamil, double *overl);
+
+void dftbp_get_pointers_phase1(DftbPlus *instance, DftbPlusPhase1 *phase1);
+
+void dftbp_init_pointers_phase1(DftbPlus *instance, int *nSite);
+
+void dftbp_set_pointers_phase1(DftbPlus *instance, int *iSite, DftbPlusPhase1 *phase1, int *nFO, int *iHOMO);
+
+void dftbp_get_fmo_hamiltonian(DftbPlus *instance, int *nFO, double *TijOrtho);
 
 }
 

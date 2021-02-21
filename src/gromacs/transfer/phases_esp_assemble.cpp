@@ -158,7 +158,7 @@ void do_dftb_phase2(charge_transfer_t*               ct,
 }
 */
 
-void ct_assemble_hamiltonian(charge_transfer_t *ct, dftb_t *dftb)
+void ct_assemble_hamiltonian(charge_transfer_t *ct) // , dftb_t *dftb)
 {
     //  mean coupling for a and b direction in SAM.
 
@@ -182,7 +182,8 @@ void ct_assemble_hamiltonian(charge_transfer_t *ct, dftb_t *dftb)
         {
             for (int i = 0; i < ct->dim; i++)
             {
-                ct->hamiltonian_history[i][i][t]  = (ct->is_hole_transfer == 1) ? -dftb->phase2.THamilOrtho[i][i] : dftb->phase2.THamilOrtho[i][i];
+             // ct->hamiltonian_history[i][i][t]  = (ct->is_hole_transfer == 1) ? -dftb->phase2.THamilOrtho[i][i] : dftb->phase2.THamilOrtho[i][i];
+                ct->hamiltonian_history[i][i][t]  = (ct->is_hole_transfer == 1) ? -ct->hamiltonian[i][i] : ct->hamiltonian[i][i];
                 ct->hamiltonian_history[i][i][t] += ct->fo_shift[i];
                 for (int j = i+1; j < ct->dim; j++)
                 {
@@ -190,7 +191,8 @@ void ct_assemble_hamiltonian(charge_transfer_t *ct, dftb_t *dftb)
                     // this is the right way to do it. without changing off-diagonal elements
                     //   the eigenvalues of the CG Ham are not necessarily -eigenvalue of electron transfer.
                     ct->hamiltonian_history[i][j][t] = ct->hamiltonian_history[j][i][t] =
-                        (ct->is_hole_transfer == 1) ? -dftb->phase2.THamilOrtho[i][j] * ct->offdiag_scaling : dftb->phase2.THamilOrtho[i][j] * ct->offdiag_scaling;
+                     // (ct->is_hole_transfer == 1) ? -dftb->phase2.THamilOrtho[i][j] * ct->offdiag_scaling : dftb->phase2.THamilOrtho[i][j] * ct->offdiag_scaling;
+                        (ct->is_hole_transfer == 1) ? -ct->hamiltonian[i][j] * ct->offdiag_scaling : ct->hamiltonian[i][j] * ct->offdiag_scaling;
                 }
             }
         }
@@ -210,7 +212,8 @@ void ct_assemble_hamiltonian(charge_transfer_t *ct, dftb_t *dftb)
 
         for (int i = 0; i < ct->dim; i++)
         {
-            ct->hamiltonian_history[i][i][0]  = (ct->is_hole_transfer == 1) ? -dftb->phase2.THamilOrtho[i][i] : dftb->phase2.THamilOrtho[i][i];
+         // ct->hamiltonian_history[i][i][0]  = (ct->is_hole_transfer == 1) ? -dftb->phase2.THamilOrtho[i][i] : dftb->phase2.THamilOrtho[i][i];
+            ct->hamiltonian_history[i][i][0]  = (ct->is_hole_transfer == 1) ? -ct->hamiltonian[i][i] : ct->hamiltonian[i][i];
             ct->hamiltonian_history[i][i][0] += ct->fo_shift[i];
             for (int j = i+1; j < ct->dim; j++)
             {
@@ -218,7 +221,8 @@ void ct_assemble_hamiltonian(charge_transfer_t *ct, dftb_t *dftb)
                     // 1.0 or 1.540 scaling factor according to J. Chem. Phys. 140, 104105 (2014)
                     // this is the right way to do it. without changing off-diagonal elements
                     // the eigenvalues of the CG Ham are not necessarily -eigenvalue of electron transfer.
-                    (ct->is_hole_transfer == 1) ? -dftb->phase2.THamilOrtho[i][j] * ct->offdiag_scaling :  dftb->phase2.THamilOrtho[i][j] * ct->offdiag_scaling;
+                 // (ct->is_hole_transfer == 1) ? -dftb->phase2.THamilOrtho[i][j] * ct->offdiag_scaling :  dftb->phase2.THamilOrtho[i][j] * ct->offdiag_scaling;
+                    (ct->is_hole_transfer == 1) ? -ct->hamiltonian[i][j] * ct->offdiag_scaling :  ct->hamiltonian[i][j] * ct->offdiag_scaling;
             }
         }
     }
@@ -269,10 +273,9 @@ void ct_assemble_hamiltonian(charge_transfer_t *ct, dftb_t *dftb)
 }
 
 
-void get_spectrum(charge_transfer_t *ct, dftb_t *dftb) //, FILE *f_ct_spec, FILE *f_ct_spec_evec){
+void get_spectrum(charge_transfer_t *ct) //, dftb_t *dftb) //, FILE *f_ct_spec, FILE *f_ct_spec_evec){
 {
  // dftb_phase2_t dftb2 = dftb->phase2;
-    (void) dftb;
 
     // diagonalize FO-Hamiltonian
     for (int i = 0; i < ct->dim; i++)
