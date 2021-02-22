@@ -226,14 +226,17 @@ void init_dftbplus_transfer(QMMM_rec_transfer*   qr,
     /* File names */
     char infilename[16];
     char outfilename[100];
+    char filenamestub[100];
     switch (phase) {
         case 1:
         sprintf(infilename, "dftb_phase1.hsd");
         sprintf(outfilename, "dftb_phase1_%03d.out", iSite);
+        sprintf(filenamestub, "phase1_%03d", iSite);
         break;
         case 2:
         sprintf(infilename, "dftb_phase2.hsd");
         sprintf(outfilename, "dftb_phase2.out");
+        sprintf(filenamestub, "phase2");
         break;
         default:
         printf("Impossible phase (%d) for DFTB, exiting...\n", phase);
@@ -298,7 +301,7 @@ void init_dftbplus_transfer(QMMM_rec_transfer*   qr,
     sfree(ptrSpecies);
 
     /* Set up the calculator by processing the input tree */
-    dftbp_process_input(qm->dpcalc, &input, &atomList);
+    dftbp_process_input(qm->dpcalc, &input, &atomList, filenamestub);
     printf("DFTB+ input has been processed!\n");
 
     /* Register the callback functions which calculate

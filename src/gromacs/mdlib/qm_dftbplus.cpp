@@ -302,7 +302,7 @@ void init_dftbplus(QMMM_QMrec*       qm,
     sfree(ptrSpecies);
 
     /* Set up the calculator by processing the input tree */
-    dftbp_process_input(&calculator, &input, &atomList);
+    dftbp_process_input(&calculator, &input, &atomList, "");
     printf("DFTB+ input has been processed!\n");
 
     qm->dpcalc = &calculator;
