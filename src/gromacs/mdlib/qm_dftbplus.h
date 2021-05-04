@@ -296,6 +296,23 @@ void dftbp_set_coords_and_lattice_vecs(DftbPlus *instance, const double *coords,
 void dftbp_set_coords_lattice_origin(DftbPlus *instance, const double *coords,
                                        const double *latvecs, const double *origin);
 
+
+/**
+ * Sets the coordinates and magnitudes of external point charges (MM atoms).
+ *
+ * \param[inout] instance Handler of the DFTB+ instance.
+ *
+ * \param[in] nExtCharges Number of external point charges.
+ *
+ * \param[in] chargeCoords Coordinates of the point charges in atomic units.
+ *     Shape: [nExtCharges, 3]. Unit: Bohr.
+ *
+ * \param[in] chargeQs Magnitudes of the point charges. Shape: [nExtCharges].
+ */
+void dftbp_set_external_charges(DftbPlus *instance, const int *nExtCharges,
+                                  const double *chargeCoords, const double *chargeQs);
+
+
 /**
  * Queries the nr. of atoms in the system.
  *
@@ -346,7 +363,22 @@ void dftbp_get_stress_tensor(DftbPlus *instance, double *stresstensor);
  */
 void dftbp_get_gross_charges(DftbPlus *instance, double *charges);
 
+/**
+ * Runs a calculation of derivatives of atomic gross charges with respect to coordinates of atoms.
+ *   With QM/MM, also derivatives w.r.t. coordinates of external point charges are calculated.
+ *
+ * \param[inout] instance Handler of the DFTB+ instance.
+ *
+ * \param[out] dQdX Derivatives w.r.t. atom coordinates.  Shape [natom, 3, natom].
+ *
+ * \param[out] dQdXext Derivatives w.r.t. external point charges.  Shape [natom, 3, nextcharge].
+ *
+ * Sign convention: Electron has negative charge.
+ */
+void dftbp_get_charge_derivatives(DftbPlus *instance, double *dQdX, double *dQdXext);
+
 }
+
 
 #endif
 

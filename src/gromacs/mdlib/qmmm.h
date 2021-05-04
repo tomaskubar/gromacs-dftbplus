@@ -155,7 +155,6 @@ private:
     rvec*   xQM;            // shifted to center of box
     int*    indexQM;        // atom i = atom indexQM[i] in mdrun
     int*    atomicnumberQM; // atomic numbers of QM atoms
-    real*   QMcharges;      // atomic charges of QM atoms(ONIOM)
     int*    shiftQM;
     int     QMcharge;       // charge of the QM system
     int     multiplicity;   // multipicity (no of unpaired eln)
@@ -202,6 +201,12 @@ public:
 
     char            *orca_basename; // basename for I/O with orca
     char            *orca_dir;      // directory for ORCA
+
+    bool             coupledPerturb;
+    real            *QMcharges;              // atomic charges of QM atoms
+    real            *QMchargeGradients;      // derivatives of atomic charges w.r.t. atom coordinates
+    int              nrQMchargeMMatoms;      // number of ext. charges to differentiate with respect to
+    real            *QMchargeMMgradients;    // derivatives of atomic charges w.r.t. coordinates of ext. charges
 
     // output
     int              nrQMatoms_get()const;
@@ -343,6 +348,11 @@ public:
                         rvec*             partgrad,
                         rvec*             MMgrad,
                         rvec*             MMgrad_full);
+
+    void gradient_MM_only(const t_commrec*  cr,
+                          t_nrnb*           nrnb,
+                          gmx_wallcycle_t   wcycle,
+                          rvec*             MMgrad);
 
     real calculate_QMMM(const t_commrec*           cr,
                         gmx::ForceWithVirial*      forceWithVirial,

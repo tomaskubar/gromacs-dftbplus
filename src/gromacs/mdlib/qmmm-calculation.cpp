@@ -1052,3 +1052,41 @@ void QMMM_rec::gradient_QM_MM(const t_commrec*  cr,
   } // switch (cutoff_qmmm)
 }
 
+void QMMM_rec::gradient_MM_only(const t_commrec*  cr,
+                                t_nrnb*           nrnb,
+                                gmx_wallcycle_t   wcycle,
+                                rvec*             MMgrad)
+{
+    QMMM_QMrec& qm_ = qm[0];
+    QMMM_MMrec& mm_ = mm[0];
+    int         n = qm_.nrQMatoms;
+    int         ne = mm_.nrMMatoms;
+    rvec        bond;
+
+    for (int j=0; j<ne; j++)
+    {
+        clear_rvec(MMgrad[j]);
+    }
+
+    for (int j=0; j<n; j++) // QM atom
+    {
+        for (int k=0; k<ne; k++) // MM atom
+        {
+            pbc_dx_qmmm(qm_.box, qm_.xQM[j], mm_.xMM[k], bond);
+            real r = norm(bond);
+            if (r < 0.001) // this may occur on the first step of simulation for link atom(s)
+            {
+                printf("QM/MM PME QM--MM short range exploding for QM=%d, MM=%d. MM charge is %f\n", j+1, k+1, mm_.MMcharges[k]);
+            }
+            else
+            {
+                rvec dgr;
+                real fscal = - qm_.QMcharges[j] * mm_.MMcharges[k] / CUB(r) * SQR(BOHR2NM);
+                svmul(fscal, bond, dgr);
+                //printf("SR: QM %1d -- MM %1d:%12.7f%12.7f%12.7f\n", j+1, k+1, dgr[XX], dgr[YY], dgr[ZZ]);
+                rvec_dec(MMgrad[k], dgr);
+            }
+        } // for k
+    } // for j
+}
+

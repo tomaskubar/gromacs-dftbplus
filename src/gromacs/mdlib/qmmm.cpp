@@ -636,6 +636,33 @@ QMMM_rec::QMMM_rec(const t_commrec*                 cr,
 		    }
         }
         snew(qm[0].QMcharges, qm[0].nrQMatoms);
+        char *env3 = getenv("GMX_DFTB_COUPLED_PERTURB");
+        if (env3 != nullptr)
+        {
+            qm[0].coupledPerturb = true;
+            fprintf(stderr, "Gromacs will calculate derivatives of DFTB+ charges with respect to atom coordinates.\n");
+            snew(qm[0].QMchargeGradients, qm[0].nrQMatoms * 3 * qm[0].nrQMatoms);
+
+            char *env4 = getenv("GMX_DFTB_COUPLED_PERTURB_MM_ATOMS");
+            if (env4 != nullptr)
+            {
+                sscanf(env4, "%d", &(qm[0].nrQMchargeMMatoms));
+                fprintf(stderr, "Gromacs will take derivatives of DFTB+ charges with respect to coordinates of %d MM atoms.\n",
+                    qm[0].nrQMchargeMMatoms);
+                snew(qm[0].QMchargeMMgradients, qm[0].nrQMatoms * 3 * qm[0].nrQMchargeMMatoms);
+            }
+            else
+            {
+                qm[0].nrQMchargeMMatoms = 0;
+                qm[0].QMchargeMMgradients = nullptr;
+            }
+        }
+        else
+        {
+            qm[0].coupledPerturb = false;
+            qm[0].QMchargeGradients = nullptr;
+            qm[0].QMchargeMMgradients = nullptr;
+        }
 
         init_dftbplus(&(qm[0]), this, ir, cr); //, wcycle);
     }

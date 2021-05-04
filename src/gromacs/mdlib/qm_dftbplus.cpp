@@ -349,7 +349,7 @@ real call_dftbplus(QMMM_rec*         qr,
     qm->dftbContext->nrnb = nrnb;
     int n = qm->nrQMatoms_get();
 
-    double *x, *grad, *pot, *potgrad, *q; // real instead of rvec, to help pass data to fortran
+    double *x, *grad, *pot, *potgrad, *q, *xMM; // real instead of rvec, to help pass data to fortran
     real *pot_sr = nullptr, *pot_lr = nullptr;
     rvec *QMgrad = nullptr, *MMgrad = nullptr, *MMgrad_full = nullptr;
 
@@ -408,46 +408,60 @@ real call_dftbplus(QMMM_rec*         qr,
             x[3*i+j] = qm->xQM_get(i,j) / BOHR2NM; // to bohr units for DFTB+
         }
     }
-
-    /* calculate the QM/MM electrostatics beforehand with Gromacs!
-     * with cut-off treatment, this will be the entire QM/MM
-     * with PME, this will only include MM atoms,
-     *    and the contribution from QM atoms will be added in every SCC iteration
-     */
-    qr->calculate_SR_QM_MM(qm->qmmm_variant_get(), pot_sr);
-    if (qm->qmmm_variant_get() == eqmmmPME)
+    if (qm->coupledPerturb && mm.nrMMatoms > 0)
     {
-     // gmx_pme_init_qmmm(&(qr->pme->pmedata), true, fr->pmedata);
-        qr->calculate_LR_QM_MM(cr, nrnb, wcycle, *qr->pmedata, pot_lr);
-        for (int i=0; i<n; i++)
+        snew(xMM, 3 * mm.nrMMatoms);
+        for (int i=0; i<mm.nrMMatoms; i++)
         {
-            pot[i] = (double) - (pot_sr[i] + pot_lr[i]);
+            for (int j=0; j<DIM; j++)
+            {
+                xMM[3*i+j] = mm.xMM[i][j] / BOHR2NM; // to bohr units for DFTB+
+            }
         }
     }
-    else
-    {
-        for (int i=0; i<n; i++)
-        {
-            pot_lr[i] = 0.;
-            pot[i] = (double) - pot_sr[i];
-        }
-    }
-    // save the potential in the QMMM_QMrec structure
-    for (int j=0; j<n; j++)
-    {
-        qm->pot_qmmm_set(j, (double) - pot[j] * HARTREE_TO_EV); // in volt units
-    }
- // // DEBUG
- // for (int i=0; i<n; i++)
- //     printf("pot_sr[%d] = %9.5f pot_lr[%d] = %9.5f\n", i+1, pot_sr[i], i+1, pot_lr[i]);
 
-    /* Set up the data structures needed for the PME calculation
-	 *   of QM--imageQM electrostatics.
-	 * During the iterative SCC calculation, this routine will be called
-	 *   directly from DFTB+, and will use those data structures.
-	 */
- //  calcQMextPotPME(nullptr, nullptr, true, lPme, fr, cr, wcycle, fr->rcoulomb, fr->ewaldcoeff_q);
-    /* This was already done in the initialization procedure! */
+    if (!qm->coupledPerturb)
+    {
+        /* calculate the QM/MM electrostatics beforehand with Gromacs!
+         * with cut-off treatment, this will be the entire QM/MM
+         * with PME, this will only include MM atoms,
+         *    and the contribution from QM atoms will be added in every SCC iteration
+         */
+        qr->calculate_SR_QM_MM(qm->qmmm_variant_get(), pot_sr);
+        if (qm->qmmm_variant_get() == eqmmmPME)
+        {
+         // gmx_pme_init_qmmm(&(qr->pme->pmedata), true, fr->pmedata);
+            qr->calculate_LR_QM_MM(cr, nrnb, wcycle, *qr->pmedata, pot_lr);
+            for (int i=0; i<n; i++)
+            {
+                pot[i] = (double) - (pot_sr[i] + pot_lr[i]);
+            }
+        }
+        else
+        {
+            for (int i=0; i<n; i++)
+            {
+                pot_lr[i] = 0.;
+                pot[i] = (double) - pot_sr[i];
+            }
+        }
+        // save the potential in the QMMM_QMrec structure
+        for (int j=0; j<n; j++)
+        {
+            qm->pot_qmmm_set(j, (double) - pot[j] * HARTREE_TO_EV); // in volt units
+        }
+     // // DEBUG
+     // for (int i=0; i<n; i++)
+     //     printf("pot_sr[%d] = %9.5f pot_lr[%d] = %9.5f\n", i+1, pot_sr[i], i+1, pot_lr[i]);
+
+        /* Set up the data structures needed for the PME calculation
+         *   of QM--imageQM electrostatics.
+         * During the iterative SCC calculation, this routine will be called
+         *   directly from DFTB+, and will use those data structures.
+         */
+     //  calcQMextPotPME(nullptr, nullptr, true, lPme, fr, cr, wcycle, fr->rcoulomb, fr->ewaldcoeff_q);
+        /* This was already done in the initialization procedure! */
+    }
 
     for (int i=0; i<n; i++)
     {
@@ -457,12 +471,37 @@ real call_dftbplus(QMMM_rec*         qr,
     /* DFTB+ calculation itself */
     wallcycle_start(wcycle, ewcQM);
     dftbp_set_coords(qm->dpcalc, x); // unit OK
-    dftbp_set_external_potential(qm->dpcalc, pot, potgrad); // unit and sign OK
+    if (qm->coupledPerturb)
+    {
+        // with solution of coupled-perturbed equations:
+        //   pass MM charges to DFTB+ and let it calculate
+        //   everything except forces on MM atoms
+        dftbp_set_external_charges(qm->dpcalc, &(mm.nrMMatoms), xMM, mm.MMcharges.data());
+    }
+    else
+    {
+        // if coupled-perturbed equations are not solved,
+        //   use the routines implemented in Gromacs
+        dftbp_set_external_potential(qm->dpcalc, pot, potgrad); // unit and sign OK
+    }
     dftbp_get_energy(qm->dpcalc, &QMener); // unit OK
     dftbp_get_gross_charges(qm->dpcalc, q);
  // for (int i=0; i<n; i++)
  //     printf("%d %6.3f\n", i+1, q[i]);
     dftbp_get_gradients(qm->dpcalc, grad);
+    if (qm->coupledPerturb)
+    {
+        dftbp_get_charge_derivatives(qm->dpcalc, qm->QMchargeGradients, qm->QMchargeMMgradients);
+        for (int i = 0; i < qm->nrQMatoms_get() * 3 * qm->nrQMatoms_get(); i++)
+        {
+            qm->QMchargeGradients[i] /= BOHR2NM;
+        }
+        for (int i = 0; i < qm->nrQMatoms_get() * 3 * qm->nrQMchargeMMatoms; i++)
+        {
+            qm->QMchargeMMgradients[i] /= BOHR2NM;
+        }
+    }
+
     wallcycle_stop(wcycle, ewcQM);
 
     /* Save the gradient on the QM atoms */
@@ -499,17 +538,26 @@ real call_dftbplus(QMMM_rec*         qr,
         snew(MMgrad_full, mm.nrMMatoms_full);
     }
 
-    rvec *partgrad;
-    snew(partgrad, qm->nrQMatoms_get());
-    qr->gradient_QM_MM(cr, nrnb, wcycle, (qm->qmmm_variant_get() == eqmmmPME ? *qr->pmedata : nullptr),
-                   qm->qmmm_variant_get(), partgrad, MMgrad, MMgrad_full);
-    for (int i=0; i<n; i++)
+    if (!qm->coupledPerturb)
     {
-        rvec_inc(QMgrad[i], partgrad[i]); // sign OK
-     // printf("GRAD QM FULL %d: %8.2f %8.2f %8.2f\n", i+1,
-     //     QMgrad[i][XX] * HARTREE_BOHR2MD, QMgrad[i][YY] * HARTREE_BOHR2MD, QMgrad[i][ZZ] * HARTREE_BOHR2MD);
+        rvec *partgrad;
+        snew(partgrad, qm->nrQMatoms_get());
+        qr->gradient_QM_MM(cr, nrnb, wcycle, (qm->qmmm_variant_get() == eqmmmPME ? *qr->pmedata : nullptr),
+                       qm->qmmm_variant_get(), partgrad, MMgrad, MMgrad_full);
+        for (int i=0; i<n; i++)
+        {
+            rvec_inc(QMgrad[i], partgrad[i]); // sign OK
+         // printf("GRAD QM FULL %d: %8.2f %8.2f %8.2f\n", i+1,
+         //     QMgrad[i][XX] * HARTREE_BOHR2MD, QMgrad[i][YY] * HARTREE_BOHR2MD, QMgrad[i][ZZ] * HARTREE_BOHR2MD);
+        }
+        sfree(partgrad);
     }
-    sfree(partgrad);
+    else
+    {
+        // QM gradient has been covered by DFTB+, so the only remaining thing
+        //   is the QM/MM gradient on MM charges here
+        qr->gradient_MM_only(cr, nrnb, wcycle, MMgrad);
+    }
 
     /* Put the QMMM forces in the force array and to the fshift.
      * Convert to MD units.

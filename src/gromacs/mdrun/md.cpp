@@ -212,6 +212,11 @@ void gmx::LegacySimulator::do_md()
     int plumedNeedsEnergy=0;
     int plumedWantsToStop=0;
     matrix plumed_vir;
+    bool plumedCoupledPerturb=false;
+    if (getenv("GMX_DFTB_COUPLED_PERTURB") != nullptr)
+    {
+        plumedCoupledPerturb=true;
+    }
 #endif
     /* END PLUMED */
 
@@ -1064,6 +1069,14 @@ void gmx::LegacySimulator::do_md()
             /* PLUMED */
 #if (GMX_PLUMED)
             if(plumedswitch){
+              if (plumedCoupledPerturb) {
+                plumed_cmd(plumedmain,"setQMCharges", fr->qr->qm[0].QMcharges);
+                plumed_cmd(plumedmain,"setQMChargeGradients", fr->qr->qm[0].QMchargeGradients);
+                if (fr->qr->qm[0].nrQMchargeMMatoms > 0)
+                {
+                  plumed_cmd(plumedmain,"setQMChargeMMGradients", fr->qr->qm[0].QMchargeMMgradients);
+                }
+              }
               if(plumedNeedsEnergy){
                 msmul(force_vir,2.0,plumed_vir);
                 plumed_cmd(plumedmain,"setEnergy",&enerd->term[F_EPOT]);
