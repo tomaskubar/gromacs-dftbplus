@@ -1029,6 +1029,12 @@ void gmx::LegacySimulator::do_md()
              * Check comments in sim_util.c
              */
 
+            /* Run the QM/MM calculation prior to calling PLUMED, so that
+             *   the QM charge derivatives are available for PLUMED.
+             */
+            do_force_qmmm(fplog, cr, nrnb, wcycle, state->box, state->x.arrayRefWithPadding(),
+                          mdatoms, enerd, fr);
+
             /* PLUMED */
 #if (GMX_PLUMED)
             plumedNeedsEnergy=0;
@@ -1040,6 +1046,14 @@ void gmx::LegacySimulator::do_md()
               plumed_cmd(plumedmain,"setMasses",&mdatoms->massT[0]);
               plumed_cmd(plumedmain,"setCharges",&mdatoms->chargeA[0]);
               plumed_cmd(plumedmain,"setBox",&state->box[0][0]);
+              if (plumedCoupledPerturb) {
+                plumed_cmd(plumedmain,"setQMCharges", fr->qr->qm[0].QMcharges);
+                plumed_cmd(plumedmain,"setQMChargeGradients", fr->qr->qm[0].QMchargeGradients);
+                if (fr->qr->qm[0].nrQMchargeMMatoms > 0)
+                {
+                  plumed_cmd(plumedmain,"setQMChargeMMGradients", fr->qr->qm[0].QMchargeMMgradients);
+                }
+              }
               plumed_cmd(plumedmain,"prepareCalc",NULL);
               plumed_cmd(plumedmain,"setStopFlag",&plumedWantsToStop);
               int checkp=0; if(checkpointHandler->isCheckpointingStep()) checkp=1;
@@ -1069,14 +1083,6 @@ void gmx::LegacySimulator::do_md()
             /* PLUMED */
 #if (GMX_PLUMED)
             if(plumedswitch){
-              if (plumedCoupledPerturb) {
-                plumed_cmd(plumedmain,"setQMCharges", fr->qr->qm[0].QMcharges);
-                plumed_cmd(plumedmain,"setQMChargeGradients", fr->qr->qm[0].QMchargeGradients);
-                if (fr->qr->qm[0].nrQMchargeMMatoms > 0)
-                {
-                  plumed_cmd(plumedmain,"setQMChargeMMGradients", fr->qr->qm[0].QMchargeMMgradients);
-                }
-              }
               if(plumedNeedsEnergy){
                 msmul(force_vir,2.0,plumed_vir);
                 plumed_cmd(plumedmain,"setEnergy",&enerd->term[F_EPOT]);

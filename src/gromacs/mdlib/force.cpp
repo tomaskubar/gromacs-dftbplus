@@ -127,7 +127,10 @@ void calculateLongRangeNonbondeds(t_forcerec*                   fr,
     if (fr->bQMMM)
     {
  //     enerd->term[F_EQM] = fr->qr->calculate_QMMM(cr, &forceOutputs->forceWithShiftForces(), nrnb, wcycle);
-        enerd->term[F_EQM] = fr->qr->calculate_QMMM(cr, forceWithVirial, nrnb, wcycle);
+ //     enerd->term[F_EQM] = fr->qr->calculate_QMMM(cr, forceWithVirial, nrnb, wcycle);
+        // QM/MM calculation itself has been shifted to do_force_qmmm(),
+        // so only add the QM/MM forces here:
+        fr->qr->calculate_QMMM_2(forceWithVirial);
     }
 
     const bool computePmeOnCpu = (EEL_PME(fr->ic->eeltype) || EVDW_PME(fr->ic->vdwtype))

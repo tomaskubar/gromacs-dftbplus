@@ -118,6 +118,20 @@ void do_force(FILE*                               log,
               int                                 legacyFlags,
               const DDBalanceRegionHandler&       ddBalanceRegionHandler);
 
+/* Call the QM/MM calculation but do not save the forces yet.
+ * This will be performed prior to the PLUMED calculation
+ *   in order for the QM charge derivatives to be available.
+ */
+void do_force_qmmm(FILE*                               fplog,
+                   const t_commrec*                    cr,
+                   t_nrnb*                             nrnb,
+                   gmx_wallcycle*                      wcycle,
+                   const matrix                        box,
+                   gmx::ArrayRefWithPadding<gmx::RVec> x,
+                   const t_mdatoms*                    mdatoms,
+                   gmx_enerdata_t*                     enerd,
+                   t_forcerec*                         fr);
+
 /* Communicate coordinates (if parallel).
  * Do neighbor searching (if necessary).
  * Calculate forces.

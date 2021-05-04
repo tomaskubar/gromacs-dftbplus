@@ -1723,7 +1723,8 @@ void do_force(FILE*                               fplog,
             }
 	    }
         /* Update the coordinates in any case. */
-	    fr->qr->update_QMMM_coord(cr, fr->shift_vec, as_rvec_array(x.unpaddedArrayRef().data()), mdatoms, box);
+        // This has been shifted to do_force_qmmm() !
+	 // fr->qr->update_QMMM_coord(cr, fr->shift_vec, as_rvec_array(x.unpaddedArrayRef().data()), mdatoms, box);
     }
 
     // TODO Force flags should include haveFreeEnergyWork for this domain
@@ -2139,4 +2140,21 @@ void do_force(FILE*                               fplog,
      * the balance timing, which is ok as most tasks do communication.
      */
     ddBalanceRegionHandler.openBeforeForceComputationCpu(DdAllowBalanceRegionReopen::no);
+}
+
+void do_force_qmmm(FILE*                               fplog,
+                   const t_commrec*                    cr,
+                   t_nrnb*                             nrnb,
+                   gmx_wallcycle_t                     wcycle,
+                   const matrix                        box,
+                   gmx::ArrayRefWithPadding<gmx::RVec> x,
+                   const t_mdatoms*                    mdatoms,
+                   gmx_enerdata_t*                     enerd,
+                   t_forcerec*                         fr)
+{
+    /* Update the coordinates */
+	fr->qr->update_QMMM_coord(cr, fr->shift_vec, as_rvec_array(x.unpaddedArrayRef().data()), mdatoms, box);
+
+    /* Run the calculation; save the energies but not the forces (will be done in calculate_QMMM_2) */
+    enerd->term[F_EQM] = fr->qr->calculate_QMMM_1(cr, nrnb, wcycle);
 }

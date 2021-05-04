@@ -986,10 +986,9 @@ void QMMM_rec::update_QMMMrec_verlet_ns(const t_commrec*    cr,
     }
 } // update_QMMMrec_verlet_ns
 
-real QMMM_rec::calculate_QMMM(const t_commrec*      cr,
-                              gmx::ForceWithVirial* forceWithVirial,
-                              t_nrnb*               nrnb,
-                              gmx_wallcycle_t       wcycle)
+real QMMM_rec::calculate_QMMM_1(const t_commrec*      cr,
+                                t_nrnb*               nrnb,
+                                gmx_wallcycle_t       wcycle)
 {
     if (!GMX_QMMM)
     {
@@ -1005,13 +1004,10 @@ real QMMM_rec::calculate_QMMM(const t_commrec*      cr,
     QMMM_QMrec* qm_ = &(qm[0]);
     QMMM_MMrec* mm_ = &(mm[0]);
 
-    rvec *forces = nullptr,
-         *fshift = nullptr;
+    // Moved to QMMM_rec
+ // rvec *forces = nullptr,
+ //      *fshift = nullptr;
  
- // gmx::ArrayRef<gmx::RVec> fMM      = forceWithVirial->force_.data();
-                  gmx::RVec *fMM      = forceWithVirial->force_.data();
- // gmx::ArrayRef<gmx::RVec> fshiftMM = forceWithShiftForces->shiftForces();
-
     if (GMX_QMMM_DFTBPLUS)
     {
         snew(forces, (qm_->nrQMatoms + mm_->nrMMatoms + mm_->nrMMatoms_full));
@@ -1024,6 +1020,22 @@ real QMMM_rec::calculate_QMMM(const t_commrec*      cr,
     }
 
     QMener = call_QMroutine(cr, this, qm_, mm_, forces, fshift, nrnb, wcycle);
+
+    return QMener;
+} // calculate_QMMM_1
+
+void QMMM_rec::calculate_QMMM_2(gmx::ForceWithVirial* forceWithVirial)
+{
+    QMMM_QMrec* qm_ = &(qm[0]);
+    QMMM_MMrec* mm_ = &(mm[0]);
+
+    // Moved to QMMM_rec
+ // rvec *forces = nullptr,
+ //      *fshift = nullptr;
+ 
+ // gmx::ArrayRef<gmx::RVec> fMM      = forceWithVirial->force_.data();
+                  gmx::RVec *fMM      = forceWithVirial->force_.data();
+ // gmx::ArrayRef<gmx::RVec> fshiftMM = forceWithShiftForces->shiftForces();
 
     if (GMX_QMMM_DFTBPLUS)
     {
@@ -1081,8 +1093,6 @@ real QMMM_rec::calculate_QMMM(const t_commrec*      cr,
 
     sfree(forces);
  // sfree(fshift);
-
-    return QMener;
-} // calculate_QMMM
+} // calculate_QMMM_2
 
 #pragma GCC diagnostic pop

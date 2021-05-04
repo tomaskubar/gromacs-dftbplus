@@ -280,6 +280,11 @@ public:
     PbcType                  pbcType;
     struct gmx_pme_t* const* pmedata;
 
+    // Arrays to save forces in calculate_QMMM_1
+    //   so that they can be used in calculate_QMMM_2
+    rvec *forces = nullptr;
+    rvec *fshift = nullptr;
+
     QMMM_rec(const t_commrec*                 cr,
              const gmx_mtop_t*                mtop,
              const t_inputrec*                ir,
@@ -354,10 +359,11 @@ public:
                           gmx_wallcycle_t   wcycle,
                           rvec*             MMgrad);
 
-    real calculate_QMMM(const t_commrec*           cr,
-                        gmx::ForceWithVirial*      forceWithVirial,
-                              t_nrnb*              nrnb,
-                              gmx_wallcycle_t      wcycle);
+    real calculate_QMMM_1(const t_commrec*           cr,
+                                t_nrnb*              nrnb,
+                                gmx_wallcycle_t      wcycle);
+
+    void calculate_QMMM_2(gmx::ForceWithVirial*      forceWithVirial);
 
     // QMMM computes the QM forces.
     // This routine makes either function calls to gmx QM routines
