@@ -1031,9 +1031,14 @@ void gmx::LegacySimulator::do_md()
 
             /* Run the QM/MM calculation prior to calling PLUMED, so that
              *   the QM charge derivatives are available for PLUMED.
-             */
+             *
             do_force_qmmm(fplog, cr, nrnb, wcycle, state->box, state->x.arrayRefWithPadding(),
                           mdatoms, enerd, fr);
+             */
+            do_force_1(cr, ir, pull_work, step, nrnb, wcycle, &top, state->box,
+                       state->x.arrayRefWithPadding(), mdatoms, enerd, state->lambda, fr,
+                       runScheduleWork, ed ? ed->getLegacyED() : nullptr,
+                       (bNS ? GMX_FORCE_NS : 0) | force_flags, ddBalanceRegionHandler);
 
             /* PLUMED */
 #if (GMX_PLUMED)
@@ -1074,11 +1079,11 @@ void gmx::LegacySimulator::do_md()
          //          f.arrayRefWithPadding(), force_vir, mdatoms, enerd, fcd, state->lambda, graph,
          //          fr, runScheduleWork, vsite, mu_tot, t, ed ? ed->getLegacyED() : nullptr,
          //          (bNS ? GMX_FORCE_NS : 0) | force_flags, ddBalanceRegionHandler);
-            do_force(fplog, cr, ms, ir, awh.get(), enforcedRotation, imdSession, pull_work, step,
-                     nrnb, wcycle, &top, state->box, state->x.arrayRefWithPadding(), &state->hist,
-                     &f.view(), force_vir, mdatoms, enerd, state->lambda, fr, runScheduleWork,
-                     vsite, mu_tot, t, ed ? ed->getLegacyED() : nullptr,
-                     (bNS ? GMX_FORCE_NS : 0) | force_flags, ddBalanceRegionHandler);
+            do_force_2(fplog, cr, ms, ir, awh.get(), enforcedRotation, imdSession, pull_work, step,
+                       nrnb, wcycle, state->box, state->x.arrayRefWithPadding(), &state->hist,
+                       &f.view(), force_vir, mdatoms, enerd, state->lambda, fr, runScheduleWork,
+                       vsite, mu_tot, t, ed ? ed->getLegacyED() : nullptr,
+                       (bNS ? GMX_FORCE_NS : 0) | force_flags, ddBalanceRegionHandler);
 
             /* PLUMED */
 #if (GMX_PLUMED)

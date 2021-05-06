@@ -89,6 +89,53 @@ class VirtualSitesHandler;
  * force->forceMtsCombined(). This forceMts can be used directly in a standard
  * leap-frog integrator to do multiple time stepping.
  */
+void do_force_1(
+              const t_commrec*                    cr,
+              const t_inputrec*                   inputrec,
+              pull_t*                             pull_work,
+              int64_t                             step,
+              t_nrnb*                             nrnb,
+              gmx_wallcycle*                      wcycle,
+              const gmx_localtop_t*               top,
+              const matrix                        box,
+              gmx::ArrayRefWithPadding<gmx::RVec> coordinates,
+              const t_mdatoms*                    mdatoms,
+              gmx_enerdata_t*                     enerd,
+              gmx::ArrayRef<const real>           lambda,
+              t_forcerec*                         fr,
+              gmx::MdrunScheduleWorkload*         runScheduleWork,
+              gmx_edsam*                          ed,
+              int                                 legacyFlags,
+              const DDBalanceRegionHandler&       ddBalanceRegionHandler);
+
+void do_force_2(FILE*                               log,
+                const t_commrec*                    cr,
+                const gmx_multisim_t*               ms,
+                const t_inputrec*                   inputrec,
+                gmx::Awh*                           awh,
+                gmx_enfrot*                         enforcedRotation,
+                gmx::ImdSession*                    imdSession,
+                pull_t*                             pull_work,
+                int64_t                             step,
+                t_nrnb*                             nrnb,
+                gmx_wallcycle*                      wcycle,
+                const matrix                        box,
+                gmx::ArrayRefWithPadding<gmx::RVec> coordinates,
+                history_t*                          hist,
+                gmx::ForceBuffersView*              force,
+                tensor                              vir_force,
+                const t_mdatoms*                    mdatoms,
+                gmx_enerdata_t*                     enerd,
+                gmx::ArrayRef<const real>           lambda,
+                t_forcerec*                         fr,
+                gmx::MdrunScheduleWorkload*         runScheduleWork,
+                gmx::VirtualSitesHandler*           vsite,
+                rvec                                mu_tot,
+                double                              t,
+                gmx_edsam*                          ed,
+                int                                 legacyFlags,
+                const DDBalanceRegionHandler&       ddBalanceRegionHandler);
+
 void do_force(FILE*                               log,
               const t_commrec*                    cr,
               const gmx_multisim_t*               ms,
@@ -121,7 +168,7 @@ void do_force(FILE*                               log,
 /* Call the QM/MM calculation but do not save the forces yet.
  * This will be performed prior to the PLUMED calculation
  *   in order for the QM charge derivatives to be available.
- */
+ *
 void do_force_qmmm(FILE*                               fplog,
                    const t_commrec*                    cr,
                    t_nrnb*                             nrnb,
@@ -131,6 +178,7 @@ void do_force_qmmm(FILE*                               fplog,
                    const t_mdatoms*                    mdatoms,
                    gmx_enerdata_t*                     enerd,
                    t_forcerec*                         fr);
+ */
 
 /* Communicate coordinates (if parallel).
  * Do neighbor searching (if necessary).

@@ -531,8 +531,9 @@ QMMM_rec::QMMM_rec(const t_commrec*                 cr,
     printf ("(mtop->natoms) = %d\n(qr->qm[0]->nrQMatoms) = %d\nmm->nrMMatoms_full = %d\n",
             (mtop->natoms), (qm[0].nrQMatoms), mm_.nrMMatoms_full);
     printf ("(found_mm_atoms) = %d\n", found_mm_atoms);
-
     // these variables get updated in the update QMMMrec // ???
+    mm_.nrMMatoms = found_mm_atoms;
+    // this is a hack! fix to match, as soon as the interface has been adjusted
 
     // OLD COMMENT but maybe useful in the future:
     //   With only one layer there is only one initialization needed.
@@ -643,17 +644,15 @@ QMMM_rec::QMMM_rec(const t_commrec*                 cr,
             fprintf(stderr, "Gromacs will calculate derivatives of DFTB+ charges with respect to atom coordinates.\n");
             snew(qm[0].QMchargeGradients, qm[0].nrQMatoms * 3 * qm[0].nrQMatoms);
 
-            char *env4 = getenv("GMX_DFTB_COUPLED_PERTURB_MM_ATOMS");
-            if (env4 != nullptr)
+            qm[0].nrQMchargeMMatoms = mm[0].nrMMatoms;
+            if (qm[0].nrQMchargeMMatoms > 0)
             {
-                sscanf(env4, "%d", &(qm[0].nrQMchargeMMatoms));
                 fprintf(stderr, "Gromacs will take derivatives of DFTB+ charges with respect to coordinates of %d MM atoms.\n",
                     qm[0].nrQMchargeMMatoms);
                 snew(qm[0].QMchargeMMgradients, qm[0].nrQMatoms * 3 * qm[0].nrQMchargeMMatoms);
             }
             else
             {
-                qm[0].nrQMchargeMMatoms = 0;
                 qm[0].QMchargeMMgradients = nullptr;
             }
         }

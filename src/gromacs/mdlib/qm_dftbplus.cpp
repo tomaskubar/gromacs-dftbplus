@@ -224,6 +224,7 @@ void init_dftbplus(QMMM_QMrec*       qm,
           "Rb", "Sr",
           "Y ", "Zr", "Nb", "Mo", "Tc", "Ru", "Rh", "Pd", "Ag", "Cd",
                       "In", "Sn", "Sb", "Te", "I",  "Xe" };
+    int nExtCharge;
 
     static DftbPlus  calculator;
     DftbPlusInput    input;
@@ -302,7 +303,8 @@ void init_dftbplus(QMMM_QMrec*       qm,
     sfree(ptrSpecies);
 
     /* Set up the calculator by processing the input tree */
-    dftbp_process_input(&calculator, &input, &atomList);
+    nExtCharge = qr->mm[0].nrMMatoms;
+    dftbp_process_input(&calculator, &input, &atomList, &nExtCharge);
     printf("DFTB+ input has been processed!\n");
 
     qm->dpcalc = &calculator;
@@ -476,6 +478,7 @@ real call_dftbplus(QMMM_rec*         qr,
         // with solution of coupled-perturbed equations:
         //   pass MM charges to DFTB+ and let it calculate
         //   everything except forces on MM atoms
+        printf("Calling set_external_charges with %d MM atoms.\n", mm.nrMMatoms);
         dftbp_set_external_charges(qm->dpcalc, &(mm.nrMMatoms), xMM, mm.MMcharges.data());
     }
     else
