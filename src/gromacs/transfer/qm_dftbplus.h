@@ -53,6 +53,11 @@ void
 call_dftbplus_transfer_phase1(QMMM_rec_transfer*   qr,
                               const t_commrec*     cr,
                               rvec                 f[],
+                              bool                 define_orbital_sign,
+                              int                  atom_index_sign[3],
+                              int                  homos,
+                              int*                 homo,
+                              bool                 first_step,
                               t_nrnb*              nrnb,
                               gmx_wallcycle_t      wcycle);
 

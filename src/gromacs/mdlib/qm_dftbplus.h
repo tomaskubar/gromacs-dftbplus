@@ -394,6 +394,8 @@ void dftbp_get_eigenvectors(DftbPlus *instance, double *eigVec);
  */
 void dftbp_get_hamil_overl(DftbPlus *instance, double *hamil, double *overl);
 
+void dftbp_check_invert_phase(DftbPlus *instance, int *atomIndexSign, int *nFrontiers, int *frontiers, bool *firstStepC);
+
 void dftbp_get_pointers_phase1(DftbPlus *instance, DftbPlusPhase1 *phase1);
 
 void dftbp_init_pointers_phase1(DftbPlus *instance, int *nSite);

@@ -1503,7 +1503,9 @@ void gmx::LegacySimulator::do_md()
                         if (iSite % ct_mpi_size == ct_mpi_rank)
                         {
                          // printf("Doing residue %d at rank %d\n", ct->site[iSite].resnr, ct_mpi_rank);
-                            call_dftbplus_transfer(dftbplus_phase1[iSite].get(), cr, f, nrnb, wcycle);
+                         // call_dftbplus_transfer(dftbplus_phase1[iSite].get(), cr, f, nrnb, wcycle);
+                            call_dftbplus_transfer_phase1(dftbplus_phase1[iSite].get(), cr, force_dftb, ct->site[iSite].define_orbital_sign,
+                                ct->site[iSite].atom_index_sign, ct->site[iSite].homos, ct->site[iSite].homo, ct->first_step, nrnb, wcycle);
                         }
                     }
                     printf("do_dftb_phase1 end at rank %d at %f\n", ct_mpi_rank, (double) clock()/CLOCKS_PER_SEC);
@@ -1536,7 +1538,7 @@ void gmx::LegacySimulator::do_md()
                 {
                     // CHECK THE ORBITALS
                     // calc sign on master since we need later also the obtained overlap in project_wf_on_new_basis().
-                    check_and_invert_orbital_phase(dftb->phase1, ct, state_global, mdatoms);
+                  //check_and_invert_orbital_phase(dftb->phase1, ct, state_global, mdatoms);
 
                     // PHASE 2
                  // do_dftb_phase2(ct, dftbplus_phase2, cr, force_dftb, nrnb, wcycle);
@@ -1569,7 +1571,8 @@ void gmx::LegacySimulator::do_md()
                     {
                         printf("phase 1 FMO for site/fragment no. %d of %d\n", iSite, ct->sites);
                         snew(force_dftb, ct->site[iSite].atoms);
-                        call_dftbplus_transfer_phase1(dftbplus_phase1[iSite].get(), cr, force_dftb, nrnb, wcycle);
+                        call_dftbplus_transfer_phase1(dftbplus_phase1[iSite].get(), cr, force_dftb, ct->site[iSite].define_orbital_sign,
+                            ct->site[iSite].atom_index_sign, ct->site[iSite].homos, ct->site[iSite].homo, ct->first_step, nrnb, wcycle);
                         sfree(force_dftb); // release memory here as forces are not needed for now - TODO
                     }
                     printf("do_dftb_phase1 end   at %f\n", (double) clock()/CLOCKS_PER_SEC);

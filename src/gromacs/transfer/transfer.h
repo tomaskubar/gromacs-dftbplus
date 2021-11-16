@@ -289,6 +289,9 @@ typedef struct ct_site_t {
   double *custom_occ;  /* occupation vector e.g. ...2, 2, 2, 1, 1, 0, 0... for system where one electron from HOMO "gets excited" into LUMO*/
   double *com;         /* center of mass[bohr]. needed to decide if site should become active or not */
   int active;          /* switch 0/1 that determines if site is part of the QM calculation or just inactive member of the pool */
+  // coupling sign -- MOVED FROM charge_transfer_t
+  int define_orbital_sign;
+  int atom_index_sign[3];
 
   // arrays to store information from phase1, to be communicated to phase2
   double *phase1_charges,
@@ -498,9 +501,9 @@ typedef struct charge_transfer_t {
   double *eigen_pca;
   double **eigenvec_pca;
   double *dummy_pca;
-// coupling sign
-  int define_orbital_sign;
-  int atom_index_sign[3];
+// coupling sign       NOW IN STRUCT SITE
+//int define_orbital_sign;
+//int atom_index_sign[3];
 // fft for coupling
   double *fft_vij;
 
@@ -903,7 +906,10 @@ int do_surf_hop_dummy(charge_transfer_t *ct, FILE *f, FILE *f2);  //dummy functi
 //int do_persico_diabatic_sfhopping_new(charge_transfer_t *ct, dftb_broyden_t *broyd, double *fermi_coeff, FILE *f, FILE *f2, FILE *f3);
 long exp_imag_matrix(double **in, twodoubles **out, double dt, long n, ct_per_orthogo_t *arrays);
 
+/* MOVED TO DFTB+
 void check_and_invert_orbital_phase(dftb_phase1_t *dftb1, charge_transfer_t *ct, t_state *state_global, t_mdatoms *mdatoms);
+void check_and_invert_orbital_phase(QMMM_rec_transfer* qr, int atomIndexSign[], int nFrontiers, int* frontiers, bool firstStep);
+*/
 
 int negf_init_arrays(ct_negf_lorentz_t *negf, double *rk_timestep, double *wf);
 int negf_propagate(charge_transfer_t *ct);

@@ -324,7 +324,12 @@ void init_dftbplus_transfer(QMMM_rec_transfer*   qr,
 
 void call_dftbplus_transfer_phase1(QMMM_rec_transfer*   qr,
                                    const t_commrec*     cr,
-                                   rvec*                f,
+                                   rvec                 f[],
+                                   bool                 define_orbital_sign,
+                                   int                  atom_index_sign[3],
+                                   int                  homos,
+                                   int*                 homo,
+                                   bool                 first_step,
 		                           t_nrnb*              nrnb,
                                    gmx_wallcycle_t      wcycle)
 {
@@ -411,6 +416,13 @@ void call_dftbplus_transfer_phase1(QMMM_rec_transfer*   qr,
     double QMener;
     dftbp_get_energy(qr->qm->dpcalc, &QMener); // unit OK
     (void) QMener;
+
+    // check and - if necessary - invert the sign of frontier orbitals
+    if (define_orbital_sign)
+    {
+        dftbp_check_invert_phase(qr->qm->dpcalc, atom_index_sign, &homos, homo, &first_step);
+    }
+
     dftbp_get_pointers_phase1(qr->qm->dpcalc, qr->qm->phase1);
     dftbp_get_gross_charges(qr->qm->dpcalc, q);
  // for (int i=0; i<n; i++)

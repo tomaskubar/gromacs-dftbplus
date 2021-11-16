@@ -407,7 +407,6 @@ void init_charge_transfer(t_atoms           *atoms,
         {"slkopath",  "{Path} to directory of the DFTB Slater-Koster files"},
         {"chargecarrier",   "The charge carrier (electron/hole). Will effect sign of the Hamilton matrix and of the charges that are added to the force-field."},
         {"offdiagscaling",   "{yes/no} Scale offdiagonal elements of FO Hamiltonian. See: J. Chem. Phys. 2014, 140, 104105+  and  Phys. Chem. Chem. Phys. 2015, 17, 14342-14354."},
-        {"atomindex",   "Atomic indexes to fix initial sign of electronic coupling. "},
         {"extchrmode",   "Treatment of the MM pointcharges. {vacou} is as it says, {qmmm} uses pointcharges with minimum image convention, {pme} is particle-mesh-Ewald treatment"},
         {"espscaling",  "Scales the strength of the electrostatic potential of the environment with 1/espscaling."},
         {"efield", "External electric field vector [V/cm]. X Y and Z direction. Adds shift to the site energies depending on their position."},
@@ -449,6 +448,7 @@ void init_charge_transfer(t_atoms           *atoms,
         {"totaladdchr", "Charge for each QM/MM bond to restore the integer total charge of the environment."},
         {"nfragorbs", "Number of molecular orbitals of this site that will be used in the fragment orbital Hamiltonian."},
         {"fragorbs", "The index (starting from 1) of the molecular orbitals."},
+        {"atomindex", "Atomic indexes to fix initial sign of electronic coupling. "},
         {"hubbard", "Hubbard parameter for each orbital."},
         {"lambda_i", "Lambda_i for each orbital."},
         {"dqresp", "List of RESP charges that will be added to the QM atoms, scaled by the occupation of the HOMO/LUMO. If more than one HOMO is used per site, first the list for the first FO is read then for the second."},
@@ -615,21 +615,6 @@ void init_charge_transfer(t_atoms           *atoms,
      //     PRINTF("Input number of training data for coupling model ! \n");
      //     exit(-1);
      // }
-    }
-
-    if (searchkey(lines1, input1, "atomindex", value, 0))
-    {
-       ct->define_orbital_sign = 1;
-
-       split_string_into_int(value, 3, ct->atom_index_sign, "atomindex");
-
-       PRINTF("Atomic indexes for fixing the initial sign of coupling: %d %d %d\n",
-             ct->atom_index_sign[0], ct->atom_index_sign[1], ct->atom_index_sign[2]);
-    }
-    else
-    {
-       ct->define_orbital_sign = 0;
-       PRINTF("Sign of coupling are randomly initialized !");
     }
 
     if (searchkey(lines1, input1, "frcoupling", value, 0))
@@ -1288,6 +1273,24 @@ void init_charge_transfer(t_atoms           *atoms,
         else
         {
             ct->sitetype[i].do_custom_occ = 0;
+        }
+
+        // to be able to determine the sign of the fragment orbitals
+        if (searchkey(lines2, input2, "atomindex", value, 0))
+        {
+           ct->sitetype[i].define_orbital_sign = 1;
+
+           split_string_into_int(value, 3, ct->sitetype[i].atom_index_sign, "atomindex");
+
+           PRINTF("Atomic indexes for fixing the initial sign of coupling: %d %d %d\n",
+                 ct->sitetype[i].atom_index_sign[0],
+                 ct->sitetype[i].atom_index_sign[1],
+                 ct->sitetype[i].atom_index_sign[2]);
+        }
+        else
+        {
+           ct->sitetype[i].define_orbital_sign = 0;
+           PRINTF("The sign of couplings are randomly initialized !");
         }
     }
 
