@@ -39,6 +39,7 @@
 
 #include "gromacs/applied_forces/densityfitting/densityfitting.h"
 #include "gromacs/applied_forces/electricfield.h"
+#include "gromacs/applied_forces/magneticfield.h"
 #include "gromacs/applied_forces/qmmm/qmmm.h"
 #include "gromacs/imd/imd.h"
 #include "gromacs/mdrunutility/mdmodulesnotifiers.h"
@@ -65,6 +66,7 @@ public:
     Impl() :
         densityFitting_(DensityFittingModuleInfo::create()),
         field_(createElectricFieldModule()),
+        magneticField_(createMagneticFieldModule()),
         imd_(createInteractiveMolecularDynamicsModule()),
         qmmm_(QMMMModuleInfo::create()),
         swapCoordinates_(createSwapCoordinatesModule())
@@ -76,6 +78,7 @@ public:
         // Create a section for applied-forces modules
         auto appliedForcesOptions = options->addSection(OptionSection("applied-forces"));
         field_->mdpOptionProvider()->initMdpOptions(&appliedForcesOptions);
+        magneticField_->mdpOptionProvider()->initMdpOptions(&appliedForcesOptions);
         densityFitting_->mdpOptionProvider()->initMdpOptions(&appliedForcesOptions);
         qmmm_->mdpOptionProvider()->initMdpOptions(&appliedForcesOptions);
         // In future, other sections would also go here.
@@ -85,11 +88,13 @@ public:
     void initOutput(FILE* fplog, int nfile, const t_filenm fnm[], bool bAppendFiles, const gmx_output_env_t* oenv) override
     {
         field_->outputProvider()->initOutput(fplog, nfile, fnm, bAppendFiles, oenv);
+        magneticField_->outputProvider()->initOutput(fplog, nfile, fnm, bAppendFiles, oenv);
         densityFitting_->outputProvider()->initOutput(fplog, nfile, fnm, bAppendFiles, oenv);
     }
     void finishOutput() override
     {
         field_->outputProvider()->finishOutput();
+        magneticField_->outputProvider()->finishOutput();
         densityFitting_->outputProvider()->finishOutput();
     }
 
@@ -102,6 +107,7 @@ public:
 
     std::unique_ptr<IMDModule>      densityFitting_;
     std::unique_ptr<IMDModule>      field_;
+    std::unique_ptr<IMDModule>      magneticField_;
     std::unique_ptr<ForceProviders> forceProviders_;
     std::unique_ptr<IMDModule>      imd_;
     std::unique_ptr<IMDModule>      qmmm_;
@@ -115,6 +121,7 @@ public:
      * \todo update IMDModule docs to allow nullptr return values
      * \todo check for nullptr returned by IMDModule methods.
      * \todo include field_ in modules_
+     * \todo include magneticField_ in modules_ ???
      */
     std::vector<std::shared_ptr<IMDModule>> modules_;
 };
@@ -127,6 +134,7 @@ void MDModules::initMdpTransform(IKeyValueTreeTransformRules* rules)
 {
     auto appliedForcesScope = rules->scopedTransform("/applied-forces");
     impl_->field_->mdpOptionProvider()->initMdpTransform(appliedForcesScope.rules());
+    impl_->magneticField_->mdpOptionProvider()->initMdpTransform(appliedForcesScope.rules());
     impl_->densityFitting_->mdpOptionProvider()->initMdpTransform(appliedForcesScope.rules());
     impl_->qmmm_->mdpOptionProvider()->initMdpTransform(appliedForcesScope.rules());
 }
@@ -134,6 +142,7 @@ void MDModules::initMdpTransform(IKeyValueTreeTransformRules* rules)
 void MDModules::buildMdpOutput(KeyValueTreeObjectBuilder* builder)
 {
     impl_->field_->mdpOptionProvider()->buildMdpOutput(builder);
+    impl_->magneticField_->mdpOptionProvider()->buildMdpOutput(builder);
     impl_->densityFitting_->mdpOptionProvider()->buildMdpOutput(builder);
     impl_->qmmm_->mdpOptionProvider()->buildMdpOutput(builder);
 }
@@ -171,6 +180,7 @@ ForceProviders* MDModules::initForceProviders()
                        "Force providers initialized multiple times");
     impl_->forceProviders_ = std::make_unique<ForceProviders>();
     impl_->field_->initForceProviders(impl_->forceProviders_.get());
+    impl_->magneticField_->initForceProviders(impl_->forceProviders_.get());
     impl_->densityFitting_->initForceProviders(impl_->forceProviders_.get());
     impl_->qmmm_->initForceProviders(impl_->forceProviders_.get());
     for (auto&& module : impl_->modules_)

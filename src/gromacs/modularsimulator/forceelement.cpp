@@ -194,6 +194,7 @@ void ForceElement::run(Step step, Time time, unsigned int flags)
      * Check comments in sim_util.c
      */
     auto        x      = statePropagatorData_->positionsView();
+    auto        v      = statePropagatorData_->velocitiesView();
     auto&       forces = statePropagatorData_->forcesView();
     const auto* box    = statePropagatorData_->constBox();
     history_t*  hist   = nullptr; // disabled
@@ -207,8 +208,6 @@ void ForceElement::run(Step step, Time time, unsigned int flags)
 
     if (doShellFC)
     {
-        auto v = statePropagatorData_->velocitiesView();
-
         relax_shell_flexcon(fplog_,
                             cr_,
                             ms,
@@ -266,6 +265,7 @@ void ForceElement::run(Step step, Time time, unsigned int flags)
                  localTopology_,
                  box,
                  x,
+                 v,
                  hist,
                  &forces,
                  force_vir,

@@ -1233,6 +1233,7 @@ void gmx::LegacySimulator::do_md()
                          top_,
                          state_->box,
                          state_->x.arrayRefWithPadding(),
+                         state_->v.arrayRefWithPadding(),
                          &state_->hist,
                          &f.view(),
                          force_vir,

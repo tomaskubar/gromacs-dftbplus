@@ -1022,6 +1022,7 @@ void EnergyEvaluator::run(em_state_t* ems, rvec mu_tot, tensor vir, tensor pres,
     /* do_force always puts the charge groups in the box and shifts again
      * We do not unshift, so molecules are always whole in congrad.c
      */
+    gmx::ArrayRefWithPadding<gmx::RVec> dummy_v;
     do_force(fplog,
              cr,
              ms,
@@ -1037,6 +1038,7 @@ void EnergyEvaluator::run(em_state_t* ems, rvec mu_tot, tensor vir, tensor pres,
              top,
              ems->s.box,
              ems->s.x.arrayRefWithPadding(),
+             dummy_v,
              &ems->s.hist,
              &ems->f.view(),
              force_vir,

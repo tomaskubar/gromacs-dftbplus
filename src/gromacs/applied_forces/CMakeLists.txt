@@ -62,6 +62,7 @@ target_link_libraries(applied_forces INTERFACE
 
 gmx_add_libgromacs_sources(
     electricfield.cpp
+    magneticfield.cpp
     )
 
 add_subdirectory(awh)

@@ -81,6 +81,7 @@ public:
     /*! \brief Constructor assembles all necessary force provider input data
      *
      * \param[in]  x        Atomic positions.
+     * \param[in]  v        Atomic velocities.
      * \param[in]  homenr   Number of atoms on the domain.
      * \param[in]  chargeA  Atomic charges for atoms on the domain.
      * \param[in]  massT    Atomic masses for atoms on the domain.
@@ -90,6 +91,7 @@ public:
      * \param[in]  cr       Communication record structure.
      */
     ForceProviderInput(ArrayRef<const RVec> x,
+                       ArrayRef<const RVec> v,
                        int                  homenr,
                        ArrayRef<const real> chargeA,
                        ArrayRef<const real> massT,
@@ -97,12 +99,13 @@ public:
                        int64_t              step,
                        const matrix         box,
                        const t_commrec&     cr) :
-        x_(x), homenr_(homenr), chargeA_(chargeA), massT_(massT), t_(time), step_(step), cr_(cr)
+        x_(x), v_(v), homenr_(homenr), chargeA_(chargeA), massT_(massT), t_(time), step_(step), cr_(cr)
     {
         copy_mat(box, box_);
     }
 
     ArrayRef<const RVec> x_; //!< The atomic positions
+    ArrayRef<const RVec> v_; //!< The atomic velocities
     int                  homenr_;
     ArrayRef<const real> chargeA_;
     ArrayRef<const real> massT_;

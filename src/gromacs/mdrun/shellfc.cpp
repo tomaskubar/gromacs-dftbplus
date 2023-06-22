@@ -1069,6 +1069,7 @@ void relax_shell_flexcon(FILE*                          fplog,
              top,
              box,
              xPadded,
+             vPadded,
              hist,
              &forceViewInit,
              force_vir,
@@ -1196,6 +1197,7 @@ void relax_shell_flexcon(FILE*                          fplog,
         }
         /* Try the new positions */
         gmx::ForceBuffersView forceViewTry = gmx::ForceBuffersView(forceWithPadding[Try], {}, false);
+        gmx::ArrayRefWithPadding<gmx::RVec> dummy_v;
         do_force(fplog,
                  cr,
                  ms,
@@ -1211,6 +1213,7 @@ void relax_shell_flexcon(FILE*                          fplog,
                  top,
                  box,
                  posWithPadding[Try],
+                 dummy_v,
                  hist,
                  &forceViewTry,
                  force_vir,
