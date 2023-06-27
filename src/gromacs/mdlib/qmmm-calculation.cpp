@@ -243,6 +243,22 @@ void QMMM_rec::calculate_SR_QM_MM(int variant,
     break;
   }
 
+  case eqmmmNN:
+  {
+    for (int j=0; j<qm_.nrQMatoms; j++) { // do it for every QM atom
+      pot[j] = 0.;
+      // add potential from MM atoms
+      for (int k=0; k<mm_.nrMMatoms; k++) {
+        real r = pbc_dist_qmmm(qm_.box, qm_.xQM[j], mm_.xMM[k]);
+        if (r < 0.001) { // this may occur on the first step of simulation for link atom(s)
+          printf("QM--MM exploding for QM=%d, MM=%d. MM charge is %f\n", j+1, k+1, mm_.MMcharges[k]);
+          continue;
+        }
+      } // for k
+    } // for j
+    break;
+  }
+
   default: // it should never get this far
     ;
   } // switch variant
