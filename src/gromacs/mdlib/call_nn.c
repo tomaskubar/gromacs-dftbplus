@@ -212,7 +212,7 @@ void init_nn(QMMM_QMrec*       qm)
     char* saved_model_dir; 
     if ((saved_model_dir = getenv("GMX_TF_MODEL_PATH")) == nullptr)
     {
-        printf("Path to model must be given in the env variable GMX_TF_MODEL_PATK\n");
+        printf("Path to model must be given in the env variable GMX_TF_MODEL_PATH\n");
         exit(-1);
     }
     else {
@@ -274,10 +274,41 @@ void init_nn(QMMM_QMrec*       qm)
         qm->TF_Model->atomicNumbers[i] = qm->atomicnumberQM_get(i);
     }
 
+    //read charges of QM atoms from file
+    char* qm_charges_file; 
+    if ((qm_charges_file = getenv("GMX_QMCHARGES_FILE")) == nullptr)
+    {
+        printf("Path to QM charges must be given in the env variable GMX_QMCHARGES_FILE\n");
+        exit(-1);
+    }
+    else {
+        printf("Read charges from path %s",qm_charges_file);
+    }
+
+    FILE* file = fopen("testinput.txt", "r");
+    if (file == NULL) {
+        printf("Error opening charge file.\n");
+        exit(-1);
+    }
+    float q[qm->TF_Model->nAtoms];
+    int numValues = 0;
+    while (fscanf(file, "%f", &q[numValues]) == 1) {
+        numValues++;
+        if (numValues == qm->TF_Model->nAtoms) {
+            printf("QM charges read.\n");
+            break;
+        }
+    }
+    fclose(file);
+    for (int i=0; i<n; i++)
+    {
+        qm->QMcharges_set(i, (real) q[i]); // sign OK
+    }
+
     return;
 } /* init_dftbplus */
 void NoOpDeallocator(void* data, size_t a, void* b) {}
-real call_dftbplus(QMMM_rec*         qr,
+real call_nn(QMMM_rec*         qr,
                    const t_commrec*  cr,
                    QMMM_QMrec*       qm,
                    const QMMM_MMrec& mm,
@@ -306,7 +337,7 @@ real call_dftbplus(QMMM_rec*         qr,
     real *pot_sr = nullptr, *pot_lr = nullptr;
     rvec *QMgrad = nullptr, *MMgrad = nullptr, *MMgrad_full = nullptr;
 
-    snew(x, (1,);
+    snew(x, (n,3));
     snew(grad, 3*n);
     for (int i=0; i<3*n; i++)
         grad[i] = 0.;
@@ -358,7 +389,7 @@ real call_dftbplus(QMMM_rec*         qr,
     {
         for (int j=0; j<DIM; j++)
         {
-            x[0][i][j] = qm->xQM_get(i,j) / BOHR2NM; // to bohr units for DFTB+
+            x[i][j] = qm->xQM_get(i,j) / BOHR2NM; // to bohr units for DFTB+, Manus Model also expects Bohr
         }
     }
 
@@ -402,18 +433,25 @@ real call_dftbplus(QMMM_rec*         qr,
  //  calcQMextPotPME(nullptr, nullptr, true, lPme, fr, cr, wcycle, fr->rcoulomb, fr->ewaldcoeff_q);
     /* This was already done in the initialization procedure! */
 
-    for (int i=0; i<n; i++)
-    {
-        q[i] = 0.;
-    }
+    // for (int i=0; i<n; i++)
+    // {
+    //     q[i] = 0.;
+    // }
 
-    //TODO concat x reshaped with pot MANU to data
+    //concat x reshaped with pot MANU to data
+    float data[1][n][4];
+    for (int i=0; i++; i<n) {
+        for (int j=0; j++; j<3) {
+            data[0][i][j]=x[i][j];  //x,y,z in Bohr
+        }
+        data[0][i][3]=pot[i];   //ESP in Bohr
+    }
 
     /* DFTB+ calculation itself */
     wallcycle_start(wcycle, ewcQM);
 
     int ndims = 3;
-    int64_t dims[] = {1,qm->TF_Model->nAtoms,4};
+    int64_t dims[] = {1,n,4};
     
     int ndata = sizeof(x); 
     TF_Tensor* int_tensor = TF_NewTensor(TF_FLOAT, dims, ndims, data, ndata, &NoOpDeallocator, 0);
@@ -436,13 +474,13 @@ real call_dftbplus(QMMM_rec*         qr,
     
     float* predictions = (float*)TF_TensorData(qm->TF_Model->OutputValues[0]);
 
-    dftbp_set_coords(qm->dpcalc, x); // unit OK
-    dftbp_set_external_potential(qm->dpcalc, pot, potgrad); // unit and sign OK
-    dftbp_get_energy(qm->dpcalc, &QMener); // unit OK
-    dftbp_get_gross_charges(qm->dpcalc, q);
+ // dftbp_set_coords(qm->dpcalc, x); // unit OK
+ // dftbp_set_external_potential(qm->dpcalc, pot, potgrad); // unit and sign OK
+ // dftbp_get_energy(qm->dpcalc, &QMener); // unit OK
+ // dftbp_get_gross_charges(qm->dpcalc, q);
  // for (int i=0; i<n; i++)
  //     printf("%d %6.3f\n", i+1, q[i]);
-    dftbp_get_gradients(qm->dpcalc, grad);
+ // dftbp_get_gradients(qm->dpcalc, grad);
     wallcycle_stop(wcycle, ewcQM);
     QMener = predictions[0]
     /* Save the gradient on the QM atoms */
@@ -462,11 +500,11 @@ real call_dftbplus(QMMM_rec*         qr,
  // }
 
     /* Save the QM charges */
-    for (int i=0; i<n; i++)
-    {
-        qm->QMcharges_set(i, (real) q[i]); // sign OK
-     // printf("CHECK CHARGE QM[%d] = %6.3f\n", i+1, qm->QMcharges[i]);
-    }
+    // for (int i=0; i<n; i++)
+    // {
+    //     qm->QMcharges_set(i, (real) q[i]); // sign OK
+    //  // printf("CHECK CHARGE QM[%d] = %6.3f\n", i+1, qm->QMcharges[i]);
+    // }
 
     /* Calculate the QM/MM forces
      *   (these are not covered by DTFB+,
@@ -595,7 +633,7 @@ real call_dftbplus(QMMM_rec*         qr,
     step++;
 
     return (real) QMener * HARTREE2KJ * AVOGADRO;
-} /* call_dftbplus */
+} /* call_nn */
 
 /* end of dftbplus sub routines */
 
