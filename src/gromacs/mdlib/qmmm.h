@@ -54,7 +54,7 @@
 //#include "gromacs/mdlib/qm_mopac.h"
 //#include "gromacs/mdlib/qm_orca.h"
 
-#define GMX_QMMM (GMX_QMMM_MOPAC || GMX_QMMM_GAMESS || GMX_QMMM_GAUSSIAN || GMX_QMMM_ORCA || GMX_QMMM_DFTBPLUS)
+#define GMX_QMMM (GMX_QMMM_MOPAC || GMX_QMMM_GAMESS || GMX_QMMM_GAUSSIAN || GMX_QMMM_ORCA || GMX_QMMM_DFTBPLUS || GMX_QMMM_NN)
 
 struct t_nrnb;
 struct nonbonded_verlet_t;
@@ -363,6 +363,7 @@ enum {eqmmmVACUO,
       eqmmmSWITCH,
       eqmmmRFIELD,
       eqmmmSHIFT,
+      eqmmmNN,
       eqmmmNR};
 
 /*! \brief

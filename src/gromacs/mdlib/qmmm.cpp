@@ -145,6 +145,10 @@ static real call_QMroutine(const t_commrec*  cr,
     {
         return call_dftbplus(qr, cr, qm, *mm, f, fshift, nrnb, wcycle);
     }
+    else if (GMX_QMMM_NN)
+    {
+        return call_nn(qr, cr, qm, *mm, f, fshift, nrnb, wcycle);
+    }
     else
     {
         gmx_fatal(FARGS, "Unknown QM software -- should never land here :-/");
@@ -451,7 +455,7 @@ QMMM_rec::QMMM_rec(const t_commrec*                 cr,
                    const t_forcerec*                fr)
  //                const gmx_wallcycle_t gmx_unused wcycle)
 {
-#if GMX_QMMM
+//#if GMX_QMMM
     // Put the atom numbers of atoms that belong to the QMMM group
     // into an array that will be copied later to QMMMrec->indexQM[..].
     // Also, it will be used to create an index array QMMMrec->bQMMM[],
@@ -638,6 +642,10 @@ QMMM_rec::QMMM_rec(const t_commrec*                 cr,
         snew(qm[0].QMcharges, qm[0].nrQMatoms);
 
         init_dftbplus(&(qm[0]), this, ir, cr); //, wcycle);
+    }
+    else if (GMX_QMMM_NN)
+    {
+        init_nn(qm);
     }
     else
     {
