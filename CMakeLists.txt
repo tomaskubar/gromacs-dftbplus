@@ -240,7 +240,7 @@ gmx_option_multichoice(
     GMX_QMMM_PROGRAM
     "QM package for QM/MM"
     None
-    none gaussian mopac gamess orca dftbplus)
+    none gaussian mopac gamess orca dftbplus nn)
 
 option(GMX_PLUMED "Link with Plumed (requires 3 symlinks in Gromacs directory)" OFF)
 
@@ -669,6 +669,8 @@ elseif(${GMX_QMMM_PROGRAM} STREQUAL "ORCA")
     set(GMX_QMMM_ORCA 1)
 elseif(${GMX_QMMM_PROGRAM} STREQUAL "DFTBPLUS")
     set(GMX_QMMM_DFTBPLUS 1)
+elseif(${GMX_QMMM_PROGRAM} STREQUAL "NN")
+    set(GMX_QMMM_NN 1)
 elseif(${GMX_QMMM_PROGRAM} STREQUAL "NONE")
     # nothing to do
 else()

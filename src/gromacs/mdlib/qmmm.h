@@ -47,6 +47,10 @@
 #include "gromacs/mdlib/tgroup.h"
 #include "gromacs/utility/arrayref.h"
 #include "gromacs/timing/wallcycle.h"
+//#include "gromacs/mdlib/qm_nn.h"
+extern "C" {
+    #include "tensorflow/c/c_api.h"
+}
 
 //#include "gromacs/mdlib/qm_dftbplus.h"
 //#include "gromacs/mdlib/qm_gamess.h"
@@ -64,6 +68,20 @@ enum class PbcType : int;
 
 struct DftbPlus;
 struct Context;
+
+typedef struct {
+    TF_Graph*   Graph;
+    TF_Status*  Status;
+    TF_Session* Session;
+    int         NumInputs;
+    TF_Output*  Input;
+    int         NumOutputs;
+    TF_Output*  Output;
+    TF_Tensor** InputValues;
+    TF_Tensor** OutputValues;
+    int         nAtoms;
+    int*        atomicNumbers;
+}TFModel;
 
 // THIS STRUCTURE IS TENTATIVE,
 // JUST FOR THE BEGINNING.
@@ -193,10 +211,20 @@ private:
                               rvec              fshift[],
                               t_nrnb*           nrnb,
                               gmx_wallcycle_t   wcycle);
+    friend void init_nn(QMMM_QMrec*       qm);
+    friend real call_nn(const t_forcerec* fr,
+                              const t_commrec*  cr,
+                              QMMM_QMrec*       qm,
+                              QMMM_MMrec*       mm,
+                              rvec              f[],
+                              rvec              fshift[],
+                              t_nrnb*           nrnb,
+                              gmx_wallcycle_t   wcycle);
 
 public:
     DftbPlus        *dpcalc;        // DFTB+ calculator
     Context         *dftbContext;   // some data for DFTB+, referenced to by DFTB through *dpcalc
+    TFModel         *model;
 
     QMMM_QMgaussian  gaussian;
 

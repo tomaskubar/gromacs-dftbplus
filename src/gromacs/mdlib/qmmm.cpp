@@ -63,6 +63,7 @@
 #include "gromacs/mdlib/qm_gaussian.h"
 #include "gromacs/mdlib/qm_mopac.h"
 #include "gromacs/mdlib/qm_orca.h"
+#include "gromacs/mdlib/qm_nn.h"
 #include "gromacs/mdtypes/commrec.h"
 #include "gromacs/mdtypes/forceoutput.h"
 #include "gromacs/mdtypes/forcerec.h"
@@ -455,7 +456,7 @@ QMMM_rec::QMMM_rec(const t_commrec*                 cr,
                    const t_forcerec*                fr)
  //                const gmx_wallcycle_t gmx_unused wcycle)
 {
-//#if GMX_QMMM
+#if GMX_QMMM
     // Put the atom numbers of atoms that belong to the QMMM group
     // into an array that will be copied later to QMMMrec->indexQM[..].
     // Also, it will be used to create an index array QMMMrec->bQMMM[],
@@ -645,7 +646,89 @@ QMMM_rec::QMMM_rec(const t_commrec*                 cr,
     }
     else if (GMX_QMMM_NN)
     {
-        init_nn(qm);
+        // Look how the QM/MM electrostatics shall be treated.
+        // In the future, this could be performed for QM/MM in general,
+        //   not only with DFTB+.
+        char *env1 = getenv("GMX_QMMM_VARIANT");
+        char *env2 = getenv("GMX_QMMM_PME_DIPCOR");
+        if (env1 == nullptr)
+        {
+            qm[0].qmmm_variant = eqmmmVACUO;
+		    fprintf(stdout, "No electrostatic QM/MM interaction.\nTo change, set environment variable GMX_QMMM_VARIANT.\n");
+        }
+        else
+        {
+            sscanf(env1, "%d", &(qm[0].qmmm_variant));
+            switch (qm[0].qmmm_variant) {
+		    case eqmmmVACUO: // 0
+		                    fprintf(stdout, "No electrostatic QM/MM interaction.\n");
+		                    break;
+		    case eqmmmPME: // 1
+                {
+		               if (pbcType != PbcType::Xyz)
+                       {
+		                   fprintf(stderr, "PME treatment of QM/MM electrostatics only possible with triclinic periodic system!\n");
+		                   exit(-1);
+		               }
+		               fprintf(stdout, "Electrostatic QM/MM interaction calculated with full PME treatment.\n");
+
+                       pme.resize(2);
+                       pmedata              = &(fr->pmedata);
+                       QMMM_PME& pme_full   = pme[0];
+                       QMMM_PME& pme_qmonly = pme[1];
+
+                       // PME data structure for the entire system
+                       pme_full.x.resizeWithPadding(qm[0].nrQMatoms + mm_.nrMMatoms_full);
+                       pme_full.q.resize(qm[0].nrQMatoms + mm_.nrMMatoms_full);
+                       pme_full.f.resizeWithPadding(qm[0].nrQMatoms + mm_.nrMMatoms_full);
+                       snew(pme_full.pot, qm[0].nrQMatoms);
+                       
+                       // PME data structure for the QM-only system
+                       pme_qmonly.x.resizeWithPadding(qm[0].nrQMatoms);
+                       pme_qmonly.q.resize(qm[0].nrQMatoms);
+                       pme_qmonly.f.resizeWithPadding(qm[0].nrQMatoms);
+                       snew(pme_qmonly.pot, qm[0].nrQMatoms);
+                       
+                       if (env2 != nullptr)
+                       {
+                           pme_full.surf_corr_pme   = true;
+                           pme_full.epsilon_r       = qm[0].epsilon_r;
+                           pme_qmonly.surf_corr_pme = true;
+                           pme_qmonly.epsilon_r     = qm[0].epsilon_r;
+					       fprintf(stdout, "Dipole (surface) correction for QM/MM PME applied ");
+					       fprintf(stdout, "with a permittivity of %5.1f.\n", pme_qmonly.epsilon_r);
+					       fprintf(stdout, "\nCurrently disabled due to solvent molecules broken across box boundary!\nExiting!\n\n");
+                           exit(-1);
+                       }
+                       else
+                       {
+                           pme_full.surf_corr_pme   = false;
+                           pme_qmonly.surf_corr_pme = false;
+					       fprintf(stdout, "No dipole (surface) correction for QM/MM PME, i.e. tin-foil boundary conditions.\n");
+                       }
+		               break;
+                }
+			case eqmmmSWITCH: // 2
+		                 fprintf(stdout, "Electrostatic QM/MM interaction calculated with a switched cut-off.\n");
+		                 break;
+		    case eqmmmRFIELD: // 3
+		                 fprintf(stdout, "Electrostatic QM/MM interaction calculated with a reaction-field cut-off.\n");
+		                 break;
+		    case eqmmmSHIFT: // 4
+		                 fprintf(stdout, "Electrostatic QM/MM interaction calculated with a shifted cut-off.\n");
+		                 break;
+            case eqmmmNN: // 5
+		                 fprintf(stdout, "Electrostatic QM/MM interaction calculated with the whole box.\n");
+		                 break;
+		    default:
+		            fprintf(stderr, "Unrecognized choice for treatment of QM/MM electrostatics.\n");
+		            fprintf(stderr, "Set environment variable GMX_QMMM_VARIANT to either 0, 1, 2, 3, or 4.\n");
+	                exit(-1);
+		    }
+        }
+        snew(qm[0].QMcharges, qm[0].nrQMatoms);
+
+        init_nn(&qm[0]);
     }
     else
     {
