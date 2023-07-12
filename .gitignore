@@ -28,3 +28,4 @@ CMakeLists.txt.user
 Testing
 /.vs
 /CMakeSettings.json
+src/gromacs/tensorflow

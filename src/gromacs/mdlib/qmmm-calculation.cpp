@@ -254,6 +254,9 @@ void QMMM_rec::calculate_SR_QM_MM(int variant,
           printf("QM--MM exploding for QM=%d, MM=%d. MM charge is %f\n", j+1, k+1, mm_.MMcharges[k]);
           continue;
         }
+        else {
+          pot[j] += mm_.MMcharges[k] / r;
+        }
       } // for k
     } // for j
     break;

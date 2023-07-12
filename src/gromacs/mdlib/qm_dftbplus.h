@@ -32,7 +32,7 @@
  * To help us fund GROMACS development, we humbly ask that you cite
  * the research papers on the package. Check out http://www.gromacs.org.
  */
-//#include "gromacs/mdlib/qmmm.h"
+#include "gromacs/mdlib/qmmm.h"
 
 #ifndef GMX_MDLIB_QM_DFTBPLUS_H
 #define GMX_MDLIB_QM_DFTBPLUS_H

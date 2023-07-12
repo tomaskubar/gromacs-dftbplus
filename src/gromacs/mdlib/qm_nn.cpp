@@ -206,8 +206,8 @@ extern "C" void calcqmextpotgrad(void *refptr, gmx_unused double *q, double *ext
 void init_nn(QMMM_QMrec*       qm)
 {
     //********* Read model
-    //snew(qm->model, 1);
-
+    snew(qm->model, 1);
+    //printf("Hello from TensorFlow C library version %s\n", TF_Version());
     qm->model->Graph = TF_NewGraph();
     qm->model->Status = TF_NewStatus();
 
@@ -223,7 +223,7 @@ void init_nn(QMMM_QMrec*       qm)
     else {
         printf("Read model from path %s",saved_model_dir);
     }
-    const char* tags = "serve"; 
+    const char* tags = "serve";
     
     int ntags = 1;
     qm->model->Session = TF_LoadSessionFromSavedModel(SessionOpts, RunOpts, saved_model_dir, &tags, ntags, qm->model->Graph, NULL, qm->model->Status);
@@ -289,10 +289,10 @@ void init_nn(QMMM_QMrec*       qm)
         exit(-1);
     }
     else {
-        printf("Read charges from path %s",qm_charges_file);
+        printf("Read charges from path %s\n",qm_charges_file);
     }
 
-    FILE* file = fopen("testinput.txt", "r");
+    FILE* file = fopen(qm_charges_file, "r");
     if (file == NULL) {
         printf("Error opening charge file.\n");
         exit(-1);
@@ -340,7 +340,7 @@ real call_nn(QMMM_rec*         qr,
 
     int n = qm->nrQMatoms_get();
 
-    double *x, *grad, *pot, *potgrad, *q; // real instead of rvec, to help pass data to fortran
+    double *grad, *pot, *potgrad, *q; // real instead of rvec, to help pass data to fortran
     real *pot_sr = nullptr, *pot_lr = nullptr;
     rvec *QMgrad = nullptr, *MMgrad = nullptr, *MMgrad_full = nullptr;
 
@@ -460,7 +460,15 @@ real call_nn(QMMM_rec*         qr,
     int ndims = 3;
     int64_t dims[] = {1,n,4};
     
-    int ndata = sizeof(x); 
+    int ndata = sizeof(data);
+
+    // for (int i = 0; i < n; i++) {
+    // for (int j = 0; j < 4; j++) {
+    //     printf("%f ", data[0][i][j]);
+    // }
+    // printf("\n");
+    // }
+
     TF_Tensor* int_tensor = TF_NewTensor(TF_FLOAT, dims, ndims, data, ndata, &NoOpDeallocator, 0);
     
     if (int_tensor != NULL){
@@ -481,7 +489,9 @@ real call_nn(QMMM_rec*         qr,
       printf("%s",TF_Message(qm->model->Status));
     }
     float* predictions = (float*)TF_TensorData(qm->model->OutputValues[0]);
-
+    // for (int i=0; i<(3*n+1);i++){
+    //     printf("%f\n",predictions[i]);
+    // }
  // dftbp_set_coords(qm->dpcalc, x); // unit OK
  // dftbp_set_external_potential(qm->dpcalc, pot, potgrad); // unit and sign OK
  // dftbp_get_energy(qm->dpcalc, &QMener); // unit OK
@@ -492,14 +502,14 @@ real call_nn(QMMM_rec*         qr,
     wallcycle_stop(wcycle, ewcQM);
     QMener = predictions[0];
     /* Save the gradient on the QM atoms */
-    for (int i=0; i<n; i++)
+    for (int i=0; i<n+3; i++)
     {
         for (int j=0; j<3; j++)
         {
             QMgrad[i][j] = (real) - predictions[3*i+j+1]; // negative of force -- sign OK
         }
     }
-
+    printf("--------------------\n");
  // /* Print the QM pure gradient */
  // for (int i=0; i<n; i++)
  // {
@@ -536,7 +546,6 @@ real call_nn(QMMM_rec*         qr,
      //     QMgrad[i][XX] * HARTREE_BOHR2MD, QMgrad[i][YY] * HARTREE_BOHR2MD, QMgrad[i][ZZ] * HARTREE_BOHR2MD);
     }
     sfree(partgrad);
-
     /* Put the QMMM forces in the force array and to the fshift.
      * Convert to MD units.
      */
@@ -555,6 +564,12 @@ real call_nn(QMMM_rec*         qr,
             f[i+qm->nrQMatoms_get()][j]      = HARTREE_BOHR2MD*MMgrad[i][j];
          // fshift[i+qm.nrQMatoms_get()][j] = HARTREE_BOHR2MD*MMgrad[i][j];
         }
+    }
+    for (int i = 0; i < n; i++) {
+    for (int j = 0; j < 3; j++) {
+        printf("%f ", f[i][j]);
+    }
+    printf("\n");
     }
     if (qm->qmmm_variant_get() == eqmmmPME)
     {
@@ -630,7 +645,6 @@ real call_nn(QMMM_rec*         qr,
         sfree(MMgrad_full);
     }
 
-    sfree(x);
     sfree(grad);
     sfree(pot);
     sfree(potgrad);
