@@ -221,7 +221,7 @@ void init_nn(QMMM_QMrec*       qm)
         exit(-1);
     }
     else {
-        printf("Read model from path %s",saved_model_dir);
+        printf("Read model from path %s\n",saved_model_dir);
     }
     const char* tags = "serve";
     
@@ -337,10 +337,9 @@ real call_nn(QMMM_rec*         qr,
     double QMener;
  // bool lPme = (qm->qmmm_variant == eqmmmPME);
     (void) fshift;
-
     int n = qm->nrQMatoms_get();
 
-    double *grad, *pot, *potgrad, *q; // real instead of rvec, to help pass data to fortran
+    double *grad, *pot, *potgrad; // real instead of rvec, to help pass data to fortran
     real *pot_sr = nullptr, *pot_lr = nullptr;
     rvec *QMgrad = nullptr, *MMgrad = nullptr, *MMgrad_full = nullptr;
 
@@ -352,13 +351,13 @@ real call_nn(QMMM_rec*         qr,
     snew(potgrad, 3*n); // dummy parameter; not used at this moment
     for (int i=0; i<3*n; i++)
         potgrad[i] = 0.;
-    snew(q, n);
-    for (int i=0; i<n; i++)
-        q[i] = 0.;
+    // snew(q, n);
+    // for (int i=0; i<n; i++)
+    //     q[i] = 0.;
     snew(pot_sr, n);
     snew(pot_lr, n);
 
-    snew(QMgrad, qm->nrQMatoms_get());
+    snew(QMgrad, n);
 
     if (step == 0) {
         char *env;
@@ -471,23 +470,23 @@ real call_nn(QMMM_rec*         qr,
 
     TF_Tensor* int_tensor = TF_NewTensor(TF_FLOAT, dims, ndims, data, ndata, &NoOpDeallocator, 0);
     
-    if (int_tensor != NULL){
-        printf("TF_NewTensor is OK\n");
-    }
-    else {
-      printf("ERROR: Failed TF_NewTensor\n");
-    }
+    // if (int_tensor != NULL){
+    //     printf("TF_NewTensor is OK\n");
+    // }
+    // else {
+    //   printf("ERROR: Failed TF_NewTensor\n");
+    // }
     qm->model->InputValues[0] = int_tensor;
 
     // Run the Session
     TF_SessionRun(qm->model->Session, NULL, qm->model->Input, qm->model->InputValues, qm->model->NumInputs, qm->model->Output, qm->model->OutputValues, qm->model->NumOutputs, NULL, 0,NULL , qm->model->Status);
     
-    if(TF_GetCode(qm->model->Status) == TF_OK) {
-      printf("Session is OK\n");
-    }
-    else {
-      printf("%s",TF_Message(qm->model->Status));
-    }
+    // if(TF_GetCode(qm->model->Status) == TF_OK) {
+    //   printf("Session is OK\n");
+    // }
+    // else {
+    //   printf("%s",TF_Message(qm->model->Status));
+    // }
     float* predictions = (float*)TF_TensorData(qm->model->OutputValues[0]);
     // for (int i=0; i<(3*n+1);i++){
     //     printf("%f\n",predictions[i]);
@@ -502,14 +501,13 @@ real call_nn(QMMM_rec*         qr,
     wallcycle_stop(wcycle, ewcQM);
     QMener = predictions[0];
     /* Save the gradient on the QM atoms */
-    for (int i=0; i<n+3; i++)
+    for (int i=0; i<n; i++)
     {
         for (int j=0; j<3; j++)
         {
             QMgrad[i][j] = (real) - predictions[3*i+j+1]; // negative of force -- sign OK
         }
     }
-    printf("--------------------\n");
  // /* Print the QM pure gradient */
  // for (int i=0; i<n; i++)
  // {
@@ -565,12 +563,12 @@ real call_nn(QMMM_rec*         qr,
          // fshift[i+qm.nrQMatoms_get()][j] = HARTREE_BOHR2MD*MMgrad[i][j];
         }
     }
-    for (int i = 0; i < n; i++) {
-    for (int j = 0; j < 3; j++) {
-        printf("%f ", f[i][j]);
-    }
-    printf("\n");
-    }
+    // for (int i = 0; i < n; i++) {
+    // for (int j = 0; j < 3; j++) {
+    //     printf("%f ", f[i][j]);
+    // }
+    // printf("\n");
+    // }
     if (qm->qmmm_variant_get() == eqmmmPME)
     {
         for (int i = 0; i < mm.nrMMatoms_full; i++)
@@ -648,7 +646,7 @@ real call_nn(QMMM_rec*         qr,
     sfree(grad);
     sfree(pot);
     sfree(potgrad);
-    sfree(q);
+    //sfree(q);
     sfree(pot_sr);
     sfree(pot_lr);
 

@@ -727,7 +727,6 @@ QMMM_rec::QMMM_rec(const t_commrec*                 cr,
 		    }
         }
         snew(qm[0].QMcharges, qm[0].nrQMatoms);
-
         init_nn(&qm[0]);
     }
     else
