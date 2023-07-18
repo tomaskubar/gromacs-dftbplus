@@ -34,8 +34,6 @@
 # the research papers on the package. Check out http://www.gromacs.org.
 
 add_library(mdlib INTERFACE)
-add_library(libtensorflow SHARED IMPORTED)
-set_target_properties(libtensorflow PROPERTIES IMPORTED_LOCATION /usr/local/lib/libtensorflow.so)
 
 file(GLOB MDLIB_SOURCES *.cpp)
 # To avoid listing all the necessary files manually, we will remove SYCL-specfific one here:
@@ -60,7 +58,8 @@ if(GMX_GPU_SYCL)
         leapfrog_gpu_sycl.cpp
     )
 endif()
-
+add_library(libtensorflow SHARED IMPORTED)
+set_target_properties(libtensorflow PROPERTIES IMPORTED_LOCATION /usr/local/lib/libtensorflow.so)
 # Source files have the following private module dependencies.
 target_link_libraries(mdlib PRIVATE
 #                      gmxlib

@@ -445,7 +445,12 @@ if (GMX_CLANG_TIDY)
    set_target_properties(libgromacs PROPERTIES CXX_CLANG_TIDY
        "${CLANG_TIDY_EXE};-warnings-as-errors=*")
 endif()
-
+find_library(TENSORFLOW
+NAMES libtensorflow.so
+HINTS ${PATH_TO_LOOK_FOR})
+add_library(libtensorflow SHARED IMPORTED)
+set_target_properties(libtensorflow PROPERTIES IMPORTED_LOCATION ${TENSORFLOW})
+target_link_libraries(libgromacs PRIVATE libtensorflow)
 # clang-3.6 warns about a number of issues that are not reported by more modern compilers
 # and we know they are not real issues. So we only check that it can compile without error
 # but ignore all warnings.
