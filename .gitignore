@@ -22,6 +22,10 @@ lib*.pc
 .cproject
 .vscode
 build
+build_master
+build_test
+build2
+build_test1
 _build
 CMakeLists.txt.user
 /VersionInfo*.cmake
