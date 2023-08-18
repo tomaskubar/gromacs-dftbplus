@@ -671,6 +671,9 @@ elseif(${GMX_QMMM_PROGRAM} STREQUAL "DFTBPLUS")
     set(GMX_QMMM_DFTBPLUS 1)
 elseif(${GMX_QMMM_PROGRAM} STREQUAL "NN")
     set(GMX_QMMM_NN 1)
+    # Add tensorflow to the search path
+    include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../tensorflow)
+
 elseif(${GMX_QMMM_PROGRAM} STREQUAL "NONE")
     # nothing to do
 else()

@@ -39,6 +39,8 @@
 #
 
 add_executable(argon-forces-integration "")
+add_library(libtensorflow SHARED IMPORTED)
+set_target_properties(libtensorflow PROPERTIES IMPORTED_LOCATION /usr/local/lib/libtensorflow.so)
 
 target_sources(argon-forces-integration
         PRIVATE
@@ -89,3 +91,5 @@ if (GMX_QMMM_DFTBPLUS)
 
     target_link_libraries(argon-forces-integration PRIVATE libdftbplus libdftd3 libmudpack gfortran gomp)
 endif()
+
+target_link_libraries(libtensorflow)

@@ -88,8 +88,10 @@ typedef struct Context {
   real              ewaldcoeff_q;
 } Context;
 
-// extern "C" {void readdftbplusinput();}
-// extern "C" {void performdftbpluscalculation(real *e, int *n, real x[], real q[], real extshift[], real f[]);}
+void NoOpDeallocator(void* data, size_t a, void* b);
+void prepare_nn_inputs(QMMM_QMrec* qm);
+int factorial(int n);
+int permutations(int n, int r);
 
 /* Fill up the context (status structure) with all the relevant data
  */
@@ -148,8 +150,6 @@ void calcQMextPotPME(Context *cont, double *q, double *extpot)
 {
 //int n = cont->fr->qr->qm[0]->nrQMatoms;
   int n = cont->n;
-
-//printf("calcQMextPotPME: %s\n", setup ? "setup" : "calculation");
 
   if (cont->pme)
   {
@@ -238,83 +238,78 @@ void init_nn(QMMM_QMrec*       qm)
     }
 
     //****** Get input tensor
-    qm->model->NumInputs = 1;
+    qm->model->NumInputs = 11;
     qm->model->Input = (TF_Output*)malloc(sizeof(TF_Output) * qm->model->NumInputs);
-    TF_Output t0 = {TF_GraphOperationByName(qm->model->Graph, "serving_default_input_1"), 0};
     
-    if (t0.oper == NULL) {
-        printf("ERROR: Failed TF_GraphOperationByName serving_default_input_1\n");
-        exit(-1);
+    const char* base_name = "serving_default_args_0";
+    char operation_name[100];
+
+    for (int i=0; i<qm->model->NumInputs; i++) {
+        if (i == 0) {
+            strcpy(operation_name, base_name);
+        }
+        else {
+            snprintf(operation_name, sizeof(operation_name), "%s_%d", base_name, i);
+        }
+        TF_Output t = {TF_GraphOperationByName(qm->model->Graph, operation_name), 0};
+
+        if(t.oper == NULL) {
+            printf("ERROR: Failed TF_GraphOperationByName %s\n", operation_name);
+            exit(-1);
+        }
+        else {
+            printf("TF_GraphOperationByName %s is OK\n", operation_name);
+            qm->model->Input[i] = t;
+        }
     }
-    else {
-        printf("TF_GraphOperationByName serving_default_input_1 is OK\n");
-    }
-    qm->model->Input[0] = t0;
     
     //********* Get Output tensor
-    qm->model->NumOutputs = 1;
+    qm->model->NumOutputs = 3;
     qm->model->Output = (TF_Output*)malloc(sizeof(TF_Output) * qm->model->NumOutputs);
-    TF_Output t2 = {TF_GraphOperationByName(qm->model->Graph, "StatefulPartitionedCall"), 0};
+    TF_Output charge_output = {TF_GraphOperationByName(qm->model->Graph, "StatefulPartitionedCall"), 0};
+
+    if(charge_output.oper == NULL) {
+        printf("ERROR: Failed TF_GraphOperationByName StatefulPartitionedCall\n");
+        exit(-1);
+    }
+    else
+        printf("TF_GraphOperationByName StatefulPartitionedCall is OK\n");
     
-    if(t2.oper == NULL) {
+    qm->model->Output[0] = charge_output;
+
+    TF_Output energy_output = {TF_GraphOperationByName(qm->model->Graph, "StatefulPartitionedCall"), 1};
+
+    if(energy_output.oper == NULL) {
         printf("ERROR: Failed TF_GraphOperationByName StatefulPartitionedCall\n");
         exit(-1);
     }
     else {
       printf("TF_GraphOperationByName StatefulPartitionedCall is OK\n");
     }
-    qm->model->Output[0] = t2;
+    qm->model->Output[1] = energy_output;
 
+    TF_Output force_output = {TF_GraphOperationByName(qm->model->Graph, "StatefulPartitionedCall"), 2};
+
+    if(force_output.oper == NULL) {
+        printf("ERROR: Failed TF_GraphOperationByName StatefulPartitionedCall\n");
+        exit(-1);
+    }
+    else {
+      printf("TF_GraphOperationByName StatefulPartitionedCall is OK\n");
+    }
+    qm->model->Output[2] = force_output;
+
+    // Allocate data for inputs & outputs
     qm->model->InputValues  = (TF_Tensor**)malloc(sizeof(TF_Tensor*)*qm->model->NumInputs);
     qm->model->OutputValues = (TF_Tensor**)malloc(sizeof(TF_Tensor*)*qm->model->NumOutputs);
     
     TF_DeleteSessionOptions(SessionOpts);
     TF_DeleteBuffer(RunOpts);
-    
-    /* Pass the list of QM atoms to DFTB+ */
-    qm->model->nAtoms = qm->nrQMatoms_get();
-    snew(qm->model->atomicNumbers, qm->model->nAtoms);
-    
-    // read the atomic numbers of QM atoms, and set up the lists
-    for (int i=0; i<qm->model->nAtoms; i++)
-    {
-        qm->model->atomicNumbers[i] = qm->atomicnumberQM_get(i);
-    }
-
-    //read charges of QM atoms from file
-    char* qm_charges_file; 
-    if ((qm_charges_file = getenv("GMX_QMCHARGES_FILE")) == nullptr)
-    {
-        printf("Path to QM charges must be given in the env variable GMX_QMCHARGES_FILE\n");
-        exit(-1);
-    }
-    else {
-        printf("Read charges from path %s\n",qm_charges_file);
-    }
-
-    FILE* file = fopen(qm_charges_file, "r");
-    if (file == NULL) {
-        printf("Error opening charge file.\n");
-        exit(-1);
-    }
-    float q[qm->model->nAtoms];
-    int numValues = 0;
-    while (fscanf(file, "%f", &q[numValues]) == 1) {
-        numValues++;
-        if (numValues == qm->model->nAtoms) {
-            printf("QM charges read.\n");
-            break;
-        }
-    }
-    fclose(file);
-    for (int i=0; i<qm->model->nAtoms; i++)
-    {
-        qm->QMcharges_set(i, (real) q[i]); // sign OK
-    }
 
     return;
-} /* init_dftbplus */
-void NoOpDeallocator(void* data, size_t a, void* b) {}
+} /* init_nn */
+
+void NoOpDeallocator(void* data, size_t a, void* b) {(void) b; if (a > 0) {free(data);}}
 real call_nn(QMMM_rec*         qr,
                    const t_commrec*  cr,
                    QMMM_QMrec*       qm,
@@ -358,7 +353,7 @@ real call_nn(QMMM_rec*         qr,
     snew(pot_sr, n);
     snew(pot_lr, n);
 
-    snew(QMgrad, qm->nrQMatoms_get());
+    snew(QMgrad, n);
 
     if (step == 0) {
         char *env;
@@ -392,15 +387,6 @@ real call_nn(QMMM_rec*         qr,
         }
     }
 
-    float data[1][n][4];
-    for (int i=0; i<n; i++)
-    {
-        for (int j=0; j<DIM; j++)
-        {
-            data[0][i][j] = qm->xQM_get(i,j) / BOHR2NM; // to bohr units for DFTB+, Manus Model also expects Bohr
-        }
-    }
-
     /* calculate the QM/MM electrostatics beforehand with Gromacs!
      * with cut-off treatment, this will be the entire QM/MM
      * with PME, this will only include MM atoms,
@@ -429,55 +415,11 @@ real call_nn(QMMM_rec*         qr,
     {
         qm->pot_qmmm_set(j, (double) - pot[j] * HARTREE_TO_EV); // in volt units
     }
- // // DEBUG
- // for (int i=0; i<n; i++)
- //     printf("pot_sr[%d] = %9.5f pot_lr[%d] = %9.5f\n", i+1, pot_sr[i], i+1, pot_lr[i]);
 
-    /* Set up the data structures needed for the PME calculation
-	 *   of QM--imageQM electrostatics.
-	 * During the iterative SCC calculation, this routine will be called
-	 *   directly from DFTB+, and will use those data structures.
-	 */
- //  calcQMextPotPME(nullptr, nullptr, true, lPme, fr, cr, wcycle, fr->rcoulomb, fr->ewaldcoeff_q);
-    /* This was already done in the initialization procedure! */
-
-    // for (int i=0; i<n; i++)
-    // {
-    //     q[i] = 0.;
-    // }
-
-    //concat x reshaped with pot MANU to data
-    for (int i=0; i<n; i++) {
-        // for (int j=0; j<3; j++) {
-        //     data[0][i][j]=x[i][j];  //x,y,z in Bohr
-        // }
-        data[0][i][3]=pot[i];   //ESP in Bohr
-    }
-
-    /* DFTB+ calculation itself */
+    /* NN call itself */
     wallcycle_start(wcycle, ewcQM);
 
-    int ndims = 3;
-    int64_t dims[] = {1,n,4};
-    
-    int ndata = sizeof(data);
-
-    // for (int i = 0; i < n; i++) {
-    // for (int j = 0; j < 4; j++) {
-    //     printf("%f ", data[0][i][j]);
-    // }
-    // printf("\n");
-    // }
-
-    TF_Tensor* int_tensor = TF_NewTensor(TF_FLOAT, dims, ndims, data, ndata, &NoOpDeallocator, 0);
-    
-    if (int_tensor != NULL){
-        printf("TF_NewTensor is OK\n");
-    }
-    else {
-      printf("ERROR: Failed TF_NewTensor\n");
-    }
-    qm->model->InputValues[0] = int_tensor;
+    prepare_nn_inputs(qm);
 
     // Run the Session
     TF_SessionRun(qm->model->Session, NULL, qm->model->Input, qm->model->InputValues, qm->model->NumInputs, qm->model->Output, qm->model->OutputValues, qm->model->NumOutputs, NULL, 0,NULL , qm->model->Status);
@@ -488,41 +430,29 @@ real call_nn(QMMM_rec*         qr,
     else {
       printf("%s",TF_Message(qm->model->Status));
     }
-    float* predictions = (float*)TF_TensorData(qm->model->OutputValues[0]);
-    // for (int i=0; i<(3*n+1);i++){
-    //     printf("%f\n",predictions[i]);
-    // }
- // dftbp_set_coords(qm->dpcalc, x); // unit OK
- // dftbp_set_external_potential(qm->dpcalc, pot, potgrad); // unit and sign OK
- // dftbp_get_energy(qm->dpcalc, &QMener); // unit OK
- // dftbp_get_gross_charges(qm->dpcalc, q);
- // for (int i=0; i<n; i++)
- //     printf("%d %6.3f\n", i+1, q[i]);
- // dftbp_get_gradients(qm->dpcalc, grad);
+    float* charge_predictions = (float*)TF_TensorData(qm->model->OutputValues[0]); // in e-
+    float* energy_predictions = (float*)TF_TensorData(qm->model->OutputValues[1]); // in Hartree
+    float* force_predictions = (float*)TF_TensorData(qm->model->OutputValues[2]); // in Hartree/Bohr
+
     wallcycle_stop(wcycle, ewcQM);
-    QMener = predictions[0];
+
+    /* Save the QM charges */
+    for (int i=0; i<n; i++)
+    {
+        qm->QMcharges_set(i, (real) charge_predictions[i]); // sign OK
+     // printf("CHECK CHARGE QM[%d] = %6.3f\n", i+1, qm->QMcharges[i]);
+    }
+    
+    QMener = energy_predictions[0];
+
     /* Save the gradient on the QM atoms */
-    for (int i=0; i<n+3; i++)
+    for (int i=0; i<n; i++)
     {
         for (int j=0; j<3; j++)
         {
-            QMgrad[i][j] = (real) - predictions[3*i+j+1]; // negative of force -- sign OK
+            QMgrad[i][j] = (real) - force_predictions[3*i+j]; // negative of force -- sign OK
         }
     }
-    printf("--------------------\n");
- // /* Print the QM pure gradient */
- // for (int i=0; i<n; i++)
- // {
- //     printf("GRAD QM %d: %8.2f %8.2f %8.2f\n", i+1,
- //         QMgrad[i][XX] * HARTREE_BOHR2MD, QMgrad[i][YY] * HARTREE_BOHR2MD, QMgrad[i][ZZ] * HARTREE_BOHR2MD);
- // }
-
-    /* Save the QM charges */
-    // for (int i=0; i<n; i++)
-    // {
-    //     qm->QMcharges_set(i, (real) q[i]); // sign OK
-    //  // printf("CHECK CHARGE QM[%d] = %6.3f\n", i+1, qm->QMcharges[i]);
-    // }
 
     /* Calculate the QM/MM forces
      *   (these are not covered by DTFB+,
@@ -657,7 +587,248 @@ real call_nn(QMMM_rec*         qr,
     return (real) QMener * HARTREE2KJ * AVOGADRO;
 } /* call_nn */
 
-/* end of dftbplus sub routines */
+// responsible for putting correct NN inputs into qm->model->Input_values
+void prepare_nn_inputs(QMMM_QMrec* qm)
+{
+    int nAtoms = qm->nrQMatoms_get();
+
+    // node number flat values 0
+    int ndims_0 = 1;
+    int64_t dims_0[] = {nAtoms};
+    int64_t data_0[nAtoms] = {};
+    for (int i=0; i<nAtoms; i++)
+    {
+        data_0[i] = qm->atomicnumberQM_get(i);
+    }
+    int ndata_0 = sizeof(data_0);
+
+    TF_Tensor* int_tensor_0 = TF_NewTensor(TF_INT64, dims_0, ndims_0, data_0, ndata_0, &NoOpDeallocator, 0);
+
+    if (int_tensor_0 != NULL) {
+        printf("TF_NewTensor is OK\n");
+        qm->model->InputValues[0] = int_tensor_0;
+    }
+    else {
+        printf("ERROR: Failed TF_NewTensor\n");
+        exit(-1);
+    }
+
+    // node number row splits 1
+    int ndims_1 = 1;
+    int64_t dims_1[] = {2};
+    int64_t data_1[2] = {0, nAtoms};
+    
+    int ndata_1 = sizeof(data_1); 
+    TF_Tensor* int_tensor_1 = TF_NewTensor(TF_INT64, dims_1, ndims_1, data_1, ndata_1, &NoOpDeallocator, 0);
+    
+    if (int_tensor_1 != NULL) {
+        printf("TF_NewTensor is OK\n");
+        qm->model->InputValues[1] = int_tensor_1;
+    }
+    else {
+        printf("ERROR: Failed TF_NewTensor\n");
+        exit(-1);
+    }
+
+    // node coordinates flat values 2
+    int ndims_2 = 2;
+    int64_t dims_2[] = {nAtoms, 3};
+    float data_2[nAtoms][3] = {};
+    for (int i=0; i<nAtoms; i++)
+    {
+        for (int j=0; j<3; j++)
+        {
+            data_2[i][j] = qm->xQM_get(i,j) / BOHR2NM; // to bohr units for Lukas model
+        }
+    }
+
+    int ndata_2 = sizeof(data_2); 
+    TF_Tensor* int_tensor_2 = TF_NewTensor(TF_FLOAT, dims_2, ndims_2, data_2, ndata_2, &NoOpDeallocator, 0);
+
+    if (int_tensor_2 != NULL) {
+        printf("TF_NewTensor is OK\n");
+        qm->model->InputValues[2] = int_tensor_2;
+    }
+    else {
+        printf("ERROR: Failed TF_NewTensor\n");
+        exit(-1);
+    }
+
+    // node coordinates row splits 3
+    TF_Tensor* int_tensor_3 = int_tensor_1;
+    
+    if (int_tensor_3 != NULL) {
+        printf("TF_NewTensor is OK\n");
+        qm->model->InputValues[3] = int_tensor_3;
+    }
+    else {
+        printf("ERROR: Failed TF_NewTensor\n");
+        exit(-1);
+    }
+
+    // edge indces flat values 4
+    int nEdgeCombinations = permutations(nAtoms, 2);
+    int ndims_4 = 2;
+    int64_t dims_4[] = {nEdgeCombinations, 2};
+    int64_t data_4[nAtoms][2] = {};
+
+    int index = 0;
+    for (int i=0; i<nAtoms; i++)
+    {
+        for (int j=i+1; j<nAtoms; j++)
+        {
+            data_4[index][0] = i;
+            data_4[index][1] = j;
+            index++;
+        }
+    }
+
+    int ndata_4 = sizeof(data_4); 
+    TF_Tensor* int_tensor_4 = TF_NewTensor(TF_INT64, dims_4, ndims_4, data_4, ndata_4, &NoOpDeallocator, 0);
+
+    if (int_tensor_4 != NULL) {
+        printf("TF_NewTensor is OK\n");
+        qm->model->InputValues[4] = int_tensor_4;
+    }
+    else {
+        printf("ERROR: Failed TF_NewTensor\n");
+        exit(-1);
+    }
+
+    // edge indces row splits 5
+    int ndims_5 = 1;
+    int64_t dims_5[] = {2};
+    int64_t data_5[2] = {0, nEdgeCombinations};
+    
+    int ndata_5 = sizeof(data_5); 
+    TF_Tensor* int_tensor_5 = TF_NewTensor(TF_INT64, dims_5, ndims_5, data_5, ndata_5, &NoOpDeallocator, 0);
+    
+    if (int_tensor_5 != NULL) {
+        printf("TF_NewTensor is OK\n");
+        qm->model->InputValues[5] = int_tensor_5;
+    }
+    else {
+        printf("ERROR: Failed TF_NewTensor\n");
+        exit(-1);
+    }
+
+    // angle indces flat values 6
+    int nAngleCombinations = permutations(nAtoms, 3);
+    int ndims_6 = 2;
+    int64_t dims_6[] = {nAngleCombinations, 3};
+    int64_t data_6[nAngleCombinations][3] = {};
+
+    index = 0;
+    for (int i=0; i<nAtoms; i++)
+    {
+        for (int j=i+1; j<nAtoms; j++)
+        {
+            for (int k=i+1; j<nAtoms; j++)
+            {
+                data_6[index][0] = i;
+                data_6[index][1] = j;
+                data_6[index][2] = k;
+                index++;
+            }
+        }
+    }
+
+    int ndata_6 = sizeof(data_6); 
+    TF_Tensor* int_tensor_6 = TF_NewTensor(TF_INT64, dims_6, ndims_6, data_6, ndata_6, &NoOpDeallocator, 0);
+    
+    if (int_tensor_6 != NULL) {
+        printf("TF_NewTensor is OK\n");
+        qm->model->InputValues[6] = int_tensor_6;
+    }
+    else {
+        printf("ERROR: Failed TF_NewTensor\n");
+        exit(-1);
+    }
+
+    // angle indces row splits 7
+    int ndims_7 = 1;
+    int64_t dims_7[] = {2};
+    int64_t data_7[2] = {0, nAtoms};
+
+    int ndata_7 = sizeof(data_7); 
+    TF_Tensor* int_tensor_7 = TF_NewTensor(TF_INT64, dims_7, ndims_7, data_7, ndata_7, &NoOpDeallocator, 0);
+    
+    if (int_tensor_7 != NULL) {
+        printf("TF_NewTensor is OK\n");
+        qm->model->InputValues[7] = int_tensor_7;
+    }
+    else {
+        printf("ERROR: Failed TF_NewTensor\n");
+        exit(-1);
+    }
+
+    // total charge 8
+    int ndims_8 = 1;
+    int64_t dims_8[] = {1};
+    float data_8[1] = {(float)qm->QMcharge_get()};
+    
+    int ndata_8 = sizeof(data_8); 
+    TF_Tensor* int_tensor_8 = TF_NewTensor(TF_FLOAT, dims_8, ndims_8, data_8, ndata_8, &NoOpDeallocator, 0);
+    
+    if (int_tensor_8 != NULL) {
+        printf("TF_NewTensor is OK\n");
+        qm->model->InputValues[8] = int_tensor_8;
+    }
+    else {
+        printf("ERROR: Failed TF_NewTensor\n");
+        exit(-1);
+    }
+
+    // esp flat values 9
+    int ndims_9 = 1;
+    int64_t dims_9[] = {nAtoms};
+    float data_9[nAtoms] = {};
+    for (int i=0; i<nAtoms; i++)
+    {
+        qm->pot_qmmm_get(i); // in volt units
+    }
+
+    int ndata_9 = sizeof(data_9); 
+    TF_Tensor* int_tensor_9 = TF_NewTensor(TF_FLOAT, dims_9, ndims_9, data_9, ndata_9, &NoOpDeallocator, 0);
+    
+    if (int_tensor_9 != NULL) {
+        printf("TF_NewTensor is OK\n");
+        qm->model->InputValues[9] = int_tensor_9;
+    }
+    else {
+        printf("ERROR: Failed TF_NewTensor\n");
+        exit(-1);
+    }
+
+    // esp row splits 10
+    TF_Tensor* int_tensor_10 = int_tensor_1;
+    
+    if (int_tensor_10 != NULL) {
+        printf("TF_NewTensor is OK\n");
+        qm->model->InputValues[10] = int_tensor_10;
+    }
+    else {
+        printf("ERROR: Failed TF_NewTensor\n");
+        exit(-1);
+    }
+
+    return;
+} //prepare_nn_inputs
+
+// Function to calculate the factorial of a number
+int factorial(int n) {
+    if (n == 0 || n == 1)
+        return 1;
+    else
+        return n * factorial(n - 1);
+}
+
+// Function to calculate permutations
+int permutations(int n, int r) {
+    return factorial(n) / factorial(n - r);
+}
+
+/* end of nn sub routines */
 
 #endif
 
