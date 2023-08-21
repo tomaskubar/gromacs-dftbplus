@@ -90,8 +90,6 @@ typedef struct Context {
 
 void NoOpDeallocator(void* data, size_t a, void* b);
 void prepare_nn_inputs(QMMM_QMrec* qm);
-int factorial(int n);
-int permutations(int n, int r);
 
 /* Fill up the context (status structure) with all the relevant data
  */
@@ -309,7 +307,7 @@ void init_nn(QMMM_QMrec*       qm)
     return;
 } /* init_nn */
 
-void NoOpDeallocator(void* data, size_t a, void* b) {(void) b; if (a > 0) {free(data);}}
+void NoOpDeallocator(void* data, size_t a, void* b) {(void) b; if (a > 0) {(void) data;}} //Nonsense Deallocator to make compiler happy
 real call_nn(QMMM_rec*         qr,
                    const t_commrec*  cr,
                    QMMM_QMrec*       qm,
@@ -422,7 +420,10 @@ real call_nn(QMMM_rec*         qr,
     prepare_nn_inputs(qm);
 
     // Run the Session
-    TF_SessionRun(qm->model->Session, NULL, qm->model->Input, qm->model->InputValues, qm->model->NumInputs, qm->model->Output, qm->model->OutputValues, qm->model->NumOutputs, NULL, 0,NULL , qm->model->Status);
+    TF_SessionRun(qm->model->Session, NULL,
+        qm->model->Input, qm->model->InputValues, qm->model->NumInputs,
+        qm->model->Output, qm->model->OutputValues, qm->model->NumOutputs,
+        NULL, 0, NULL, qm->model->Status);
     
     if(TF_GetCode(qm->model->Status) == TF_OK) {
       printf("Session is OK\n");
@@ -602,6 +603,12 @@ void prepare_nn_inputs(QMMM_QMrec* qm)
     }
     int ndata_0 = sizeof(data_0);
 
+    // Print content of data for debugging
+    // for (int i=0; i<nAtoms; i++)
+    // {
+    //     printf("%d\n", data_0[i]); 
+    // }
+
     TF_Tensor* int_tensor_0 = TF_NewTensor(TF_INT64, dims_0, ndims_0, data_0, ndata_0, &NoOpDeallocator, 0);
 
     if (int_tensor_0 != NULL) {
@@ -617,6 +624,11 @@ void prepare_nn_inputs(QMMM_QMrec* qm)
     int ndims_1 = 1;
     int64_t dims_1[] = {2};
     int64_t data_1[2] = {0, nAtoms};
+
+    //for (int i=0; i<2; i++)
+    // {
+    //     printf("%d\n", data_1[i]); 
+    // }
     
     int ndata_1 = sizeof(data_1); 
     TF_Tensor* int_tensor_1 = TF_NewTensor(TF_INT64, dims_1, ndims_1, data_1, ndata_1, &NoOpDeallocator, 0);
@@ -641,6 +653,11 @@ void prepare_nn_inputs(QMMM_QMrec* qm)
             data_2[i][j] = qm->xQM_get(i,j) / BOHR2NM; // to bohr units for Lukas model
         }
     }
+
+    // for (int i=0; i<nAtoms; i++)
+    // {
+    //     printf("%f,%f,%f\n", data_2[i][0], data_2[i][1], data_2[i][1]); 
+    // }
 
     int ndata_2 = sizeof(data_2); 
     TF_Tensor* int_tensor_2 = TF_NewTensor(TF_FLOAT, dims_2, ndims_2, data_2, ndata_2, &NoOpDeallocator, 0);
@@ -667,14 +684,13 @@ void prepare_nn_inputs(QMMM_QMrec* qm)
     }
 
     // edge indces flat values 4
-    int nEdgeCombinations = permutations(nAtoms, 2);
+    int nEdgeCombinations = nAtoms*(nAtoms-1)/2; // Cheap Binomialcoeffient (nAtoms 2)
     int ndims_4 = 2;
     int64_t dims_4[] = {nEdgeCombinations, 2};
-    int64_t data_4[nAtoms][2] = {};
-
+    int64_t data_4[nEdgeCombinations][2] = {};
     int index = 0;
     for (int i=0; i<nAtoms; i++)
-    {
+    {   
         for (int j=i+1; j<nAtoms; j++)
         {
             data_4[index][0] = i;
@@ -682,6 +698,11 @@ void prepare_nn_inputs(QMMM_QMrec* qm)
             index++;
         }
     }
+
+    // for (int i=0; i<nEdgeCombinations; i++)
+    // {
+    //     printf("%d,%d\n", data_4[i][0],  data_4[i][1]); 
+    // }
 
     int ndata_4 = sizeof(data_4); 
     TF_Tensor* int_tensor_4 = TF_NewTensor(TF_INT64, dims_4, ndims_4, data_4, ndata_4, &NoOpDeallocator, 0);
@@ -713,7 +734,7 @@ void prepare_nn_inputs(QMMM_QMrec* qm)
     }
 
     // angle indces flat values 6
-    int nAngleCombinations = permutations(nAtoms, 3);
+    int nAngleCombinations = nAtoms*(nAtoms-1)*(nAtoms-2)/6; // Cheap Binomialcoeffient (nAtoms 3)
     int ndims_6 = 2;
     int64_t dims_6[] = {nAngleCombinations, 3};
     int64_t data_6[nAngleCombinations][3] = {};
@@ -723,7 +744,7 @@ void prepare_nn_inputs(QMMM_QMrec* qm)
     {
         for (int j=i+1; j<nAtoms; j++)
         {
-            for (int k=i+1; j<nAtoms; j++)
+            for (int k=j+1; k<nAtoms; k++)
             {
                 data_6[index][0] = i;
                 data_6[index][1] = j;
@@ -732,6 +753,11 @@ void prepare_nn_inputs(QMMM_QMrec* qm)
             }
         }
     }
+
+    // for (int i=0; i<nAngleCombinations; i++)
+    // {
+    //     printf("%d,%d,%d\n", data_6[i][0],  data_6[i][1], data_6[i][2]); 
+    // }
 
     int ndata_6 = sizeof(data_6); 
     TF_Tensor* int_tensor_6 = TF_NewTensor(TF_INT64, dims_6, ndims_6, data_6, ndata_6, &NoOpDeallocator, 0);
@@ -748,7 +774,7 @@ void prepare_nn_inputs(QMMM_QMrec* qm)
     // angle indces row splits 7
     int ndims_7 = 1;
     int64_t dims_7[] = {2};
-    int64_t data_7[2] = {0, nAtoms};
+    int64_t data_7[2] = {0, nAngleCombinations};
 
     int ndata_7 = sizeof(data_7); 
     TF_Tensor* int_tensor_7 = TF_NewTensor(TF_INT64, dims_7, ndims_7, data_7, ndata_7, &NoOpDeallocator, 0);
@@ -814,19 +840,6 @@ void prepare_nn_inputs(QMMM_QMrec* qm)
 
     return;
 } //prepare_nn_inputs
-
-// Function to calculate the factorial of a number
-int factorial(int n) {
-    if (n == 0 || n == 1)
-        return 1;
-    else
-        return n * factorial(n - 1);
-}
-
-// Function to calculate permutations
-int permutations(int n, int r) {
-    return factorial(n) / factorial(n - r);
-}
 
 /* end of nn sub routines */
 
