@@ -33,10 +33,10 @@
  */
 /*! \internal \file
  * \brief
- * Defines data structure and utilities for magnetic fields
+ * Defines data structure and utilities for magnetic fields.
+ * Adopted from those for electric field by David van der Spoel.
  *
  * \author Tomáš Kubař <tomas.kubar@kit.edu>
- * \author David van der Spoel <david.vanderspoel@icm.uu.se>
  * \ingroup module_applied_forces
  */
 #include "gmxpre.h"
@@ -74,12 +74,43 @@ namespace
 {
 
 /*! \internal
+ * \brief Describes an applied magnetic field in a coordinate
+ * dimension.
+ *
+ * Supports operations to read and form corresponding .mdp contents.
+ */
+class MagneticFieldDimension
+{
+public:
+    /*! \brief
+     * Adds an option section to specify parameters for this field component.
+     */
+    void initMdpOptions(IOptionsContainerWithSections* options, const char* sectionName)
+    {
+        auto section = options->addSection(OptionSection(sectionName));
+        section.addOption(RealOption("B0").store(&b_));
+    }
+    /*! \brief
+     * Creates mdp parameters for this field component.
+     */
+    void buildMdpOutput(KeyValueTreeObjectBuilder* builder, const std::string& name) const
+    {
+        builder->addUniformArray<real>("magnetic-field-" + name, { b_ });
+    }
+
+    //! Return the amplitude
+    real b() const { return b_; }
+
+private:
+    //! The component of the magnetic field  (10^9 / 96485 T)
+    real b_ = 0;
+};
+
+/*! \internal
  * \brief Describes an external magnetic field
  *
  * Class that implements a force to be evaluated in mdrun.
  * The magnetic field is constant.
- *
- * Supports operations to read and form corresponding .mdp contents.
  */
 class MagneticField final : public IMDModule, public IMdpOptionProvider, public IMDOutputProvider, public IForceProvider
 {
@@ -124,12 +155,10 @@ private:
     real field(int dim) const;
 
     //! The components of the magnetic field  (10^9 / 96485 T)
-    real b0x_ = 0;
-    real b0y_ = 0;
-    real b0z_ = 0;
+    //  in each coordinate dimension
+    MagneticFieldDimension mfield_[DIM];
 };
 
-//! Converts dynamic parameters from new mdp format to (B0_x, B0_y, B0_z).
 void convertParameters(gmx::KeyValueTreeObjectBuilder* builder, const std::string& value)
 {
     const std::vector<std::string> sxt = splitString(value);
@@ -137,13 +166,11 @@ void convertParameters(gmx::KeyValueTreeObjectBuilder* builder, const std::strin
     {
         return;
     }
-    if (sxt.size() != 3)
+    if (sxt.size() != 1)
     {
-        GMX_THROW(InvalidInputError("Please specify 3 components (x, y, z) for the magnetic field"));
+        GMX_THROW(InvalidInputError("Please specify 1 component for the magnetic field"));
     }
-    builder->addValue<real>("magnetic-field-x", fromString<real>(sxt[0]));
-    builder->addValue<real>("magnetic-field-y", fromString<real>(sxt[1]));
-    builder->addValue<real>("magnetic-field-z", fromString<real>(sxt[2]));
+    builder->addValue<real>("B0", fromString<real>(sxt[0]));
 }
 
 void MagneticField::initMdpTransform(IKeyValueTreeTransformRules* rules)
@@ -153,12 +180,12 @@ void MagneticField::initMdpTransform(IKeyValueTreeTransformRules* rules)
     rules->addRule().from<std::string>("/magnetic-field-z").toObject("/magnetic-field/z").transformWith(&convertParameters);
 }
 
-void MagneticField::initMdpOptions(IOptionsContainerWithSections* options) //, const char* sectionName)
+void MagneticField::initMdpOptions(IOptionsContainerWithSections* options)
 {
     auto section = options->addSection(OptionSection("magnetic-field"));
-    section.addOption(RealOption("-x").store(&b0x_));
-    section.addOption(RealOption("-y").store(&b0y_));
-    section.addOption(RealOption("-z").store(&b0z_));
+    mfield_[XX].initMdpOptions(&section, "x");
+    mfield_[YY].initMdpOptions(&section, "y");
+    mfield_[ZZ].initMdpOptions(&section, "z");
 }
 
 
@@ -166,12 +193,12 @@ void MagneticField::buildMdpOutput(KeyValueTreeObjectBuilder* builder) const
 {
     std::string comment =
             R"(; Magnetic fields
-; Format is: three real variables, magnetic-field-x magentic-field-y
-; magnetic-field-z (unit T).)";
+; Format for magnetic-field-x, etc. is: a single real variable,
+; component of constant mag. field (unit T).)";
     builder->addValue<std::string>("comment-magnetic-field", comment);
-    builder->addValue<real>("magnetic-field-x",  b0x_);
-    builder->addValue<real>("magnetic-field-y",  b0y_);
-    builder->addValue<real>("magnetic-field-z",  b0z_);
+    mfield_[XX].buildMdpOutput(builder, "x");
+    mfield_[YY].buildMdpOutput(builder, "y");
+    mfield_[ZZ].buildMdpOutput(builder, "z");
 }
 
 
@@ -179,8 +206,9 @@ void MagneticField::initOutput(FILE* fplog, int nfile, const t_filenm fnm[], boo
 {
     if (isActive())
     {
-        // TODO: replace with any relevant reference?
-        please_cite(fplog, "Caleman2008a");
+        // Is there any relevant reference?
+        (void) fplog;
+        //please_cite(fplog, "Caleman2008a");
         // keep the compiler silent
         (void) nfile;
         (void) fnm;
@@ -195,16 +223,12 @@ void MagneticField::finishOutput()
 
 real MagneticField::field(int dim) const
 {
-    switch (dim) {
-        case XX: return b0x_;
-        case YY: return b0y_;
-        case ZZ: return b0z_;
-    }
+    return mfield_[dim].b();
 }
 
 bool MagneticField::isActive() const
 {
-    return (b0x_ != 0 || b0y_ != 0 || b0z_ != 0);
+    return (mfield_[XX].b() != 0 || mfield_[YY].b() != 0 || mfield_[ZZ].b() != 0);
 }
 
 void MagneticField::calculateForces(const ForceProviderInput& forceProviderInput,
