@@ -121,14 +121,14 @@ void initialize_context(Context*          cont,
   }
   printf("qmmm_variant = %d\n", qmmm_variant);
   printf("cont->pme = %s\n", cont->pme ? "true" : "false");
-//cont->n = fr_in->qr->qm[0].nrQMatoms; // object qr not available yet!
+  //cont->n = fr_in->qr->qm[0].nrQMatoms; // object qr not available yet!
   cont->n = nrQMatoms;
   printf("cont->n = %d\n", cont->n);
   if (cont->pme)
   {
       cont->cr           = cr_in;
       cont->qr           = qr_in;
-   // cont->wcycle       = wcycle_in;
+      // cont->wcycle       = wcycle_in;
       cont->rcoul        = ir_in->rcoulomb;
       cont->ewaldcoeff_q = calc_ewaldcoeff_q(ir_in->rcoulomb, ir_in->ewald_rtol);
       printf("cont->cr = %p\n", cont->cr);
@@ -236,7 +236,7 @@ void init_nn(QMMM_QMrec*       qm)
     }
 
     //****** Get input tensor
-    qm->model->NumInputs = 11;
+    qm->model->NumInputs = 13;
     qm->model->Input = (TF_Output*)malloc(sizeof(TF_Output) * qm->model->NumInputs);
     
     const char* base_name = "serving_default_args_0";
@@ -336,6 +336,7 @@ real call_nn(QMMM_rec*         qr,
     double *grad, *pot, *potgrad, *q; // real instead of rvec, to help pass data to fortran
     real *pot_sr = nullptr, *pot_lr = nullptr;
     rvec *QMgrad = nullptr, *MMgrad = nullptr, *MMgrad_full = nullptr;
+    rvec *ESPgrad = nullptr, *ESPgrad_full = nullptr;
 
     //snew(x, (n,3));
     snew(grad, 3*n);
@@ -426,7 +427,7 @@ real call_nn(QMMM_rec*         qr,
     for (int i=0; i<nAtoms; i++)
     {
         data_0[i] = qm->atomicnumberQM_get(i);
-        printf("CHECK Atomic numbers %d %ld\n", i, data_0[i]);
+        // printf("CHECK Atomic numbers %d %ld\n", i, data_0[i]);
     }
     int ndata_0 = sizeof(data_0);
     qm->model->InputValues[0] = TF_NewTensor(TF_INT64, dims_0, ndims_0, data_0, ndata_0, &NoOpDeallocator, data_0);
@@ -448,7 +449,7 @@ real call_nn(QMMM_rec*         qr,
         {
             data_2[i][j] = qm->xQM_get(i,j) / BOHR2NM; // from nm to bohr for Lukas model
         }
-        printf("CHECK COORD QM[%d] = %6.3f %6.3f %6.3f\n", i+1, data_2[i][0], data_2[i][1], data_2[i][2]);
+        // printf("CHECK COORD QM[%d] = %6.3f %6.3f %6.3f\n", i+1, data_2[i][0], data_2[i][1], data_2[i][2]);
     }
     int ndata_2 = sizeof(data_2); 
     qm->model->InputValues[2] = TF_NewTensor(TF_FLOAT, dims_2, ndims_2, data_2, ndata_2, &NoOpDeallocator, data_2);
@@ -474,7 +475,7 @@ real call_nn(QMMM_rec*         qr,
             index++;
         }
     }
-    printf("CHECK Bonds %d %d\n", index, nEdgeCombinations);
+    // printf("CHECK Bonds %d %d\n", index, nEdgeCombinations);
     int ndata_4 = sizeof(data_4); 
     qm->model->InputValues[4] = TF_NewTensor(TF_INT64, dims_4, ndims_4, data_4, ndata_4, &NoOpDeallocator, data_4);
 
@@ -518,7 +519,7 @@ real call_nn(QMMM_rec*         qr,
             }
         }
     }
-    printf("CHECK Angles %d %d\n", index, nAngleCombinations);
+    // printf("CHECK Angles %d %d\n", index, nAngleCombinations);
     int ndata_6 = sizeof(data_6); 
     qm->model->InputValues[6] = TF_NewTensor(TF_INT64, dims_6, ndims_6, data_6, ndata_6, &NoOpDeallocator, data_6);
 
@@ -533,24 +534,46 @@ real call_nn(QMMM_rec*         qr,
     int ndims_8 = 1;
     int64_t dims_8[] = {1};
     float data_8[1] = {(float)qm->QMcharge_get()};
-    printf("CHECK Total Charge %f\n", (float)qm->QMcharge_get());
+    // printf("CHECK Total Charge %f\n", (float)qm->QMcharge_get());
     int ndata_8 = sizeof(data_8);
     qm->model->InputValues[8] = TF_NewTensor(TF_FLOAT, dims_8, ndims_8, data_8, ndata_8, &NoOpDeallocator, data_8);
 
     // esp flat values 9
+    float V_to_au = 1/27.211386245988;
     int ndims_9 = 1;
     int64_t dims_9[] = {nAtoms};
     float data_9[nAtoms] = {};
     for (int i=0; i<nAtoms; i++)
     {
-        data_9[i] = qm->pot_qmmm_get(i); // in volt units
-        printf("CHECK ESP QM[%d] = %6.3f\n", i+1, data_9[i]);
+        data_9[i] = qm->pot_qmmm_get(i)*V_to_au; // in atomic units
+        // printf("CHECK ESP QM[%d] = %6.3f\n", i+1, data_9[i]);
     }
     int ndata_9 = sizeof(data_9); 
     qm->model->InputValues[9] = TF_NewTensor(TF_FLOAT, dims_9, ndims_9, data_9, ndata_9, &NoOpDeallocator, data_9);
 
     // esp row splits 10
     qm->model->InputValues[10] = qm->model->InputValues[1];
+
+    // esp_grad flat values 11
+    snew(ESPgrad, qm->nrQMatoms_get());
+    if (qm->qmmm_variant_get() == eqmmmPME)
+    {
+        snew(ESPgrad_full, qm->nrQMatoms_get());
+    }
+    int ndims_11 = 2;
+    int64_t dims_11[] = {nAtoms, 3};
+    float data_11[nAtoms][3] = {};
+    // qr->gradient_ESP(//cr, nrnb, wcycle, nullptr, qm->qmmm_variant_get(), data_11, ESPgrad_full);
+    qr->gradient_ESP(qm->qmmm_variant_get(), data_11, ESPgrad_full);
+    // for (int i=0; i<nAtoms; i++)
+    // {
+    //     printf("CHECK ESP GRAD[%d] = %6.3f %6.3f %6.3f\n", i+1, data_11[i][0], data_11[i][1], data_11[i][2]);
+    // }
+    int ndata_11 = sizeof(data_11);
+    qm->model->InputValues[11] = TF_NewTensor(TF_FLOAT, dims_11, ndims_11, data_11, ndata_11, &NoOpDeallocator, data_11);
+
+    // esp grad row splits 12
+    qm->model->InputValues[12] = qm->model->InputValues[1];  
 
     // Run the Session
     TF_SessionRun(qm->model->Session, NULL,
@@ -587,8 +610,8 @@ real call_nn(QMMM_rec*         qr,
         // printf("CHECK QM Grad[%d] = %6.3f %6.3f %6.3f\n", i+1, QMgrad[i][0], QMgrad[i][1], QMgrad[i][2]);
     }
 
-    /* Calculate the QM/MM forces
-     *   (these are not covered by DTFB+,
+    /* Calculate the MM-part of the QM/MM forces
+     *   (these are not covered by the model,
      *    because it does not know the position and charges of individual atoms,
      *    and instead, it only obtains the external potentials induced at QM atoms.
      */
@@ -616,7 +639,7 @@ real call_nn(QMMM_rec*         qr,
     {
         for (int j = 0; j < DIM; j++)
         {
-            f[i][j]      = -HARTREE_BOHR2MD*QMgrad[i][j];
+            f[i][j]      = HARTREE_BOHR2MD*QMgrad[i][j];
          // fshift[i][j] = HARTREE_BOHR2MD*QMgrad[i][j];
         }
     }
@@ -624,7 +647,7 @@ real call_nn(QMMM_rec*         qr,
     {
         for (int j = 0; j < DIM; j++)
         {
-            f[i+qm->nrQMatoms_get()][j]      = HARTREE_BOHR2MD*MMgrad[i][j];
+            f[i+qm->nrQMatoms_get()][j]      = -HARTREE_BOHR2MD*MMgrad[i][j];
          // fshift[i+qm.nrQMatoms_get()][j] = HARTREE_BOHR2MD*MMgrad[i][j];
         }
     }
@@ -706,6 +729,11 @@ real call_nn(QMMM_rec*         qr,
     if (qm->qmmm_variant_get() == eqmmmPME)
     {
         sfree(MMgrad_full);
+    }
+    sfree(ESPgrad);
+    if (qm->qmmm_variant_get() == eqmmmPME)
+    {
+        sfree(ESPgrad_full);
     }
 
     sfree(grad);

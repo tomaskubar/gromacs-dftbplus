@@ -371,6 +371,14 @@ public:
                         rvec*             partgrad,
                         rvec*             MMgrad,
                         rvec*             MMgrad_full);
+    
+    void gradient_ESP(//const t_commrec*  cr,
+                      //t_nrnb*           nrnb,
+                      //gmx_wallcycle_t   wcycle,
+                      //struct gmx_pme_t* pmedata,
+                      int               variant,
+                      rvec*             ESPgrad,
+                      rvec*             ESPgrad_full);
 
     real calculate_QMMM(const t_commrec*           cr,
                         gmx::ForceWithVirial*      forceWithVirial,

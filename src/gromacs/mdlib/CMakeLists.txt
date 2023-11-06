@@ -35,7 +35,7 @@
 
 add_library(mdlib INTERFACE)
 add_library(libtensorflow SHARED IMPORTED)
-set_target_properties(libtensorflow PROPERTIES IMPORTED_LOCATION /usr/local/lib/libtensorflow.so)
+set_target_properties(libtensorflow PROPERTIES IMPORTED_LOCATION /home/lpetersen/tensorflow/lib/libtensorflow.so)
 
 file(GLOB MDLIB_SOURCES *.cpp)
 # To avoid listing all the necessary files manually, we will remove SYCL-specfific one here:
