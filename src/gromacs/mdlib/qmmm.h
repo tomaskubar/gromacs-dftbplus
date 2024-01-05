@@ -224,7 +224,7 @@ private:
 public:
     DftbPlus        *dpcalc;        // DFTB+ calculator
     Context         *dftbContext;   // some data for DFTB+, referenced to by DFTB through *dpcalc
-    TFModel         *model;
+    TFModel         *models[10];
 
     QMMM_QMgaussian  gaussian;
 

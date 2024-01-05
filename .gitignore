@@ -21,7 +21,8 @@ lib*.pc
 .tox
 .cproject
 .vscode
-build
+build/
+build_adaptive_sampling/
 _build
 CMakeLists.txt.user
 /VersionInfo*.cmake
