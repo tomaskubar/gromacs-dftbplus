@@ -362,7 +362,7 @@ real call_nn(QMMM_rec*         qr,
     static int output_freq_x_mm;
 
     static float force_prediction_std_threshold; // threshold deviation
-    bool significant_structure = false; // to mark significant deviations
+    static FILE *f_std = nullptr; // file for saving standard deviations of significant structures
 
     double QMener;
  // bool lPme = (qm->qmmm_variant == eqmmmPME);
@@ -425,12 +425,14 @@ real call_nn(QMMM_rec*         qr,
         // Find threshold deviation
         if ((env = getenv("GMX_FORCE_PREDICTION_STD_THRESHOLD")) == nullptr)
         {
-            printf("Deviation as threshold for significant standard deviation must be given via the env variable FORCE_PREDICTION_STD_THRESHOLD\n");
-            exit(-1);
+            printf("Deviation as threshold for significant standard deviation must be given via the env variable FORCE_PREDICTION_STD_THRESHOLD to do adaptive sampling\n");
+            force_prediction_std_threshold = -1;
         }
         else
         {
             force_prediction_std_threshold = std::stof(env);
+            f_std = fopen("qm_mlmm_std.xyz", "a");
+            printf("Using %6.3f as standard deviation threshold for adaptive sampling\n", force_prediction_std_threshold);
         }
     }
 
@@ -717,7 +719,7 @@ real call_nn(QMMM_rec*         qr,
             }
             mean /= n_models;
             grad_means[at_idx][dim_idx] = mean;
-            printf("%8.3f\n", mean);
+            
             //calculate and save std of each model prediction
             float std = 0.0;
             for (int model_idx=0; model_idx<n_models; model_idx++) {
@@ -726,9 +728,9 @@ real call_nn(QMMM_rec*         qr,
             std /= n_models;
             std = std::sqrt(std);
 
-            if (std > force_prediction_std_threshold)
+            if ((std > force_prediction_std_threshold) and (force_prediction_std_threshold > 0.0))
             {
-                significant_structure = true;
+                qm->significant_structure = true;
             }
 
             grad_stds[at_idx][dim_idx] = std;
@@ -741,11 +743,13 @@ real call_nn(QMMM_rec*         qr,
     /* Save the QM charges */
     for (int i=0; i<n; i++)
     {
-        qm->QMcharges_set(i, charge_means[i]); // sign OK
+        qm->QMcharges_set(i, charge_predictions[0][i]); // sign OK
+        //qm->QMcharges_set(i, charge_means[i]); // sign OK
         // printf("CHECK CHARGE QM[%d] = %6.3f\n", i+1, qm->QMcharges_get(i));
     }
     
-    QMener = energy_mean;
+    QMener = energy_predictions[0];
+    //QMener = energy_mean;
     // printf("CHECK QM Energy = %6.3f\n", QMener);
 
     /* Save the gradient on the QM atoms */
@@ -753,7 +757,8 @@ real call_nn(QMMM_rec*         qr,
     {
         for (int j=0; j<3; j++)
         {
-            QMgrad[i][j] = grad_means[i][j]; // negative of force 
+            QMgrad[i][j] = grad_predictions[0][i][j]; // negative of force
+            //QMgrad[i][j] = grad_means[i][j]; // negative of force 
         }
         // printf("CHECK QM Grad[%d] = %6.3f %6.3f %6.3f\n", i+1, QMgrad[i][0], QMgrad[i][1], QMgrad[i][2]);
     }
@@ -845,14 +850,15 @@ real call_nn(QMMM_rec*         qr,
         fprintf(f_p, "\n");
     }
 
+    char periodic_system[37][3]={"XX",
+        "h",                               "he",
+        "li","be","b", "c", "n", "o", "f", "ne",
+        "na","mg","al","si","p", "s", "cl","ar",
+        "k", "ca","sc","ti","v", "cr","mn","fe","co",
+        "ni","cu","zn","ga","ge","as","se","br","kr"};
+
     if (f_x_qm && step % output_freq_x_qm == 0)
     {
-        const char periodic_system[37][3]={"XX",
-            "h",                               "he",
-            "li","be","b", "c", "n", "o", "f", "ne",
-            "na","mg","al","si","p", "s", "cl","ar",
-            "k", "ca","sc","ti","v", "cr","mn","fe","co",
-            "ni","cu","zn","ga","ge","as","se","br","kr"};
         fprintf(f_x_qm, "\nQM coordinates and charges step %d\n", step);
         for (int i=0; i<n; i++) {
             fprintf(f_x_qm, "%-2s %10.5f%10.5f%10.5f %10.7f\n",
@@ -869,6 +875,22 @@ real call_nn(QMMM_rec*         qr,
             fprintf(f_x_mm, "%10.7f%10.5f%10.5f%10.5f\n",
                 mm.MMcharges[i], // CHECK -- HOW TO DO IT WITH PME / WITH CUT-OFF?
                 mm.xMM[i][0] * 10., mm.xMM[i][1] * 10., mm.xMM[i][2] * 10.);
+        }
+    }
+
+    if (qm->significant_structure)
+    {
+        fprintf(f_std, "\nMeans of force predictions step %d\n", step);
+        for (int i=0; i<n; i++) {
+            fprintf(f_std, "%-2s %4i %8.4f %8.4f %8.4f\n",
+                periodic_system[qm->atomicnumberQM_get(i)], i,
+                grad_means[i][0], grad_means[i][1], grad_means[i][2]);
+        }
+        fprintf(f_std, "\nStds of force predictions step %d\n", step);
+        for (int i=0; i<n; i++) {
+            fprintf(f_std, "%-2s %4i %8.4f %8.4f %8.4f\n",
+                periodic_system[qm->atomicnumberQM_get(i)], i,
+                grad_stds[i][0], grad_stds[i][1], grad_stds[i][2]);
         }
     }
 

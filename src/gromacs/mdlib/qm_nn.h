@@ -42,7 +42,7 @@
 
 void init_nn(QMMM_QMrec*       qm);
 
-real call_nn(QMMM_rec*         qr,
+real call_nn(QMMM_rec*          qr,
               const t_commrec*  cr,
               QMMM_QMrec*       qm,
               const QMMM_MMrec& mm,

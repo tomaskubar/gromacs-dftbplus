@@ -329,6 +329,8 @@ void QMMM_QMrec::init_QMrec(int               grpnr,
     snew(pot_qmmm, nr);
     snew(pot_qmqm, nr);
 
+    significant_structure = false; // to mark significant deviations
+    
 } // init_QMrec
 
 int QMMM_QMrec::nrQMatoms_get() const
@@ -490,7 +492,7 @@ QMMM_rec::QMMM_rec(const t_commrec*                 cr,
     //   and is treated as MM.
 
     // Small problem if there is only QM... so no MM. */
-
+    
     pbcType = fr->pbcType;
 
     int numQmmmGroups = ir->opts.ngQM;

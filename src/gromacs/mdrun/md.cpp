@@ -66,6 +66,7 @@
 #include "gromacs/ewald/pme_load_balancing.h"
 #include "gromacs/ewald/pme_pp.h"
 #include "gromacs/fileio/trxio.h"
+#include "gromacs/fileio/xtcio.h"
 #include "gromacs/gmxlib/network.h"
 #include "gromacs/gmxlib/nrnb.h"
 #include "gromacs/gpu_utils/device_stream_manager.h"
@@ -1155,6 +1156,26 @@ void gmx::LegacySimulator::do_md()
                                  observablesHistory, top_global, fr, outf, energyOutput, ekind,
                                  f.view().force(), checkpointHandler->isCheckpointingStep(),
                                  bRerunMD, bLastStep, mdrunOptions.writeConfout, bSumEkinhOld);
+
+        // Quick and dirty custom xtc for significant structures during adaptive sampling
+        if (fr->qr->qm[0].significant_structure)
+        {
+            auto adaptive_sampling_xtc_file = open_xtc("adaptive_sampling.xtc", "a+");
+
+            if (write_xtc(adaptive_sampling_xtc_file, outf->natoms_global, step, t, state->box, state_global->x.rvec_array(),
+                            outf->x_compression_precision)
+                == 0)
+            {
+                gmx_fatal(FARGS,
+                            "XTC error. This indicates you are out of disk space, or a "
+                            "simulation with major instabilities resulting in coordinates "
+                            "that are NaN or too large to be represented in the XTC format.\n");
+            }
+            close_xtc(adaptive_sampling_xtc_file);
+            fprintf(stderr, "\nHit a significant structure at step %6li\n", step);
+            exit(0);
+        }
+
         /* Check if IMD step and do IMD communication, if bIMD is TRUE. */
         bInteractiveMDstep = imdSession->run(step, bNS, state->box, state->x.rvec_array(), t);
 

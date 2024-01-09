@@ -73,33 +73,6 @@
 #include "gromacs/utility/smalloc.h"
 #include "gromacs/utility/sysinfo.h"
 
-struct gmx_mdoutf
-{
-    t_fileio*                     fp_trn;
-    t_fileio*                     fp_xtc;
-    gmx_tng_trajectory_t          tng;
-    gmx_tng_trajectory_t          tng_low_prec;
-    int                           x_compression_precision; /* only used by XTC output */
-    ener_file_t                   fp_ene;
-    const char*                   fn_cpt;
-    gmx_bool                      bKeepAndNumCPT;
-    int                           eIntegrator;
-    gmx_bool                      bExpanded;
-    int                           elamstats;
-    int                           simulation_part;
-    FILE*                         fp_dhdl;
-    int                           natoms_global;
-    int                           natoms_x_compressed;
-    const SimulationGroups*       groups; /* for compressed position writing */
-    gmx_wallcycle_t               wcycle;
-    rvec*                         f_global;
-    gmx::IMDOutputProvider*       outputProvider;
-    const gmx::MdModulesNotifier* mdModulesNotifier;
-    bool                          simulationsShareState;
-    MPI_Comm                      mastersComm;
-};
-
-
 gmx_mdoutf_t init_mdoutf(FILE*                         fplog,
                          int                           nfile,
                          const t_filenm                fnm[],
