@@ -743,12 +743,12 @@ real call_nn(QMMM_rec*         qr,
     /* Save the QM charges */
     for (int i=0; i<n; i++)
     {
-        qm->QMcharges_set(i, charge_predictions[0][i]); // sign OK
+        qm->QMcharges_set(i, (real) charge_predictions[0][i]); // sign OK
         //qm->QMcharges_set(i, charge_means[i]); // sign OK
         // printf("CHECK CHARGE QM[%d] = %6.3f\n", i+1, qm->QMcharges_get(i));
     }
     
-    QMener = energy_predictions[0];
+    QMener = energy_predictions[0][0];
     //QMener = energy_mean;
     // printf("CHECK QM Energy = %6.3f\n", QMener);
 
@@ -757,7 +757,7 @@ real call_nn(QMMM_rec*         qr,
     {
         for (int j=0; j<3; j++)
         {
-            QMgrad[i][j] = grad_predictions[0][i][j]; // negative of force
+            QMgrad[i][j] = (real) grad_predictions[0][3*i+j]; // negative of force
             //QMgrad[i][j] = grad_means[i][j]; // negative of force 
         }
         // printf("CHECK QM Grad[%d] = %6.3f %6.3f %6.3f\n", i+1, QMgrad[i][0], QMgrad[i][1], QMgrad[i][2]);
