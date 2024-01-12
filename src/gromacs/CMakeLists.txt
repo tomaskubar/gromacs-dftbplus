@@ -445,12 +445,39 @@ if (GMX_CLANG_TIDY)
    set_target_properties(libgromacs PROPERTIES CXX_CLANG_TIDY
        "${CLANG_TIDY_EXE};-warnings-as-errors=*")
 endif()
-find_library(TENSORFLOW
-NAMES libtensorflow.so
-HINTS ${PATH_TO_LOOK_FOR})
-add_library(libtensorflow SHARED IMPORTED)
-set_target_properties(libtensorflow PROPERTIES IMPORTED_LOCATION ${TENSORFLOW})
-target_link_libraries(libgromacs PRIVATE libtensorflow)
+
+if(${GMX_QMMM_PROGRAM} STREQUAL "NN")
+    find_library(TENSORFLOW
+        NAMES libtensorflow.so
+        PATH /usr/local/lib
+        DOC "Find tensorflow library libtensorflow.so"
+        )
+
+    # Header addition didn't work properly yet, had to add set CMAKE_CXX_FLAGS to -I/data/lpetersen/tensorflow/include in the advanced settings in ccmake
+    # or cmake -D CMAKE_CXX_FLAGS="-I/data/lpetersen/tensorflow/include" ..
+    find_path(TENSORFLOW_HEADERS 
+            NAMES tensorflow/c/c_api.h
+            PATHS /usr/local/include
+            DOC "Find tensorflow header files(tensorflow/c/c_api.h)"
+            )
+
+    if (TENSORFLOW)
+        message(STATUS "Looking for tensorflow at ${TENSORFLOW}")
+        target_link_libraries(libgromacs PRIVATE libtensorflow)
+        add_library(libtensorflow SHARED IMPORTED)
+        set_target_properties(libtensorflow PROPERTIES IMPORTED_LOCATION ${TENSORFLOW}) 
+    else()
+        message(FATAL_ERROR "tensorflow library not found.")
+    endif()
+
+    if (TENSORFLOW_HEADERS)
+        message(STATUS "Looking for tensorflow headers at ${TENSORFLOW_HEADERS}")
+        target_include_directories(libgromacs INTERFACE ${TENSORFLOW_HEADERS}) # seems not sufficient to do the job
+        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -I${TENSORFLOW_HEADERS}") # apparently insuffienct set CMAKE_CXX_FLAGS after the configuration
+    else()
+        message(FATAL_ERROR "tensorflow header files not found.")
+    endif()
+endif()
 
 # clang-3.6 warns about a number of issues that are not reported by more modern compilers
 # and we know they are not real issues. So we only check that it can compile without error
