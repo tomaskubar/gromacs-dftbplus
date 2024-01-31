@@ -48,9 +48,9 @@
 #include "gromacs/utility/arrayref.h"
 #include "gromacs/timing/wallcycle.h"
 //#include "gromacs/mdlib/qm_nn.h"
-extern "C" {
-    #include "tensorflow/c/c_api.h"
-}
+#if GMX_QMMM_NN
+#include "tensorflow/c/c_api.h"
+#endif
 
 //#include "gromacs/mdlib/qm_dftbplus.h"
 //#include "gromacs/mdlib/qm_gamess.h"
@@ -69,6 +69,7 @@ enum class PbcType : int;
 struct DftbPlus;
 struct Context;
 
+#if GMX_QMMM_NN
 typedef struct {
     TF_Graph*   Graph;
     TF_Status*  Status;
@@ -82,6 +83,7 @@ typedef struct {
     int         nAtoms;
     int*        atomicNumbers;
 }TFModel;
+#endif
 
 // THIS STRUCTURE IS TENTATIVE,
 // JUST FOR THE BEGINNING.
@@ -224,7 +226,9 @@ private:
 public:
     DftbPlus        *dpcalc;        // DFTB+ calculator
     Context         *dftbContext;   // some data for DFTB+, referenced to by DFTB through *dpcalc
+    #if GMX_QMMM_NN
     TFModel         *models[10];
+    #endif
 
     QMMM_QMgaussian  gaussian;
 

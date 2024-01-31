@@ -345,7 +345,7 @@ real call_orca(const QMMM_QMrec& qm, const QMMM_MMrec& mm, rvec f[], rvec fshift
         for (j = 0; j < DIM; j++)
         {
             f[i][j]      = HARTREE_BOHR2MD * QMgrad[i][j];
-            fshift[i][j] = HARTREE_BOHR2MD * QMgrad[i][j];
+            //fshift[i][j] = HARTREE_BOHR2MD * QMgrad[i][j];
         }
     }
     for (i = 0; i < mm.nrMMatoms; i++)
@@ -353,7 +353,7 @@ real call_orca(const QMMM_QMrec& qm, const QMMM_MMrec& mm, rvec f[], rvec fshift
         for (j = 0; j < DIM; j++)
         {
             f[i + qm.nrQMatoms_get()][j]      = HARTREE_BOHR2MD * MMgrad[i][j];
-            fshift[i + qm.nrQMatoms_get()][j] = HARTREE_BOHR2MD * MMgrad[i][j];
+            //fshift[i + qm.nrQMatoms_get()][j] = HARTREE_BOHR2MD * MMgrad[i][j];
         }
     }
     QMener = QMener * HARTREE2KJ * AVOGADRO;
