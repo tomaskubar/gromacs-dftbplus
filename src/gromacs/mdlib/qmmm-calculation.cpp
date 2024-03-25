@@ -1085,19 +1085,19 @@ void QMMM_rec::gradient_ESP(//const t_commrec*  cr,
   // real        ewaldcoeff_q = qm_.ewaldcoeff_q;
   int         n = qm_.nrQMatoms;
   int         ne = mm_.nrMMatoms;
-  int         ne_full = mm_.nrMMatoms_full;
+  // int         ne_full = mm_.nrMMatoms_full;
   rvec bond;
   /* all of the contributions to the gradients are calculated in, or immediately converted to,
    * ATOMIC UNITS!
    */
    
-  for (int j=0; j<ne; j++)
+  for (int j=0; j<n; j++)
   {
       clear_rvec(ESPgrad[j]);
   }
   if (variant == eqmmmPME)
   {
-    for (int j=0; j<ne_full; j++)
+    for (int j=0; j<n; j++)
     {
       clear_rvec(ESPgrad_full[j]);
     }

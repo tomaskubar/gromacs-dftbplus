@@ -372,8 +372,7 @@ real call_nn(QMMM_rec*         qr,
     double *grad, *pot, *potgrad, *q; // real instead of rvec, to help pass data to fortran
     real *pot_sr = nullptr, *pot_lr = nullptr;
     rvec *QMgrad = nullptr, *MMgrad = nullptr, *MMgrad_full = nullptr;
-    rvec *ESPgrad = nullptr;
-    // rvec *ESPgrad_full = nullptr;
+    rvec *ESPgrad = nullptr, *ESPgrad_full = nullptr;
 
     //snew(x, (n,3));
     snew(grad, 3*n);
@@ -478,7 +477,6 @@ real call_nn(QMMM_rec*         qr,
     {
         data_0[i] = qm->atomicnumberQM_get(i);
     }
-
     int ndata_0 = sizeof(data_0);
     for (int model_idx=0; model_idx<n_models; model_idx++) {
         qm->models[model_idx]->InputValues[0] = TF_NewTensor(TF_INT64, dims_0, ndims_0, data_0, ndata_0, &NoOpDeallocator, data_0);
@@ -608,34 +606,27 @@ real call_nn(QMMM_rec*         qr,
     {
         data_9[i] = qm->pot_qmmm_get(i)*V_to_au; // in atomic units
     }
-    printf("YYasdasdESP in V: %f\n", data_9[0]); //dabug2
     int ndata_9 = sizeof(data_9); 
     for (int model_idx=0; model_idx<n_models; model_idx++) {
         qm->models[model_idx]->InputValues[9] = TF_NewTensor(TF_FLOAT, dims_9, ndims_9, data_9, ndata_9, &NoOpDeallocator, data_9);
     }
-    
-    printf("YYESP in V: %f\n", data_9[0]); //dabug2
 
     // esp row splits 10
     for (int model_idx=0; model_idx<n_models; model_idx++) {
         qm->models[model_idx]->InputValues[10] = qm->models[model_idx]->InputValues[1];
     }
 
-    printf("asdagdfESP in V: %f\n", data_9[0]); //dabug2
     // esp_grad flat values 11
     snew(ESPgrad, qm->nrQMatoms_get());
-    // if (qm->qmmm_variant_get() == eqmmmPME)
-    // {
-    //     snew(ESPgrad_full, qm->nrQMatoms_get());
-    // }
-    printf("dfgdfg in V: %f\n", data_9[0]); //dabug2
+    if (qm->qmmm_variant_get() == eqmmmPME)
+    {
+        snew(ESPgrad_full, qm->nrQMatoms_get());
+    }
     int ndims_11 = 2;
     int64_t dims_11[] = {nAtoms, 3};
     float data_11[nAtoms][3] = {};
     // qr->gradient_ESP(//cr, nrnb, wcycle, nullptr, qm->qmmm_variant_get(), data_11, ESPgrad_full);
-    printf("asdhgbffg in V: %f\n", data_9[0]); //dabug2
-    qr->gradient_ESP(qm->qmmm_variant_get(), data_11, ESPgrad);
-    printf("Yhngfhfg in V: %f\n", data_9[0]); //dabug2
+    qr->gradient_ESP(qm->qmmm_variant_get(), data_11, ESPgrad_full);
     int ndata_11 = sizeof(data_11);
     for (int model_idx=0; model_idx<n_models; model_idx++) {
         qm->models[model_idx]->InputValues[11] = TF_NewTensor(TF_FLOAT, dims_11, ndims_11, data_11, ndata_11, &NoOpDeallocator, data_11);
@@ -645,8 +636,6 @@ real call_nn(QMMM_rec*         qr,
     for (int model_idx=0; model_idx<n_models; model_idx++) {
         qm->models[model_idx]->InputValues[12] = qm->models[model_idx]->InputValues[1];  
     }
-
-    printf("YYESP in V: %f\n", data_9[0]); //dabug2
 
     // Run the Session
     float* charge_predictions[n_models];
@@ -666,8 +655,6 @@ real call_nn(QMMM_rec*         qr,
         energy_predictions[model_idx] = (float*)TF_TensorData(qm->models[model_idx]->OutputValues[1]); // in Hartree
         grad_predictions[model_idx] = (float*)TF_TensorData(qm->models[model_idx]->OutputValues[2]); // in Hartree/Bohr
     }
-    
-    printf("YYESP in V: %f\n", data_9[0]); //dabug2
 
     // mean and std of charges
     float charge_means[nAtoms] = {};
@@ -690,8 +677,6 @@ real call_nn(QMMM_rec*         qr,
         std = std::sqrt(std);
         charge_stds[at_idx] = std;
     }
-
-    printf("YYESP in V: %f\n", data_9[0]); //dabug2
 
     // mean and std of energy
     float energy_mean = 0.0;
@@ -739,8 +724,6 @@ real call_nn(QMMM_rec*         qr,
 
     wallcycle_stop(wcycle, ewcQM);
 
-    printf("XXXXESP in V: %f\n", data_9[0]); //dabug2
-
     /* Save the QM charges */
     for (int i=0; i<n; i++)
     {
@@ -783,8 +766,6 @@ real call_nn(QMMM_rec*         qr,
     //  //       QMgrad[i][0] , QMgrad[i][1] , QMgrad[i][2] );
     // }
     sfree(partgrad);
-
-    printf("AAAAESP in V: %f\n", data_9[0]); //dabug2
 
     /* Put the QMMM forces in the force array and to the fshift.
      * Convert to MD units.
@@ -879,102 +860,91 @@ real call_nn(QMMM_rec*         qr,
         }
     }
 
-    printf("yxcyxcasdESP in V: %f\n", data_9[0]); //dabug2
-
     if (qm->significant_structure)
     {   
-        // Print information and save information for debugging
-        FILE *f_input_0 = nullptr;
-        f_input_0 = fopen("input_00.txt", "w");
-        for (int i=0; i<nAtoms; i++)
-        {
-            printf("CHECK Atomic numbers %d %ld\n", i, data_0[i]);
-            fprintf(f_input_0, "%ld\n", data_0[i]);
-        }
-        fclose(f_input_0);
+        // // Print information and save information for debugging
+        // FILE *f_input_0 = nullptr;
+        // f_input_0 = fopen("input_00.txt", "w");
+        // for (int i=0; i<nAtoms; i++)
+        // {
+        //     printf("CHECK Atomic numbers %d %ld\n", i, data_0[i]);
+        //     fprintf(f_input_0, "%ld\n", data_0[i]);
+        // }
+        // fclose(f_input_0);
 
-        FILE *f_input_2 = nullptr;
-        f_input_2 = fopen("input_02.txt", "w");
-        for (int i=0; i<nAtoms; i++)
-        {
-            printf("CHECK COORD QM Bohr[%d] = %6.3f %6.3f %6.3f\n", i+1, data_2[i][0], data_2[i][1], data_2[i][2]);
-            fprintf(f_input_2, "%6.3f %6.3f %6.3f\n", data_2[i][0], data_2[i][1], data_2[i][2]);
-        }
-        for (int i=0; i<nAtoms; i++)
-        {
-            printf("CHECK COORD QM MD units[%d] = %6.3f %6.3f %6.3f\n", i+1, BOHR2NM*data_2[i][0], BOHR2NM*data_2[i][1], BOHR2NM*data_2[i][2]);
-        }
-        fclose(f_input_2);
+        // FILE *f_input_2 = nullptr;
+        // f_input_2 = fopen("input_02.txt", "w");
+        // for (int i=0; i<nAtoms; i++)
+        // {
+        //     printf("CHECK COORD QM Bohr[%d] = %6.3f %6.3f %6.3f\n", i+1, data_2[i][0], data_2[i][1], data_2[i][2]);
+        //     fprintf(f_input_2, "%6.6f %6.6f %6.6f\n", data_2[i][0], data_2[i][1], data_2[i][2]);
+        // }
+        // for (int i=0; i<nAtoms; i++)
+        // {
+        //     printf("CHECK COORD QM MD units[%d] = %6.3f %6.3f %6.3f\n", i+1, BOHR2NM*data_2[i][0], BOHR2NM*data_2[i][1], BOHR2NM*data_2[i][2]);
+        // }
+        // fclose(f_input_2);
 
-        FILE *f_input_4 = nullptr;
-        f_input_4 = fopen("input_04.txt", "w");
-        for (int i=0; i<nEdgeCombinations; i++)
-        {
-            fprintf(f_input_4, "%ld %ld\n", data_4[i][0], data_4[i][1]);
-        }
-        printf("CHECK Bonds %d %d\n", edge_index, nEdgeCombinations);
-        fclose(f_input_4);
+        // FILE *f_input_4 = nullptr;
+        // f_input_4 = fopen("input_04.txt", "w");
+        // for (int i=0; i<nEdgeCombinations; i++)
+        // {
+        //     fprintf(f_input_4, "%ld %ld\n", data_4[i][0], data_4[i][1]);
+        // }
+        // printf("CHECK Bonds %d %d\n", edge_index, nEdgeCombinations);
+        // fclose(f_input_4);
 
-        FILE *f_input_6 = nullptr;
-        f_input_6 = fopen("input_06.txt", "w");
-        for (int i=0; i<nAngleCombinations; i++)
-        {
-            fprintf(f_input_6, "%ld %ld\n", data_6[i][0], data_6[i][1]);
-        }
-        printf("CHECK Angles %d %d\n", angle_index, nAngleCombinations);
-        fclose(f_input_6);
+        // FILE *f_input_6 = nullptr;
+        // f_input_6 = fopen("input_06.txt", "w");
+        // for (int i=0; i<nAngleCombinations; i++)
+        // {
+        //     fprintf(f_input_6, "%ld %ld %ld\n", data_6[i][0], data_6[i][1],  data_6[i][2]);
+        // }
+        // printf("CHECK Angles %d %d\n", angle_index, nAngleCombinations);
+        // fclose(f_input_6);
 
-        FILE *f_input_8 = nullptr;
-        f_input_8 = fopen("input_08.txt", "w");
-        fprintf(f_input_8, "%1.0f\n", data_8[0]);
-        printf("CHECK Total Charge %1.0f \n", data_8[0]);
-        fclose(f_input_8);
+        // FILE *f_input_8 = nullptr;
+        // f_input_8 = fopen("input_08.txt", "w");
+        // fprintf(f_input_8, "%1.0f\n", data_8[0]);
+        // printf("CHECK Total Charge %1.0f \n", data_8[0]);
+        // fclose(f_input_8);
 
-        FILE *f_input_9 = nullptr;
-        f_input_9 = fopen("input_09.txt", "w");
-        for (int i=0; i<nAtoms; i++)
-        {
-            printf("CHECK ESP QM[%d] = %6.3f\n", i+1, data_9[i]);
-            fprintf(f_input_9, "%6.3f\n", data_9[i]);
-        }
-        fclose(f_input_9);
+        // FILE *f_input_9 = nullptr;
+        // f_input_9 = fopen("input_09.txt", "w");
+        // for (int i=0; i<nAtoms; i++)
+        // {
+        //     printf("CHECK ESP QM[%d] = %6.3f\n", i+1, data_9[i]);
+        //     fprintf(f_input_9, "%6.6f\n", data_9[i]);
+        // }
+        // fclose(f_input_9);
 
-        FILE *f_input_11 = nullptr;
-        f_input_11 = fopen("input_11.txt", "w");
-        for (int i=0; i<nAtoms; i++)
-        {
-            printf("CHECK ESP GRAD[%d] = %6.3f %6.3f %6.3f\n", i+1, data_11[i][0], data_11[i][1], data_11[i][2]);
-            fprintf(f_input_11, "%6.3f %6.3f %6.3f\n", data_11[i][0], data_11[i][1], data_11[i][2]);
-        }
-        fclose(f_input_11);
+        // FILE *f_input_11 = nullptr;
+        // f_input_11 = fopen("input_11.txt", "w");
+        // for (int i=0; i<nAtoms; i++)
+        // {
+        //     printf("CHECK ESP GRAD[%d] = %6.3f %6.3f %6.3f\n", i+1, data_11[i][0], data_11[i][1], data_11[i][2]);
+        //     fprintf(f_input_11, "%6.6f %6.6f %6.6f\n", data_11[i][0], data_11[i][1], data_11[i][2]);
+        // }
+        // fclose(f_input_11);
 
-        FILE *f_output_0 = nullptr;
-        f_output_0 = fopen("output_0.txt", "w");
-        for (int i=0; i<nAtoms; i++)
-        {
-            printf("CHECK CHARGE QM[%d] = %6.3f\n", i+1, qm->QMcharges_get(i));
-            fprintf(f_output_0, "%6.3f\n", qm->QMcharges_get(i));
-        }
-        fclose(f_output_0);
+        // FILE *f_output = nullptr;
+        // f_output = fopen("output.txt", "w");
+        // for (int i=0; i<nAtoms; i++)
+        // {
+        //     printf("CHECK CHARGE QM[%d] = %6.3f\n", i+1, qm->QMcharges_get(i));
+        //     fprintf(f_output, "%6.6f\n", qm->QMcharges_get(i));
+        // }
 
-        FILE *f_output = nullptr;
-        f_output = fopen("output.txt", "w");
-        for (int i=0; i<nAtoms; i++)
-        {
-            printf("CHECK CHARGE QM[%d] = %6.3f\n", i+1, qm->QMcharges_get(i));
-            fprintf(f_output, "%6.3f\n", qm->QMcharges_get(i));
-        }
+        // printf("CHECK QM Energy = %6.3f\n", QMener);
+        // fprintf(f_output, "%6.6f\n", QMener);
 
-        printf("CHECK QM Energy = %6.3f\n", QMener);
-        fprintf(f_output, "%6.3f\n", QMener);
+        // for (int i=0; i<n; i++)
+        // {
+        //     printf("CHECK QM Grad[%d] = %6.3f %6.3f %6.3f\n", i+1, QMgrad[i][0], QMgrad[i][1], QMgrad[i][2]);
+        //     fprintf(f_output, "%6.6f %6.6f %6.6f\n", QMgrad[i][0], QMgrad[i][1], QMgrad[i][2]);
+        // }
 
-        for (int i=0; i<n; i++)
-        {
-            printf("CHECK QM Grad[%d] = %6.3f %6.3f %6.3f\n", i+1, QMgrad[i][0], QMgrad[i][1], QMgrad[i][2]);
-            fprintf(f_output, "%6.3f %6.3f %6.3f\n", QMgrad[i][0], QMgrad[i][1], QMgrad[i][2]);
-        }
-
-        fclose(f_output);
+        // fclose(f_output);
 
         FILE *f_std = nullptr; // file for saving standard deviations of significant structures
         f_std = fopen("qm_mlmm_std.xyz", "a");
@@ -1000,10 +970,10 @@ real call_nn(QMMM_rec*         qr,
         sfree(MMgrad_full);
     }
     sfree(ESPgrad);
-    // if (qm->qmmm_variant_get() == eqmmmPME)
-    // {
-    //     sfree(ESPgrad_full);
-    // }
+    if (qm->qmmm_variant_get() == eqmmmPME)
+    {
+        sfree(ESPgrad_full);
+    }
 
     sfree(grad);
     sfree(pot);
