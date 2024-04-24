@@ -236,20 +236,40 @@ void init_nn(QMMM_QMrec*       qm)
         printf("%s",TF_Message(qm->model->Status));
         exit(-1);
     }
-
     //****** Get input tensor
     qm->model->NumInputs = 1;
     qm->model->Input = (TF_Output*)malloc(sizeof(TF_Output) * qm->model->NumInputs);
     TF_Output t0 = {TF_GraphOperationByName(qm->model->Graph, "serving_default_input_1"), 0};
-    
-    if (t0.oper == NULL) {
+
+    if(t0.oper == NULL)
         printf("ERROR: Failed TF_GraphOperationByName serving_default_input_1\n");
-        exit(-1);
-    }
-    else {
+    else
         printf("TF_GraphOperationByName serving_default_input_1 is OK\n");
-    }
+
     qm->model->Input[0] = t0;
+
+    // TF_Output t1 = {TF_GraphOperationByName(qm->model->Graph, "serving_default_input_2"), 0};
+
+    // if(t0.oper == NULL)
+    //     printf("ERROR: Failed TF_GraphOperationByName serving_default_input_2\n");
+    // else
+    //     printf("TF_GraphOperationByName serving_default_input_2 is OK\n");
+
+    // qm->model->Input[1] = t1;
+
+    //****** Get input tensor
+//    qm->model->NumInputs = 1;
+//    qm->model->Input = (TF_Output*)malloc(sizeof(TF_Output) * qm->model->NumInputs);
+//    TF_Output t0 = {TF_GraphOperationByName(qm->model->Graph, "serving_default_input_1"), 0};
+//    
+//    if (t0.oper == NULL) {
+//        printf("ERROR: Failed TF_GraphOperationByName serving_default_input_1\n");
+//        exit(-1);
+//    }
+//    else {
+//        printf("TF_GraphOperationByName serving_default_input_1 is OK\n");
+//    }
+//    qm->model->Input[0] = t0;
     
     //********* Get Output tensor
     qm->model->NumOutputs = 1;
@@ -311,7 +331,6 @@ void init_nn(QMMM_QMrec*       qm)
     {
         qm->QMcharges_set(i, (real) q[i]); // sign OK
     }
-
     return;
 } /* init_dftbplus */
 void NoOpDeallocator(void* data, size_t a, void* b) {}
@@ -338,16 +357,17 @@ real call_nn(QMMM_rec*         qr,
  // bool lPme = (qm->qmmm_variant == eqmmmPME);
     (void) fshift;
     int n = qm->nrQMatoms_get();
-
     double *grad, *pot, *potgrad; // real instead of rvec, to help pass data to fortran
     real *pot_sr = nullptr, *pot_lr = nullptr;
     rvec *QMgrad = nullptr, *MMgrad = nullptr, *MMgrad_full = nullptr;
+    //rvec *dpot = nullptr;
 
     //snew(x, (n,3));
     snew(grad, 3*n);
     for (int i=0; i<3*n; i++)
         grad[i] = 0.;
     snew(pot, n);
+    //snew(dpot, n);
     snew(potgrad, 3*n); // dummy parameter; not used at this moment
     for (int i=0; i<3*n; i++)
         potgrad[i] = 0.;
@@ -358,7 +378,6 @@ real call_nn(QMMM_rec*         qr,
     snew(pot_lr, n);
 
     snew(QMgrad, n);
-
     if (step == 0) {
         char *env;
 
@@ -392,6 +411,7 @@ real call_nn(QMMM_rec*         qr,
     }
 
     float data[1][n][4];
+    // float factors[1][n][3];
     for (int i=0; i<n; i++)
     {
         for (int j=0; j<DIM; j++)
@@ -399,7 +419,6 @@ real call_nn(QMMM_rec*         qr,
             data[0][i][j] = qm->xQM_get(i,j) / BOHR2NM; // to bohr units for DFTB+, Manus Model also expects Bohr
         }
     }
-
     /* calculate the QM/MM electrostatics beforehand with Gromacs!
      * with cut-off treatment, this will be the entire QM/MM
      * with PME, this will only include MM atoms,
@@ -421,6 +440,9 @@ real call_nn(QMMM_rec*         qr,
         {
             pot_lr[i] = 0.;
             pot[i] = (double) - pot_sr[i];
+            // for (int k=0; k<3; k++) {
+            //     factors[0][i][k] = (float) - dpot[i][k];
+            // }
         }
     }
     // save the potential in the QMMM_QMrec structure
@@ -456,10 +478,10 @@ real call_nn(QMMM_rec*         qr,
     /* DFTB+ calculation itself */
     wallcycle_start(wcycle, ewcQM);
 
-    int ndims = 3;
-    int64_t dims[] = {1,n,4};
+    //int ndims = 3;
+    //int64_t dims[] = {1,n,4};
     
-    int ndata = sizeof(data);
+    //int ndata = sizeof(data);
 
     // for (int i = 0; i < n; i++) {
     // for (int j = 0; j < 4; j++) {
@@ -468,7 +490,7 @@ real call_nn(QMMM_rec*         qr,
     // printf("\n");
     // }
 
-    TF_Tensor* int_tensor = TF_NewTensor(TF_FLOAT, dims, ndims, data, ndata, &NoOpDeallocator, 0);
+    //TF_Tensor* int_tensor = TF_NewTensor(TF_FLOAT, dims, ndims, data, ndata, &NoOpDeallocator, 0);
     
     // if (int_tensor != NULL){
     //     printf("TF_NewTensor is OK\n");
@@ -476,11 +498,22 @@ real call_nn(QMMM_rec*         qr,
     // else {
     //   printf("ERROR: Failed TF_NewTensor\n");
     // }
-    qm->model->InputValues[0] = int_tensor;
+    //qm->model->InputValues[0] = int_tensor;
+    int ndims0 = 3;
+    int64_t dims0[] = {1,n,4};
 
+    int ndata0 = sizeof(data);
+    TF_Tensor* int_tensor0 = TF_NewTensor(TF_FLOAT, dims0, ndims0, data, ndata0, &NoOpDeallocator, 0);
+    qm->model->InputValues[0] = int_tensor0;
+
+    // int ndims1 = 3;
+    // int64_t dims1[] = {1,n,3};
+
+    // int ndata1 = sizeof(factors);
+    // TF_Tensor* int_tensor1 = TF_NewTensor(TF_FLOAT, dims1, ndims1, factors, ndata1, &NoOpDeallocator, 0);
+    // qm->model->InputValues[1] = int_tensor1;
     // Run the Session
     TF_SessionRun(qm->model->Session, NULL, qm->model->Input, qm->model->InputValues, qm->model->NumInputs, qm->model->Output, qm->model->OutputValues, qm->model->NumOutputs, NULL, 0,NULL , qm->model->Status);
-    
     // if(TF_GetCode(qm->model->Status) == TF_OK) {
     //   printf("Session is OK\n");
     // }
@@ -500,6 +533,7 @@ real call_nn(QMMM_rec*         qr,
  // dftbp_get_gradients(qm->dpcalc, grad);
     wallcycle_stop(wcycle, ewcQM);
     QMener = predictions[0];
+    //float maxforce=0.0;
     /* Save the gradient on the QM atoms */
     for (int i=0; i<n; i++)
     {
@@ -508,6 +542,7 @@ real call_nn(QMMM_rec*         qr,
             QMgrad[i][j] = (real) - predictions[3*i+j+1]; // negative of force -- sign OK
         }
     }
+    //printf("%f\n",maxforce);
  // /* Print the QM pure gradient */
  // for (int i=0; i<n; i++)
  // {
@@ -645,6 +680,7 @@ real call_nn(QMMM_rec*         qr,
 
     sfree(grad);
     sfree(pot);
+    //sfree(dpot);
     sfree(potgrad);
     //sfree(q);
     sfree(pot_sr);

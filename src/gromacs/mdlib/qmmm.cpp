@@ -181,6 +181,14 @@ void QMMM_rec::update_QMMM_coord(const t_commrec*  cr,
     std::vector<bool> isCurrentMMatom;
     isCurrentMMatom.resize(mm_.nrMMatoms_nbl);
 
+    // remember the old QM coordinates
+    rvec *xQMold;
+    snew(xQMold, qm_.nrQMatoms);
+    for (int i = 0; i < qm_.nrQMatoms; i++)
+    {
+        copy_rvec(qm_.xQM[i], xQMold[i]);
+    }
+
     // shift the QM atoms into the central box
     for (int i = 0; i < qm_.nrQMatoms; i++)
     {
@@ -189,6 +197,18 @@ void QMMM_rec::update_QMMM_coord(const t_commrec*  cr,
 
     // copy box size
     copy_mat(box, qm_.box);
+    
+    // check if QM atoms flipped over the edge of the box and if so, fold them back
+    for (int i = 0; i < qm_.nrQMatoms; i++)
+    {
+        if (qm_.xQM[i][XX] - xQMold[i][XX] > 0.1) qm_.xQM[i][XX] -= qm_.box[XX][XX];
+        if (qm_.xQM[i][XX] - xQMold[i][XX] < 0.1) qm_.xQM[i][XX] += qm_.box[XX][XX];
+        if (qm_.xQM[i][YY] - xQMold[i][YY] > 0.1) qm_.xQM[i][YY] -= qm_.box[YY][YY];
+        if (qm_.xQM[i][YY] - xQMold[i][YY] < 0.1) qm_.xQM[i][YY] += qm_.box[YY][YY];
+        if (qm_.xQM[i][ZZ] - xQMold[i][ZZ] > 0.1) qm_.xQM[i][ZZ] -= qm_.box[ZZ][ZZ];
+        if (qm_.xQM[i][ZZ] - xQMold[i][ZZ] < 0.1) qm_.xQM[i][ZZ] += qm_.box[ZZ][ZZ];
+    }
+    sfree(xQMold);
 
     // initialize PBC for MM coordinate manipulation
     t_pbc pbc;
@@ -734,7 +754,7 @@ QMMM_rec::QMMM_rec(const t_commrec*                 cr,
         gmx_fatal(FARGS, "Unknown QM software -- should never land here :-/");
     }
 #else // GMX_QMMM
-    gmx_incons("Compiled without QMMM");
+    //gmx_incons("Compiled without QMMM");
     (void) cr;
     (void) mtop;
     (void) ir;

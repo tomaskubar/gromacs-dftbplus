@@ -350,6 +350,10 @@ public:
     
     void calculate_SR_QM_MM(int   variant,
                             real* pot);
+
+    void calculate_SR_NN_MM(int   variant,
+                            rvec* dpot,
+                            real* pot);
     
     void calculate_LR_QM_MM(const t_commrec*  cr,
                             t_nrnb*           nrnb,

@@ -121,6 +121,28 @@ static inline real pbc_dist_qmmm(matrix box, const rvec x1, const rvec x2)
     return norm(dx);
 }
 
+static inline rvec* pbc_dist_vec_qmmm(matrix box, const rvec x1, const rvec x2)
+{
+    rvec* dx;
+
+    for(int i=0; i<DIM; i++) {
+        *dx[i] = x1[i] - x2[i];
+
+        if (box != nullptr)
+        {
+            real length = box[i][i];
+            while (*dx[i] > length / 2.) {
+                *dx[i] -= length;
+            }
+            while (*dx[i] < - length / 2.) {
+                *dx[i] += length;
+            }
+        }
+    }
+    return dx;
+}
+
+
 /****************************************
  ******   PRE-SCC CALCULATION  **********
  ****************************************/
@@ -278,6 +300,57 @@ void QMMM_rec::calculate_SR_QM_MM(int variant,
  * EXCLUDING the periodic images of QM charges at this stage!
  * That contribution will be added within the SCC cycle.
  */
+
+void QMMM_rec::calculate_SR_NN_MM(int variant,
+                                  rvec *dpot,
+                                  real *pot)
+{
+  /* as the last argument is expected: fr->ewaldcoeff_q */
+  QMMM_QMrec& qm_ = qm[0];
+  QMMM_MMrec& mm_ = mm[0];
+  real rcoul = qm_.rcoulomb;
+  real ewaldcoeff_q = qm_.ewaldcoeff_q;
+  if (variant!=5) {
+      printf("Wrong variant for ML/MM");
+      exit(-1);
+  }
+  else {
+      for (int j=0; j<qm_.nrQMatoms; j++) { // do it for every QM atom
+      pot[j] = 0.;
+      for (int l=0; l<3; l++) {
+        dpot[j][l] = 0.;
+      }
+      // add potential from MM atoms
+      for (int k=0; k<mm_.nrMMatoms; k++) {
+        rvec dr;
+        //real r = pbc_dist_qmmm(qm_.box, qm_.xQM[j], mm_.xMM[k]);
+        pbc_dx_qmmm(qm_.box, qm_.xQM[j], mm_.xMM[k], dr);
+        real r = norm(dr);
+        if (r < 0.001) { // this may occur on the first step of simulation for link atom(s)
+          printf("QM--MM exploding for QM=%d, MM=%d. MM charge is %f\n", j+1, k+1, mm_.MMcharges[k]);
+          continue;
+        }
+        else {
+          pot[j] += mm_.MMcharges[k] / r;
+          for (int l=0; l<3; l++) {
+              dpot[j][l] -= dr[l]/(r*r);
+          }
+        }
+      } // for k
+    } // for j
+  }
+/* Convert the result to atomic units. */
+  for (int j=0; j<qm_.nrQMatoms; j++)
+  {
+      pot[j] /= NM2BOHR;
+      for (int l=0; l<3; l++) {
+          dpot[j][l] /= NM2BOHR;
+      }
+   // printf("SR QM/MM POT in a.u.: %d %8.5f\n", j+1, pot[j]);
+  }
+} // calculate_SR_QM_MM
+
+
 void QMMM_rec::calculate_LR_QM_MM(const t_commrec *cr,
                                   t_nrnb *nrnb,
                                   gmx_wallcycle_t wcycle,
@@ -1063,6 +1136,32 @@ void QMMM_rec::gradient_QM_MM(const t_commrec*  cr,
 
       delete[] grad_add;
       // end of PME
+      break;
+    }
+
+    case eqmmmNN:
+    {
+      for (int j=0; j<n; j++) { // do it for every QM atom
+        // add SR potential only from MM atoms in the neighbor list!
+        for (int k=0; k<ne; k++) {
+          pbc_dx_qmmm(qm_.box, qm_.xQM[j], mm_.xMM[k], bond);
+          real r = norm(bond);
+          rvec dgr;
+          if (r < 0.001)
+          { // this may occur on the first step of simulation for link atom(s)
+              printf("QM/MM PME QM--MM short range exploding for QM=%d, MM=%d. MM charge is %f\n", j+1, k+1, mm_.MMcharges[k]);
+              continue;
+          }
+          else
+          {
+              real fscal = - qm_.QMcharges[j] * mm_.MMcharges[k] / CUB(r) * SQR(BOHR2NM);
+              svmul(fscal, bond, dgr);
+              rvec_inc(partgrad[j], dgr);
+              rvec_dec(MMgrad[k], dgr);
+              continue;
+          }
+        } // for k
+      } // for j
       break;
     }
 

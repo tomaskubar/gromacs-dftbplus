@@ -33,3 +33,4 @@ Testing
 /.vs
 /CMakeSettings.json
 src/gromacs/tensorflow
+nnmmbuild/
