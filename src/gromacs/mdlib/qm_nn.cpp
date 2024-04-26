@@ -228,7 +228,7 @@ void init_nn(QMMM_QMrec* qm)
     // Find model prefixes and pathes
     char* model_path_prefix;
     std::vector<std::string> model_paths;
-    char model_path[100];
+    char model_path[1000];
     if ((model_path_prefix = getenv("GMX_TF_MODEL_PATH_PREFIX")) == nullptr)
     {
         printf("Path prefix to models must be given in the env variable GMX_TF_MODEL_PATH_PREFIX\n");
@@ -361,7 +361,8 @@ real call_nn(QMMM_rec*         qr,
     static int output_freq_x_qm;
     static int output_freq_x_mm;
 
-    static float force_prediction_std_threshold; // threshold deviation
+    static float energy_prediction_std_threshold; // energy threshold deviation
+    static float force_prediction_std_threshold; // force threshold deviation
 
     double QMener;
  // bool lPme = (qm->qmmm_variant == eqmmmPME);
@@ -421,16 +422,24 @@ real call_nn(QMMM_rec*         qr,
             printf("The MM coordinates (XYZQ) will be saved in file qm_dftb_mm.qxyz every %d steps.\n", output_freq_x_mm);
         }
 
-        // Find threshold deviation
-        if ((env = getenv("GMX_FORCE_PREDICTION_STD_THRESHOLD")) == nullptr)
+        // Find threshold deviation, energy threshold has priority
+        if (((env = getenv("GMX_ENERGY_PREDICTION_STD_THRESHOLD")) == nullptr) && ((env = getenv("GMX_FORCE_PREDICTION_STD_THRESHOLD")) == nullptr))
         {
-            printf("Deviation as threshold for significant standard deviation must be given via the env variable FORCE_PREDICTION_STD_THRESHOLD to do adaptive sampling\n");
-            force_prediction_std_threshold = -1;
+            printf("Deviation as threshold for significant standard deviation must be given via the env variable GMX_ENERGY_PREDICTION_STD_THRESHOLD or GMX_FORCE_PREDICTION_STD_THRESHOLD to do adaptive sampling\n");
+            energy_prediction_std_threshold = -1;
+            force_prediction_std_threshold = -1;        
         }
-        else
+        else if ((env = getenv("GMX_ENERGY_PREDICTION_STD_THRESHOLD")) != nullptr)
+        {
+            energy_prediction_std_threshold = std::stof(env);
+            force_prediction_std_threshold = -1;
+            printf("Using %6.3f as standard deviation threshold of the energy prediction for adaptive sampling\n", energy_prediction_std_threshold);
+        }
+        else if ((env = getenv("GMX_FORCE_PREDICTION_STD_THRESHOLD")) != nullptr)
         {
             force_prediction_std_threshold = std::stof(env);
-            printf("Using %6.3f as standard deviation threshold for adaptive sampling\n", force_prediction_std_threshold);
+            energy_prediction_std_threshold = -1;
+            printf("Using %6.3f as standard deviation threshold of the force prediction for adaptive sampling\n", force_prediction_std_threshold);
         }
     }
 
@@ -691,6 +700,10 @@ real call_nn(QMMM_rec*         qr,
     }
     energy_std /= n_models;
     energy_std = std::sqrt(energy_std);
+    if ((energy_std > energy_prediction_std_threshold) and (energy_prediction_std_threshold > 0.0))
+    {
+        qm->significant_structure = true;
+    }
 
     // mean and std of gradients
     float grad_means[nAtoms][3] = {};
@@ -948,12 +961,20 @@ real call_nn(QMMM_rec*         qr,
 
         FILE *f_std = nullptr; // file for saving standard deviations of significant structures
         f_std = fopen("qm_mlmm_std.xyz", "a");
+
+        fprintf(f_std, "\nMeans of energy predictions step %d\n", step);
+        fprintf(f_std, "%8.4f\n", energy_mean);
+
+        fprintf(f_std, "\nStds of energy predictions step %d\n", step);
+        fprintf(f_std, "%8.4f\n", energy_std);
+
         fprintf(f_std, "\nMeans of force predictions step %d\n", step);
         for (int i=0; i<n; i++) {
             fprintf(f_std, "%-2s %4i %8.4f %8.4f %8.4f\n",
                 periodic_system[qm->atomicnumberQM_get(i)], i,
                 grad_means[i][0], grad_means[i][1], grad_means[i][2]);
         }
+        
         fprintf(f_std, "\nStds of force predictions step %d\n", step);
         for (int i=0; i<n; i++) {
             fprintf(f_std, "%-2s %4i %8.4f %8.4f %8.4f\n",
