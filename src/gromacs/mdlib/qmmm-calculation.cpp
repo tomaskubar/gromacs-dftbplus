@@ -1119,7 +1119,7 @@ void QMMM_rec::gradient_ESP(//const t_commrec*  cr,
           real esp_scal = - mm_.MMcharges[k] / CUB(r) * SQR(BOHR2NM);
           svmul(esp_scal, bond, dgr);
           //printf("SR: QM %1d -- MM %1d:%12.7f%12.7f%12.7f\n", j+1, k+1, dgr[XX], dgr[YY], dgr[ZZ]);
-          rvec_dec(ESPgrad[j], dgr);
+          rvec_inc(ESPgrad[j], dgr);
         } // for k
       } // for j
       break;
