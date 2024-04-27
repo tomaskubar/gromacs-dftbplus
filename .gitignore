@@ -29,3 +29,6 @@ Testing
 /.vs
 /CMakeSettings.json
 src/gromacs/tensorflow
+Plumed.cmake
+Plumed.h
+Plumed.inc
