@@ -360,6 +360,7 @@ real call_nn(QMMM_rec*         qr,
 
     static float energy_prediction_std_threshold; // energy threshold deviation
     static float force_prediction_std_threshold; // force threshold deviation
+    static int nn_eval_freq; // evaluation frequency of additional models
 
     double QMener;
     // bool lPme = (qm->qmmm_variant == eqmmmPME);
@@ -422,7 +423,7 @@ real call_nn(QMMM_rec*         qr,
         // Find threshold deviation, energy threshold has priority
         if (((env = getenv("GMX_ENERGY_PREDICTION_STD_THRESHOLD")) == nullptr) && ((env = getenv("GMX_FORCE_PREDICTION_STD_THRESHOLD")) == nullptr))
         {
-            printf("Deviation as threshold for significant standard deviation must be given via the env variable GMX_ENERGY_PREDICTION_STD_THRESHOLD or GMX_FORCE_PREDICTION_STD_THRESHOLD to do adaptive sampling\n");
+            printf("Deviation as threshold for significant standard deviation can be given via the env variable GMX_ENERGY_PREDICTION_STD_THRESHOLD or GMX_FORCE_PREDICTION_STD_THRESHOLD to do adaptive sampling\n");
             energy_prediction_std_threshold = -1;
             force_prediction_std_threshold = -1;        
         }
@@ -437,6 +438,17 @@ real call_nn(QMMM_rec*         qr,
             force_prediction_std_threshold = std::stof(env);
             energy_prediction_std_threshold = -1;
             printf("Using %6.3f as standard deviation threshold of the force prediction for adaptive sampling\n", force_prediction_std_threshold);
+        }
+        // Find and set evaluation frequency of additional models(for adaptive sampling as well as safeguard during simulations), default 1
+        if ((env = getenv("GMX_NN_EVAL_FREQ")) != nullptr)
+        {
+            nn_eval_freq = std::stoi(env);
+            printf("Using %i as evaluation frequency of additional models\n", nn_eval_freq);
+        }
+        else
+        {
+            nn_eval_freq = 1;
+            printf("Using %i as default evaluation frequency of additional models\n", nn_eval_freq);
         }
     }
 
@@ -475,6 +487,17 @@ real call_nn(QMMM_rec*         qr,
     int n_models = std::stoi(getenv("GMX_N_TF_MODELS"));
     int nAtoms = qm->nrQMatoms_get();
 
+    // Decide how many models to use
+    int n_active_models;
+    if (step % nn_eval_freq == 0)
+    {
+        n_active_models = n_models;
+    }
+    else
+    {
+        n_active_models = 1;
+    }
+    
     // node number flat values 0
     int ndims_0 = 1;
     int64_t dims_0[] = {nAtoms};
@@ -484,7 +507,7 @@ real call_nn(QMMM_rec*         qr,
         data_0[i] = qm->atomicnumberQM_get(i);
     }
     int ndata_0 = sizeof(data_0);
-    for (int model_idx=0; model_idx<n_models; model_idx++) {
+    for (int model_idx=0; model_idx<n_active_models; model_idx++) {
         qm->models[model_idx]->InputValues[0] = TF_NewTensor(TF_INT64, dims_0, ndims_0, data_0, ndata_0, &NoOpDeallocator, nullptr);
     }
 
@@ -493,7 +516,7 @@ real call_nn(QMMM_rec*         qr,
     int64_t dims_1[] = {2};
     int64_t data_1[2] = {0, nAtoms};
     int ndata_1 = sizeof(data_1);
-    for (int model_idx=0; model_idx<n_models; model_idx++) {
+    for (int model_idx=0; model_idx<n_active_models; model_idx++) {
         qm->models[model_idx]->InputValues[1] = TF_NewTensor(TF_INT64, dims_1, ndims_1, data_1, ndata_1, &NoOpDeallocator, nullptr);
     }
 
@@ -509,7 +532,7 @@ real call_nn(QMMM_rec*         qr,
         }
     }
     int ndata_2 = sizeof(data_2);
-    for (int model_idx=0; model_idx<n_models; model_idx++) {
+    for (int model_idx=0; model_idx<n_active_models; model_idx++) {
         qm->models[model_idx]->InputValues[2] = TF_NewTensor(TF_FLOAT, dims_2, ndims_2, data_2, ndata_2, &NoOpDeallocator, nullptr);
     }
 
@@ -518,7 +541,7 @@ real call_nn(QMMM_rec*         qr,
     int64_t dims_3[] = {2};
     int64_t data_3[2] = {0, nAtoms};
     int ndata_3 = sizeof(data_3);
-    for (int model_idx=0; model_idx<n_models; model_idx++) {
+    for (int model_idx=0; model_idx<n_active_models; model_idx++) {
         qm->models[model_idx]->InputValues[3] = TF_NewTensor(TF_INT64, dims_3, ndims_3, data_3, ndata_3, &NoOpDeallocator, nullptr);
     }
 
@@ -542,7 +565,7 @@ real call_nn(QMMM_rec*         qr,
     }
     
     int ndata_4 = sizeof(data_4);
-    for (int model_idx=0; model_idx<n_models; model_idx++) {
+    for (int model_idx=0; model_idx<n_active_models; model_idx++) {
         qm->models[model_idx]->InputValues[4] = TF_NewTensor(TF_INT64, dims_4, ndims_4, data_4, ndata_4, &NoOpDeallocator, nullptr);
     }
 
@@ -551,7 +574,7 @@ real call_nn(QMMM_rec*         qr,
     int64_t dims_5[] = {2};
     int64_t data_5[2] = {0, nEdgeCombinations};
     int ndata_5 = sizeof(data_5);
-    for (int model_idx=0; model_idx<n_models; model_idx++) {
+    for (int model_idx=0; model_idx<n_active_models; model_idx++) {
         qm->models[model_idx]->InputValues[5] = TF_NewTensor(TF_INT64, dims_5, ndims_5, data_5, ndata_5, &NoOpDeallocator, nullptr);
     }
 
@@ -585,7 +608,7 @@ real call_nn(QMMM_rec*         qr,
     }
     
     int ndata_6 = sizeof(data_6);
-    for (int model_idx=0; model_idx<n_models; model_idx++) {
+    for (int model_idx=0; model_idx<n_active_models; model_idx++) {
         qm->models[model_idx]->InputValues[6] = TF_NewTensor(TF_INT64, dims_6, ndims_6, data_6, ndata_6, &NoOpDeallocator, nullptr);
     }
 
@@ -594,7 +617,7 @@ real call_nn(QMMM_rec*         qr,
     int64_t dims_7[] = {2};
     int64_t data_7[2] = {0, nAngleCombinations};
     int ndata_7 = sizeof(data_7); 
-    for (int model_idx=0; model_idx<n_models; model_idx++) {
+    for (int model_idx=0; model_idx<n_active_models; model_idx++) {
         qm->models[model_idx]->InputValues[7] = TF_NewTensor(TF_INT64, dims_7, ndims_7, data_7, ndata_7, &NoOpDeallocator, nullptr);
     }
 
@@ -603,7 +626,7 @@ real call_nn(QMMM_rec*         qr,
     int64_t dims_8[] = {1};
     float data_8[1] = {(float)qm->QMcharge_get()};
     int ndata_8 = sizeof(data_8);
-    for (int model_idx=0; model_idx<n_models; model_idx++) {
+    for (int model_idx=0; model_idx<n_active_models; model_idx++) {
         qm->models[model_idx]->InputValues[8] = TF_NewTensor(TF_FLOAT, dims_8, ndims_8, data_8, ndata_8, &NoOpDeallocator, nullptr);
     }
 
@@ -617,7 +640,7 @@ real call_nn(QMMM_rec*         qr,
         data_9[i] = qm->pot_qmmm_get(i)*V_to_au; // in atomic units
     }
     int ndata_9 = sizeof(data_9); 
-    for (int model_idx=0; model_idx<n_models; model_idx++) {
+    for (int model_idx=0; model_idx<n_active_models; model_idx++) {
         qm->models[model_idx]->InputValues[9] = TF_NewTensor(TF_FLOAT, dims_9, ndims_9, data_9, ndata_9, &NoOpDeallocator, nullptr);
     }
 
@@ -626,7 +649,7 @@ real call_nn(QMMM_rec*         qr,
     int64_t dims_10[] = {2};
     int64_t data_10[2] = {0, nAtoms};
     int ndata_10 = sizeof(data_1);
-    for (int model_idx=0; model_idx<n_models; model_idx++) {
+    for (int model_idx=0; model_idx<n_active_models; model_idx++) {
         qm->models[model_idx]->InputValues[10] = TF_NewTensor(TF_INT64, dims_10, ndims_10, data_10, ndata_10, &NoOpDeallocator, nullptr);
     }
 
@@ -642,7 +665,7 @@ real call_nn(QMMM_rec*         qr,
     // qr->gradient_ESP(//cr, nrnb, wcycle, nullptr, qm->qmmm_variant_get(), data_11, ESPgrad_full);
     qr->gradient_ESP(qm->qmmm_variant_get(), data_11, ESPgrad_full);
     int ndata_11 = sizeof(data_11);
-    for (int model_idx=0; model_idx<n_models; model_idx++) {
+    for (int model_idx=0; model_idx<n_active_models; model_idx++) {
         qm->models[model_idx]->InputValues[11] = TF_NewTensor(TF_FLOAT, dims_11, ndims_11, data_11, ndata_11, &NoOpDeallocator, nullptr);
     }
 
@@ -651,15 +674,15 @@ real call_nn(QMMM_rec*         qr,
     int64_t dims_12[] = {2};
     int64_t data_12[2] = {0, nAtoms};
     int ndata_12 = sizeof(data_12);
-    for (int model_idx=0; model_idx<n_models; model_idx++) {
+    for (int model_idx=0; model_idx<n_active_models; model_idx++) {
         qm->models[model_idx]->InputValues[12] = TF_NewTensor(TF_INT64, dims_12, ndims_12, data_12, ndata_12, &NoOpDeallocator, nullptr);
     }
 
     // Run the Session
-    float* charge_predictions[n_models];
-    float* energy_predictions[n_models];
-    float* grad_predictions[n_models];
-    for (int model_idx=0; model_idx<n_models; model_idx++) {
+    float* charge_predictions[n_active_models];
+    float* energy_predictions[n_active_models];
+    float* grad_predictions[n_active_models];
+    for (int model_idx=0; model_idx<n_active_models; model_idx++) {
         TF_SessionRun(qm->models[model_idx]->Session, NULL,
             qm->models[model_idx]->Input, qm->models[model_idx]->InputValues, qm->models[model_idx]->NumInputs,
             qm->models[model_idx]->Output, qm->models[model_idx]->OutputValues, qm->models[model_idx]->NumOutputs,
@@ -680,34 +703,34 @@ real call_nn(QMMM_rec*         qr,
     for (int at_idx=0; at_idx<nAtoms; at_idx++) {
         //calculate and save mean of each model prediction
         float mean = 0.0;
-        for (int model_idx=0; model_idx<n_models; model_idx++) {
+        for (int model_idx=0; model_idx<n_active_models; model_idx++) {
             mean += charge_predictions[model_idx][at_idx];
         }
-        mean /= n_models;
+        mean /= n_active_models;
         charge_means[at_idx] = mean;
 
         //calculate and save std of each model prediction
         float std = 0.0;
-        for (int model_idx=0; model_idx<n_models; model_idx++) {
+        for (int model_idx=0; model_idx<n_active_models; model_idx++) {
             std += std::pow(charge_predictions[model_idx][at_idx] - mean, 2);
         }
-        std /= n_models;
+        std /= n_active_models;
         std = std::sqrt(std);
         charge_stds[at_idx] = std;
     }
 
     // mean and std of energy
     float energy_mean = 0.0;
-    for (int model_idx=0; model_idx<n_models; model_idx++) {
+    for (int model_idx=0; model_idx<n_active_models; model_idx++) {
         energy_mean += energy_predictions[model_idx][0];
     }
-    energy_mean /= n_models;
+    energy_mean /= n_active_models;
 
     float energy_std = 0.0;
-    for (int model_idx=0; model_idx<n_models; model_idx++) {
+    for (int model_idx=0; model_idx<n_active_models; model_idx++) {
         energy_std += std::pow(energy_predictions[model_idx][0] - energy_mean, 2);
     }
-    energy_std /= n_models;
+    energy_std /= n_active_models;
     energy_std = std::sqrt(energy_std);
     if ((energy_std > energy_prediction_std_threshold) and (energy_prediction_std_threshold > 0.0))
     {
@@ -721,18 +744,18 @@ real call_nn(QMMM_rec*         qr,
         for (int dim_idx=0; dim_idx<3; dim_idx++) {
             //calculate and save mean of each model prediction
             float mean = 0.0;
-            for (int model_idx=0; model_idx<n_models; model_idx++) {
+            for (int model_idx=0; model_idx<n_active_models; model_idx++) {
                 mean += grad_predictions[model_idx][3*at_idx+dim_idx];
             }
-            mean /= n_models;
+            mean /= n_active_models;
             grad_means[at_idx][dim_idx] = mean;
             
             //calculate and save std of each model prediction
             float std = 0.0;
-            for (int model_idx=0; model_idx<n_models; model_idx++) {
+            for (int model_idx=0; model_idx<n_active_models; model_idx++) {
                 std += std::pow(grad_predictions[model_idx][3*at_idx+dim_idx] - mean, 2);
             }
-            std /= n_models;
+            std /= n_active_models;
             std = std::sqrt(std);
 
             if ((std > force_prediction_std_threshold) and (force_prediction_std_threshold > 0.0))
@@ -1012,9 +1035,12 @@ real call_nn(QMMM_rec*         qr,
     sfree(pot_sr);
     sfree(pot_lr);
 
-    for (int model_idx=0; model_idx<n_models; model_idx++) {
+    for (int model_idx=0; model_idx<n_active_models; model_idx++) {
         for (int i=0; i<qm->models[model_idx]->NumInputs; i++) {
             TF_DeleteTensor(qm->models[model_idx]->InputValues[i]);
+        }
+        for (int i=0; i<qm->models[model_idx]->NumOutputs; i++) {
+            TF_DeleteTensor(qm->models[model_idx]->OutputValues[i]);
         }
     }
 
