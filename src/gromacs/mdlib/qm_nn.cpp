@@ -91,7 +91,6 @@ typedef struct Context {
 } Context;
 
 void NoOpDeallocator(void* data, size_t a, void* b);
-void prepare_nn_inputs(QMMM_QMrec* qm);
 
 /* Fill up the context (status structure) with all the relevant data
  */
@@ -99,12 +98,12 @@ void initialize_context(Context*          cont,
                         int               nrQMatoms,
                         int               qmmm_variant,
                         QMMM_rec*         qr_in,
-                     // const t_forcerec* fr_in,
+                        // const t_forcerec* fr_in,
                         const t_inputrec* ir_in,
                         const t_commrec*  cr_in)
-                     // gmx_wallcycle_t   wcycle_in)
-//                      const real        rcoul_in,
-//                      const real        ewaldcoeff_q_in)
+                        // gmx_wallcycle_t   wcycle_in)
+                        // const real        rcoul_in,
+                        // const real        ewaldcoeff_q_in)
 {
   /* The "cr" and "qr" structures will be initialized
    *   at the start of every MD step,
@@ -116,66 +115,66 @@ void initialize_context(Context*          cont,
    *       so the object qr is not available yet!
    */
 
-  if (qmmm_variant == eqmmmPME) {
-      cont->pme = true;
-  } else {
-      cont->pme = false;
-  }
-  printf("qmmm_variant = %d\n", qmmm_variant);
-  printf("cont->pme = %s\n", cont->pme ? "true" : "false");
-  //cont->n = fr_in->qr->qm[0].nrQMatoms; // object qr not available yet!
-  cont->n = nrQMatoms;
-  printf("cont->n = %d\n", cont->n);
-  if (cont->pme)
-  {
-      cont->cr           = cr_in;
-      cont->qr           = qr_in;
-      // cont->wcycle       = wcycle_in;
-      cont->rcoul        = ir_in->rcoulomb;
-      cont->ewaldcoeff_q = calc_ewaldcoeff_q(ir_in->rcoulomb, ir_in->ewald_rtol);
-      printf("cont->cr = %p\n", cont->cr);
-      printf("cont->qr = %p\n", cont->qr);
-      printf("cont->qr->pmedata = %p\n", cont->qr->pmedata);
-      printf("cont->qr->pmedata* = %p\n", *cont->qr->pmedata);
-      printf("cont->rcoul = %f\n", cont->rcoul);
-      printf("cont->ewaldcoeff_q = %f\n", cont->ewaldcoeff_q);
-  }
+    if (qmmm_variant == eqmmmPME) {
+        cont->pme = true;
+    } else {
+        cont->pme = false;
+    }
+    printf("qmmm_variant = %d\n", qmmm_variant);
+    printf("cont->pme = %s\n", cont->pme ? "true" : "false");
+    //cont->n = fr_in->qr->qm[0].nrQMatoms; // object qr not available yet!
+    cont->n = nrQMatoms;
+    printf("cont->n = %d\n", cont->n);
+    if (cont->pme)
+    {
+        cont->cr           = cr_in;
+        cont->qr           = qr_in;
+        // cont->wcycle       = wcycle_in;
+        cont->rcoul        = ir_in->rcoulomb;
+        cont->ewaldcoeff_q = calc_ewaldcoeff_q(ir_in->rcoulomb, ir_in->ewald_rtol);
+        printf("cont->cr = %p\n", cont->cr);
+        printf("cont->qr = %p\n", cont->qr);
+        printf("cont->qr->pmedata = %p\n", cont->qr->pmedata);
+        printf("cont->qr->pmedata* = %p\n", *cont->qr->pmedata);
+        printf("cont->rcoul = %f\n", cont->rcoul);
+        printf("cont->ewaldcoeff_q = %f\n", cont->ewaldcoeff_q);
+    }
 
-  return;
+    return;
 }
 
 /* Calculate the external potential due to periodic images of QM atoms with PME.
  */
 void calcQMextPotPME(Context *cont, double *q, double *extpot)
 {
-//int n = cont->fr->qr->qm[0]->nrQMatoms;
-  int n = cont->n;
+    // int n = cont->fr->qr->qm[0]->nrQMatoms;
+    int n = cont->n;
 
-  if (cont->pme)
-  {
-      /* PERFORM THE REAL CALCULATION */
-      real *extpot_real;
-      snew(extpot_real, n);
-      for (int i=0; i<n; i++)
-      {
-          cont->qr->qm[0].QMcharges_set(i, (real) -q[i]); // check sign TODO
-      }
-      cont->qr->calculate_complete_QM_QM(cont->cr, cont->nrnb, cont->wcycle, *cont->qr->pmedata, extpot_real);
-      for (int i=0; i<n; i++)
-      {
-          extpot[i] = (double) - extpot_real[i]; // sign OK
-      }
-      sfree(extpot_real);
-  }
-  else
-  {
-      for (int i=0; i<n; i++)
-      {
-          extpot[i] = 0.;
-      }
-  }
+    if (cont->pme)
+    {
+        /* PERFORM THE REAL CALCULATION */
+        real *extpot_real;
+        snew(extpot_real, n);
+        for (int i=0; i<n; i++)
+        {
+            cont->qr->qm[0].QMcharges_set(i, (real) -q[i]); // check sign TODO
+        }
+        cont->qr->calculate_complete_QM_QM(cont->cr, cont->nrnb, cont->wcycle, *cont->qr->pmedata, extpot_real);
+        for (int i=0; i<n; i++)
+        {
+            extpot[i] = (double) - extpot_real[i]; // sign OK
+        }
+        sfree(extpot_real);
+    }
+    else
+    {
+        for (int i=0; i<n; i++)
+        {
+            extpot[i] = 0.;
+        }
+    }
 
-  return;
+    return;
 }
 
 /* The wrapper for the calculation of external potential
@@ -183,9 +182,9 @@ void calcQMextPotPME(Context *cont, double *q, double *extpot)
  */
 extern "C" void calcqmextpot(void *refptr, double *q, double *extpot)
 {
-  Context *cont = (Context *) refptr;
-  calcQMextPotPME(cont, q, extpot);
-  return;
+    Context *cont = (Context *) refptr;
+    calcQMextPotPME(cont, q, extpot);
+    return;
 }
 
 /* The wrapper for the calculation of grdient of external potential
@@ -195,18 +194,16 @@ extern "C" void calcqmextpot(void *refptr, double *q, double *extpot)
  */
 extern "C" void calcqmextpotgrad(void *refptr, gmx_unused double *q, double *extpotgrad)
 {
-  Context *cont = (Context *) refptr;
-  for (int i=0; i<3*cont->n; i++)
-      extpotgrad[i] = 0.;
-  return;
+    Context *cont = (Context *) refptr;
+    for (int i=0; i<3*cont->n; i++)
+        extpotgrad[i] = 0.;
+    return;
 }
 
 /* DFTBPLUS interface routines */
 
 void init_nn(QMMM_QMrec* qm)
 {
-    //printf("Hello from TensorFlow C library version %s\n", TF_Version());
-
     // Find amount of models, max 10
     char* N_TF_MODELS; // Pointer to env variable for comparison with nullpointer
     int n_models; 
@@ -365,7 +362,7 @@ real call_nn(QMMM_rec*         qr,
     static float force_prediction_std_threshold; // force threshold deviation
 
     double QMener;
- // bool lPme = (qm->qmmm_variant == eqmmmPME);
+    // bool lPme = (qm->qmmm_variant == eqmmmPME);
     (void) fshift;
 
     int n = qm->nrQMatoms_get();
@@ -488,7 +485,7 @@ real call_nn(QMMM_rec*         qr,
     }
     int ndata_0 = sizeof(data_0);
     for (int model_idx=0; model_idx<n_models; model_idx++) {
-        qm->models[model_idx]->InputValues[0] = TF_NewTensor(TF_INT64, dims_0, ndims_0, data_0, ndata_0, &NoOpDeallocator, data_0);
+        qm->models[model_idx]->InputValues[0] = TF_NewTensor(TF_INT64, dims_0, ndims_0, data_0, ndata_0, &NoOpDeallocator, nullptr);
     }
 
     // node number row splits 1
@@ -497,7 +494,7 @@ real call_nn(QMMM_rec*         qr,
     int64_t data_1[2] = {0, nAtoms};
     int ndata_1 = sizeof(data_1);
     for (int model_idx=0; model_idx<n_models; model_idx++) {
-        qm->models[model_idx]->InputValues[1] = TF_NewTensor(TF_INT64, dims_1, ndims_1, data_1, ndata_1, &NoOpDeallocator, data_1);
+        qm->models[model_idx]->InputValues[1] = TF_NewTensor(TF_INT64, dims_1, ndims_1, data_1, ndata_1, &NoOpDeallocator, nullptr);
     }
 
     // node coordinates flat values 2
@@ -513,12 +510,16 @@ real call_nn(QMMM_rec*         qr,
     }
     int ndata_2 = sizeof(data_2);
     for (int model_idx=0; model_idx<n_models; model_idx++) {
-        qm->models[model_idx]->InputValues[2] = TF_NewTensor(TF_FLOAT, dims_2, ndims_2, data_2, ndata_2, &NoOpDeallocator, data_2);
+        qm->models[model_idx]->InputValues[2] = TF_NewTensor(TF_FLOAT, dims_2, ndims_2, data_2, ndata_2, &NoOpDeallocator, nullptr);
     }
 
     // node coordinates row splits 3
+    int ndims_3 = 1;
+    int64_t dims_3[] = {2};
+    int64_t data_3[2] = {0, nAtoms};
+    int ndata_3 = sizeof(data_3);
     for (int model_idx=0; model_idx<n_models; model_idx++) {
-        qm->models[model_idx]->InputValues[3] = qm->models[model_idx]->InputValues[1];
+        qm->models[model_idx]->InputValues[3] = TF_NewTensor(TF_INT64, dims_3, ndims_3, data_3, ndata_3, &NoOpDeallocator, nullptr);
     }
 
     // edge indices flat values 4
@@ -542,7 +543,7 @@ real call_nn(QMMM_rec*         qr,
     
     int ndata_4 = sizeof(data_4);
     for (int model_idx=0; model_idx<n_models; model_idx++) {
-        qm->models[model_idx]->InputValues[4] = TF_NewTensor(TF_INT64, dims_4, ndims_4, data_4, ndata_4, &NoOpDeallocator, data_4);
+        qm->models[model_idx]->InputValues[4] = TF_NewTensor(TF_INT64, dims_4, ndims_4, data_4, ndata_4, &NoOpDeallocator, nullptr);
     }
 
     // edge indces row splits 5
@@ -551,7 +552,7 @@ real call_nn(QMMM_rec*         qr,
     int64_t data_5[2] = {0, nEdgeCombinations};
     int ndata_5 = sizeof(data_5);
     for (int model_idx=0; model_idx<n_models; model_idx++) {
-        qm->models[model_idx]->InputValues[5] = TF_NewTensor(TF_INT64, dims_5, ndims_5, data_5, ndata_5, &NoOpDeallocator, data_5);
+        qm->models[model_idx]->InputValues[5] = TF_NewTensor(TF_INT64, dims_5, ndims_5, data_5, ndata_5, &NoOpDeallocator, nullptr);
     }
 
     // angle indces flat values 6
@@ -585,7 +586,7 @@ real call_nn(QMMM_rec*         qr,
     
     int ndata_6 = sizeof(data_6);
     for (int model_idx=0; model_idx<n_models; model_idx++) {
-        qm->models[model_idx]->InputValues[6] = TF_NewTensor(TF_INT64, dims_6, ndims_6, data_6, ndata_6, &NoOpDeallocator, data_6);
+        qm->models[model_idx]->InputValues[6] = TF_NewTensor(TF_INT64, dims_6, ndims_6, data_6, ndata_6, &NoOpDeallocator, nullptr);
     }
 
     // angle indces row splits 7
@@ -594,7 +595,7 @@ real call_nn(QMMM_rec*         qr,
     int64_t data_7[2] = {0, nAngleCombinations};
     int ndata_7 = sizeof(data_7); 
     for (int model_idx=0; model_idx<n_models; model_idx++) {
-        qm->models[model_idx]->InputValues[7] = TF_NewTensor(TF_INT64, dims_7, ndims_7, data_7, ndata_7, &NoOpDeallocator, data_7);
+        qm->models[model_idx]->InputValues[7] = TF_NewTensor(TF_INT64, dims_7, ndims_7, data_7, ndata_7, &NoOpDeallocator, nullptr);
     }
 
     // total charge 8
@@ -603,7 +604,7 @@ real call_nn(QMMM_rec*         qr,
     float data_8[1] = {(float)qm->QMcharge_get()};
     int ndata_8 = sizeof(data_8);
     for (int model_idx=0; model_idx<n_models; model_idx++) {
-        qm->models[model_idx]->InputValues[8] = TF_NewTensor(TF_FLOAT, dims_8, ndims_8, data_8, ndata_8, &NoOpDeallocator, data_8);
+        qm->models[model_idx]->InputValues[8] = TF_NewTensor(TF_FLOAT, dims_8, ndims_8, data_8, ndata_8, &NoOpDeallocator, nullptr);
     }
 
     // esp flat values 9
@@ -617,12 +618,16 @@ real call_nn(QMMM_rec*         qr,
     }
     int ndata_9 = sizeof(data_9); 
     for (int model_idx=0; model_idx<n_models; model_idx++) {
-        qm->models[model_idx]->InputValues[9] = TF_NewTensor(TF_FLOAT, dims_9, ndims_9, data_9, ndata_9, &NoOpDeallocator, data_9);
+        qm->models[model_idx]->InputValues[9] = TF_NewTensor(TF_FLOAT, dims_9, ndims_9, data_9, ndata_9, &NoOpDeallocator, nullptr);
     }
 
     // esp row splits 10
+    int ndims_10 = 1;
+    int64_t dims_10[] = {2};
+    int64_t data_10[2] = {0, nAtoms};
+    int ndata_10 = sizeof(data_1);
     for (int model_idx=0; model_idx<n_models; model_idx++) {
-        qm->models[model_idx]->InputValues[10] = qm->models[model_idx]->InputValues[1];
+        qm->models[model_idx]->InputValues[10] = TF_NewTensor(TF_INT64, dims_10, ndims_10, data_10, ndata_10, &NoOpDeallocator, nullptr);
     }
 
     // esp_grad flat values 11
@@ -638,12 +643,16 @@ real call_nn(QMMM_rec*         qr,
     qr->gradient_ESP(qm->qmmm_variant_get(), data_11, ESPgrad_full);
     int ndata_11 = sizeof(data_11);
     for (int model_idx=0; model_idx<n_models; model_idx++) {
-        qm->models[model_idx]->InputValues[11] = TF_NewTensor(TF_FLOAT, dims_11, ndims_11, data_11, ndata_11, &NoOpDeallocator, data_11);
+        qm->models[model_idx]->InputValues[11] = TF_NewTensor(TF_FLOAT, dims_11, ndims_11, data_11, ndata_11, &NoOpDeallocator, nullptr);
     }
 
     // esp grad row splits 12
+    int ndims_12 = 1;
+    int64_t dims_12[] = {2};
+    int64_t data_12[2] = {0, nAtoms};
+    int ndata_12 = sizeof(data_12);
     for (int model_idx=0; model_idx<n_models; model_idx++) {
-        qm->models[model_idx]->InputValues[12] = qm->models[model_idx]->InputValues[1];  
+        qm->models[model_idx]->InputValues[12] = TF_NewTensor(TF_INT64, dims_12, ndims_12, data_12, ndata_12, &NoOpDeallocator, nullptr);
     }
 
     // Run the Session
@@ -1002,6 +1011,12 @@ real call_nn(QMMM_rec*         qr,
     sfree(q);
     sfree(pot_sr);
     sfree(pot_lr);
+
+    for (int model_idx=0; model_idx<n_models; model_idx++) {
+        for (int i=0; i<qm->models[model_idx]->NumInputs; i++) {
+            TF_DeleteTensor(qm->models[model_idx]->InputValues[i]);
+        }
+    }
 
     step++;
 
