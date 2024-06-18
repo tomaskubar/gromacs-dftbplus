@@ -337,10 +337,12 @@ real call_dftbplus(QMMM_rec*         qr,
     static FILE *f_p = nullptr;
     static FILE *f_x_qm = nullptr;
     static FILE *f_x_mm = nullptr;
+    static FILE *f_x_mm_full = nullptr;
     static int output_freq_q;
     static int output_freq_p;
     static int output_freq_x_qm;
     static int output_freq_x_mm;
+    static int output_freq_x_mm_full;
 
     double QMener;
  // bool lPme = (qm->qmmm_variant == eqmmmPME);
@@ -398,6 +400,13 @@ real call_dftbplus(QMMM_rec*         qr,
             output_freq_x_mm = atoi(env);
             f_x_mm = fopen("qm_dftb_mm.qxyz", "a");
             printf("The MM coordinates (XYZQ) will be saved in file qm_dftb_mm.qxyz every %d steps.\n", output_freq_x_mm);
+        }
+
+        if (qm->qmmm_variant_get() != eqmmmVACUO && (env = getenv("GMX_DFTB_MM_COORD_FULL")) != nullptr)
+        {
+            output_freq_x_mm_full = atoi(env);
+            f_x_mm_full = fopen("qm_dftb_mm_full.qxyz", "a");
+            printf("The full MM coordinates (XYZQ) will be saved in file qm_dftb_mm_full.qxyz every %d steps.\n", output_freq_x_mm_full);
         }
     }
 
@@ -594,6 +603,17 @@ real call_dftbplus(QMMM_rec*         qr,
             fprintf(f_x_mm, "%10.7f%10.5f%10.5f%10.5f\n",
                 mm.MMcharges[i], // CHECK -- HOW TO DO IT WITH PME / WITH CUT-OFF?
                 mm.xMM[i][0] * 10., mm.xMM[i][1] * 10., mm.xMM[i][2] * 10.);
+        }
+    }
+
+    if (f_x_mm_full && step % output_freq_x_mm_full == 0)
+    {
+        fprintf(f_x_mm_full, "\nbox step %d : %10.5f%10.5f%10.5f\n", step, qm->box_xx_get(), qm->box_yy_get(), qm->box_zz_get());
+        fprintf(f_x_mm_full, "\nfull MM coordinates and charges step %d\n", step);
+        for (int i=0; i<mm.nrMMatoms_full; i++) {
+            fprintf(f_x_mm_full, "%10.7f%10.5f%10.5f%10.5f\n",
+                mm.MMcharges_full[i], // CHECK -- HOW TO DO IT WITH PME / WITH CUT-OFF?
+                mm.xMM_full[i][0] * 10., mm.xMM_full[i][1] * 10., mm.xMM_full[i][2] * 10.);
         }
     }
 

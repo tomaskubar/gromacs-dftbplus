@@ -218,6 +218,9 @@ public:
     int              nelectrons_get()const;
     int              CASelectrons_get()const;
     int              CASorbitals_get()const;
+    real             box_xx_get()const;
+    real             box_yy_get()const;
+    real             box_zz_get()const;
     // input
     void             QMcharges_set(int atom, real value);
     void             pot_qmmm_set(int atom, double value);
