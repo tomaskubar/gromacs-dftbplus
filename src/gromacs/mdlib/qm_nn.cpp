@@ -105,7 +105,7 @@ void initialize_context(Context*          cont,
                         // const real        rcoul_in,
                         // const real        ewaldcoeff_q_in)
 {
-  /* The "cr" and "qr" structures will be initialized
+   /* The "cr" and "qr" structures will be initialized
    *   at the start of every MD step,
    *   and will be remembered for all of the SCC iterations.
    * That way, these data need not pass through the DFTB+ program.
@@ -204,13 +204,36 @@ extern "C" void calcqmextpotgrad(void *refptr, gmx_unused double *q, double *ext
 
 void init_nn(QMMM_QMrec* qm)
 {
+    // Find and set network architecture, default "hdnnp"
+    implemented_network_architectures = {"hdnnp", "schnet", "painn"};
+    std::string network_architecture;
+    if ((env = getenv("GMX_NN_ARCHITECTURE")) != nullptr)
+    {
+        network_architecture = env;
+        if (std::find(implemented_network_architectures.begin(), implemented_network_architectures.end(), network_architecture) == implemented_network_architectures.end())
+        {
+            printf("The network architecture %s is not implemented, please choose from %s\n", network_architecture.c_str(), implemented_network_architectures.c_str());
+            exit(-1);
+        }
+        printf("Using %s as network architecture\n", network_architecture.c_str());y
+    }
+    else
+    {
+        network_architecture = "hdnnp";
+        printf("Using %s as default network architecture\n", network_architecture.c_str());
+    }
+    for (int i=0; i<n_models; i++) {
+        qm->models[model_idx]->modelArchitecture = network_architecture;
+    }
+
     // Find amount of models, max 10
     char* N_TF_MODELS; // Pointer to env variable for comparison with nullpointer
     int n_models; 
     if ((N_TF_MODELS = getenv("GMX_N_TF_MODELS")) == nullptr)
     {
         printf("Amount of models to use for adaptive sampling must be given via the env variable GMX_N_TF_MODELS\n");
-        exit(-1);
+        n_models = 1;
+        printf("Using %i model \n", n_models);
     }
     else {
         n_models = std::stoi(N_TF_MODELS);
@@ -224,7 +247,6 @@ void init_nn(QMMM_QMrec* qm)
 
     // Find model prefixes and pathes
     char* model_path_prefix;
-    std::vector<std::string> model_paths;
     char model_path[1000];
     if ((model_path_prefix = getenv("GMX_TF_MODEL_PATH_PREFIX")) == nullptr)
     {
@@ -238,6 +260,20 @@ void init_nn(QMMM_QMrec* qm)
             printf("%s ", model_path);
         }
         printf("\n");
+    }
+
+    // Architecture differences
+    int NumInputs;
+    int NumOutputs;
+    if (network_architecture == "hdnnp")
+    {
+        NumInputs = 13;
+        NumOutputs = 3; // charge, energy, force
+    }
+    if ((network_architecture == "schnet") || (network_architecture == "painn"))
+    {
+        NumInputs = 5;
+        NumOutputs = 2; // energy, force
     }
 
     //********* Read models
@@ -266,7 +302,7 @@ void init_nn(QMMM_QMrec* qm)
         }
 
         //****** Get input tensor
-        qm->models[model_idx]->NumInputs = 13;
+        qm->models[model_idx]->NumInputs = NumInputs;
         qm->models[model_idx]->Input = (TF_Output*)malloc(sizeof(TF_Output) * qm->models[model_idx]->NumInputs);
         
         const char* base_name = "serving_default_args_0";
@@ -292,40 +328,21 @@ void init_nn(QMMM_QMrec* qm)
         }
         
         //********* Get Output tensor
-        qm->models[model_idx]->NumOutputs = 3;
+        qm->models[model_idx]->NumOutputs = NumOutputs;
         qm->models[model_idx]->Output = (TF_Output*)malloc(sizeof(TF_Output) * qm->models[model_idx]->NumOutputs);
-        TF_Output charge_output = {TF_GraphOperationByName(qm->models[model_idx]->Graph, "StatefulPartitionedCall"), 0};
 
-        if(charge_output.oper == NULL) {
-            printf("ERROR: Failed TF_GraphOperationByName StatefulPartitionedCall\n");
-            exit(-1);
+        TF_Output output;
+        for (int output_index=0; output_index<qm->models[model_idx]->NumOutputs; output_index++) {
+            output = {TF_GraphOperationByName(qm->models[model_idx]->Graph, "StatefulPartitionedCall"), output_index};
+            if(output.oper == NULL) {
+                printf("ERROR: Failed TF_GraphOperationByName StatefulPartitionedCall\n");
+                exit(-1);
+            }
+            else {
+                printf("TF_GraphOperationByName StatefulPartitionedCall is OK\n");
+                qm->models[model_idx]->Output[output_index] = output;
+            }
         }
-        else
-            printf("TF_GraphOperationByName StatefulPartitionedCall is OK\n");
-        
-        qm->models[model_idx]->Output[0] = charge_output;
-
-        TF_Output energy_output = {TF_GraphOperationByName(qm->models[model_idx]->Graph, "StatefulPartitionedCall"), 1};
-
-        if(energy_output.oper == NULL) {
-            printf("ERROR: Failed TF_GraphOperationByName StatefulPartitionedCall\n");
-            exit(-1);
-        }
-        else {
-        printf("TF_GraphOperationByName StatefulPartitionedCall is OK\n");
-        }
-        qm->models[model_idx]->Output[1] = energy_output;
-
-        TF_Output force_output = {TF_GraphOperationByName(qm->models[model_idx]->Graph, "StatefulPartitionedCall"), 2};
-
-        if(force_output.oper == NULL) {
-            printf("ERROR: Failed TF_GraphOperationByName StatefulPartitionedCall\n");
-            exit(-1);
-        }
-        else {
-        printf("TF_GraphOperationByName StatefulPartitionedCall is OK\n");
-        }
-        qm->models[model_idx]->Output[2] = force_output;
 
         // Allocate data for inputs & outputs
         qm->models[model_idx]->InputValues  = (TF_Tensor**)malloc(sizeof(TF_Tensor*)*qm->models[model_idx]->NumInputs);
