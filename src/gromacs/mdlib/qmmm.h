@@ -82,7 +82,7 @@ typedef struct {
     TF_Tensor** OutputValues;
     int         nAtoms;
     int*        atomicNumbers;
-    std::string modelArchitecture; // network architecture, default "hdnnp", availabe: "hdnnp", "schnet", "painn"
+    char modelArchitecture[100]; // network architecture, default "hdnnp", availabe: "hdnnp", "schnet", "painn"
 }TFModel;
 #endif
 

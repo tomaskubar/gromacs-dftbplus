@@ -90,8 +90,6 @@ typedef struct Context {
   real              ewaldcoeff_q;
 } Context;
 
-void NoOpDeallocator(void* data, size_t a, void* b);
-
 /* Fill up the context (status structure) with all the relevant data
  */
 void initialize_context(Context*          cont,
@@ -200,32 +198,10 @@ extern "C" void calcqmextpotgrad(void *refptr, gmx_unused double *q, double *ext
     return;
 }
 
-/* DFTBPLUS interface routines */
+/* NN interface routines */
 
 void init_nn(QMMM_QMrec* qm)
 {
-    // Find and set network architecture, default "hdnnp"
-    implemented_network_architectures = {"hdnnp", "schnet", "painn"};
-    std::string network_architecture;
-    if ((env = getenv("GMX_NN_ARCHITECTURE")) != nullptr)
-    {
-        network_architecture = env;
-        if (std::find(implemented_network_architectures.begin(), implemented_network_architectures.end(), network_architecture) == implemented_network_architectures.end())
-        {
-            printf("The network architecture %s is not implemented, please choose from %s\n", network_architecture.c_str(), implemented_network_architectures.c_str());
-            exit(-1);
-        }
-        printf("Using %s as network architecture\n", network_architecture.c_str());y
-    }
-    else
-    {
-        network_architecture = "hdnnp";
-        printf("Using %s as default network architecture\n", network_architecture.c_str());
-    }
-    for (int i=0; i<n_models; i++) {
-        qm->models[model_idx]->modelArchitecture = network_architecture;
-    }
-
     // Find amount of models, max 10
     char* N_TF_MODELS; // Pointer to env variable for comparison with nullpointer
     int n_models; 
@@ -243,6 +219,31 @@ void init_nn(QMMM_QMrec* qm)
             exit(-1);
         }
         printf("Using %i models \n", n_models);
+    }
+    
+    // Find and set network architecture, default "hdnnp"
+    std::vector<std::string> implemented_network_architectures = {"hdnnp", "schnet", "painn"};
+    std::string network_architecture;
+    char* env;
+    if ((env = getenv("GMX_NN_ARCHITECTURE")) != nullptr)
+    {
+        network_architecture = std::string(env);
+        if (std::find(implemented_network_architectures.begin(), implemented_network_architectures.end(), network_architecture) == implemented_network_architectures.end())
+        {
+            printf("The network architecture %s is not implemented, please choose from ", network_architecture.c_str());
+            for (long unsigned int i=0; i<implemented_network_architectures.size(); i++)
+            {
+                printf("%s ", implemented_network_architectures[i].c_str());
+            }
+            printf("\n");
+            exit(-1);
+        }
+        printf("Using %s as network architecture\n", network_architecture.c_str());
+    }
+    else
+    {
+        network_architecture = "hdnnp";
+        printf("Using %s as default network architecture\n", network_architecture.c_str());
     }
 
     // Find model prefixes and pathes
@@ -272,15 +273,18 @@ void init_nn(QMMM_QMrec* qm)
     }
     if ((network_architecture == "schnet") || (network_architecture == "painn"))
     {
-        NumInputs = 5;
+        NumInputs = 6;
         NumOutputs = 2; // energy, force
     }
 
     //********* Read models
     for (int model_idx=0; model_idx<n_models; model_idx++) {
+        snew(qm->models[model_idx], 1);
+        printf("Reading model %d\n", model_idx);
+        std::strcpy(qm->models[model_idx]->modelArchitecture, network_architecture.c_str()); // Save network architecture for later use
+
         snprintf(model_path, sizeof(model_path), "%s%d", model_path_prefix, model_idx);
 
-        snew(qm->models[model_idx], 1);
         qm->models[model_idx]->Graph = TF_NewGraph();
         qm->models[model_idx]->Status = TF_NewStatus();
 
@@ -310,10 +314,10 @@ void init_nn(QMMM_QMrec* qm)
 
         for (int i=0; i<qm->models[model_idx]->NumInputs; i++) {
             if (i == 0) {
-                strcpy(operation_name, base_name);
+                strcpy(operation_name, base_name); // First input is named "serving_default_args_0" with ragged tensors by default
             }
             else {
-                snprintf(operation_name, sizeof(operation_name), "%s_%d", base_name, i);
+                snprintf(operation_name, sizeof(operation_name), "%s_%d", base_name, i); // Subsequent inputs are named "serving_default_args_0_1", "serving_default_args_0_2", ...
             }
             TF_Output t = {TF_GraphOperationByName(qm->models[model_idx]->Graph, operation_name), 0};
 
@@ -322,7 +326,7 @@ void init_nn(QMMM_QMrec* qm)
                 exit(-1);
             }
             else {
-                printf("TF_GraphOperationByName %s is OK\n", operation_name);
+                // printf("TF_GraphOperationByName %s is OK\n", operation_name);
                 qm->models[model_idx]->Input[i] = t;
             }
         }
@@ -335,11 +339,11 @@ void init_nn(QMMM_QMrec* qm)
         for (int output_index=0; output_index<qm->models[model_idx]->NumOutputs; output_index++) {
             output = {TF_GraphOperationByName(qm->models[model_idx]->Graph, "StatefulPartitionedCall"), output_index};
             if(output.oper == NULL) {
-                printf("ERROR: Failed TF_GraphOperationByName StatefulPartitionedCall\n");
+                printf("ERROR: Failed TF_GraphOperationByName StatefulPartitionedCall %d\n", output_index);
                 exit(-1);
             }
             else {
-                printf("TF_GraphOperationByName StatefulPartitionedCall is OK\n");
+                // printf("TF_GraphOperationByName StatefulPartitionedCall is OK\n");
                 qm->models[model_idx]->Output[output_index] = output;
             }
         }
@@ -355,15 +359,15 @@ void init_nn(QMMM_QMrec* qm)
     return;
 } /* init_nn */
 
-void NoOpDeallocator(void* data, size_t a, void* b) {(void) b; if (a > 0) {(void) data;}} //Nonsense Deallocator to make compiler happy
-real call_nn(QMMM_rec*         qr,
-                   const t_commrec*  cr,
-                   QMMM_QMrec*       qm,
-                   const QMMM_MMrec& mm,
-                   rvec              f[],
-                   rvec              fshift[],
-		           t_nrnb*           nrnb,
-                   gmx_wallcycle_t   wcycle)
+void NoOpDeallocator(void* data, size_t a, void* b) {(void)b; if (a > 0) {(void)data;}} //Nonsense Deallocator to make compiler happy
+real call_nn(   QMMM_rec*         qr,
+                const t_commrec*  cr,
+                QMMM_QMrec*       qm,
+                const QMMM_MMrec& mm,
+                rvec              f[],
+                rvec              fshift[],
+                t_nrnb*           nrnb,
+                gmx_wallcycle_t   wcycle)
 {
     static int step = 0;
     static FILE *f_q = nullptr;
@@ -379,7 +383,7 @@ real call_nn(QMMM_rec*         qr,
     static float force_prediction_std_threshold; // force threshold deviation
     static int nn_eval_freq; // evaluation frequency of additional models
 
-    double QMener;
+    float QMenergy;
     // bool lPme = (qm->qmmm_variant == eqmmmPME);
     (void) fshift;
 
@@ -388,7 +392,6 @@ real call_nn(QMMM_rec*         qr,
     double *grad, *pot, *potgrad, *q; // real instead of rvec, to help pass data to fortran
     real *pot_sr = nullptr, *pot_lr = nullptr;
     rvec *QMgrad = nullptr, *MMgrad = nullptr, *MMgrad_full = nullptr;
-    rvec *ESPgrad = nullptr, *ESPgrad_full = nullptr;
 
     //snew(x, (n,3));
     snew(grad, 3*n);
@@ -515,184 +518,24 @@ real call_nn(QMMM_rec*         qr,
         n_active_models = 1;
     }
     
-    // node number flat values 0
-    int ndims_0 = 1;
-    int64_t dims_0[] = {nAtoms};
-    int64_t data_0[nAtoms] = {};
-    for (int i=0; i<nAtoms; i++)
+    // Prepare inputs
+    if (strcmp(qm->models[0]->modelArchitecture, "hdnnp") == 0)
     {
-        data_0[i] = qm->atomicnumberQM_get(i);
+        prepare_hdnnp_inputs(qr, qm, n_active_models);
     }
-    int ndata_0 = sizeof(data_0);
-    for (int model_idx=0; model_idx<n_active_models; model_idx++) {
-        qm->models[model_idx]->InputValues[0] = TF_NewTensor(TF_INT64, dims_0, ndims_0, data_0, ndata_0, &NoOpDeallocator, nullptr);
-    }
-
-    // node number row splits 1
-    int ndims_1 = 1;
-    int64_t dims_1[] = {2};
-    int64_t data_1[2] = {0, nAtoms};
-    int ndata_1 = sizeof(data_1);
-    for (int model_idx=0; model_idx<n_active_models; model_idx++) {
-        qm->models[model_idx]->InputValues[1] = TF_NewTensor(TF_INT64, dims_1, ndims_1, data_1, ndata_1, &NoOpDeallocator, nullptr);
-    }
-
-    // node coordinates flat values 2
-    int ndims_2 = 2;
-    int64_t dims_2[] = {nAtoms, 3};
-    float data_2[nAtoms][3] = {};
-    for (int i=0; i<nAtoms; i++)
+    if ((strcmp(qm->models[0]->modelArchitecture, "schnet") == 0) || (strcmp(qm->models[0]->modelArchitecture, "painn") == 0))
     {
-        for (int j=0; j<3; j++)
-        {
-            data_2[i][j] = qm->xQM_get(i,j) / BOHR2NM; // from nm to bohr for NN model
-        }
-    }
-    int ndata_2 = sizeof(data_2);
-    for (int model_idx=0; model_idx<n_active_models; model_idx++) {
-        qm->models[model_idx]->InputValues[2] = TF_NewTensor(TF_FLOAT, dims_2, ndims_2, data_2, ndata_2, &NoOpDeallocator, nullptr);
-    }
-
-    // node coordinates row splits 3
-    int ndims_3 = 1;
-    int64_t dims_3[] = {2};
-    int64_t data_3[2] = {0, nAtoms};
-    int ndata_3 = sizeof(data_3);
-    for (int model_idx=0; model_idx<n_active_models; model_idx++) {
-        qm->models[model_idx]->InputValues[3] = TF_NewTensor(TF_INT64, dims_3, ndims_3, data_3, ndata_3, &NoOpDeallocator, nullptr);
-    }
-
-    // edge indices flat values 4
-    int nEdgeCombinations = nAtoms*(nAtoms-1); // Cheap Combinations nCr(nAtoms 2)
-    int ndims_4 = 2;
-    int64_t dims_4[] = {nEdgeCombinations, 2};
-    int64_t data_4[nEdgeCombinations][2] = {};
-    int edge_index = 0;
-    for (int i=0; i<nAtoms; i++)
-    {   
-        for (int j=0; j<nAtoms; j++)
-        {
-            if (i==j) {
-                continue;
-            }
-            data_4[edge_index][0] = i;
-            data_4[edge_index][1] = j;
-            edge_index++;
-        }
+        prepare_schnet_painn_inputs(qr, qm, n_active_models);
     }
     
-    int ndata_4 = sizeof(data_4);
-    for (int model_idx=0; model_idx<n_active_models; model_idx++) {
-        qm->models[model_idx]->InputValues[4] = TF_NewTensor(TF_INT64, dims_4, ndims_4, data_4, ndata_4, &NoOpDeallocator, nullptr);
-    }
-
-    // edge indces row splits 5
-    int ndims_5 = 1;
-    int64_t dims_5[] = {2};
-    int64_t data_5[2] = {0, nEdgeCombinations};
-    int ndata_5 = sizeof(data_5);
-    for (int model_idx=0; model_idx<n_active_models; model_idx++) {
-        qm->models[model_idx]->InputValues[5] = TF_NewTensor(TF_INT64, dims_5, ndims_5, data_5, ndata_5, &NoOpDeallocator, nullptr);
-    }
-
-    // angle indces flat values 6
-    int nAngleCombinations;
-    nAngleCombinations = nAtoms*(nAtoms-1)*(nAtoms-2); // Cheap Combinations nAtoms*nCr(nAtoms-1 2)
-
-    int ndims_6 = 2;
-    int64_t dims_6[] = {nAngleCombinations, 3};
-    int64_t data_6[nAngleCombinations][3] = {};
-
-    int angle_index = 0;
-    for (int i=0; i<nAtoms; i++)
+    // Check input availability outside of preparation functions
+    for (int input_idx=0; input_idx<qm->models[0]->NumInputs; input_idx++)
     {
-        for (int j=0; j<nAtoms; j++)
+        if (qm->models[0]->InputValues[input_idx] == NULL)
         {
-            if (i == j) {
-                continue;
-            }
-            for (int k=0; k<nAtoms; k++)
-            {
-                if ((i == k) || (j == k))  {
-                    continue;
-                }
-                data_6[angle_index][0] = i;
-                data_6[angle_index][1] = j;
-                data_6[angle_index][2] = k; 
-                angle_index++;
-            }
+            printf("ERROR: Input %d is NULL\n", input_idx);
+            exit(-1);
         }
-    }
-    
-    int ndata_6 = sizeof(data_6);
-    for (int model_idx=0; model_idx<n_active_models; model_idx++) {
-        qm->models[model_idx]->InputValues[6] = TF_NewTensor(TF_INT64, dims_6, ndims_6, data_6, ndata_6, &NoOpDeallocator, nullptr);
-    }
-
-    // angle indces row splits 7
-    int ndims_7 = 1;
-    int64_t dims_7[] = {2};
-    int64_t data_7[2] = {0, nAngleCombinations};
-    int ndata_7 = sizeof(data_7); 
-    for (int model_idx=0; model_idx<n_active_models; model_idx++) {
-        qm->models[model_idx]->InputValues[7] = TF_NewTensor(TF_INT64, dims_7, ndims_7, data_7, ndata_7, &NoOpDeallocator, nullptr);
-    }
-
-    // total charge 8
-    int ndims_8 = 1;
-    int64_t dims_8[] = {1};
-    float data_8[1] = {(float)qm->QMcharge_get()};
-    int ndata_8 = sizeof(data_8);
-    for (int model_idx=0; model_idx<n_active_models; model_idx++) {
-        qm->models[model_idx]->InputValues[8] = TF_NewTensor(TF_FLOAT, dims_8, ndims_8, data_8, ndata_8, &NoOpDeallocator, nullptr);
-    }
-
-    // esp flat values 9
-    float V_to_au = 1/27.211386245988;
-    int ndims_9 = 1;
-    int64_t dims_9[] = {nAtoms};
-    float data_9[nAtoms] = {};
-    for (int i=0; i<nAtoms; i++)
-    {
-        data_9[i] = qm->pot_qmmm_get(i)*V_to_au; // in atomic units
-    }
-    int ndata_9 = sizeof(data_9); 
-    for (int model_idx=0; model_idx<n_active_models; model_idx++) {
-        qm->models[model_idx]->InputValues[9] = TF_NewTensor(TF_FLOAT, dims_9, ndims_9, data_9, ndata_9, &NoOpDeallocator, nullptr);
-    }
-
-    // esp row splits 10
-    int ndims_10 = 1;
-    int64_t dims_10[] = {2};
-    int64_t data_10[2] = {0, nAtoms};
-    int ndata_10 = sizeof(data_1);
-    for (int model_idx=0; model_idx<n_active_models; model_idx++) {
-        qm->models[model_idx]->InputValues[10] = TF_NewTensor(TF_INT64, dims_10, ndims_10, data_10, ndata_10, &NoOpDeallocator, nullptr);
-    }
-
-    // esp_grad flat values 11
-    snew(ESPgrad, qm->nrQMatoms_get());
-    if (qm->qmmm_variant_get() == eqmmmPME)
-    {
-        snew(ESPgrad_full, qm->nrQMatoms_get());
-    }
-    int ndims_11 = 2;
-    int64_t dims_11[] = {nAtoms, 3};
-    float data_11[nAtoms][3] = {};
-    // qr->gradient_ESP(//cr, nrnb, wcycle, nullptr, qm->qmmm_variant_get(), data_11, ESPgrad_full);
-    qr->gradient_ESP(qm->qmmm_variant_get(), data_11, ESPgrad_full);
-    int ndata_11 = sizeof(data_11);
-    for (int model_idx=0; model_idx<n_active_models; model_idx++) {
-        qm->models[model_idx]->InputValues[11] = TF_NewTensor(TF_FLOAT, dims_11, ndims_11, data_11, ndata_11, &NoOpDeallocator, nullptr);
-    }
-
-    // esp grad row splits 12
-    int ndims_12 = 1;
-    int64_t dims_12[] = {2};
-    int64_t data_12[2] = {0, nAtoms};
-    int ndata_12 = sizeof(data_12);
-    for (int model_idx=0; model_idx<n_active_models; model_idx++) {
-        qm->models[model_idx]->InputValues[12] = TF_NewTensor(TF_INT64, dims_12, ndims_12, data_12, ndata_12, &NoOpDeallocator, nullptr);
     }
 
     // Run the Session
@@ -709,9 +552,22 @@ real call_nn(QMMM_rec*         qr,
         printf("%s",TF_Message(qm->models[model_idx]->Status));
         }
 
-        charge_predictions[model_idx] = (float*)TF_TensorData(qm->models[model_idx]->OutputValues[0]); // in e-
-        energy_predictions[model_idx] = (float*)TF_TensorData(qm->models[model_idx]->OutputValues[1]); // in Hartree
-        grad_predictions[model_idx] = (float*)TF_TensorData(qm->models[model_idx]->OutputValues[2]); // in Hartree/Bohr
+        if (strcmp(qm->models[model_idx]->modelArchitecture, "hdnnp") == 0)
+        {
+            charge_predictions[model_idx] = (float*)TF_TensorData(qm->models[model_idx]->OutputValues[0]); // in e-
+            energy_predictions[model_idx] = (float*)TF_TensorData(qm->models[model_idx]->OutputValues[1]); // in Hartree
+            grad_predictions[model_idx] = (float*)TF_TensorData(qm->models[model_idx]->OutputValues[2]); // in Hartree/Bohr
+        }
+        else if ((strcmp(qm->models[model_idx]->modelArchitecture, "schnet") == 0) || (strcmp(qm->models[model_idx]->modelArchitecture, "painn") == 0))
+        {
+            float charges[nAtoms] = {};
+            for (int at_idx=0; at_idx<nAtoms; at_idx++) {
+                charges[at_idx] = 0; // in e-
+            }
+            charge_predictions[model_idx] = (float*)charges;
+            energy_predictions[model_idx] = (float*)TF_TensorData(qm->models[model_idx]->OutputValues[0]); // in Hartree
+            grad_predictions[model_idx] = (float*)TF_TensorData(qm->models[model_idx]->OutputValues[1]); // in Hartree/Bohr
+        }
     }
 
     // mean and std of charges
@@ -793,8 +649,8 @@ real call_nn(QMMM_rec*         qr,
         //qm->QMcharges_set(i, charge_means[i]); // sign OK
     }
     
-    QMener = energy_predictions[0][0];
-    //QMener = energy_mean;
+    QMenergy = energy_predictions[0][0];
+    //QMenergy = energy_mean;
 
     /* Save the gradient on the QM atoms */
     for (int i=0; i<n; i++)
@@ -924,91 +780,16 @@ real call_nn(QMMM_rec*         qr,
 
     if (qm->significant_structure)
     {   
-        // // Print information and save information for debugging
-        // FILE *f_input_0 = nullptr;
-        // f_input_0 = fopen("input_00.txt", "w");
-        // for (int i=0; i<nAtoms; i++)
+        // if (std::strcmp(qm->models[0]->modelArchitecture, "hdnnp") == 0)
         // {
-        //     printf("CHECK Atomic numbers %d %ld\n", i, data_0[i]);
-        //     fprintf(f_input_0, "%ld\n", data_0[i]);
+        //     write_hdnnp_inputs_outputs(qm);
         // }
-        // fclose(f_input_0);
-
-        // FILE *f_input_2 = nullptr;
-        // f_input_2 = fopen("input_02.txt", "w");
-        // for (int i=0; i<nAtoms; i++)
+        // if ((std::strcmp(qm->models[0]->modelArchitecture, "schnet") == 0) || (std::strcmp(qm->models[0]->modelArchitecture, "painn") == 0))
         // {
-        //     printf("CHECK COORD QM Bohr[%d] = %6.3f %6.3f %6.3f\n", i+1, data_2[i][0], data_2[i][1], data_2[i][2]);
-        //     fprintf(f_input_2, "%6.6f %6.6f %6.6f\n", data_2[i][0], data_2[i][1], data_2[i][2]);
-        // }
-        // for (int i=0; i<nAtoms; i++)
-        // {
-        //     printf("CHECK COORD QM MD units[%d] = %6.3f %6.3f %6.3f\n", i+1, BOHR2NM*data_2[i][0], BOHR2NM*data_2[i][1], BOHR2NM*data_2[i][2]);
-        // }
-        // fclose(f_input_2);
-
-        // FILE *f_input_4 = nullptr;
-        // f_input_4 = fopen("input_04.txt", "w");
-        // for (int i=0; i<nEdgeCombinations; i++)
-        // {
-        //     fprintf(f_input_4, "%ld %ld\n", data_4[i][0], data_4[i][1]);
-        // }
-        // printf("CHECK Bonds %d %d\n", edge_index, nEdgeCombinations);
-        // fclose(f_input_4);
-
-        // FILE *f_input_6 = nullptr;
-        // f_input_6 = fopen("input_06.txt", "w");
-        // for (int i=0; i<nAngleCombinations; i++)
-        // {
-        //     fprintf(f_input_6, "%ld %ld %ld\n", data_6[i][0], data_6[i][1],  data_6[i][2]);
-        // }
-        // printf("CHECK Angles %d %d\n", angle_index, nAngleCombinations);
-        // fclose(f_input_6);
-
-        // FILE *f_input_8 = nullptr;
-        // f_input_8 = fopen("input_08.txt", "w");
-        // fprintf(f_input_8, "%1.0f\n", data_8[0]);
-        // printf("CHECK Total Charge %1.0f \n", data_8[0]);
-        // fclose(f_input_8);
-
-        // FILE *f_input_9 = nullptr;
-        // f_input_9 = fopen("input_09.txt", "w");
-        // for (int i=0; i<nAtoms; i++)
-        // {
-        //     printf("CHECK ESP QM[%d] = %6.3f\n", i+1, data_9[i]);
-        //     fprintf(f_input_9, "%6.6f\n", data_9[i]);
-        // }
-        // fclose(f_input_9);
-
-        // FILE *f_input_11 = nullptr;
-        // f_input_11 = fopen("input_11.txt", "w");
-        // for (int i=0; i<nAtoms; i++)
-        // {
-        //     printf("CHECK ESP GRAD[%d] = %6.3f %6.3f %6.3f\n", i+1, data_11[i][0], data_11[i][1], data_11[i][2]);
-        //     fprintf(f_input_11, "%6.6f %6.6f %6.6f\n", data_11[i][0], data_11[i][1], data_11[i][2]);
-        // }
-        // fclose(f_input_11);
-
-        // FILE *f_output = nullptr;
-        // f_output = fopen("output.txt", "w");
-        // for (int i=0; i<nAtoms; i++)
-        // {
-        //     printf("CHECK CHARGE QM[%d] = %6.3f\n", i+1, qm->QMcharges_get(i));
-        //     fprintf(f_output, "%6.6f\n", qm->QMcharges_get(i));
+        //     write_schnet_painn_inputs_outputs(qm);
         // }
 
-        // printf("CHECK QM Energy = %6.3f\n", QMener);
-        // fprintf(f_output, "%6.6f\n", QMener);
-
-        // for (int i=0; i<n; i++)
-        // {
-        //     printf("CHECK QM Grad[%d] = %6.3f %6.3f %6.3f\n", i+1, QMgrad[i][0], QMgrad[i][1], QMgrad[i][2]);
-        //     fprintf(f_output, "%6.6f %6.6f %6.6f\n", QMgrad[i][0], QMgrad[i][1], QMgrad[i][2]);
-        // }
-
-        // fclose(f_output);
-
-        FILE *f_std = nullptr; // file for saving standard deviations of significant structures
+        FILE* f_std = nullptr; // file for saving standard deviations of significant structures
         f_std = fopen("qm_mlmm_std.xyz", "a");
 
         fprintf(f_std, "\nMeans of energy predictions step %d\n", step);
@@ -1032,17 +813,12 @@ real call_nn(QMMM_rec*         qr,
         }
         fclose(f_std);
     }
-    
+
     sfree(QMgrad);
     sfree(MMgrad);
     if (qm->qmmm_variant_get() == eqmmmPME)
     {
         sfree(MMgrad_full);
-    }
-    sfree(ESPgrad);
-    if (qm->qmmm_variant_get() == eqmmmPME)
-    {
-        sfree(ESPgrad_full);
     }
 
     sfree(grad);
@@ -1063,11 +839,494 @@ real call_nn(QMMM_rec*         qr,
 
     step++;
 
-    return (real) QMener * HARTREE2KJ * AVOGADRO;
+    return (real) QMenergy * HARTREE2KJ * AVOGADRO;
 } /* call_nn */
 
-/* end of nn sub routines */
+void prepare_hdnnp_inputs(  QMMM_rec* qr,
+                            QMMM_QMrec* qm,
+                            int n_active_models)
+{
+    typedef int64_t int_pair[2];
+    typedef int64_t int_triple[3];
 
+    int nAtoms = qm->nrQMatoms_get();
+
+    // node number flat values 0
+    int ndims_0 = 1;
+    int64_t dims_0[] = {nAtoms};
+    int64_t* data_0;
+    snew(data_0, nAtoms);
+    for (int i=0; i<nAtoms; i++)
+    {
+        data_0[i] = qm->atomicnumberQM_get(i);
+    }
+    int ndata_0 = nAtoms * sizeof(*data_0);
+    for (int model_idx=0; model_idx<n_active_models; model_idx++) {
+        qm->models[model_idx]->InputValues[0] = TF_NewTensor(TF_INT64, dims_0, ndims_0, data_0, ndata_0, &NoOpDeallocator, nullptr);
+    }
+
+    // node number row splits 1
+    int ndims_1 = 1;
+    int64_t dims_1[] = {2};
+    static int64_t data_1[2] = {0, nAtoms};
+    int ndata_1 = sizeof(data_1);
+    for (int model_idx=0; model_idx<n_active_models; model_idx++) {
+        qm->models[model_idx]->InputValues[1] = TF_NewTensor(TF_INT64, dims_1, ndims_1, data_1, ndata_1, &NoOpDeallocator, nullptr);
+    }
+
+    // node coordinates flat values 2
+    int ndims_2 = 2;
+    int64_t dims_2[] = {nAtoms, 3};
+    rvec* data_2;
+    snew(data_2, nAtoms);
+    for (int i=0; i<nAtoms; i++)
+    {
+        for (int j=0; j<3; j++)
+        {
+            data_2[i][j] = qm->xQM_get(i,j) / BOHR2NM; // from nm to bohr for NN model
+        }
+    }
+    int ndata_2 = nAtoms * sizeof(*data_2);
+    for (int model_idx=0; model_idx<n_active_models; model_idx++) {
+        qm->models[model_idx]->InputValues[2] = TF_NewTensor(TF_FLOAT, dims_2, ndims_2, data_2, ndata_2, &NoOpDeallocator, nullptr);
+    }
+
+    // node coordinates row splits 3
+    int ndims_3 = 1;
+    int64_t dims_3[] = {2};
+    static int64_t data_3[2] = {0, nAtoms};
+    int ndata_3 = sizeof(data_3);
+    for (int model_idx=0; model_idx<n_active_models; model_idx++) {
+        qm->models[model_idx]->InputValues[3] = TF_NewTensor(TF_INT64, dims_3, ndims_3, data_3, ndata_3, &NoOpDeallocator, nullptr);
+    }
+
+    // edge indices flat values 4
+    int nEdgeCombinations = nAtoms*(nAtoms-1); // Cheap Combinations nCr(nAtoms 2)
+    int ndims_4 = 2;
+    int64_t dims_4[] = {nEdgeCombinations, 2};
+    int_pair* data_4;
+    snew(data_4, nEdgeCombinations);
+    int edge_index = 0;
+    for (int i=0; i<nAtoms; i++)
+    {   
+        for (int j=0; j<nAtoms; j++)
+        {
+            if (i==j) {
+                continue;
+            }
+            data_4[edge_index][0] = i;
+            data_4[edge_index][1] = j;
+            edge_index++;
+        }
+    }
+    
+    int ndata_4 = sizeof(*data_4)*nEdgeCombinations;
+    for (int model_idx=0; model_idx<n_active_models; model_idx++) {
+        qm->models[model_idx]->InputValues[4] = TF_NewTensor(TF_INT64, dims_4, ndims_4, data_4, ndata_4, &NoOpDeallocator, nullptr);
+    }
+
+    // edge indces row splits 5
+    int ndims_5 = 1;
+    int64_t dims_5[] = {2};
+    static int64_t data_5[2] = {0, nEdgeCombinations};
+    int ndata_5 = sizeof(data_5);
+    for (int model_idx=0; model_idx<n_active_models; model_idx++) {
+        qm->models[model_idx]->InputValues[5] = TF_NewTensor(TF_INT64, dims_5, ndims_5, data_5, ndata_5, &NoOpDeallocator, nullptr);
+    }
+
+    // angle indces flat values 6
+    int nAngleCombinations = nAtoms*(nAtoms-1)*(nAtoms-2); // Cheap Combinations nAtoms*nCr(nAtoms-1 2)
+
+    int ndims_6 = 2;
+    int64_t dims_6[] = {nAngleCombinations, 3};
+    int_triple* data_6;
+    snew(data_6, nAngleCombinations);
+
+    int angle_index = 0;
+    for (int i=0; i<nAtoms; i++)
+    {
+        for (int j=0; j<nAtoms; j++)
+        {
+            if (i == j) {
+                continue;
+            }
+            for (int k=0; k<nAtoms; k++)
+            {
+                if ((i == k) || (j == k))  {
+                    continue;
+                }
+                data_6[angle_index][0] = i;
+                data_6[angle_index][1] = j;
+                data_6[angle_index][2] = k; 
+                angle_index++;
+            }
+        }
+    }
+    
+    int ndata_6 = sizeof(*data_6)*nAngleCombinations;
+    for (int model_idx=0; model_idx<n_active_models; model_idx++) {
+        qm->models[model_idx]->InputValues[6] = TF_NewTensor(TF_INT64, dims_6, ndims_6, data_6, ndata_6, &NoOpDeallocator, nullptr);
+    }
+
+    // angle indces row splits 7
+    int ndims_7 = 1;
+    int64_t dims_7[] = {2};
+    static int64_t data_7[2] = {0, nAngleCombinations};
+    int ndata_7 = sizeof(data_7); 
+    for (int model_idx=0; model_idx<n_active_models; model_idx++) {
+        qm->models[model_idx]->InputValues[7] = TF_NewTensor(TF_INT64, dims_7, ndims_7, data_7, ndata_7, &NoOpDeallocator, nullptr);
+    }
+
+    // total charge 8
+    int ndims_8 = 1;
+    int64_t dims_8[] = {1};
+    static float data_8[1] = {(float)qm->QMcharge_get()};
+    int ndata_8 = sizeof(data_8);
+    for (int model_idx=0; model_idx<n_active_models; model_idx++) {
+        qm->models[model_idx]->InputValues[8] = TF_NewTensor(TF_FLOAT, dims_8, ndims_8, data_8, ndata_8, &NoOpDeallocator, nullptr);
+    }
+
+    // esp flat values 9
+    float V_to_au = 1/27.211386245988;
+    int ndims_9 = 1;
+    int64_t dims_9[] = {nAtoms};
+    float* data_9;
+    snew(data_9, nAtoms);
+    for (int i=0; i<nAtoms; i++)
+    {
+        data_9[i] = qm->pot_qmmm_get(i)*V_to_au; // in atomic units
+    }
+    int ndata_9 = sizeof(*data_9)*nAtoms; 
+    for (int model_idx=0; model_idx<n_active_models; model_idx++) {
+        qm->models[model_idx]->InputValues[9] = TF_NewTensor(TF_FLOAT, dims_9, ndims_9, data_9, ndata_9, &NoOpDeallocator, nullptr);
+    }
+
+    // esp row splits 10
+    int ndims_10 = 1;
+    int64_t dims_10[] = {2};
+    static int64_t data_10[2] = {0, nAtoms};
+    int ndata_10 = sizeof(data_10);
+    for (int model_idx=0; model_idx<n_active_models; model_idx++) {
+        qm->models[model_idx]->InputValues[10] = TF_NewTensor(TF_INT64, dims_10, ndims_10, data_10, ndata_10, &NoOpDeallocator, nullptr);
+    }
+
+    // esp_grad flat values 11
+    rvec *ESPgrad = nullptr, *ESPgrad_full = nullptr;
+    snew(ESPgrad, nAtoms); // Not really needed, as I put this data directly into data_11
+    if (qm->qmmm_variant_get() == eqmmmPME)
+    {
+        snew(ESPgrad_full, nAtoms);
+    }
+    int ndims_11 = 2;
+    int64_t dims_11[] = {nAtoms, 3};
+    rvec* data_11;
+    snew(data_11, nAtoms);
+    // qr->gradient_ESP(//cr, nrnb, wcycle, nullptr, qm->qmmm_variant_get(), data_11, ESPgrad_full);
+    qr->gradient_ESP(qm->qmmm_variant_get(), data_11, ESPgrad_full);
+    int ndata_11 = sizeof(*data_11)*nAtoms;
+    for (int model_idx=0; model_idx<n_active_models; model_idx++) {
+        qm->models[model_idx]->InputValues[11] = TF_NewTensor(TF_FLOAT, dims_11, ndims_11, data_11, ndata_11, &NoOpDeallocator, nullptr);
+    }
+
+    // esp grad row splits 12
+    int ndims_12 = 1;
+    int64_t dims_12[] = {2};
+    static int64_t data_12[2] = {0, nAtoms};
+    int ndata_12 = sizeof(data_12);
+    for (int model_idx=0; model_idx<n_active_models; model_idx++) {
+        qm->models[model_idx]->InputValues[12] = TF_NewTensor(TF_INT64, dims_12, ndims_12, data_12, ndata_12, &NoOpDeallocator, nullptr);
+    }
+
+    sfree(ESPgrad);
+    if (qm->qmmm_variant_get() == eqmmmPME)
+    {
+        sfree(ESPgrad_full);
+    }
+
+    // Check input availability
+    for (int input_idx=0; input_idx<qm->models[0]->NumInputs; input_idx++) {
+        if (qm->models[0]->InputValues[input_idx] == NULL)
+        {
+            printf("ERROR: Input %d is NULL\n", input_idx);
+            exit(-1);
+        }
+    }
+
+} // end of prepare_hdnnp_inputs
+
+
+void prepare_schnet_painn_inputs(   QMMM_rec* qr,
+                                    QMMM_QMrec* qm,
+                                    int n_active_models)
+{
+    typedef int64_t int_pair[2];
+
+    int nAtoms = qm->nrQMatoms_get();
+
+    // node number flat values 0
+    int ndims_0 = 1;
+    int64_t dims_0[] = {nAtoms};
+    int64_t* data_0;
+    snew(data_0, nAtoms);
+    for (int i=0; i<nAtoms; i++)
+    {
+        data_0[i] = qm->atomicnumberQM_get(i);
+    }
+    int ndata_0 = nAtoms * sizeof(*data_0);
+    for (int model_idx=0; model_idx<n_active_models; model_idx++) {
+        qm->models[model_idx]->InputValues[0] = TF_NewTensor(TF_INT64, dims_0, ndims_0, data_0, ndata_0, &NoOpDeallocator, nullptr);
+    }
+
+    // node number row splits 1
+    int ndims_1 = 1;
+    int64_t dims_1[] = {2};
+    static int64_t data_1[2] = {0, nAtoms};
+    int ndata_1 = sizeof(data_1);
+    for (int model_idx=0; model_idx<n_active_models; model_idx++) {
+        qm->models[model_idx]->InputValues[1] = TF_NewTensor(TF_INT64, dims_1, ndims_1, data_1, ndata_1, &NoOpDeallocator, nullptr);
+    }
+
+    // node coordinates flat values 2
+    int ndims_2 = 2;
+    int64_t dims_2[] = {nAtoms, 3};
+    rvec* data_2;
+    snew(data_2, nAtoms);
+    for (int i=0; i<nAtoms; i++)
+    {
+        for (int j=0; j<3; j++)
+        {
+            data_2[i][j] = qm->xQM_get(i,j) / BOHR2NM; // from nm to bohr for NN model
+        }
+    }
+    int ndata_2 = nAtoms * sizeof(*data_2);
+    for (int model_idx=0; model_idx<n_active_models; model_idx++) {
+        qm->models[model_idx]->InputValues[2] = TF_NewTensor(TF_FLOAT, dims_2, ndims_2, data_2, ndata_2, &NoOpDeallocator, nullptr);
+    }
+
+    // node coordinates row splits 3
+    int ndims_3 = 1;
+    int64_t dims_3[] = {2};
+    static int64_t data_3[2] = {0, nAtoms};
+    int ndata_3 = sizeof(data_3);
+    for (int model_idx=0; model_idx<n_active_models; model_idx++) {
+        qm->models[model_idx]->InputValues[3] = TF_NewTensor(TF_INT64, dims_3, ndims_3, data_3, ndata_3, &NoOpDeallocator, nullptr);
+    }
+
+    // edge indices flat values 4
+    int nEdgeCombinations = nAtoms*(nAtoms-1); // Cheap Combinations nCr(nAtoms 2)
+    int ndims_4 = 2;
+    int64_t dims_4[] = {nEdgeCombinations, 2};
+    int_pair* data_4;
+    snew(data_4, nEdgeCombinations);
+    int edge_index = 0;
+    for (int i=0; i<nAtoms; i++)
+    {   
+        for (int j=0; j<nAtoms; j++)
+        {
+            if (i==j) {
+                continue;
+            }
+            data_4[edge_index][0] = i;
+            data_4[edge_index][1] = j;
+            edge_index++;
+        }
+    }
+    
+    int ndata_4 = sizeof(*data_4)*nEdgeCombinations;
+    for (int model_idx=0; model_idx<n_active_models; model_idx++) {
+        qm->models[model_idx]->InputValues[4] = TF_NewTensor(TF_INT64, dims_4, ndims_4, data_4, ndata_4, &NoOpDeallocator, nullptr);
+    }
+
+    // edge indces row splits 5
+    int ndims_5 = 1;
+    int64_t dims_5[] = {2};
+    static int64_t data_5[2] = {0, nEdgeCombinations};
+    int ndata_5 = sizeof(data_5);
+    for (int model_idx=0; model_idx<n_active_models; model_idx++) {
+        qm->models[model_idx]->InputValues[5] = TF_NewTensor(TF_INT64, dims_5, ndims_5, data_5, ndata_5, &NoOpDeallocator, nullptr);
+    }
+
+    // Check input availability
+    for (int input_idx=0; input_idx<qm->models[0]->NumInputs; input_idx++) {
+        if (qm->models[0]->InputValues[input_idx] == NULL)
+        {
+            printf("ERROR: Input %d is NULL\n", input_idx);
+            exit(-1);
+        }
+    }
+
+    (void)qr; // placeholder to avoid warning
+}
+
+void write_hdnnp_inputs_outputs(QMMM_QMrec* qm)
+{
+    // Print information and save information for debugging
+
+    int nAtoms = qm->nrQMatoms_get();
+    int nEdgeCombinations = nAtoms*(nAtoms-1);
+    int nAngleCombinations = nAtoms*(nAtoms-1)*(nAtoms-2);
+
+    // node number flat values 0
+    FILE* f_input_0 = nullptr;
+    f_input_0 = fopen("input_00.txt", "w");
+    int64_t* data_0 = (int64_t*)(TF_TensorData(qm->models[0]->InputValues[0]));
+    for (int i=0; i<nAtoms; i++)
+    {
+        printf("CHECK Atomic numbers %d %ld\n", i, data_0[i]);
+        fprintf(f_input_0, "%ld\n", data_0[i]);
+    }
+    fclose(f_input_0);
+
+    // node coordinates flat values 2
+    FILE* f_input_2 = nullptr;
+    f_input_2 = fopen("input_02.txt", "w");
+    float* data_2 = (float*)(TF_TensorData(qm->models[0]->InputValues[2]));
+    for (int i=0; i<nAtoms; i++)
+    {
+        printf("CHECK COORD QM Bohr[%d] = %6.3f %6.3f %6.3f\n", i+1, data_2[3*i+0], data_2[3*i+1], data_2[3*i+2]);
+        fprintf(f_input_2, "%6.6f %6.6f %6.6f\n", data_2[3*i+0], data_2[3*i+1], data_2[3*i+2]);
+    }
+    for (int i=0; i<nAtoms; i++)
+    {
+        printf("CHECK COORD QM MD units[%d] = %6.3f %6.3f %6.3f\n", i+1, BOHR2NM*data_2[3*i+0], BOHR2NM*data_2[3*i+1], BOHR2NM*data_2[3*i+2]);
+    }
+    fclose(f_input_2);
+
+    // edge indices flat values 4
+    FILE* f_input_4 = nullptr;
+    f_input_4 = fopen("input_04.txt", "w");
+    int64_t* data_4 = (int64_t*)(TF_TensorData(qm->models[0]->InputValues[4]));
+    for (int i=0; i<nEdgeCombinations; i++)
+    {
+        fprintf(f_input_4, "%ld %ld\n", data_4[2*i+0], data_4[2*i+1]);
+    }
+    fclose(f_input_4);
+
+    // angle indces flat values 6
+    FILE* f_input_6 = nullptr;
+    f_input_6 = fopen("input_06.txt", "w");
+    int64_t* data_6 = (int64_t*)(TF_TensorData(qm->models[0]->InputValues[6]));
+    for (int i=0; i<nAngleCombinations; i++)
+    {
+        fprintf(f_input_6, "%ld %ld %ld\n", data_6[3*i+0], data_6[3*i+1],  data_6[3*i+2]);
+    }
+    fclose(f_input_6);
+
+    // total charge 8
+    FILE* f_input_8 = nullptr;
+    f_input_8 = fopen("input_08.txt", "w");
+    float* data_8 = (float*)(TF_TensorData(qm->models[0]->InputValues[8]));
+    fprintf(f_input_8, "%1.0f\n", data_8[0]);
+    printf("CHECK Total Charge %1.0f \n", data_8[0]);
+    fclose(f_input_8);
+
+    // esp flat values 9
+    FILE* f_input_9 = nullptr;
+    f_input_9 = fopen("input_09.txt", "w");
+    float* data_9 = (float*)(TF_TensorData(qm->models[0]->InputValues[9]));
+    for (int i=0; i<nAtoms; i++)
+    {
+        printf("CHECK ESP QM[%d] = %6.3f\n", i+1, data_9[i]);
+        fprintf(f_input_9, "%6.6f\n", data_9[i]);
+    }
+    fclose(f_input_9);
+
+    // esp_grad flat values 11
+    FILE* f_input_11 = nullptr;
+    f_input_11 = fopen("input_11.txt", "w");
+    float* data_11 = (float*)(TF_TensorData(qm->models[0]->InputValues[11]));
+    for (int i=0; i<nAtoms; i++)
+    {
+        printf("CHECK ESP GRAD[%d] = %6.3f %6.3f %6.3f\n", i+1, data_11[3*i+0], data_11[3*i+1], data_11[3*i+2]);
+        fprintf(f_input_11, "%6.6f %6.6f %6.6f\n", data_11[3*i+0], data_11[3*i+1], data_11[3*i+2]);
+    }
+    fclose(f_input_11);
+
+
+    float* charge_predictions = (float*)TF_TensorData(qm->models[0]->OutputValues[0]); // in e-
+    float* energy_predictions = (float*)TF_TensorData(qm->models[0]->OutputValues[1]); // in Hartree
+    float* grad_predictions = (float*)TF_TensorData(qm->models[0]->OutputValues[2]); // in Hartree/Bohr
+
+    FILE* f_output = nullptr;
+    f_output = fopen("output.txt", "w");
+    for (int i=0; i<nAtoms; i++)
+    {
+        printf("CHECK CHARGE QM[%d] = %6.3f\n", i+1, charge_predictions[i]);
+        fprintf(f_output, "%6.6f\n", charge_predictions[i]);
+    }
+
+    printf("CHECK QM Energy = %6.3f\n", energy_predictions[0]);
+    fprintf(f_output, "%6.6f\n", energy_predictions[0]);
+
+    for (int i=0; i<nAtoms; i++)
+    {
+        printf("CHECK QM Grad[%d] = %6.3f %6.3f %6.3f\n", i+1, grad_predictions[3*i+0], grad_predictions[3*i+1], grad_predictions[3*i+2]);
+        fprintf(f_output, "%6.6f %6.6f %6.6f\n", grad_predictions[3*i+0], grad_predictions[3*i+1], grad_predictions[3*i+2]);
+    }
+    fclose(f_output);
+}
+
+void write_schnet_painn_inputs_outputs(QMMM_QMrec* qm)
+{
+    // Print information and save information for debugging
+
+    int nAtoms = qm->nrQMatoms_get();
+    int nEdgeCombinations = nAtoms*(nAtoms-1);
+
+    // node number flat values 0
+    FILE* f_input_0 = nullptr;
+    f_input_0 = fopen("input_00.txt", "w");
+    int64_t* data_0 = (int64_t*)(TF_TensorData(qm->models[0]->InputValues[0]));
+    for (int i=0; i<nAtoms; i++)
+    {
+        printf("CHECK Atomic numbers %d %ld\n", i, data_0[i]);
+        fprintf(f_input_0, "%ld\n", data_0[i]);
+    }
+    fclose(f_input_0);
+
+    // node coordinates flat values 2
+    FILE* f_input_2 = nullptr;
+    f_input_2 = fopen("input_02.txt", "w");
+    float* data_2 = (float*)(TF_TensorData(qm->models[0]->InputValues[2]));
+    for (int i=0; i<nAtoms; i++)
+    {
+        printf("CHECK COORD QM Bohr[%d] = %6.3f %6.3f %6.3f\n", i+1, data_2[3*i+0], data_2[3*i+1], data_2[3*i+2]);
+        fprintf(f_input_2, "%6.6f %6.6f %6.6f\n", data_2[3*i+0], data_2[3*i+1], data_2[3*i+2]);
+    }
+    for (int i=0; i<nAtoms; i++)
+    {
+        printf("CHECK COORD QM MD units[%d] = %6.3f %6.3f %6.3f\n", i+1, BOHR2NM*data_2[3*i+0], BOHR2NM*data_2[3*i+1], BOHR2NM*data_2[3*i+2]);
+    }
+    fclose(f_input_2);
+
+    // edge indices flat values 4
+    FILE* f_input_4 = nullptr;
+    f_input_4 = fopen("input_04.txt", "w");
+    int64_t* data_4 = (int64_t*)(TF_TensorData(qm->models[0]->InputValues[4]));
+    for (int i=0; i<nEdgeCombinations; i++)
+    {
+        fprintf(f_input_4, "%ld %ld\n", data_4[2*i+0], data_4[2*i+1]);
+    }
+    fclose(f_input_4);
+
+    float* energy_predictions = (float*)TF_TensorData(qm->models[0]->OutputValues[0]); // in Hartree
+    float* grad_predictions = (float*)TF_TensorData(qm->models[0]->OutputValues[1]); // in Hartree/Bohr
+
+    FILE* f_output = nullptr;
+    f_output = fopen("output.txt", "w");
+
+    printf("CHECK QM Energy = %6.3f\n", energy_predictions[0]);
+    fprintf(f_output, "%6.6f\n", energy_predictions[0]);
+
+    for (int i=0; i<nAtoms; i++)
+    {
+        printf("CHECK QM Grad[%d] = %6.3f %6.3f %6.3f\n", i+1, grad_predictions[3*i+0], grad_predictions[3*i+1], grad_predictions[3*i+2]);
+        fprintf(f_output, "%6.6f %6.6f %6.6f\n", grad_predictions[3*i+0], grad_predictions[3*i+1], grad_predictions[3*i+2]);
+    }
+    fclose(f_output);
+
+}
+/* end of NN sub routines */
 #endif
 
 #pragma GCC diagnostic pop

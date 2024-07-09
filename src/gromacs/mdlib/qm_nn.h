@@ -40,6 +40,8 @@
 
 #define HARTREE_TO_EV     (27.211396132)
 
+void NoOpDeallocator(void* data, size_t a, void* b);
+
 void init_nn(QMMM_QMrec*       qm);
 
 real call_nn(QMMM_rec*          qr,
@@ -50,5 +52,21 @@ real call_nn(QMMM_rec*          qr,
               rvec              fshift[],
               t_nrnb*           nrnb,
               gmx_wallcycle_t   wcycle);
+
+void prepare_hdnnp_inputs(  QMMM_rec* qr,
+                            QMMM_QMrec* qm,
+                            int n_active_models);
+
+void prepare_hdnnp_inputs(  QMMM_rec* qr,
+                            QMMM_QMrec* qm,
+                            int n_active_models);
+
+void prepare_schnet_painn_inputs(   QMMM_rec* qr,
+                                    QMMM_QMrec* qm,
+                                    int n_active_models);
+
+void write_hdnnp_inputs_outputs(QMMM_QMrec* qm);
+
+void write_schnet_painn_inputs_outputs(QMMM_QMrec* qm);
 
 #endif
