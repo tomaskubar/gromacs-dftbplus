@@ -45,8 +45,14 @@
 #pragma GCC diagnostic ignored "-Wmissing-noreturn"
 
 #if GMX_QMMM_NN
+#include <json/value.h>
+#include <json/reader.h>
+#include <fstream>
+#include <iostream>
 #include <vector>
 #include <string>
+#include <set>
+#include <map>
 
 #include <math.h>
 #include <stdio.h>
@@ -356,6 +362,20 @@ void init_nn(QMMM_QMrec* qm)
         TF_DeleteBuffer(RunOpts);
     }
 
+    // Load scaler
+    snew (qm->scaler, 1);
+    if (((env = getenv("GMX_NN_SCALER")) != nullptr) && (env[0] != '\0'))
+    {
+        printf("Using scaler %s\n", env);
+        
+        load_scaler(qm, env);
+    }
+    else
+    {
+        printf("No scaler used\n");
+        qm->scaler->use_scaler = false;
+    }
+
     return;
 } /* init_nn */
 
@@ -568,7 +588,14 @@ real call_nn(   QMMM_rec*         qr,
             energy_predictions[model_idx] = (float*)TF_TensorData(qm->models[model_idx]->OutputValues[0]); // in Hartree
             grad_predictions[model_idx] = (float*)TF_TensorData(qm->models[model_idx]->OutputValues[1]); // in Hartree/Bohr
         }
+
+        // Unscale predictions
+        if (qm->scaler->use_scaler)
+        {
+            inverse_transform(qm, energy_predictions[model_idx], grad_predictions[model_idx]);
+        }
     }
+
 
     // mean and std of charges
     float charge_means[nAtoms] = {};
@@ -780,14 +807,14 @@ real call_nn(   QMMM_rec*         qr,
 
     if (qm->significant_structure)
     {   
-        // if (std::strcmp(qm->models[0]->modelArchitecture, "hdnnp") == 0)
-        // {
-        //     write_hdnnp_inputs_outputs(qm);
-        // }
-        // if ((std::strcmp(qm->models[0]->modelArchitecture, "schnet") == 0) || (std::strcmp(qm->models[0]->modelArchitecture, "painn") == 0))
-        // {
-        //     write_schnet_painn_inputs_outputs(qm);
-        // }
+        if (std::strcmp(qm->models[0]->modelArchitecture, "hdnnp") == 0)
+        {
+            write_hdnnp_inputs_outputs(qm);
+        }
+        if ((std::strcmp(qm->models[0]->modelArchitecture, "schnet") == 0) || (std::strcmp(qm->models[0]->modelArchitecture, "painn") == 0))
+        {
+            write_schnet_painn_inputs_outputs(qm);
+        }
 
         FILE* f_std = nullptr; // file for saving standard deviations of significant structures
         f_std = fopen("qm_mlmm_std.xyz", "a");
@@ -1156,7 +1183,7 @@ void prepare_schnet_painn_inputs(   QMMM_rec* qr,
     }
 
     (void)qr; // placeholder to avoid warning
-}
+} // end of prepare_schnet_painn_inputs
 
 void write_hdnnp_inputs_outputs(QMMM_QMrec* qm)
 {
@@ -1263,6 +1290,21 @@ void write_hdnnp_inputs_outputs(QMMM_QMrec* qm)
         printf("CHECK QM Grad[%d] = %6.3f %6.3f %6.3f\n", i+1, grad_predictions[3*i+0], grad_predictions[3*i+1], grad_predictions[3*i+2]);
         fprintf(f_output, "%6.6f %6.6f %6.6f\n", grad_predictions[3*i+0], grad_predictions[3*i+1], grad_predictions[3*i+2]);
     }
+
+    // // Unscale predictions, not necessary, the qm struct got changed with the scaler already due to the pointer
+    // if (qm->scaler->use_scaler)
+    // {
+    //     inverse_transform(qm, energy_predictions, grad_predictions);
+
+    //     printf("CHECK QM Energy Unscaled = %6.3f\n", energy_predictions[0]);
+    //     fprintf(f_output, "%6.6f\n", energy_predictions[0]);
+
+    //     for (int i=0; i<nAtoms; i++)
+    //     {
+    //         printf("CHECK QM Grad Unscaled[%d] = %6.3f %6.3f %6.3f\n", i+1, grad_predictions[3*i+0], grad_predictions[3*i+1], grad_predictions[3*i+2]);
+    //         fprintf(f_output, "%6.6f %6.6f %6.6f\n", grad_predictions[3*i+0], grad_predictions[3*i+1], grad_predictions[3*i+2]);
+    //     }
+    // }
     fclose(f_output);
 }
 
@@ -1320,12 +1362,201 @@ void write_schnet_painn_inputs_outputs(QMMM_QMrec* qm)
 
     for (int i=0; i<nAtoms; i++)
     {
-        printf("CHECK QM Grad[%d] = %6.3f %6.3f %6.3f\n", i+1, grad_predictions[3*i+0], grad_predictions[3*i+1], grad_predictions[3*i+2]);
+        printf("CHECK QM Grad [%d] = %6.3f %6.3f %6.3f\n", i+1, grad_predictions[3*i+0], grad_predictions[3*i+1], grad_predictions[3*i+2]);
         fprintf(f_output, "%6.6f %6.6f %6.6f\n", grad_predictions[3*i+0], grad_predictions[3*i+1], grad_predictions[3*i+2]);
     }
-    fclose(f_output);
+    
+    // // Unscale predictions, not necessary, the qm struct got changed with the scaler already due to the pointer
+    // if (qm->scaler->use_scaler)
+    // {
+    //     inverse_transform(qm, energy_predictions, grad_predictions);
 
-}
+    //     printf("CHECK QM Energy Unscaled = %6.3f\n", energy_predictions[0]);
+    //     fprintf(f_output, "%6.6f\n", energy_predictions[0]);
+
+    //     for (int i=0; i<nAtoms; i++)
+    //     {
+    //         printf("CHECK QM Grad Unscaled[%d] = %6.3f %6.3f %6.3f\n", i+1, grad_predictions[3*i+0], grad_predictions[3*i+1], grad_predictions[3*i+2]);
+    //         fprintf(f_output, "%6.6f %6.6f %6.6f\n", grad_predictions[3*i+0], grad_predictions[3*i+1], grad_predictions[3*i+2]);
+    //     }
+    // }
+    fclose(f_output);
+} // end of write_schnet_painn_inputs_outputs
+
+void load_scaler(QMMM_QMrec* qm, char* scaler_file)
+{
+    std::ifstream file(scaler_file);
+    Json::Reader reader;
+    Json::Value root;
+    Json::Value weights;
+
+    // Input checks
+    FILE* f_scaler = nullptr;
+    f_scaler = fopen(scaler_file, "r");
+    if (f_scaler == NULL) {
+        printf("ERROR: Could not open scaler file %s\n", scaler_file);
+        exit(-1);
+    }
+    fclose(f_scaler);
+
+    if (!reader.parse(file, root)) {
+        std::cout << "Failed to parse JSON\n" << reader.getFormattedErrorMessages();
+        exit(-1);
+    }
+
+    if (!root.isMember("weights")) {
+        std::cout << "No weights in scaler JSON\n";
+        exit(-1);
+    }
+    weights = root["weights"];
+
+    if (!weights.isMember("n_features_in_")) {
+        std::cout << "No n_features_in_ in scaler JSON\n";
+        exit(-1);
+    }
+    if (!weights.isMember("scale_")) {
+        std::cout << "No scale_ in scaler JSON\n";
+        exit(-1);
+    }
+    if (!weights.isMember("intercept_")) {
+        std::cout << "No intercept_ in scaler JSON\n";
+        exit(-1);
+    }
+    if (!weights.isMember("coef_")) {
+        std::cout << "No coef_ in scaler JSON\n";
+        exit(-1);
+    }
+    if (!weights["coef_"].isArray()) {
+        std::cout << "coef_ is not an array in scaler JSON\n";
+        exit(-1);
+    }
+    if (!weights["_fit_atom_selection"]) {
+        std::cout << "No _fit_atom_selection in scaler JSON\n";
+        exit(-1);
+    }
+    if (!weights["_fit_atom_selection"].isArray()) {
+        std::cout << "_fit_atom_selection is not an array in scaler JSON\n";
+        exit(-1);
+    }
+    // if (!weights["_fit_atom_selection_mask"]) {
+    //     std::cout << "No _fit_atom_selection_mask in scaler JSON\n";
+    //     exit(-1);
+    // }
+    // if (!weights["_fit_atom_selection_mask"].isArray()) {
+    //     std::cout << "_fit_atom_selection_mask is not an array in scaler JSON\n";
+    //     exit(-1);
+    // }
+
+    // Load weights
+    qm->scaler->use_scaler = true;
+
+    qm->scaler->n_features_in_ = weights["n_features_in_"].asInt();
+    qm->scaler->scale_ = weights["scale_"].asFloat();
+    qm->scaler->intercept_ = weights["intercept_"].asFloat();
+    float* coef_;
+    snew (coef_, qm->scaler->n_features_in_);
+    for (int i=0; i<qm->scaler->n_features_in_; i++) {
+        coef_[i] = weights["coef_"][i].asFloat();
+    }
+    qm->scaler->coef_ = coef_;
+
+    int* _fit_atom_selection;
+    snew (_fit_atom_selection, qm->scaler->n_features_in_);
+    for (int i=0; i<qm->scaler->n_features_in_; i++) {
+        _fit_atom_selection[i] = weights["_fit_atom_selection"][i].asInt();
+    }
+    qm->scaler->_fit_atom_selection = _fit_atom_selection;
+
+    // Didn't use this mask, redundant with _fit_atom_selection
+    // bool* _fit_atom_selection_mask;
+    // snew (_fit_atom_selection_mask, weights["_fit_atom_selection_mask"].size());
+    // for (unsigned int i=0; i<weights["_fit_atom_selection_mask"].size(); i++) {
+    //     _fit_atom_selection_mask[i] = weights["_fit_atom_selection_mask"][i].asBool();
+    // }
+    // qm->scaler->_fit_atom_selection_mask = _fit_atom_selection_mask;
+
+    // // Print loaded weights
+    // std::cout << "n_features_in: " << qm->scaler->n_features_in_ << "\n";
+    // std::cout << "scale: " << qm->scaler->scale_ << "\n";
+    // std::cout << "intercept: " << qm->scaler->intercept_ << "\n";
+    // std::cout << "coef_: ";
+    // for (int i=0; i<qm->scaler->n_features_in_; i++) {
+    //     std::cout << qm->scaler->coef_[i] << " ";
+    // }
+    // std::cout << "\n";
+    // std::cout << "_fit_atom_selection: ";
+    // for (int i=0; i<qm->scaler->n_features_in_; i++) {
+    //     std::cout << qm->scaler->_fit_atom_selection[i] << " ";
+    // }
+    // std::cout << "\n";
+    // std::cout << "_fit_atom_selection_mask: ";
+    // for (unsigned int i=0; i<weights["_fit_atom_selection_mask"].size(); i++) {
+    //     std::cout << qm->scaler->_fit_atom_selection_mask[i] << " ";
+    // }
+    // std::cout << "\n";
+} // end of load_scaler
+
+void inverse_transform(QMMM_QMrec* qm, float* energy_predictions, float* grad_predictions)
+// Could maybe be done without passing energy_predictions and grad_predictions and grad_predictions
+// Because they point to the qm struct property
+{
+    int n_atoms = qm->nrQMatoms_get();
+    int atomic_numbers[n_atoms];
+    for (int i=0; i<n_atoms; i++)
+    {
+        atomic_numbers[i] = qm->atomicnumberQM_get(i);
+    }
+
+    std::set<int> unique_elements(atomic_numbers, atomic_numbers + n_atoms); // unique atomic numbers as set of atomic numbers
+    int n_unique_elements = (int)unique_elements.size();
+    // printf("Unique elements: ");
+    // for (std::set<int>::iterator it = unique_elements.begin(); it != unique_elements.end(); ++it) {
+    //     printf("%d ", *it);
+    // }
+    // printf("\n");
+    // printf("Number of unique elements: %d\n", n_unique_elements);
+
+    // Ensure, that every atomic number is in the scaler
+    for (std::set<int>::iterator it = unique_elements.begin(); it != unique_elements.end(); ++it) {
+        if (std::find(qm->scaler->_fit_atom_selection, qm->scaler->_fit_atom_selection + n_unique_elements, *it) == qm->scaler->_fit_atom_selection + n_unique_elements) {
+            printf("ERROR: Atomic number %d not in scaler\n", *it);
+            exit(-1);
+        }
+    }
+
+    // Map atomic number to the amount of its occurrences
+    std::map<int, int> atomic_number_occurrences;
+    for (int i = 0; i < n_atoms; i++) {
+        atomic_number_occurrences[atomic_numbers[i]]++;
+    }
+    // printf("Atomic number occurrences: ");
+    // for (std::map<int, int>::iterator it = atomic_number_occurrences.begin(); it != atomic_number_occurrences.end(); ++it) {
+    //     printf("%d: %d ", it->first, it->second);
+    // }
+    // printf("\n");
+    
+    // Unscale predictions
+    *energy_predictions *= qm->scaler->scale_;
+    // printf("scale_ %6.3f\n", qm->scaler->scale_);
+    *energy_predictions += qm->scaler->intercept_;
+    // printf("intercept_ %6.3f\n", qm->scaler->intercept_);
+    int atomic_number;
+    for (int i=0; i<n_unique_elements; i++) {
+        atomic_number = qm->scaler->_fit_atom_selection[i];
+        *energy_predictions += qm->scaler->coef_[i] * atomic_number_occurrences[atomic_number];
+        // printf("coef_[%d] %6.3f\n", i, qm->scaler->coef_[i]);
+        // printf("atomic_number_occurrences %d [%d] %d\n",i, atomic_number, atomic_number_occurrences[atomic_number]);
+    }
+
+    for (int i=0; i<n_atoms; i++)
+    {
+        *(grad_predictions+(3*i+0)) *= qm->scaler->scale_;
+        *(grad_predictions+(3*i+1)) *= qm->scaler->scale_;
+        *(grad_predictions+(3*i+2)) *= qm->scaler->scale_;
+    }
+
+} // end of inverse_transform
+
 /* end of NN sub routines */
 #endif
 

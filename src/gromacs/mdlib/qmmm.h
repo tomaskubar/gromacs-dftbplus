@@ -84,6 +84,16 @@ typedef struct {
     int*        atomicNumbers;
     char modelArchitecture[100]; // network architecture, default "hdnnp", availabe: "hdnnp", "schnet", "painn"
 }TFModel;
+
+typedef struct {
+    bool                use_scaler;
+    int                 n_features_in_;
+    float               scale_;
+    float               intercept_;
+    float*              coef_;
+    int*                _fit_atom_selection;
+    //bool*               _fit_atom_selection_mask;
+} EnergyForceExtensiveLabelScaler;
 #endif
 
 // THIS STRUCTURE IS TENTATIVE,
@@ -229,6 +239,7 @@ public:
     Context         *dftbContext;   // some data for DFTB+, referenced to by DFTB through *dpcalc
     #if GMX_QMMM_NN
     TFModel         *models[10];
+    EnergyForceExtensiveLabelScaler* scaler;
     #endif
 
     QMMM_QMgaussian  gaussian;
