@@ -206,8 +206,11 @@
 /* Use DFTB+ for QM-MM calculations */
 #cmakedefine01 GMX_QMMM_DFTBPLUS
 
-/* Use Neural Network for QM-MM calculations */
-#cmakedefine01 GMX_QMMM_NN
+/* Use Tensorflow for QM-MM calculations */
+#cmakedefine01 GMX_QMMM_TENSORFLOW
+
+/* Use Pytorch for QM-MM calculations */
+#cmakedefine01 GMX_QMMM_PYTORCH
 
 /* Use sub-counters */
 #cmakedefine01 GMX_CYCLE_SUBCOUNTERS

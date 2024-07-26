@@ -240,7 +240,7 @@ gmx_option_multichoice(
     GMX_QMMM_PROGRAM
     "QM package for QM/MM"
     None
-    none gaussian mopac gamess orca dftbplus nn)
+    none gaussian mopac gamess orca dftbplus tensorflow pytorch)
 
 option(GMX_PLUMED "Link with Plumed (requires 3 symlinks in Gromacs directory)" OFF)
 
@@ -659,19 +659,22 @@ include(gmxManageSimd)
 gmx_manage_simd()
 
 # Process QM/MM Settings
-if(${GMX_QMMM_PROGRAM} STREQUAL "GAUSSIAN")
+message(STATUS "GMX_QMMM_PROGRAM is set to: ${GMX_QMMM_PROGRAM}.")
+if("${GMX_QMMM_PROGRAM}" STREQUAL "GAUSSIAN")
     set(GMX_QMMM_GAUSSIAN 1)
-elseif(${GMX_QMMM_PROGRAM} STREQUAL "MOPAC")
+elseif("${GMX_QMMM_PROGRAM}" STREQUAL "MOPAC")
     set(GMX_QMMM_MOPAC 1)
-elseif(${GMX_QMMM_PROGRAM} STREQUAL "GAMESS")
+elseif("${GMX_QMMM_PROGRAM}" STREQUAL "GAMESS")
     set(GMX_QMMM_GAMESS 1)
-elseif(${GMX_QMMM_PROGRAM} STREQUAL "ORCA")
+elseif("${GMX_QMMM_PROGRAM}" STREQUAL "ORCA")
     set(GMX_QMMM_ORCA 1)
-elseif(${GMX_QMMM_PROGRAM} STREQUAL "DFTBPLUS")
+elseif("${GMX_QMMM_PROGRAM}" STREQUAL "DFTBPLUS")
     set(GMX_QMMM_DFTBPLUS 1)
-elseif(${GMX_QMMM_PROGRAM} STREQUAL "NN")
-    set(GMX_QMMM_NN 1)
-elseif(${GMX_QMMM_PROGRAM} STREQUAL "NONE")
+elseif("${GMX_QMMM_PROGRAM}" STREQUAL "TENSORFLOW")
+    set(GMX_QMMM_TENSORFLOW 1)
+elseif("${GMX_QMMM_PROGRAM}" STREQUAL "PYTORCH")
+    set(GMX_QMMM_PYTORCH 1)
+elseif("${GMX_QMMM_PROGRAM}" STREQUAL "NONE")
     # nothing to do
 else()
     gmx_invalid_option_value(GMX_QMMM_PROGRAM)

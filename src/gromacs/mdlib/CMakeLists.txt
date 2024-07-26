@@ -35,10 +35,16 @@
 
 add_library(mdlib INTERFACE)
 
-if(${GMX_QMMM_PROGRAM} STREQUAL "NN")
+if("${GMX_QMMM_PROGRAM}" STREQUAL "TENSORFLOW")
     add_library(libtensorflow SHARED IMPORTED)
     set_target_properties(libtensorflow PROPERTIES IMPORTED_LOCATION ${TENSORFLOW})
     target_include_directories(mdlib INTERFACE ${TENSORFLOW_HEADERS})
+endif()
+
+if ("${GMX_QMMM_PROGRAM}" STREQUAL "PYTORCH")
+    add_library(libtorch SHARED IMPORTED)
+    set_target_properties(libtorch PROPERTIES IMPORTED_LOCATION ${TORCH})
+    target_include_directories(mdlib INTERFACE ${TORCH_HEADERS})
 endif()
 
 file(GLOB MDLIB_SOURCES *.cpp)

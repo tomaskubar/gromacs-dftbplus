@@ -42,9 +42,9 @@
 
 void NoOpDeallocator(void* data, size_t a, void* b);
 
-void init_nn(QMMM_QMrec*       qm);
+void init_tensorflow(QMMM_QMrec*       qm);
 
-real call_nn(QMMM_rec*          qr,
+real call_tensorflow(QMMM_rec*          qr,
               const t_commrec*  cr,
               QMMM_QMrec*       qm,
               const QMMM_MMrec& mm,

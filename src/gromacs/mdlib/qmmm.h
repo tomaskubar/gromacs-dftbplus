@@ -48,7 +48,7 @@
 #include "gromacs/utility/arrayref.h"
 #include "gromacs/timing/wallcycle.h"
 //#include "gromacs/mdlib/qm_nn.h"
-#if GMX_QMMM_NN
+#if GMX_QMMM_TENSORFLOW
 #include "tensorflow/c/c_api.h"
 #endif
 
@@ -58,7 +58,7 @@
 //#include "gromacs/mdlib/qm_mopac.h"
 //#include "gromacs/mdlib/qm_orca.h"
 
-#define GMX_QMMM (GMX_QMMM_MOPAC || GMX_QMMM_GAMESS || GMX_QMMM_GAUSSIAN || GMX_QMMM_ORCA || GMX_QMMM_DFTBPLUS || GMX_QMMM_NN)
+#define GMX_QMMM (GMX_QMMM_MOPAC || GMX_QMMM_GAMESS || GMX_QMMM_GAUSSIAN || GMX_QMMM_ORCA || GMX_QMMM_DFTBPLUS || GMX_QMMM_TENSORFLOW || GMX_QMMM_PYTORCH)
 
 struct t_nrnb;
 struct nonbonded_verlet_t;
@@ -69,7 +69,7 @@ enum class PbcType : int;
 struct DftbPlus;
 struct Context;
 
-#if GMX_QMMM_NN
+#if GMX_QMMM_TENSORFLOW
 typedef struct {
     TF_Graph*   Graph;
     TF_Status*  Status;
@@ -224,8 +224,8 @@ private:
                               rvec              fshift[],
                               t_nrnb*           nrnb,
                               gmx_wallcycle_t   wcycle);
-    friend void init_nn(QMMM_QMrec*       qm);
-    friend real call_nn(const t_forcerec* fr,
+    friend void init_tensorflow(QMMM_QMrec*       qm);
+    friend real call_tensorflow(const t_forcerec* fr,
                               const t_commrec*  cr,
                               QMMM_QMrec*       qm,
                               QMMM_MMrec*       mm,
@@ -237,7 +237,7 @@ private:
 public:
     DftbPlus        *dpcalc;        // DFTB+ calculator
     Context         *dftbContext;   // some data for DFTB+, referenced to by DFTB through *dpcalc
-    #if GMX_QMMM_NN
+    #if GMX_QMMM_TENSORFLOW
     TFModel         *models[10];
     EnergyForceExtensiveLabelScaler* scaler;
     #endif

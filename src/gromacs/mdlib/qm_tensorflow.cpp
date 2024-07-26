@@ -44,7 +44,7 @@
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wmissing-noreturn"
 
-#if GMX_QMMM_NN
+#if GMX_QMMM_TENSORFLOW
 #include <json/value.h>
 #include <json/reader.h>
 #include <fstream>
@@ -78,7 +78,7 @@
 
 //#include "dftbplus_gromacs.h"
 #include "gromacs/mdlib/qm_dftbplus.h"
-#include "gromacs/mdlib/qm_nn.h"
+#include "gromacs/mdlib/qm_tensorflow.h"
 //#include <tensorflow/c/c_api.h>
 extern "C" {
     #include "tensorflow/c/c_api.h"
@@ -206,7 +206,7 @@ extern "C" void calcqmextpotgrad(void *refptr, gmx_unused double *q, double *ext
 
 /* NN interface routines */
 
-void init_nn(QMMM_QMrec* qm)
+void init_tensorflow(QMMM_QMrec* qm)
 {
     // Find amount of models, max 10
     char* N_TF_MODELS; // Pointer to env variable for comparison with nullpointer
@@ -377,10 +377,10 @@ void init_nn(QMMM_QMrec* qm)
     }
 
     return;
-} /* init_nn */
+} /* init_tensorflow */
 
 void NoOpDeallocator(void* data, size_t a, void* b) {(void)b; if (a > 0) {(void)data;}} //Nonsense Deallocator to make compiler happy
-real call_nn(   QMMM_rec*         qr,
+real call_tensorflow(   QMMM_rec*         qr,
                 const t_commrec*  cr,
                 QMMM_QMrec*       qm,
                 const QMMM_MMrec& mm,
@@ -867,7 +867,7 @@ real call_nn(   QMMM_rec*         qr,
     step++;
 
     return (real) QMenergy * HARTREE2KJ * AVOGADRO;
-} /* call_nn */
+} /* call_tensorflow */
 
 void prepare_hdnnp_inputs(  QMMM_rec* qr,
                             QMMM_QMrec* qm,

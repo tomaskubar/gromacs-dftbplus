@@ -63,7 +63,7 @@
 #include "gromacs/mdlib/qm_gaussian.h"
 #include "gromacs/mdlib/qm_mopac.h"
 #include "gromacs/mdlib/qm_orca.h"
-#include "gromacs/mdlib/qm_nn.h"
+#include "gromacs/mdlib/qm_tensorflow.h"
 #include "gromacs/mdtypes/commrec.h"
 #include "gromacs/mdtypes/forceoutput.h"
 #include "gromacs/mdtypes/forcerec.h"
@@ -146,9 +146,9 @@ static real call_QMroutine(const t_commrec*  cr,
     {
         return call_dftbplus(qr, cr, qm, *mm, f, fshift, nrnb, wcycle);
     }
-    else if (GMX_QMMM_NN)
+    else if (GMX_QMMM_TENSORFLOW)
     {
-        return call_nn(qr, cr, qm, *mm, f, fshift, nrnb, wcycle);
+        return call_tensorflow(qr, cr, qm, *mm, f, fshift, nrnb, wcycle);
     }
     else
     {
@@ -646,7 +646,7 @@ QMMM_rec::QMMM_rec(const t_commrec*                 cr,
 
         init_dftbplus(&(qm[0]), this, ir, cr); //, wcycle);
     }
-    else if (GMX_QMMM_NN)
+    else if (GMX_QMMM_TENSORFLOW || GMX_QMMM_PYTORCH)
     {
         // Look how the QM/MM electrostatics shall be treated.
         // In the future, this could be performed for QM/MM in general,
@@ -730,7 +730,14 @@ QMMM_rec::QMMM_rec(const t_commrec*                 cr,
         }
         snew(qm[0].QMcharges, qm[0].nrQMatoms);
 
-        init_nn(&qm[0]);
+        if (GMX_QMMM_TENSORFLOW)
+        {
+            init_tensorflow(&qm[0]);
+        }
+        // else if (GMX_QMMM_PYTORCH)
+        // {
+        //     init_pytorch(&qm[0]);
+        // }
     }
     else
     {
@@ -800,10 +807,10 @@ void QMMM_rec::update_QMMMrec_dftb(const t_commrec*  cr,
     t_pbc pbc;
     set_pbc_dd(&pbc, pbcType, DOMAINDECOMP(cr) ? cr->dd->numCells : null_ivec, false, box);
 
- // printf("There are %d QM atoms, namely:", qm_.nrQMatoms);
- // for (int i=0; i<qm_.nrQMatoms; i++)
- //   printf(" %d", qm_.indexQM[i]);
- // printf("\n");
+    // printf("There are %d QM atoms, namely:", qm_.nrQMatoms);
+    // for (int i=0; i<qm_.nrQMatoms; i++)
+    //   printf(" %d", qm_.indexQM[i]);
+    // printf("\n");
 
     // Compute the shift for the MM atoms with respect to QM atom [0].
     // TODO: This looks like a viable first guess, but is that correct?
@@ -902,22 +909,22 @@ void QMMM_rec::update_QMMMrec_verlet_ns(const t_commrec*    cr,
                                         const t_mdatoms*    md,
                                         const matrix        box)
 {
- //  * COMMENTS TO THE FORMER GROUP-SCHEME BASED VERSION OF THIS FUNCTION:
- //  *********************************************************************
- //  * Create/update a number of QMMMrec entries:
- //  * 1) shiftQM -- shifts of the QM atoms
- //  * 2) indexMM -- indices of the MM atoms
- //  * 3) shiftMM -- shifts of the MM atoms
- //  * 4) shifted coordinates of the MM atoms
- //  *       --- NOT THIS ONE, BECAUSE A SEPARATE ROUTINE IS USED!
- //  * (The shifts are used to compute the virial of the QM/MM particles.)
- //  *
+    //  * COMMENTS TO THE FORMER GROUP-SCHEME BASED VERSION OF THIS FUNCTION:
+    //  *********************************************************************
+    //  * Create/update a number of QMMMrec entries:
+    //  * 1) shiftQM -- shifts of the QM atoms
+    //  * 2) indexMM -- indices of the MM atoms
+    //  * 3) shiftMM -- shifts of the MM atoms
+    //  * 4) shifted coordinates of the MM atoms
+    //  *       --- NOT THIS ONE, BECAUSE A SEPARATE ROUTINE IS USED!
+    //  * (The shifts are used to compute the virial of the QM/MM particles.)
+    //  *
 
- //  * if atom i shall be considered as MM,
- //  *   isMMatom[i] = true
- //  * UPDATE: store the shift in this array,
- //  * and change 'bool' to 'int':
- //  *   shiftMMatom[i] = the value of shift
+    //  * if atom i shall be considered as MM,
+    //  *   isMMatom[i] = true
+    //  * UPDATE: store the shift in this array,
+    //  * and change 'bool' to 'int':
+    //  *   shiftMMatom[i] = the value of shift
 
     std::vector<int> shiftMMatom(md->nr, -1); // ALL ATOMS IN SIMULATION - IS THAT NECESSARY???
 
@@ -1074,9 +1081,9 @@ real QMMM_rec::calculate_QMMM(const t_commrec*      cr,
     rvec *forces = nullptr,
          *fshift = nullptr;
  
- // gmx::ArrayRef<gmx::RVec> fMM      = forceWithVirial->force_.data();
-                  gmx::RVec *fMM      = forceWithVirial->force_.data();
- // gmx::ArrayRef<gmx::RVec> fshiftMM = forceWithShiftForces->shiftForces();
+    // gmx::ArrayRef<gmx::RVec> fMM      = forceWithVirial->force_.data();
+                    gmx::RVec *fMM      = forceWithVirial->force_.data();
+    // gmx::ArrayRef<gmx::RVec> fshiftMM = forceWithShiftForces->shiftForces();
 
     if (GMX_QMMM_DFTBPLUS)
     {
@@ -1146,7 +1153,7 @@ real QMMM_rec::calculate_QMMM(const t_commrec*      cr,
     }
 
     sfree(forces);
- // sfree(fshift);
+    // sfree(fshift);
 
     return QMener;
 } // calculate_QMMM
