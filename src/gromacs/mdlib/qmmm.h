@@ -47,9 +47,18 @@
 #include "gromacs/mdlib/tgroup.h"
 #include "gromacs/utility/arrayref.h"
 #include "gromacs/timing/wallcycle.h"
-//#include "gromacs/mdlib/qm_nn.h"
 #if GMX_QMMM_TENSORFLOW
 #include "tensorflow/c/c_api.h"
+#endif
+#if GMX_QMMM_PYTORCH
+#ifdef DIM
+#undef DIM
+#endif
+#include <torch/torch.h>
+#include <torch/script.h>
+#ifndef DIM
+#define DIM 3
+#endif
 #endif
 
 //#include "gromacs/mdlib/qm_dftbplus.h"
@@ -94,6 +103,15 @@ typedef struct {
     int*                _fit_atom_selection;
     //bool*               _fit_atom_selection_mask;
 } EnergyForceExtensiveLabelScaler;
+#endif
+
+#if GMX_QMMM_PYTORCH
+typedef struct {
+    torch::jit::script::Module* model;
+    int         NumInputs;
+    int         NumOutputs;
+    char modelArchitecture[100]; // network architecture, default "maceqeq", availabe: "maceqeq"
+} PytorchModel;
 #endif
 
 // THIS STRUCTURE IS TENTATIVE,
@@ -224,15 +242,6 @@ private:
                               rvec              fshift[],
                               t_nrnb*           nrnb,
                               gmx_wallcycle_t   wcycle);
-    friend void init_tensorflow(QMMM_QMrec*       qm);
-    friend real call_tensorflow(const t_forcerec* fr,
-                              const t_commrec*  cr,
-                              QMMM_QMrec*       qm,
-                              QMMM_MMrec*       mm,
-                              rvec              f[],
-                              rvec              fshift[],
-                              t_nrnb*           nrnb,
-                              gmx_wallcycle_t   wcycle);
 
 public:
     DftbPlus        *dpcalc;        // DFTB+ calculator
@@ -240,6 +249,12 @@ public:
     #if GMX_QMMM_TENSORFLOW
     TFModel         *models[10];
     EnergyForceExtensiveLabelScaler* scaler;
+    #endif
+    #if GMX_QMMM_PYTORCH
+    PytorchModel         *models[10];
+    torch::Device device = torch::kCPU;
+    torch::ScalarType torch_float_dtype = torch::kFloat32;
+    torch::ScalarType torch_int_dtype = torch::kInt64;
     #endif
 
     QMMM_QMgaussian  gaussian;

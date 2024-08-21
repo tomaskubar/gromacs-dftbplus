@@ -32,41 +32,37 @@
  * To help us fund GROMACS development, we humbly ask that you cite
  * the research papers on the package. Check out http://www.gromacs.org.
  */
+
 #include "gromacs/mdlib/qmmm.h"
 #include <vector>
 
-#ifndef GMX_MDLIB_QM_NN_H
-#define GMX_MDLIB_QM_NN_H
+#ifndef GMX_MDLIB_QM_PYTORCH_H
+#define GMX_MDLIB_QM_PYTORCH_H
 
 #define HARTREE_TO_EV     (27.211396132)
 
-void NoOpDeallocator(void* data, size_t a, void* b);
+void init_pytorch(QMMM_QMrec*       qm);
 
-void init_tensorflow(QMMM_QMrec*       qm);
+real call_pytorch(QMMM_rec*         qr,
+                  const t_commrec*  cr,
+                  QMMM_QMrec*       qm,
+                  const QMMM_MMrec& mm,
+                  rvec              f[],
+                  rvec              fshift[],
+                  t_nrnb*           nrnb,
+                  gmx_wallcycle_t   wcycle);
+#if GMX_QMMM_PYTORCH
+void prepare_base_mace_inputs(QMMM_QMrec* qm,
+                              c10::Dict<std::string, torch::Tensor> input_dict);
 
-real call_tensorflow(QMMM_rec*          qr,
-              const t_commrec*  cr,
-              QMMM_QMrec*       qm,
-              const QMMM_MMrec& mm,
-              rvec              f[],
-              rvec              fshift[],
-              t_nrnb*           nrnb,
-              gmx_wallcycle_t   wcycle);
 
-void prepare_hdnnp_inputs(  QMMM_rec* qr,
-                            QMMM_QMrec* qm,
-                            int n_active_models);
+void prepare_maceqeq_inputs(QMMM_rec*                             qr,
+                            QMMM_QMrec*                           qm,
+                            c10::Dict<std::string, torch::Tensor> input_dict);
 
-void prepare_schnet_painn_inputs(   QMMM_rec* qr,
-                                    QMMM_QMrec* qm,
-                                    int n_active_models);
-
-void write_hdnnp_inputs_outputs(QMMM_QMrec* qm);
-
-void write_schnet_painn_inputs_outputs(QMMM_QMrec* qm);
-
-void load_scaler(QMMM_QMrec* qm, char* scaler_file);
-
-void inverse_transform(QMMM_QMrec* qm, float* energy_predictions, float* grad_predictions);
+void write_maceqeq_inputs_outputs(QMMM_QMrec* qm,
+                                  c10::Dict<std::string, torch::Tensor> input_dict,
+                                  c10::impl::GenericDict output_dict);
+#endif
 
 #endif

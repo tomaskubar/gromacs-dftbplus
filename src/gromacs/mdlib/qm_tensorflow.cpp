@@ -76,149 +76,26 @@
 #include "gromacs/utility/smalloc.h"
 #include "gromacs/pbcutil/pbc.h"
 
-//#include "dftbplus_gromacs.h"
-#include "gromacs/mdlib/qm_dftbplus.h"
 #include "gromacs/mdlib/qm_tensorflow.h"
-//#include <tensorflow/c/c_api.h>
 extern "C" {
     #include "tensorflow/c/c_api.h"
 }
 
-typedef struct Context {
-  bool              pme;
-  int               n;
-  const t_commrec*  cr;
-  QMMM_rec*         qr;
-//const t_forcerec* fr;
-  t_nrnb*           nrnb;
-  gmx_wallcycle_t   wcycle;
-  real              rcoul;
-  real              ewaldcoeff_q;
-} Context;
-
-/* Fill up the context (status structure) with all the relevant data
- */
-void initialize_context(Context*          cont,
-                        int               nrQMatoms,
-                        int               qmmm_variant,
-                        QMMM_rec*         qr_in,
-                        // const t_forcerec* fr_in,
-                        const t_inputrec* ir_in,
-                        const t_commrec*  cr_in)
-                        // gmx_wallcycle_t   wcycle_in)
-                        // const real        rcoul_in,
-                        // const real        ewaldcoeff_q_in)
-{
-   /* The "cr" and "qr" structures will be initialized
-   *   at the start of every MD step,
-   *   and will be remembered for all of the SCC iterations.
-   * That way, these data need not pass through the DFTB+ program.
-   *
-   * NOTE: In the new "C++" implementation,
-   *       this is called from the constructor QMMM_rec::QMMM_rec(),
-   *       so the object qr is not available yet!
-   */
-
-    if (qmmm_variant == eqmmmPME) {
-        cont->pme = true;
-    } else {
-        cont->pme = false;
-    }
-    printf("qmmm_variant = %d\n", qmmm_variant);
-    printf("cont->pme = %s\n", cont->pme ? "true" : "false");
-    //cont->n = fr_in->qr->qm[0].nrQMatoms; // object qr not available yet!
-    cont->n = nrQMatoms;
-    printf("cont->n = %d\n", cont->n);
-    if (cont->pme)
-    {
-        cont->cr           = cr_in;
-        cont->qr           = qr_in;
-        // cont->wcycle       = wcycle_in;
-        cont->rcoul        = ir_in->rcoulomb;
-        cont->ewaldcoeff_q = calc_ewaldcoeff_q(ir_in->rcoulomb, ir_in->ewald_rtol);
-        printf("cont->cr = %p\n", cont->cr);
-        printf("cont->qr = %p\n", cont->qr);
-        printf("cont->qr->pmedata = %p\n", cont->qr->pmedata);
-        printf("cont->qr->pmedata* = %p\n", *cont->qr->pmedata);
-        printf("cont->rcoul = %f\n", cont->rcoul);
-        printf("cont->ewaldcoeff_q = %f\n", cont->ewaldcoeff_q);
-    }
-
-    return;
-}
-
-/* Calculate the external potential due to periodic images of QM atoms with PME.
- */
-void calcQMextPotPME(Context *cont, double *q, double *extpot)
-{
-    // int n = cont->fr->qr->qm[0]->nrQMatoms;
-    int n = cont->n;
-
-    if (cont->pme)
-    {
-        /* PERFORM THE REAL CALCULATION */
-        real *extpot_real;
-        snew(extpot_real, n);
-        for (int i=0; i<n; i++)
-        {
-            cont->qr->qm[0].QMcharges_set(i, (real) -q[i]); // check sign TODO
-        }
-        cont->qr->calculate_complete_QM_QM(cont->cr, cont->nrnb, cont->wcycle, *cont->qr->pmedata, extpot_real);
-        for (int i=0; i<n; i++)
-        {
-            extpot[i] = (double) - extpot_real[i]; // sign OK
-        }
-        sfree(extpot_real);
-    }
-    else
-    {
-        for (int i=0; i<n; i++)
-        {
-            extpot[i] = 0.;
-        }
-    }
-
-    return;
-}
-
-/* The wrapper for the calculation of external potential
- *   due to the periodic images of QM atoms with PME.
- */
-extern "C" void calcqmextpot(void *refptr, double *q, double *extpot)
-{
-    Context *cont = (Context *) refptr;
-    calcQMextPotPME(cont, q, extpot);
-    return;
-}
-
-/* The wrapper for the calculation of grdient of external potential
- *   due to the periodic images of QM atoms with PME.
- * This is function does not calculate anything,
- *   because it is not needed in this DFTB+Gromacs implementation.
- */
-extern "C" void calcqmextpotgrad(void *refptr, gmx_unused double *q, double *extpotgrad)
-{
-    Context *cont = (Context *) refptr;
-    for (int i=0; i<3*cont->n; i++)
-        extpotgrad[i] = 0.;
-    return;
-}
-
-/* NN interface routines */
+/* Tensorflow interface routines */
 
 void init_tensorflow(QMMM_QMrec* qm)
 {
     // Find amount of models, max 10
-    char* N_TF_MODELS; // Pointer to env variable for comparison with nullpointer
+    char* n_models_env; // Pointer to env variable for comparison with nullpointer
     int n_models; 
-    if ((N_TF_MODELS = getenv("GMX_N_TF_MODELS")) == nullptr)
+    if ((n_models_env = getenv("GMX_N_MODELS")) == nullptr)
     {
-        printf("Amount of models to use for adaptive sampling must be given via the env variable GMX_N_TF_MODELS\n");
+        printf("Amount of models to use for adaptive sampling must be given via the env variable GMX_N_MODELS\n");
         n_models = 1;
         printf("Using %i model \n", n_models);
     }
     else {
-        n_models = std::stoi(N_TF_MODELS);
+        n_models = std::stoi(n_models_env);
         if (n_models > 10)
         {
             printf("A maximum of 10 models is supported\n");
@@ -255,9 +132,9 @@ void init_tensorflow(QMMM_QMrec* qm)
     // Find model prefixes and pathes
     char* model_path_prefix;
     char model_path[1000];
-    if ((model_path_prefix = getenv("GMX_TF_MODEL_PATH_PREFIX")) == nullptr)
+    if ((model_path_prefix = getenv("GMX_MODEL_PATH_PREFIX")) == nullptr)
     {
-        printf("Path prefix to models must be given in the env variable GMX_TF_MODEL_PATH_PREFIX\n");
+        printf("Path prefix to models must be given in the env variable GMX_MODEL_PATH_PREFIX\n");
         exit(-1);
     }
     else {
@@ -285,7 +162,7 @@ void init_tensorflow(QMMM_QMrec* qm)
 
     //********* Read models
     for (int model_idx=0; model_idx<n_models; model_idx++) {
-        snew(qm->models[model_idx], 1);
+        snew(qm->models[model_idx], 1); // Allocate memory for model
         printf("Reading model %d\n", model_idx);
         std::strcpy(qm->models[model_idx]->modelArchitecture, network_architecture.c_str()); // Save network architecture for later use
 
@@ -524,7 +401,7 @@ real call_tensorflow(   QMMM_rec*         qr,
     /* NN call itself */
     wallcycle_start(wcycle, ewcQM);
 
-    int n_models = std::stoi(getenv("GMX_N_TF_MODELS"));
+    int n_models = std::stoi(getenv("GMX_N_MODELS"));
     int nAtoms = qm->nrQMatoms_get();
 
     // Decide how many models to use

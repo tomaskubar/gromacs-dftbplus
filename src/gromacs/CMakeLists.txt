@@ -480,34 +480,18 @@ if("${GMX_QMMM_PROGRAM}" STREQUAL "TENSORFLOW")
 endif()
 
 if ("${GMX_QMMM_PROGRAM}" STREQUAL "PYTORCH")
-    find_library(TORCH
-        NAMES libtorch.so
-        PATH /usr/local/lib
-        DOC "Find torch library libtorch.so"
-        )
+    find_package(Torch REQUIRED)
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${TORCH_CXX_FLAGS}") # apparently insuffienct set CMAKE_CXX_FLAGS after the configuration
 
-    find_path(TORCH_HEADERS 
-            NAMES torch/torch.h
-            PATHS /usr/local/include
-            DOC "Find torch header files(torch/torch.h)"
-            )
-
-    if (TORCH)
-        message(STATUS "Looking for torch at ${TORCH}")
-        target_link_libraries(libgromacs PRIVATE libtorch)
-        add_library(libtorch SHARED IMPORTED)
-        set_target_properties(libtorch PROPERTIES IMPORTED_LOCATION ${TORCH}) 
-    else()
-        message(FATAL_ERROR "torch library not found.")
-    endif()
-
-    if (TORCH_HEADERS)
-        message(STATUS "Looking for torch headers at ${TORCH_HEADERS}")
-        target_include_directories(libgromacs INTERFACE ${TORCH_HEADERS}) # seems not sufficient to do the job
-        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -I${TORCH_HEADERS}") # apparently insuffienct set CMAKE_CXX_FLAGS after the configuration
-    else()
-        message(FATAL_ERROR "torch header files not found.")
-    endif()
+    add_library(libtorch SHARED IMPORTED)
+    set_target_properties(libtorch PROPERTIES IMPORTED_LOCATION "${TORCH_LIBRARIES}")
+    target_link_libraries(libgromacs INTERFACE "${TORCH_LIBRARIES}")
+    target_include_directories(libgromacs INTERFACE
+        "${TORCH_INCLUDE_DIRS}"
+    ) # seems not sufficient to do the job
+    set_property(TARGET libgromacs PROPERTY CXX_STANDARD 17)
+    #message(STATUS "Torch found (include: ${TORCH_INCLUDE_DIRS}, lib: ${TORCH_LIBRARIES})")
+    #message(STATUS "Torch CXX_FLAGS: ${TORCH_CXX_FLAGS}")
 endif()
 
 # clang-3.6 warns about a number of issues that are not reported by more modern compilers

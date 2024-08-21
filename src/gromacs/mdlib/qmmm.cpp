@@ -64,6 +64,7 @@
 #include "gromacs/mdlib/qm_mopac.h"
 #include "gromacs/mdlib/qm_orca.h"
 #include "gromacs/mdlib/qm_tensorflow.h"
+#include "gromacs/mdlib/qm_pytorch.h"
 #include "gromacs/mdtypes/commrec.h"
 #include "gromacs/mdtypes/forceoutput.h"
 #include "gromacs/mdtypes/forcerec.h"
@@ -150,6 +151,10 @@ static real call_QMroutine(const t_commrec*  cr,
     {
         return call_tensorflow(qr, cr, qm, *mm, f, fshift, nrnb, wcycle);
     }
+    else if (GMX_QMMM_PYTORCH)
+    {
+        return call_pytorch(qr, cr, qm, *mm, f, fshift, nrnb, wcycle);
+    }
     else
     {
         gmx_fatal(FARGS, "Unknown QM software -- should never land here :-/");
@@ -196,11 +201,11 @@ void QMMM_rec::update_QMMM_coord(const t_commrec*  cr,
     clear_ivec(null_ivec);
     set_pbc_dd(&pbc, pbcType, DOMAINDECOMP(cr) ? cr->dd->numCells : null_ivec, false, box);
 
- // for (int s = 0; s < pbc.ntric_vec; s++)
- // {
- //     printf("SHIFT[%2d] = %d %d %d\n", s, pbc.tric_shift[s][0], pbc.tric_shift[s][1], pbc.tric_shift[s][2]);
- //  // printf("SHIFT[%2d] = %8.5f %8.5f %8.5f\n", s, pbc.tric_vec[s][0], pbc.tric_vec[s][1], pbc.tric_vec[s][2]);
- // }
+    // for (int s = 0; s < pbc.ntric_vec; s++)
+    // {
+    //     printf("SHIFT[%2d] = %d %d %d\n", s, pbc.tric_shift[s][0], pbc.tric_shift[s][1], pbc.tric_shift[s][2]);
+    //  // printf("SHIFT[%2d] = %8.5f %8.5f %8.5f\n", s, pbc.tric_vec[s][0], pbc.tric_vec[s][1], pbc.tric_vec[s][2]);
+    // }
 
     // DECIDE IF WE WANT TO APPLY A CUTOFF ON THE ATOMS FROM THE SR NEIGHBORLIST!
 
@@ -233,7 +238,7 @@ void QMMM_rec::update_QMMM_coord(const t_commrec*  cr,
 	    }
 	 // printf("\n");
     }
- // printf("Number of actual    MM atoms in the current MD step               : %d\n", nrMMatoms);
+    // printf("Number of actual    MM atoms in the current MD step               : %d\n", nrMMatoms);
 
     // ALLOCATION
     mm_.nrMMatoms = nrMMatoms;
@@ -264,14 +269,14 @@ void QMMM_rec::update_QMMM_coord(const t_commrec*  cr,
 
     // also shift the MM atoms into the central box
 
- //   for (int a=0; a<45; a++)
- //     printf("SHIFT %2d: %7.3f %7.3f %7.3f\n", a,
- //     fr->shift_vec[a][XX], fr->shift_vec[a][YY], fr->shift_vec[a][ZZ]);
+    //   for (int a=0; a<45; a++)
+    //     printf("SHIFT %2d: %7.3f %7.3f %7.3f\n", a,
+    //     fr->shift_vec[a][XX], fr->shift_vec[a][YY], fr->shift_vec[a][ZZ]);
 
     for (int ind = 0; ind < mm_.nrMMatoms; ind++)
     {
         rvec_sub(x[mm_.indexMM[ind]], shift_vec[mm_.shiftMM[ind]], mm_.xMM[ind]);
- //     printf("COORD MM %4d %2d\n", mm_.indexMM[ind], mm_.shiftMM[ind]);
+    //     printf("COORD MM %4d %2d\n", mm_.indexMM[ind], mm_.shiftMM[ind]);
     }
 
     // For DFTB, also update the coordinates of *all* of the MM atoms,
@@ -649,8 +654,6 @@ QMMM_rec::QMMM_rec(const t_commrec*                 cr,
     else if (GMX_QMMM_TENSORFLOW || GMX_QMMM_PYTORCH)
     {
         // Look how the QM/MM electrostatics shall be treated.
-        // In the future, this could be performed for QM/MM in general,
-        //   not only with DFTB+.
         char *env1 = getenv("GMX_QMMM_VARIANT");
         char *env2 = getenv("GMX_QMMM_PME_DIPCOR");
         if (env1 == nullptr)
@@ -734,10 +737,10 @@ QMMM_rec::QMMM_rec(const t_commrec*                 cr,
         {
             init_tensorflow(&qm[0]);
         }
-        // else if (GMX_QMMM_PYTORCH)
-        // {
-        //     init_pytorch(&qm[0]);
-        // }
+        else if (GMX_QMMM_PYTORCH)
+        {
+            init_pytorch(&qm[0]);
+        }
     }
     else
     {
