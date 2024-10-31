@@ -100,6 +100,11 @@
 #define BOHR2NM (0.0529177210903) /* nm^-1, NIST 2018 CODATA */
 #define HARTREE_BOHR2MD (HARTREE2KJ * AVOGADRO / BOHR2NM)
 
+/* to convert electron volt units to MD units*/
+#define EV2KJ ELECTRONVOLT
+#define EV_A2MD (ELECTRONVOLT / A2NM)
+#define EV2AU 1/27.211386245988;
+#define V2AU EV2AU;
 
 /* The four basic units */
 #define unit_length "nm"

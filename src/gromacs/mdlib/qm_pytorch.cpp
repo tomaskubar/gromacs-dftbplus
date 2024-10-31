@@ -143,32 +143,24 @@ void init_pytorch(QMMM_QMrec* qm)
     else {
         printf("Will read models from ");
         for (int i=0; i<n_models; i++) {
-            snprintf(model_path, sizeof(model_path), "%s%d%s", model_path_prefix, i, ".model");
+            snprintf(model_path, sizeof(model_path), "%s%d%s", model_path_prefix, i, ".pt");
             printf("%s ", model_path);
         }
         printf("\n");
     }
 
-    // Architecture differences
-    int NumInputs;
-    int NumOutputs;
-    if (network_architecture == "maceqeq")
-    {
-        NumInputs = 13;
-        NumOutputs = 3; // charge, energy, force
-    }
-
     //********* Read models
+    torch::jit::script::Module model;
     for (int model_idx=0; model_idx<n_models; model_idx++) {
         snew(qm->models[model_idx], 1); // Allocate memory for model
         printf("Reading model %d\n", model_idx);
         std::strcpy(qm->models[model_idx]->modelArchitecture, network_architecture.c_str()); // Save network architecture for later use
 
-        snprintf(model_path, sizeof(model_path), "%s%d%s", model_path_prefix, model_idx, ".model");
+        snprintf(model_path, sizeof(model_path), "%s%d%s", model_path_prefix, model_idx, ".pt");
 
         try {
             // Attempt to load the model
-            torch::jit::script::Module model = torch::load(model_path);
+            model = torch::jit::load(model_path);
             
             // Check if the model is not empty
             // if (model) {
@@ -187,11 +179,28 @@ void init_pytorch(QMMM_QMrec* qm)
             std::cerr << "Unknown error occurred while loading the model." << std::endl;
             throw;
         }
-
-        // Prepare input and output tensors
-        qm->models[model_idx]->NumInputs = NumInputs;
-        qm->models[model_idx]->NumOutputs = NumOutputs;
     }
+
+    // extract r_max from mace model
+    qm->r_max = model.attr("r_max").toTensor().item<double>();
+    qm->r_max_squared = qm->r_max*qm->r_max;
+    printf("Read r_max from model: %6.3f\n", qm->r_max);
+    
+    // extract atomic numbers from mace model
+    torch::Tensor present_atomic_numbers_tensor = model.attr("atomic_numbers").toTensor();
+    qm->n_present_atomic_numbers = present_atomic_numbers_tensor.size(0);
+    snew (qm->present_atomic_numbers, qm->n_present_atomic_numbers);
+    
+    for (int i=0; i<qm->n_present_atomic_numbers; i++) {
+        qm->present_atomic_numbers[i] = present_atomic_numbers_tensor[i].item<int>();
+    }
+    printf("Read %d atomic numbers from model\n", qm->n_present_atomic_numbers);
+    for (int i=0; i<qm->n_present_atomic_numbers; i++) {
+        printf("%d ", qm->present_atomic_numbers[i]);
+    }
+    printf("\n");
+
+    //TODO: extract default dtype from mace model
 
     return;
 } /* init_pytorch */
@@ -361,18 +370,6 @@ real call_pytorch(QMMM_rec*       qr,
         prepare_base_mace_inputs(qm, input_dict);
         prepare_maceqeq_inputs(qr, qm, input_dict);
     }
-    
-    // Check input availability outside of preparation functions
-    for (const auto& entry : input_dict) {
-        const std::string& key = entry.key();
-        const torch::Tensor& value = entry.value();
-        printf("Key: %s\n", key.c_str());
-        printf("Shape: ");
-        for (long unsigned int i = 0; i < value.sizes().size(); i++) {
-            printf("%ld ", value.sizes()[i]);
-        }
-        printf("\n");
-    }
 
     torch::Tensor mask = torch::zeros(nAtoms, torch::dtype(torch::kBool));
     for (int i=0; i<nAtoms; i++)
@@ -381,18 +378,18 @@ real call_pytorch(QMMM_rec*       qr,
     }
 
     // Run the Session
-    std::vector<decltype(qm->models[0]->model->forward({input_dict, mask.to(qm->device)}).toGenericDict())> output_dicts;
-    float* charge_predictions[n_active_models];
-    float* energy_predictions[n_active_models];
-    rvec* force_predictions[n_active_models];
+    c10::Dict<std::string, torch::Tensor> output_dicts[n_active_models];
+    double* charge_predictions[n_active_models];
+    double* energy_predictions[n_active_models];
+    dvec* force_predictions[n_active_models];
     for (int model_idx=0; model_idx<n_active_models; model_idx++) {
-        output_dicts[model_idx] = qm->models[model_idx]->model->forward({input_dict, mask.to(qm->device)}).toGenericDict();
-
+        c10::Dict<c10::IValue,c10::IValue> output_dict = qm->models[model_idx]->model->forward({input_dict}).toGenericDict();
+        output_dicts[model_idx] = convertDict(output_dict);
         if (strcmp(qm->models[model_idx]->modelArchitecture, "maceqeq") == 0)
         {
-            charge_predictions[model_idx] = output_dicts[model_idx].at("charges").toTensor().cpu().data_ptr<float>(); // in e-
-            energy_predictions[model_idx] = output_dicts[model_idx].at("total_energy_local").toTensor().cpu().data_ptr<float>(); // in eV
-            force_predictions[model_idx] = reinterpret_cast<rvec*>(output_dicts[model_idx].at("forces").toTensor().cpu().data_ptr<float>()) ; // in eV/Angstrom
+            charge_predictions[model_idx] = output_dicts[model_idx].at("charges").cpu().data_ptr<double>(); // in e-
+            energy_predictions[model_idx] = output_dicts[model_idx].at("energy").cpu().data_ptr<double>(); // in eV
+            force_predictions[model_idx] = reinterpret_cast<dvec*>(output_dicts[model_idx].at("forces").cpu().data_ptr<double>()) ; // in eV/Angstrom, actual forces, not gradients
         }
     }
 
@@ -483,8 +480,8 @@ real call_pytorch(QMMM_rec*       qr,
     {
         for (int j=0; j<3; j++)
         {
-            QMgrad[i][j] = (real) (-1*force_predictions[0][i][j]); // negative of force
-            //QMgrad[i][j] = -force_means[i][j]; // negative of force 
+            QMgrad[i][j] = (real) (force_predictions[0][i][j]); // positive of force
+            //QMgrad[i][j] = force_means[i][j]; // positive of force 
         }
     }
 
@@ -518,8 +515,8 @@ real call_pytorch(QMMM_rec*       qr,
     {
         for (int j = 0; j < DIM; j++)
         {
-            f[i][j]      = HARTREE_BOHR2MD*QMgrad[i][j];
-         // fshift[i][j] = HARTREE_BOHR2MD*QMgrad[i][j];
+            f[i][j]      = EV_A2MD*QMgrad[i][j];
+         // fshift[i][j] = EV_A2MD*QMgrad[i][j];
         }
     }
     for (int i = 0; i < mm.nrMMatoms; i++)
@@ -604,11 +601,18 @@ real call_pytorch(QMMM_rec*       qr,
         }
     }
 
+    // Debugging
+    if (std::strcmp(qm->models[0]->modelArchitecture, "maceqeq") == 0)
+    {
+        printf("Step %d\n", step);
+        write_maceqeq_inputs_outputs(qm, input_dict, output_dicts[0], step);
+    }
+
     if (qm->significant_structure)
     {   
         if (std::strcmp(qm->models[0]->modelArchitecture, "maceqeq") == 0)
         {
-            write_maceqeq_inputs_outputs(qm, input_dict, output_dicts[0]);
+            write_maceqeq_inputs_outputs(qm, input_dict, output_dicts[0], step);
         }
 
         FILE* f_std = nullptr; // file for saving standard deviations of significant structures
@@ -652,7 +656,7 @@ real call_pytorch(QMMM_rec*       qr,
 
     step++;
 
-    return (real) QMenergy * HARTREE2KJ * AVOGADRO;
+    return (real) QMenergy * EV2KJ * AVOGADRO;
 } /* call_pytorch */
 
 
@@ -663,12 +667,19 @@ void prepare_base_mace_inputs(QMMM_QMrec* qm,
     torch::ScalarType torch_float_dtype = qm->torch_float_dtype;
     torch::ScalarType torch_int_dtype = qm->torch_int_dtype;
 
-    // atomic numbers
-    int64_t atomic_numbers_dims[] = {nAtoms};
-    torch::Tensor atomic_numbers = torch::zeros(atomic_numbers_dims, torch_int_dtype);
+    // one-hot encode atomic numbers, very badly hardcoded, no idea how to get it from the model or even from a file, as the model only keeps the necessary elements
+    int64_t atomic_numbers_dims[] = {nAtoms, qm->n_present_atomic_numbers};
+    torch::Tensor atomic_numbers = torch::zeros(atomic_numbers_dims, torch_float_dtype);
     for (int i=0; i<nAtoms; i++)
     {
-        atomic_numbers[i] = qm->atomicnumberQM_get(i);
+        int atomic_number = qm->atomicnumberQM_get(i);
+        for (int j=0; j<qm->n_present_atomic_numbers; j++)
+        {
+            if (atomic_number == qm->present_atomic_numbers[j])
+            {
+                atomic_numbers[i][j] = 1.0;
+            }
+        }
     }
 
     // coordinates
@@ -678,45 +689,98 @@ void prepare_base_mace_inputs(QMMM_QMrec* qm,
     {
         for (int j=0; j<3; j++)
         {
-            coordinates[i][j] = qm->xQM_get(i,j) / BOHR2NM; // from nm to bohr for NN model
+            coordinates[i][j] = qm->xQM_get(i,j) * NM2A;
         }
     }
 
-    // edge indices
-    int nEdgeCombinations = nAtoms*(nAtoms-1); // Cheap Combinations nCr(nAtoms 2)
-    int64_t edge_indices_dims[] = {2, nEdgeCombinations};
-    torch::Tensor edge_indices = torch::zeros(edge_indices_dims, torch_int_dtype);
-    int edge_index = 0;
-    for (int i=0; i<nAtoms; i++)
-    {   
-        for (int j=0; j<nAtoms; j++)
-        {
-            if (i==j) {
-                continue;
-            }
-            edge_indices[0][edge_index] = i;
-            edge_indices[1][edge_index] = j;
-            edge_index++;
-        }
-    }
+    // // edge indices
+    // int nEdgeCombinations = nAtoms*(nAtoms-1); // Cheap Combinations nCr(nAtoms 2)
+    // int64_t edge_indices_dims[] = {2, nEdgeCombinations};
+    // torch::Tensor edge_indices = torch::zeros(edge_indices_dims, torch_int_dtype);
+    // int edge_index = 0;
+    // for (int i=0; i<nAtoms; i++)
+    // {   
+    //     for (int j=0; j<nAtoms; j++)
+    //     {
+    //         if (i==j) {
+    //             continue;
+    //         }
+    //         edge_indices[0][edge_index] = i;
+    //         edge_indices[1][edge_index] = j;
+    //         edge_index++;
+    //     }
+    // }
 
     // box
     torch::Tensor box = torch::zeros({3,3}, torch_float_dtype);
-    box[0][0] = 10.0;
-    box[0][1] = 0.0;
-    box[0][2] = 0.0;
-    box[1][0] = 0.0;
-    box[1][1] = 10.0;
-    box[1][2] = 0.0;
-    box[2][0] = 0.0;
-    box[2][1] = 0.0;
-    box[2][2] = 10.0;
+    for (int i=0; i<3; i++) {
+        for (int j=0; j<3; j++) {
+            box[i][j] = qm->box_get(i,j) * NM2A;
+        }
+    }
 
-    torch::Tensor batch = torch::zeros({nAtoms}, torch_int_dtype);
+    // ----- edge_index, shift and unit_shift -----
+    // count total number of edges
+    int n_edges = 0;
+    std::vector<int> n_edges_vec(nAtoms, 0);
+    #pragma omp parallel for reduction(+:n_edges)
+    for (int i=0; i<nAtoms; i++) {
+        for (int j=0; j<nAtoms; j++) {
+            if (i==j) {
+                continue;
+            }
+
+            double r_squared = 0.0;
+            for (int k=0; k<3; k++) {
+                double delta = (qm->xQM_get(i,k) - qm->xQM_get(j,k)) * NM2A;
+                r_squared += delta*delta;
+            }
+            if (r_squared < qm->r_max_squared) {
+                n_edges += 1;
+                n_edges_vec[i] += 1;
+            }
+        }
+    }
+  
+    // make first_edge vector to help with parallelizing following loop, contains the index of the first edge for each atom
+    std::vector<int> first_edge(nAtoms);
+    first_edge[0] = 0;
+    for (int i=0; i<nAtoms-1; i++) {
+        first_edge[i+1] = first_edge[i] + n_edges_vec[i];
+    }
+
+    torch::Tensor edge_indices = torch::zeros({2, n_edges}, torch_int_dtype);
+    torch::Tensor shifts = torch::zeros({n_edges,3}, torch_float_dtype);
+    torch::Tensor unit_shifts = torch::zeros({n_edges,3}, torch_float_dtype);
+
+    #pragma omp parallel for
+    for (int i=0; i<nAtoms; i++) {
+        int k = first_edge[i];
+        for (int j=0; j<nAtoms; j++) {
+            if (i==j) {
+                continue;
+            }
+
+            double r_squared = 0.0;
+            for (int k=0; k<3; k++) {
+                double delta = (qm->xQM_get(i,k) - qm->xQM_get(j,k)) * NM2A;
+                r_squared += delta*delta;
+            }
+            if (r_squared > qm->r_max_squared) {
+                continue;
+            }
+            
+            edge_indices[0][k] = i;
+            edge_indices[1][k] = j;
+            k++;
+        }
+    }
+
     torch::Tensor energy = torch::empty({1}, torch_float_dtype);
     torch::Tensor forces = torch::empty({nAtoms,3}, torch_float_dtype);
-    torch::Tensor ptr = torch::empty({2}, torch_int_dtype);
-    torch::Tensor weight = torch::empty({1}, torch_float_dtype);
+    torch::Tensor batch = torch::zeros({nAtoms}, torch_int_dtype); // batch placeholder
+    torch::Tensor ptr = torch::empty({2}, torch_int_dtype); // batch property
+    torch::Tensor weight = torch::empty({1}, torch_float_dtype); // batch property
     ptr[0] = 0;
     ptr[1] = nAtoms;
     weight[0] = 1.0;
@@ -731,8 +795,8 @@ void prepare_base_mace_inputs(QMMM_QMrec* qm,
     energy = energy.to(device);
     forces = forces.to(device);
     ptr = ptr.to(device);
-    // shifts = shifts.to(device);
-    // unit_shifts = unit_shifts.to(device);
+    shifts = shifts.to(device);
+    unit_shifts = unit_shifts.to(device);
     weight = weight.to(device);
 
     // Prepare input dictionary
@@ -745,6 +809,8 @@ void prepare_base_mace_inputs(QMMM_QMrec* qm,
     input_dict.insert("forces", forces);
     input_dict.insert("ptr", ptr);
     input_dict.insert("weight", weight);
+    input_dict.insert("shifts", shifts);
+    input_dict.insert("unit_shifts", unit_shifts);
 
 } // end of base_mace_inputs
 
@@ -760,15 +826,14 @@ void prepare_maceqeq_inputs(QMMM_rec* qr,
     // total charge
     int64_t total_charge_dims[] = {1};
     torch::Tensor total_charge = torch::zeros(total_charge_dims, torch_float_dtype);
-    total_charge[0] = (float)qm->QMcharge_get(); // in e-
+    total_charge[0] = qm->QMcharge_get(); // in e-
 
     // esp
-    float V_to_au = 1/27.211386245988;
     int64_t esp_dims[] = {nAtoms};
     torch::Tensor esp = torch::zeros(esp_dims, torch_float_dtype);
     for (int i=0; i<nAtoms; i++)
     {
-       esp[i] = qm->pot_qmmm_get(i)*V_to_au; // in atomic units
+       esp[i] = qm->pot_qmmm_get(i)*V2AU; // in atomic units
     }
 
     // esp_grad
@@ -796,6 +861,12 @@ void prepare_maceqeq_inputs(QMMM_rec* qr,
         sfree(ESPgrad_full);
     }
 
+    // transfer data to device
+    torch::Device device = qm->device;
+    total_charge = total_charge.to(device);
+    esp = esp.to(device);
+    esp_grad = esp_grad.to(device);
+
     // Prepare input dictionary
     input_dict.insert("total_charge", total_charge);
     input_dict.insert("esp", esp);
@@ -804,53 +875,61 @@ void prepare_maceqeq_inputs(QMMM_rec* qr,
 
 void write_maceqeq_inputs_outputs(QMMM_QMrec* qm,
                                   c10::Dict<std::string, torch::Tensor> input_dict,
-                                  c10::impl::GenericDict output_dict)
+                                  c10::Dict<std::string, torch::Tensor> output_dict,
+                                  int step)
 {
     // Print information and save information for debugging
 
     int nAtoms = qm->nrQMatoms_get();
-    int nEdgeCombinations = nAtoms*(nAtoms-1);
 
     // atomic numbers
     FILE* f_atomic_numbers = nullptr;
     f_atomic_numbers = fopen("atomic_numbers.txt", "w");
-    int64_t* atomic_numbers = input_dict.at("node_attrs").data_ptr<int64_t>();
+    double* atomic_numbers = input_dict.at("node_attrs").data_ptr<double>();
     for (int i=0; i<nAtoms; i++)
     {
-        printf("CHECK Atomic numbers %d %ld\n", i, atomic_numbers[i]);
-        fprintf(f_atomic_numbers, "%ld\n", atomic_numbers[i]);
+        printf("CHECK Atomic numbers %d", i+1);
+        for (int j=0; j<qm->n_present_atomic_numbers; j++)
+        {
+            printf(" %6.3f", atomic_numbers[qm->n_present_atomic_numbers*i+j]);
+            fprintf(f_atomic_numbers, "%6.3f ", atomic_numbers[qm->n_present_atomic_numbers*i+j]);
+        }
+        printf("\n");
+        fprintf(f_atomic_numbers, "\n");
     }
     fclose(f_atomic_numbers);
 
     // node coordinates 
     FILE* f_coordinates = nullptr;
     f_coordinates = fopen("coordinates.txt", "w");
-    rvec* coordinates = reinterpret_cast<rvec*>(input_dict.at("positions").data_ptr<float>());
+    dvec* coordinates = reinterpret_cast<dvec*>(input_dict.at("positions").data_ptr<double>());
     for (int i=0; i<nAtoms; i++)
     {
-        printf("CHECK COORD QM Bohr[%d] = %6.3f %6.3f %6.3f\n", i+1, coordinates[i][0], coordinates[i][1], coordinates[i][2]);
+        printf("CHECK COORD QM Angstrom[%d] = %6.3f %6.3f %6.3f\n", i+1, coordinates[i][0], coordinates[i][1], coordinates[i][2]);
         fprintf(f_coordinates, "%6.6f %6.6f %6.6f\n", coordinates[i][0], coordinates[i][1], coordinates[i][2]);
     }
     for (int i=0; i<nAtoms; i++)
     {
-        printf("CHECK COORD QM MD units[%d] = %6.3f %6.3f %6.3f\n", i+1, BOHR2NM*coordinates[i][0], BOHR2NM*coordinates[i][1], BOHR2NM*coordinates[i][2]);
+        printf("CHECK COORD QM MD units[%d] = %6.3f %6.3f %6.3f\n", i+1, A2NM*coordinates[i][0], A2NM*coordinates[i][1], A2NM*coordinates[i][2]);
     }
     fclose(f_coordinates);
 
     // edge indices 
     FILE* f_edge_indices = nullptr;
     f_edge_indices = fopen("edge_indices.txt", "w");
-    int64_t* edge_indices = input_dict.at("edge_index").data_ptr<int64_t>();
-    for (int i=0; i<nEdgeCombinations; i++)
+    torch::Tensor edge_indices = input_dict.at("edge_index");
+    int n_edges = input_dict.at("edge_index").size(1);
+    for (int i=0; i<n_edges; i++)
     {
-        fprintf(f_edge_indices, "%ld %ld\n", edge_indices[2*i+0], edge_indices[2*i+1]);
+        //printf("CHECK EDGE INDICES[%d] = %ld %ld\n", i+1, edge_indices[0][i].item<int64_t>(), edge_indices[1][i].item<int64_t>());
+        fprintf(f_edge_indices, "%ld %ld\n", edge_indices[0][i].item<int64_t>(), edge_indices[1][i].item<int64_t>());
     }
     fclose(f_edge_indices);
 
     // total charge
     FILE* f_total_charge = nullptr;
     f_total_charge = fopen("total_charge.txt", "w");
-    float* total_charge = input_dict.at("total_charge").data_ptr<float>();
+    double* total_charge = input_dict.at("total_charge").data_ptr<double>();
     fprintf(f_total_charge, "%1.0f\n", total_charge[0]);
     printf("CHECK Total Charge %1.0f \n", total_charge[0]);
     fclose(f_total_charge);
@@ -858,7 +937,7 @@ void write_maceqeq_inputs_outputs(QMMM_QMrec* qm,
     // esp
     FILE* f_esp = nullptr;
     f_esp = fopen("esp.txt", "w");
-    float* esp = input_dict.at("esp").data_ptr<float>();
+    double* esp = input_dict.at("esp").data_ptr<double>();
     for (int i=0; i<nAtoms; i++)
     {
         printf("CHECK ESP QM[%d] = %6.3f\n", i+1, esp[i]);
@@ -869,7 +948,7 @@ void write_maceqeq_inputs_outputs(QMMM_QMrec* qm,
     // esp_grad
     FILE* f_esp_grad = nullptr;
     f_esp_grad = fopen("esp_grad.txt", "w");
-    rvec* esp_grad = reinterpret_cast<rvec*>(input_dict.at("esp_grad").data_ptr<float>());
+    dvec* esp_grad = reinterpret_cast<dvec*>(input_dict.at("esp_grad").data_ptr<double>());
     for (int i=0; i<nAtoms; i++)
     {
         printf("CHECK ESP GRAD[%d] = %6.3f %6.3f %6.3f\n", i+1, esp_grad[i][0], esp_grad[i][1], esp_grad[i][2]);
@@ -877,10 +956,47 @@ void write_maceqeq_inputs_outputs(QMMM_QMrec* qm,
     }
     fclose(f_esp_grad);
 
+    // batch, shifts, unit_shifts, weight
+    FILE* f_batch = nullptr;
+    f_batch = fopen("batch.txt", "w");
+    int64_t* batch = input_dict.at("batch").data_ptr<int64_t>();
+    for (int i=0; i<nAtoms; i++)
+    {
+        //printf("CHECK BATCH[%d] = %ld\n", i+1, batch[i]);
+        fprintf(f_batch, "%ld\n", batch[i]);
+    }
+    fclose(f_batch);
 
-    float* charge_predictions = output_dict.at("charges").toTensor().data_ptr<float>() ; // in e-
-    float* energy_predictions = output_dict.at("energy").toTensor().data_ptr<float>() ; // in ev
-    rvec* force_predictions = reinterpret_cast<rvec*>(output_dict.at("forces").toTensor().data_ptr<float>()) ; // in ev/Angstrom
+    FILE* f_shift = nullptr;
+    f_shift = fopen("shifts.txt", "w");
+    dvec* shifts = reinterpret_cast<dvec*>(input_dict.at("shifts").data_ptr<double>());
+    for (int i=0; i<n_edges; i++)
+    {
+        //printf("CHECK SHIFT[%d] = %6.3f %6.3f %6.3f\n", i+1, shifts[i][0], shifts[i][1], shifts[i][2]);
+        fprintf(f_shift, "%6.6f %6.6f %6.6f\n", shifts[i][0], shifts[i][1], shifts[i][2]);
+    }
+    fclose(f_shift);
+
+    FILE* f_unit_shift = nullptr;
+    f_unit_shift = fopen("unit_shifts.txt", "w");
+    dvec* unit_shifts = reinterpret_cast<dvec*>(input_dict.at("unit_shifts").data_ptr<double>());
+    for (int i=0; i<n_edges; i++)
+    {
+        //printf("CHECK UNIT SHIFT[%d] = %6.3f %6.3f %6.3f\n", i+1, unit_shifts[i][0], unit_shifts[i][1], unit_shifts[i][2]);
+        fprintf(f_unit_shift, "%6.6f %6.6f %6.6f\n", unit_shifts[i][0], unit_shifts[i][1], unit_shifts[i][2]);
+    }
+    fclose(f_unit_shift);
+
+    FILE* f_weight = nullptr;
+    f_weight = fopen("weight.txt", "w");
+    double* weight = input_dict.at("weight").data_ptr<double>();
+    //printf("CHECK WEIGHT = %6.3f\n", weight[0]);
+    fprintf(f_weight, "%6.6f\n", weight[0]);
+    fclose(f_weight);
+
+    double* charge_predictions = output_dict.at("charges").data_ptr<double>() ; // in e-
+    double* energy_predictions = output_dict.at("energy").data_ptr<double>() ; // in ev
+    dvec* force_predictions = reinterpret_cast<dvec*>(output_dict.at("forces").data_ptr<double>()) ; // in ev/Angstrom
 
     FILE* f_output = nullptr;
     f_output = fopen("output.txt", "w");
@@ -899,8 +1015,52 @@ void write_maceqeq_inputs_outputs(QMMM_QMrec* qm,
         fprintf(f_output, "%6.6f %6.6f %6.6f\n", force_predictions[i][0], force_predictions[i][1], force_predictions[i][2]);
     }
     fclose(f_output);
-}
 
+    // Write all inputs and outputs in the extended xyz format
+    char periodic_system[37][3]={"XX",
+        "H",                               "He",
+        "Li","Be","B", "C", "N", "O", "F", "Ne",
+        "Na","Mg","Al","Si","P", "S", "Cl","Ar",
+        "K", "Ca","Sc","Ti","V", "Cr","Mn","Fe","Co",
+        "Ni","Cu","Zn","Ga","Ge","As","Se","Br","Kr"};
+    dvec* box = reinterpret_cast<dvec*>(input_dict.at("cell").data_ptr<double>());
+    FILE* f_extxyz = nullptr;
+    f_extxyz = fopen("qm_mlmm.extxyz", "w");
+    fprintf(f_extxyz, "%d\n", nAtoms);
+    fprintf(f_extxyz, "Lattice=\"%.1f %.1f %.1f %.1f %.1f %.1f %.1f %.1f %.1f\" ", box[0][0], box[0][1], box[0][2], box[1][0], box[1][1], box[1][2], box[2][0], box[2][1], box[2][2]);
+    fprintf(f_extxyz, "Properties=species:S:1:pos:R:3:pred_force:R:3:pred_charge:R:1:esp:R:1:electric_field:R:3 ");
+    fprintf(f_extxyz, "pred_energy=%.6f ", energy_predictions[0]);
+    fprintf(f_extxyz, "total_charge=%.1f ", total_charge[0]);
+    fprintf(f_extxyz, "comment=\"Step %d\" ", step);
+    fprintf(f_extxyz, "pbc=\"T T T\" \n");
+    for (int i=0; i<nAtoms; i++)
+    {
+        fprintf(f_extxyz, "%-2s ", periodic_system[qm->atomicnumberQM_get(i)]);
+        fprintf(f_extxyz, "%8.4f %8.4f %8.4f ", coordinates[i][0], coordinates[i][1], coordinates[i][2]);
+        fprintf(f_extxyz, "%8.4f %8.4f %8.4f ", force_predictions[i][0], force_predictions[i][1], force_predictions[i][2]);
+        fprintf(f_extxyz, "%8.4f ", charge_predictions[i]);
+        fprintf(f_extxyz, "%8.4f ", esp[i]);
+        fprintf(f_extxyz, "%8.4f %8.4f %8.4f\n", esp_grad[i][0], esp_grad[i][1], esp_grad[i][2]);
+    }
+    fclose(f_extxyz);
+} // end of write_maceqeq_inputs_outputs
+
+c10::Dict<std::string, torch::Tensor> convertDict(const c10::impl::GenericDict &inputDict) {
+    c10::Dict<std::string, torch::Tensor> outputDict;
+
+    for (const auto& item : inputDict) {
+        // Convert key to std::string
+        std::string key = item.key().toStringRef();
+
+        // Convert value to torch::Tensor
+        torch::Tensor value = item.value().toTensor();
+
+        // Insert into the new dictionary
+        outputDict.insert(key, value);
+    }
+
+    return outputDict;
+} // end of convertDict
 /* end of NN sub routines */
 #endif
 

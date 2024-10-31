@@ -62,7 +62,10 @@ void prepare_maceqeq_inputs(QMMM_rec*                             qr,
 
 void write_maceqeq_inputs_outputs(QMMM_QMrec* qm,
                                   c10::Dict<std::string, torch::Tensor> input_dict,
-                                  c10::impl::GenericDict output_dict);
+                                  c10::Dict<std::string, torch::Tensor> output_dict,
+                                  int step);
+
+c10::Dict<std::string, torch::Tensor> convertDict(const c10::impl::GenericDict& inputDict);
 #endif
 
 #endif

@@ -353,6 +353,11 @@ double QMMM_QMrec::xQM_get(const int atom, const int coordinate) const
     return xQM[atom][coordinate];
 }
 
+real QMMM_QMrec::box_get(const int dim, const int coordinate) const
+{
+    return box[dim][coordinate];
+}
+
 real QMMM_QMrec::QMcharges_get(const int atom) const
 {
     return QMcharges[atom];

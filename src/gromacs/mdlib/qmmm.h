@@ -247,14 +247,18 @@ public:
     DftbPlus        *dpcalc;        // DFTB+ calculator
     Context         *dftbContext;   // some data for DFTB+, referenced to by DFTB through *dpcalc
     #if GMX_QMMM_TENSORFLOW
-    TFModel         *models[10];
+    TFModel*         models[10];
     EnergyForceExtensiveLabelScaler* scaler;
     #endif
     #if GMX_QMMM_PYTORCH
-    PytorchModel         *models[10];
+    PytorchModel*         models[10];
     torch::Device device = torch::kCPU;
-    torch::ScalarType torch_float_dtype = torch::kFloat32;
+    torch::ScalarType torch_float_dtype = torch::kFloat64;
     torch::ScalarType torch_int_dtype = torch::kInt64;
+    double r_max;
+    double r_max_squared;
+    int n_present_atomic_numbers;
+    int* present_atomic_numbers;
     #endif
 
     QMMM_QMgaussian  gaussian;
@@ -266,6 +270,7 @@ public:
     int              nrQMatoms_get()const;
     int              qmmm_variant_get()const;
     double           xQM_get(int atom, int coordinate)const;
+    real             box_get(int dim, int coordinate)const;
     real             QMcharges_get(int atom)const;
     double           pot_qmmm_get(int atom)const;
     double           pot_qmqm_get(int atom)const;
