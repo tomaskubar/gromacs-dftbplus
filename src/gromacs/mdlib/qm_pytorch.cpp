@@ -171,13 +171,13 @@ void init_pytorch(QMMM_QMrec* qm)
             //}
         } catch (const c10::Error& e) {
             std::cerr << "Error loading the model: " << e.what() << std::endl;
-            throw;
+            exit(-1);
         } catch (const std::exception& e) {
             std::cerr << "Standard exception: " << e.what() << std::endl;
-            throw;
+            exit(-1);
         } catch (...) {
             std::cerr << "Unknown error occurred while loading the model." << std::endl;
-            throw;
+            exit(-1);
         }
     }
 
@@ -667,7 +667,7 @@ void prepare_base_mace_inputs(QMMM_QMrec* qm,
     torch::ScalarType torch_float_dtype = qm->torch_float_dtype;
     torch::ScalarType torch_int_dtype = qm->torch_int_dtype;
 
-    // one-hot encode atomic numbers, very badly hardcoded, no idea how to get it from the model or even from a file, as the model only keeps the necessary elements
+    // one-hot encode atomic numbers
     int64_t atomic_numbers_dims[] = {nAtoms, qm->n_present_atomic_numbers};
     torch::Tensor atomic_numbers = torch::zeros(atomic_numbers_dims, torch_float_dtype);
     for (int i=0; i<nAtoms; i++)
@@ -692,24 +692,6 @@ void prepare_base_mace_inputs(QMMM_QMrec* qm,
             coordinates[i][j] = qm->xQM_get(i,j) * NM2A;
         }
     }
-
-    // // edge indices
-    // int nEdgeCombinations = nAtoms*(nAtoms-1); // Cheap Combinations nCr(nAtoms 2)
-    // int64_t edge_indices_dims[] = {2, nEdgeCombinations};
-    // torch::Tensor edge_indices = torch::zeros(edge_indices_dims, torch_int_dtype);
-    // int edge_index = 0;
-    // for (int i=0; i<nAtoms; i++)
-    // {   
-    //     for (int j=0; j<nAtoms; j++)
-    //     {
-    //         if (i==j) {
-    //             continue;
-    //         }
-    //         edge_indices[0][edge_index] = i;
-    //         edge_indices[1][edge_index] = j;
-    //         edge_index++;
-    //     }
-    // }
 
     // box
     torch::Tensor box = torch::zeros({3,3}, torch_float_dtype);
