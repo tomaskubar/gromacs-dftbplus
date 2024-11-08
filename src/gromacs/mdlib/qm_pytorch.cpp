@@ -161,14 +161,9 @@ void init_pytorch(QMMM_QMrec* qm)
         try {
             // Attempt to load the model
             model = torch::jit::load(model_path);
-            
-            // Check if the model is not empty
-            // if (model) {
-                qm->models[model_idx]->model = new torch::jit::script::Module(model);
-                std::cout << "Model loaded successfully." << std::endl;
-            //} else {
-            //    throw std::runtime_error("Model is empty after loading.");
-            //}
+            qm->models[model_idx]->model = new torch::jit::script::Module(model);
+            printf("Model %d loaded successfully\n", model_idx);
+
         } catch (const c10::Error& e) {
             std::cerr << "Error loading the model: " << e.what() << std::endl;
             exit(-1);
@@ -599,13 +594,6 @@ real call_pytorch(QMMM_rec*       qr,
                 mm.MMcharges[i], // CHECK -- HOW TO DO IT WITH PME / WITH CUT-OFF?
                 mm.xMM[i][0] * 10., mm.xMM[i][1] * 10., mm.xMM[i][2] * 10.);
         }
-    }
-
-    // Debugging
-    if (std::strcmp(qm->models[0]->modelArchitecture, "maceqeq") == 0)
-    {
-        printf("Step %d\n", step);
-        write_maceqeq_inputs_outputs(qm, input_dict, output_dicts[0], step);
     }
 
     if (qm->significant_structure)
