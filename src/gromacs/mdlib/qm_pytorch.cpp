@@ -475,8 +475,8 @@ real call_pytorch(QMMM_rec*       qr,
     {
         for (int j=0; j<3; j++)
         {
-            QMgrad[i][j] = (real) (force_predictions[0][i][j]); // positive of force
-            //QMgrad[i][j] = force_means[i][j]; // positive of force 
+            QMgrad[i][j] = (real) (-1*force_predictions[0][i][j]); // negative of force
+            //QMgrad[i][j] = -1*force_means[i][j]; // negative of force 
         }
     }
 
@@ -598,10 +598,10 @@ real call_pytorch(QMMM_rec*       qr,
 
     if (qm->significant_structure)
     {   
-        if (std::strcmp(qm->models[0]->modelArchitecture, "maceqeq") == 0)
-        {
-            write_maceqeq_inputs_outputs(qm, input_dict, output_dicts[0], step);
-        }
+        // if (std::strcmp(qm->models[0]->modelArchitecture, "maceqeq") == 0)
+        // {
+        //     write_maceqeq_inputs_outputs(qm, input_dict, output_dicts[0], step); // Print inputs and outputs of the model at the significant structure
+        // }
 
         FILE* f_std = nullptr; // file for saving standard deviations of significant structures
         f_std = fopen("qm_mlmm_std.xyz", "a");
