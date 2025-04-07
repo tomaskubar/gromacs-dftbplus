@@ -826,7 +826,7 @@ void prepare_maceqeq_inputs(QMMM_rec* qr,
     torch::Tensor esp = torch::zeros(esp_dims, torch_float_dtype);
     for (int i=0; i<nAtoms; i++)
     {
-       esp[i] = qm->pot_qmmm_get(i)*V2AU; // in atomic units
+       esp[i] = qm->pot_qmmm_get(i); // in Volt units, could be changed with *V2AU
     }
 
     // esp_grad
@@ -844,7 +844,7 @@ void prepare_maceqeq_inputs(QMMM_rec* qr,
     {
         for (int j=0; j<3; j++)
         {
-            esp_grad[i][j] = ESPgrad[i][j]; // in atomic units
+            esp_grad[i][j] = ESPgrad[i][j] *HARTREE_TO_EV/BOHR2NM/10 ; // from H/B to eV/e/Angstrom
         }
     }
 
@@ -863,7 +863,7 @@ void prepare_maceqeq_inputs(QMMM_rec* qr,
     // Prepare input dictionary
     input_dict.insert("total_charge", total_charge);
     input_dict.insert("esp", esp);
-    input_dict.insert("esp_grad", esp_grad);
+    input_dict.insert("esp_gradient", esp_grad);
 } // end of prepare_maceqeq_inputs
 
 void write_maceqeq_inputs_outputs(QMMM_QMrec* qm,
@@ -956,7 +956,7 @@ void write_maceqeq_inputs_outputs(QMMM_QMrec* qm,
     // esp_grad
     FILE* f_esp_grad = nullptr;
     f_esp_grad = fopen("esp_grad.txt", "w");
-    torch::Tensor esp_grad_tensor = input_dict.at("esp_grad").cpu();
+    torch::Tensor esp_grad_tensor = input_dict.at("esp_gradient").cpu();
     float esp_grad[nAtoms][3];
     for (int i=0; i<nAtoms; i++)
     {
@@ -1077,7 +1077,7 @@ void write_maceqeq_inputs_outputs(QMMM_QMrec* qm,
     f_extxyz = fopen("qm_mlmm.extxyz", "w");
     fprintf(f_extxyz, "%d\n", nAtoms);
     fprintf(f_extxyz, "Lattice=\"%.1f %.1f %.1f %.1f %.1f %.1f %.1f %.1f %.1f\" ", box[0][0], box[0][1], box[0][2], box[1][0], box[1][1], box[1][2], box[2][0], box[2][1], box[2][2]);
-    fprintf(f_extxyz, "Properties=species:S:1:pos:R:3:pred_force:R:3:pred_charge:R:1:esp:R:1:electric_field:R:3 ");
+    fprintf(f_extxyz, "Properties=species:S:1:pos:R:3:pred_force:R:3:pred_charge:R:1:esp:R:1:esp_gradient:R:3 ");
     fprintf(f_extxyz, "pred_energy=%.6f ", energy_predictions);
     fprintf(f_extxyz, "total_charge=%.1f ", total_charge);
     fprintf(f_extxyz, "comment=\"Step %d\" ", step);
