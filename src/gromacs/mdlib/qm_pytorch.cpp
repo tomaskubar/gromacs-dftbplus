@@ -117,7 +117,7 @@ void init_pytorch(QMMM_QMrec* qm)
     }
     
     // Find and set network architecture, default "maceqeq"
-    std::vector<std::string> implemented_network_architectures = {"maceqeq"};
+    std::vector<std::string> implemented_network_architectures = {"mace", "maceqeq"};
     std::string network_architecture;
     char* env;
     if ((env = getenv("GMX_NN_ARCHITECTURE")) != nullptr)
@@ -137,7 +137,7 @@ void init_pytorch(QMMM_QMrec* qm)
     }
     else
     {
-        network_architecture = "maceqeq";
+        network_architecture = "mace";
         printf("Using %s as default network architecture\n", network_architecture.c_str());
     }
 
@@ -371,10 +371,20 @@ real call_pytorch(QMMM_rec*       qr,
     
     // Prepare inputs
     c10::Dict<std::string, torch::Tensor> input_dict;
-    if (strcmp(qm->models[0]->modelArchitecture, "maceqeq") == 0)
+    float energy_conversion;
+    float force_conversion;
+    if (strcmp(qm->models[0]->modelArchitecture, "mace") == 0)
+    {
+        prepare_base_mace_inputs(qm, input_dict);
+        energy_conversion = KCAL2KJ;
+        force_conversion = KCAL_A2MD;
+    }
+    else if (strcmp(qm->models[0]->modelArchitecture, "maceqeq") == 0)
     {
         prepare_base_mace_inputs(qm, input_dict);
         prepare_maceqeq_inputs(qr, qm, input_dict);
+        energy_conversion = EV2KJ * AVOGADRO;
+        force_conversion = EV_A2MD;
     }
 
     torch::Tensor mask = torch::zeros(nAtoms, torch::dtype(torch::kBool));
@@ -387,7 +397,7 @@ real call_pytorch(QMMM_rec*       qr,
     c10::Dict<std::string, torch::Tensor> output_dicts[n_active_models];
     for (int model_idx=0; model_idx<n_active_models; model_idx++) {
         c10::Dict<c10::IValue,c10::IValue> output_dict = qm->models[model_idx]->model->forward({input_dict}).toGenericDict();
-        output_dicts[model_idx] = convertDict(output_dict);
+        output_dicts[model_idx] = convertDict(qm, output_dict);
     }
 
     // Convert tensors to arrays
@@ -397,9 +407,9 @@ real call_pytorch(QMMM_rec*       qr,
     float force_predictions[n_active_models][nAtoms][3];
 
     for (int model_idx=0; model_idx<n_active_models; model_idx++) {
-        charge_predictions_tensor = output_dicts[model_idx].at("charges").cpu(); // in e
-        energy_predictions_tensor = output_dicts[model_idx].at("energy").cpu(); // in eV
-        force_predictions_tensor = output_dicts[model_idx].at("forces").cpu() ; // in eV/Angstrom, actual forces, not gradients
+            charge_predictions_tensor = output_dicts[model_idx].at("charges").cpu(); // in e
+            energy_predictions_tensor = output_dicts[model_idx].at("energy").cpu(); // in eV for maceqeq, in kcal/mol for mace(for pascal for now)
+            force_predictions_tensor = output_dicts[model_idx].at("forces").cpu() ; // in eV/Angstrom for maceqeq, , in kcal/mol/A for mace(for pascal for now), actual forces, not gradients
         for (int at_idx=0; at_idx<nAtoms; at_idx++) {
             charge_predictions[model_idx][at_idx] = charge_predictions_tensor[at_idx].item<float>();
         }
@@ -533,8 +543,8 @@ real call_pytorch(QMMM_rec*       qr,
     {
         for (int j = 0; j < DIM; j++)
         {
-            f[i][j]      = EV_A2MD*QMgrad[i][j];
-         // fshift[i][j] = EV_A2MD*QMgrad[i][j];
+            f[i][j]      = force_conversion*QMgrad[i][j];
+         // fshift[i][j] = force_conversion*QMgrad[i][j];
         }
     }
     for (int i = 0; i < mm.nrMMatoms; i++)
@@ -667,7 +677,7 @@ real call_pytorch(QMMM_rec*       qr,
 
     step++;
 
-    return (real) QMenergy * EV2KJ * AVOGADRO;
+    return (real) QMenergy * energy_conversion; // in kJ/mol
 } /* call_pytorch */
 
 
@@ -769,8 +779,6 @@ void prepare_base_mace_inputs(QMMM_QMrec* qm,
         }
     }
 
-    torch::Tensor energy = torch::empty({1}, torch_float_dtype);
-    torch::Tensor forces = torch::empty({nAtoms,3}, torch_float_dtype);
     torch::Tensor batch = torch::zeros({nAtoms}, torch_int_dtype); // batch placeholder
     torch::Tensor ptr = torch::empty({2}, torch_int_dtype); // batch property
     torch::Tensor weight = torch::empty({1}, torch_float_dtype); // batch property
@@ -785,8 +793,6 @@ void prepare_base_mace_inputs(QMMM_QMrec* qm,
     edge_indices = edge_indices.to(device);
     box = box.to(device);
     batch = batch.to(device);
-    energy = energy.to(device);
-    forces = forces.to(device);
     ptr = ptr.to(device);
     shifts = shifts.to(device);
     unit_shifts = unit_shifts.to(device);
@@ -798,8 +804,6 @@ void prepare_base_mace_inputs(QMMM_QMrec* qm,
     input_dict.insert("edge_index", edge_indices);
     input_dict.insert("cell", box);
     input_dict.insert("batch", batch);
-    input_dict.insert("energy", energy);
-    input_dict.insert("forces", forces);
     input_dict.insert("ptr", ptr);
     input_dict.insert("weight", weight);
     input_dict.insert("shifts", shifts);
@@ -1094,18 +1098,26 @@ void write_maceqeq_inputs_outputs(QMMM_QMrec* qm,
     fclose(f_extxyz);
 } // end of write_maceqeq_inputs_outputs
 
-c10::Dict<std::string, torch::Tensor> convertDict(const c10::impl::GenericDict &inputDict) {
+c10::Dict<std::string, torch::Tensor> convertDict(QMMM_QMrec* qm, const c10::impl::GenericDict &inputDict) {
     c10::Dict<std::string, torch::Tensor> outputDict;
 
     for (const auto& item : inputDict) {
-        // Convert key to std::string
-        std::string key = item.key().toStringRef();
+        if (item.value().isTensor()) { // to avoid missing values such as stress/virials
+            // Convert key to std::string
+            std::string key = item.key().toStringRef();
 
-        // Convert value to torch::Tensor
-        torch::Tensor value = item.value().toTensor();
+            // Convert value to torch::Tensor
+            torch::Tensor value = item.value().toTensor();
 
-        // Insert into the new dictionary
-        outputDict.insert(key, value);
+            // Insert into the new dictionary
+            outputDict.insert(key, value);
+        } 
+    }
+
+    // Add expected keys, if they are not present in the inputDict
+    int nAtoms = qm->nrQMatoms_get();
+    if (!outputDict.contains("charges")) {
+        outputDict.insert("charges", torch::zeros({nAtoms, 1}, qm->torch_float_dtype));
     }
 
     return outputDict;
