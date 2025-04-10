@@ -100,6 +100,10 @@
 #define BOHR2NM (0.0529177210903) /* nm^-1, NIST 2018 CODATA */
 #define HARTREE_BOHR2MD (HARTREE2KJ * AVOGADRO / BOHR2NM)
 
+/* to convert kcal/mol based energy and force to MD units */
+#define KCAL2KJ (4.184) /* kcal to kJ*/
+#define KCAL_A2MD (KCAL2KJ / A2NM) /* kcal/mol/A to MD units */
+
 /* to convert electron volt units to MD units*/
 #define EV2KJ ELECTRONVOLT
 #define EV_A2MD (ELECTRONVOLT / A2NM)
