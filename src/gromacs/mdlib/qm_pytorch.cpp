@@ -185,7 +185,8 @@ void init_pytorch(QMMM_QMrec* qm)
         }
     }
 
-    if (strcmp(qm->models[0]->modelArchitecture, "mace") == 0)
+    if ((strcmp(qm->models[0]->modelArchitecture, "mace") == 0) ||
+        (strcmp(qm->models[0]->modelArchitecture, "maceqeq") == 0))
     {
         // extract r_max from mace model
         qm->r_max = model.attr("r_max").toTensor().item<double>();
@@ -388,7 +389,7 @@ real call_pytorch(QMMM_rec*       qr,
     {
         prepare_base_mace_inputs(qm, input_dict);
         prepare_maceqeq_inputs(qr, qm, input_dict);
-        energy_conversion = EV2KJ * AVOGADRO; // from eV to kJ/mol
+        energy_conversion = EV2KJ; // from eV to kJ/mol
         force_conversion = EV_A2MD; // from eV/A to kJ/mol/nm
         mm_gradient_conversion = HARTREE_BOHR2MD; // from Hartree/Bohr to kJ/mol/nm
     }
@@ -396,8 +397,8 @@ real call_pytorch(QMMM_rec*       qr,
     {
         prepare_amp_inputs(qm, mm, input_dict);
         energy_conversion = 1; // from kJ/mol to kJ/mol
-        force_conversion = 10; // from kJ/mol/A to kJ/mol/nm
-        mm_gradient_conversion = 10; // from kJ/A to kJ/mol/nm
+        force_conversion = NM2A; // from kJ/mol/A to kJ/mol/nm
+        mm_gradient_conversion = NM2A; // from kJ/A to kJ/mol/nm
     }
     else
     {
@@ -423,7 +424,7 @@ real call_pytorch(QMMM_rec*       qr,
     float charge_predictions[n_active_models][nAtoms];
     float energy_predictions[n_active_models];
     float force_predictions[n_active_models][nAtoms][3];
-    float mm_gradient_predictions[n_active_models][nAtoms][3];
+    float mm_gradient_predictions[n_active_models][nMMAtoms][3];
 
     for (int model_idx=0; model_idx<n_active_models; model_idx++) {
 
@@ -560,6 +561,18 @@ real call_pytorch(QMMM_rec*       qr,
         snew(MMgrad_full, mm.nrMMatoms_full);
     }
 
+        for (int j=0; j<mm.nrMMatoms; j++)
+        {
+            clear_rvec(MMgrad[j]);
+        }
+        if (qm->qmmm_variant_get() == eqmmmPME)
+        {
+          for (int j=0; j<mm.nrMMatoms_full; j++)
+          {
+            clear_rvec(MMgrad_full[j]);
+          }
+        }
+
     if ((strcmp(qm->models[0]->modelArchitecture, "mace") == 0) || (strcmp(qm->models[0]->modelArchitecture, "maceqeq") == 0))
     {
         rvec *partgrad;
@@ -578,8 +591,6 @@ real call_pytorch(QMMM_rec*       qr,
     {
         for (int mm_idx=0; mm_idx<mm.nrMMatoms; mm_idx++)
         { 
-            clear_rvec(MMgrad[mm_idx]);  
-            clear_rvec(MMgrad_full[mm_idx]);
             for (int dim_idx=0; dim_idx<DIM; dim_idx++)
             {
                 MMgrad[mm_idx][dim_idx] = mm_gradient_predictions[0][mm_idx][dim_idx]; // negative of force // Using the first model
@@ -750,6 +761,7 @@ void prepare_base_mace_inputs(QMMM_QMrec* qm,
     int nAtoms = qm->nrQMatoms_get();
     torch::ScalarType torch_float_dtype = qm->torch_float_dtype;
     torch::ScalarType torch_int_dtype = qm->torch_int_dtype;
+    float geometry_conversion = NM2A; // nm to angstrom
 
     // one-hot encode atomic numbers
     int64_t atomic_numbers_dims[] = {nAtoms, qm->n_present_atomic_numbers};
@@ -773,7 +785,7 @@ void prepare_base_mace_inputs(QMMM_QMrec* qm,
     {
         for (int j=0; j<3; j++)
         {
-            coordinates[i][j] = qm->xQM_get(i,j) * NM2A;
+            coordinates[i][j] = qm->xQM_get(i,j) * geometry_conversion;
         }
     }
 
@@ -781,7 +793,7 @@ void prepare_base_mace_inputs(QMMM_QMrec* qm,
     torch::Tensor box = torch::zeros({3,3}, torch_float_dtype);
     for (int i=0; i<3; i++) {
         for (int j=0; j<3; j++) {
-            box[i][j] = qm->box_get(i,j) * NM2A;
+            box[i][j] = qm->box_get(i,j) * geometry_conversion;
         }
     }
 
@@ -798,7 +810,7 @@ void prepare_base_mace_inputs(QMMM_QMrec* qm,
 
             double r_squared = 0.0;
             for (int k=0; k<3; k++) {
-                double delta = (qm->xQM_get(i,k) - qm->xQM_get(j,k)) * NM2A;
+                double delta = (qm->xQM_get(i,k) - qm->xQM_get(j,k)) * geometry_conversion;
                 r_squared += delta*delta;
             }
             if (r_squared < qm->r_max_squared) {
@@ -829,7 +841,7 @@ void prepare_base_mace_inputs(QMMM_QMrec* qm,
 
             double r_squared = 0.0;
             for (int k=0; k<3; k++) {
-                double delta = (qm->xQM_get(i,k) - qm->xQM_get(j,k)) * NM2A;
+                double delta = (qm->xQM_get(i,k) - qm->xQM_get(j,k)) * geometry_conversion;
                 r_squared += delta*delta;
             }
             if (r_squared > qm->r_max_squared) {
@@ -942,6 +954,7 @@ void prepare_amp_inputs(QMMM_QMrec* qm,
     int nMMAtoms = mm.nrMMatoms;
     torch::ScalarType torch_float_dtype = qm->torch_float_dtype;
     torch::ScalarType torch_int_dtype = qm->torch_int_dtype;
+    float geometry_conversion = NM2A; // nm to angstrom
 
     // atomic numbers
     int64_t atomic_numbers_dims[] = {nQMAtoms};
@@ -959,7 +972,7 @@ void prepare_amp_inputs(QMMM_QMrec* qm,
     {
         for (int j=0; j<3; j++)
         {
-            coordinates[0][i][j] = qm->xQM_get(i,j) * NM2A;
+            coordinates[0][i][j] = qm->xQM_get(i,j) * geometry_conversion;
         }
     }
 
@@ -979,7 +992,7 @@ void prepare_amp_inputs(QMMM_QMrec* qm,
     {
         for (int j=0; j<3; j++)
         {
-            mm_coordinates[0][i][j] = mm.xMM[i][j] * NM2A;
+            mm_coordinates[0][i][j] = mm.xMM[i][j] * geometry_conversion;
         }
     }
 
@@ -1369,7 +1382,7 @@ void write_amp_inputs_outputs(QMMM_QMrec* qm,
         mm_coordinates[i][0] = x;
         mm_coordinates[i][1] = y;
         mm_coordinates[i][2] = z;
-        printf("CHECK COORD MM Angstrom[%d] = %6.3f %6.3f %6.3f\n", i+1, x, y, z);
+        // printf("CHECK COORD MM Angstrom[%d] = %6.3f %6.3f %6.3f\n", i+1, x, y, z);
         fprintf(f_mm_coordinates, "%6.6f %6.6f %6.6f\n", x, y, z);
     }
     for (int i=0; i<nMMAtoms; i++)
@@ -1377,7 +1390,7 @@ void write_amp_inputs_outputs(QMMM_QMrec* qm,
         x = mm_coordinates[i][0];
         y = mm_coordinates[i][1];
         z = mm_coordinates[i][2];
-        printf("CHECK COORD MM MD units[%d] = %6.3f %6.3f %6.3f\n", i+1, A2NM*x, A2NM*y, A2NM*z);
+        // printf("CHECK COORD MM MD units[%d] = %6.3f %6.3f %6.3f\n", i+1, A2NM*x, A2NM*y, A2NM*z);
     }
     fclose(f_mm_coordinates);
 
@@ -1390,7 +1403,7 @@ void write_amp_inputs_outputs(QMMM_QMrec* qm,
     for (int i=0; i<nMMAtoms; i++)
     {
         mm_charges[i] = mm_charges_tensor[0][i].item<float>();
-        printf("CHECK MM charges %d = %6.3f\n", i+1, mm_charges[i]);
+        // printf("CHECK MM charges %d = %6.3f\n", i+1, mm_charges[i]);
         fprintf(f_mm_charges, "%6.6f\n", mm_charges[i]);
     }
     fclose(f_mm_charges);
@@ -1400,11 +1413,11 @@ void write_amp_inputs_outputs(QMMM_QMrec* qm,
     FILE* f_mm_output = nullptr;
     f_output = fopen("output.txt", "w");
     f_mm_output = fopen("mm_output.txt", "w");
-    torch::Tensor energy_predictions_tensor = output_dict.at("energy").cpu() ; // in kJ/mol
+    torch::Tensor energy_predictions_tensor = output_dict.at("energy").cpu()[0] ; // in kJ/mol
     torch::Tensor force_predictions_tensor = output_dict.at("forces").cpu()[0] ; // in kJ/mol/Angstrom
-    torch::Tensor dipole_predictions_tensor = output_dict.at("dipole").cpu() ; // in ev/Angstrom
-    torch::Tensor quadrupole_predictions_tensor = output_dict.at("quadrupole").cpu() ; // in ev/Angstrom^2
-    torch::Tensor mm_gradients_tensor = output_dict.at("mm_gradients").cpu() ; // in kJ/mol/Angstrom
+    torch::Tensor dipole_predictions_tensor = output_dict.at("dipoles").cpu()[0] ; // in ev/Angstrom
+    torch::Tensor quadrupole_predictions_tensor = output_dict.at("quadrupoles").cpu()[0] ; // in ev/Angstrom^2
+    torch::Tensor mm_gradients_tensor = output_dict.at("mm_gradients").cpu()[0] ; // in kJ/mol/Angstrom
 
     float energy_predictions = energy_predictions_tensor[0].item<float>();
     printf("CHECK QM Energy = %6.3f\n", energy_predictions);
