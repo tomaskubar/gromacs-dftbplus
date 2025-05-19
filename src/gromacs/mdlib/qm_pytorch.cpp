@@ -397,8 +397,8 @@ real call_pytorch(QMMM_rec*       qr,
     {
         prepare_amp_inputs(qm, mm, input_dict);
         energy_conversion = 1; // from kJ/mol to kJ/mol
-        force_conversion = NM2A; // from kJ/mol/A to kJ/mol/nm
-        mm_gradient_conversion = NM2A; // from kJ/A to kJ/mol/nm
+        force_conversion = A2NM; // from kJ/mol/A to kJ/mol/nm
+        mm_gradient_conversion = A2NM; // from kJ/A to kJ/mol/nm
     }
     else
     {
