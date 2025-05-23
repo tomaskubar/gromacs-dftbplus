@@ -46,11 +46,14 @@
 #include "gromacs/math/utilities.h"
 
 #define ANGSTROM (1e-10)           /* Old...	*/
+#define BOHR (5.29177e-11)     /* Old...	*/
 #define KILO (1e3)                 /* Thousand	*/
 #define NANO (1e-9)                /* A Number	*/
 #define PICO (1e-12)               /* A Number	*/
 #define A2NM (ANGSTROM / NANO)     /* NANO	        */
 #define NM2A (NANO / ANGSTROM)     /* 10.0		*/
+#define A2BOHR (ANGSTROM / BOHR)    /* 1.88973     */
+#define BOHR2A (BOHR / ANGSTROM)    /* 0.529177    */
 #define RAD2DEG (180.0 / M_PI)     /* Conversion	*/
 #define DEG2RAD (M_PI / 180.0)     /* id		*/
 #define CAL2JOULE (4.184)          /* Exact definition of the calorie */
@@ -96,7 +99,7 @@
 #define FIELDFAC (FARADAY / KILO)
 
 /* to convert AU to MD units: */
-#define HARTREE2KJ ((2.0 * RYDBERG * PLANCK * SPEED_OF_LIGHT) / AVOGADRO)
+#define HARTREE2KJ ((2.0 * RYDBERG * PLANCK * SPEED_OF_LIGHT) / AVOGADRO) // I dont trust this. Too large for float?
 #define BOHR2NM (0.0529177210903) /* nm^-1, NIST 2018 CODATA */
 #define HARTREE_BOHR2MD (HARTREE2KJ * AVOGADRO / BOHR2NM)
 
