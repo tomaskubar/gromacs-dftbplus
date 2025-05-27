@@ -224,14 +224,7 @@ real call_pytorch(QMMM_rec*       qr,
                 gmx_wallcycle_t   wcycle)
 {
     static int step = 0;
-    static FILE *f_q = nullptr;
-    static FILE *f_p = nullptr;
-    static FILE *f_x_qm = nullptr;
-    static FILE *f_x_mm = nullptr;
-    static int output_freq_q;
-    static int output_freq_p;
-    static int output_freq_x_qm;
-    static int output_freq_x_mm;
+    static int output_freq_extxyz;
 
     static float energy_prediction_std_threshold; // energy threshold deviation
     static float force_prediction_std_threshold; // force threshold deviation
@@ -266,32 +259,14 @@ real call_pytorch(QMMM_rec*       qr,
     if (step == 0) {
         char *env;
 
-        if ((env = getenv("GMX_DFTB_CHARGES")) != nullptr)
+        if ((env = getenv("GMX_PYTORCH_EXTXYZ")) != nullptr)
         {
-            output_freq_q = atoi(env);
-            f_q = fopen("qm_dftb_charges.xvg", "a");
-            printf("The QM charges will be saved in file qm_dftb_charges.xvg every %d steps.\n", output_freq_q);
+            output_freq_extxyz = atoi(env);
+            printf("The model inputs/outputs will be saved in file qm_mlmm.extxyz every %d steps.\n", output_freq_extxyz);
         }
-
-        if (qm->qmmm_variant_get() != eqmmmVACUO && (env = getenv("GMX_DFTB_ESP")) != nullptr)
+        else
         {
-            output_freq_p = atoi(env);
-            f_p = fopen("qm_dftb_esp.xvg", "a");
-            printf("The MM potential induced on QM atoms will be saved in file qm_dftb_esp.xvg every %d steps.\n", output_freq_p);
-        }
-
-        if ((env = getenv("GMX_DFTB_QM_COORD")) != nullptr)
-        {
-            output_freq_x_qm = atoi(env);
-            f_x_qm = fopen("qm_dftb_qm.qxyz", "a");
-            printf("The QM coordinates (XYZQ) will be saved in file qm_dftb_qm.qxyz every %d steps.\n", output_freq_x_qm);
-        }
-
-        if (qm->qmmm_variant_get() != eqmmmVACUO && (env = getenv("GMX_DFTB_MM_COORD")) != nullptr)
-        {
-            output_freq_x_mm = atoi(env);
-            f_x_mm = fopen("qm_dftb_mm.qxyz", "a");
-            printf("The MM coordinates (XYZQ) will be saved in file qm_dftb_mm.qxyz every %d steps.\n", output_freq_x_mm);
+            output_freq_extxyz = -1; // default no output
         }
 
         // Find threshold deviation, energy threshold has priority
@@ -352,7 +327,7 @@ real call_pytorch(QMMM_rec*       qr,
     // save the potential in the QMMM_QMrec structure
     for (int j=0; j<n; j++)
     {
-        qm->pot_qmmm_set(j, (double) - pot[j] * HARTREE_TO_EV); // in volt units
+        qm->pot_qmmm_set(j, (double) - pot[j] * AU2EV); // in volt units
     }
 
     /* NN call itself */
@@ -638,61 +613,33 @@ real call_pytorch(QMMM_rec*       qr,
         }
     }
 
-    if (f_q && step % output_freq_q == 0)
+    // Print inputs and outputs of the model every output_freq_extxyz steps
+    if ((output_freq_extxyz > 0) && (step % output_freq_extxyz == 0))
     {
-        fprintf(f_q, "%8d", step);
-        for (int i=0; i<n; i++)
+        
+        if (std::strcmp(qm->models[0]->modelArchitecture, "mace") == 0)
         {
-            fprintf(f_q, " %8.5f", qm->QMcharges_get(i));
+            write_base_mace_inputs_outputs(qm, input_dict, output_dicts[0], step);
         }
-        fprintf(f_q, "\n");
+        else if (std::strcmp(qm->models[0]->modelArchitecture, "maceqeq") == 0)
+        {
+            write_maceqeq_inputs_outputs(qm, input_dict, output_dicts[0], step);
+        }
+        else if (std::strcmp(qm->models[0]->modelArchitecture, "amp") == 0)
+        {
+            write_amp_inputs_outputs(qm, mm, input_dict, output_dicts[0], step);
+        }
     }
 
-    if (f_p && step % output_freq_p == 0)
-    {
-        fprintf(f_p, "%8d", step);
-        for (int i=0; i<n; i++)
-        {
-            fprintf(f_p, " %8.5f", qm->pot_qmmm_get(i) + qm->pot_qmqm_get(i));
-         // if (qm.qmmm_variant == eqmmmPME)
-         // {
-         //     fprintf(f_p, " %8.5f %8.5f %8.5f", qm.pot_qmmm[i], qm.pot_qmqm[i], qm.pot_qmmm[i] + qm.pot_qmqm[i]);
-         // }
-         // else
-         // {
-         //     fprintf(f_p, " %8.5f", qm.pot_qmmm[i]);
-         // }
-        }
-        fprintf(f_p, "\n");
-    }
 
     char periodic_system[37][3]={"XX",
         "h",                               "he",
         "li","be","b", "c", "n", "o", "f", "ne",
         "na","mg","al","si","p", "s", "cl","ar",
         "k", "ca","sc","ti","v", "cr","mn","fe","co",
-        "ni","cu","zn","ga","ge","as","se","br","kr"};
+        "ni","cu","zn","ga","ge","as","se","br","kr"
+    };
 
-    if (f_x_qm && step % output_freq_x_qm == 0)
-    {
-        fprintf(f_x_qm, "\nQM coordinates and charges step %d\n", step);
-        for (int i=0; i<n; i++) {
-            fprintf(f_x_qm, "%-2s %10.5f%10.5f%10.5f %10.7f\n",
-                periodic_system[qm->atomicnumberQM_get(i)],
-                qm->xQM_get(i, 0) * 10., qm->xQM_get(i, 1) * 10., qm->xQM_get(i, 2) * 10.,
-                qm->QMcharges_get(i));
-        }
-    }
-
-    if (f_x_mm && step % output_freq_x_mm == 0)
-    {
-        fprintf(f_x_mm, "\nMM coordinates and charges step %d\n", step);
-        for (int i=0; i<mm.nrMMatoms; i++) {
-            fprintf(f_x_mm, "%10.7f%10.5f%10.5f%10.5f\n",
-                mm.MMcharges[i], // CHECK -- HOW TO DO IT WITH PME / WITH CUT-OFF?
-                mm.xMM[i][0] * 10., mm.xMM[i][1] * 10., mm.xMM[i][2] * 10.);
-        }
-        }
 
     if (qm->significant_structure)
     {   
@@ -923,7 +870,7 @@ void prepare_maceqeq_inputs(QMMM_rec* qr,
     {
         for (int j=0; j<3; j++)
         {
-            esp_grad[i][j] = ESPgrad[i][j] *HARTREE_TO_EV/BOHR2NM/10 ; // from H/B to eV/e/Angstrom
+            esp_grad[i][j] = ESPgrad[i][j] *AU2EV/BOHR2NM/10 ; // from H/B to eV/e/Angstrom
         }
     }
 
@@ -1165,7 +1112,7 @@ void write_base_mace_inputs_outputs(QMMM_QMrec* qm,
         "K", "Ca","Sc","Ti","V", "Cr","Mn","Fe","Co",
         "Ni","Cu","Zn","Ga","Ge","As","Se","Br","Kr"};
     FILE* f_extxyz = nullptr;
-    f_extxyz = fopen("qm_mlmm.extxyz", "w");
+    f_extxyz = fopen("qm_mlmm.extxyz", "a");
     fprintf(f_extxyz, "%d\n", nAtoms);
     fprintf(f_extxyz, "Lattice=\"%.1f %.1f %.1f %.1f %.1f %.1f %.1f %.1f %.1f\" ", box[0][0], box[0][1], box[0][2], box[1][0], box[1][1], box[1][2], box[2][0], box[2][1], box[2][2]);
     fprintf(f_extxyz, "Properties=species:S:1:pos:R:3:pred_force:R:3 ");
@@ -1294,7 +1241,7 @@ void write_maceqeq_inputs_outputs(QMMM_QMrec* qm,
         "K", "Ca","Sc","Ti","V", "Cr","Mn","Fe","Co",
         "Ni","Cu","Zn","Ga","Ge","As","Se","Br","Kr"};
     FILE* f_extxyz = nullptr;
-    f_extxyz = fopen("qm_mlmm.extxyz", "w"); // Overwrites the write_base_mace_inputs_outputs qm_mlmm.extxyz
+    f_extxyz = fopen("qm_mlmm.extxyz", "a"); // Write to the same file as in write_base_mace_inputs_outputs, TODO: Separate files
     fprintf(f_extxyz, "%d\n", nAtoms);
     fprintf(f_extxyz, "Lattice=\"%.1f %.1f %.1f %.1f %.1f %.1f %.1f %.1f %.1f\" ", box[0][0], box[0][1], box[0][2], box[1][0], box[1][1], box[1][2], box[2][0], box[2][1], box[2][2]);
     fprintf(f_extxyz, "Properties=species:S:1:pos:R:3:pred_force:R:3:pred_charge:R:1:esp:R:1:esp_gradient:R:3 ");
@@ -1502,7 +1449,7 @@ void write_amp_inputs_outputs(QMMM_QMrec* qm,
         "K", "Ca","Sc","Ti","V", "Cr","Mn","Fe","Co",
         "Ni","Cu","Zn","Ga","Ge","As","Se","Br","Kr"};
     FILE* f_extxyz = nullptr;
-    f_extxyz = fopen("qm_mlmm.extxyz", "w");
+    f_extxyz = fopen("qm_mlmm.extxyz", "a");
     fprintf(f_extxyz, "%d\n", nQMAtoms);
     fprintf(f_extxyz, "Properties=species:S:1:pos:R:3:pred_force:R:3 ");
     fprintf(f_extxyz, "pred_energy=%.6f ", energy_predictions*energy_conversion);

@@ -39,8 +39,7 @@
 #ifndef GMX_MDLIB_QM_PYTORCH_H
 #define GMX_MDLIB_QM_PYTORCH_H
 
-#define HARTREE_TO_EV     (27.211396132)
-
+#if GMX_QMMM_PYTORCH
 void init_pytorch(QMMM_QMrec*       qm);
 
 real call_pytorch(QMMM_rec*         qr,
@@ -51,7 +50,6 @@ real call_pytorch(QMMM_rec*         qr,
                   rvec              fshift[],
                   t_nrnb*           nrnb,
                   gmx_wallcycle_t   wcycle);
-#if GMX_QMMM_PYTORCH
 void prepare_base_mace_inputs(QMMM_QMrec* qm,
                               c10::Dict<std::string, torch::Tensor> input_dict);
 

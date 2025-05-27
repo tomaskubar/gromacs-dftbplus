@@ -110,7 +110,8 @@
 /* to convert electron volt units to MD units*/
 #define EV2KJ ELECTRONVOLT
 #define EV_A2MD (ELECTRONVOLT / A2NM)
-#define EV2AU 1/27.211386245988;
+#define AU2EV (27.211386245988) /* 1 Hartree in eV*/
+#define EV2AU (1/AU2EV) /* 1 eV in Hartree */
 #define V2AU EV2AU;
 
 /* The four basic units */
