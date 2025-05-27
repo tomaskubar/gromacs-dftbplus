@@ -973,16 +973,16 @@ void write_base_mace_inputs_outputs(QMMM_QMrec* qm,
     FILE* f_atomic_numbers = nullptr;
     f_atomic_numbers = fopen("atomic_numbers.txt", "w");
     torch::Tensor atomic_numbers = input_dict.at("node_attrs").cpu();
-    printf("CHECK Atomic numbers size %ld %ld\n", atomic_numbers.size(0), atomic_numbers.size(1));
+    // printf("CHECK Atomic numbers size %ld %ld\n", atomic_numbers.size(0), atomic_numbers.size(1));
     for (int i=0; i<nAtoms; i++)
     {
-        printf("CHECK Atomic numbers %d", i+1);
+        // printf("CHECK Atomic numbers %d", i+1);
         for (int j=0; j<qm->n_present_atomic_numbers; j++)
         {
-            printf(" %6.3f", atomic_numbers[i][j].item<float>());
+            // printf(" %6.3f", atomic_numbers[i][j].item<float>());
             fprintf(f_atomic_numbers, "%6.3f ", atomic_numbers[i][j].item<float>());
         }
-        printf("\n");
+        // printf("\n");
         fprintf(f_atomic_numbers, "\n");
     }
     fclose(f_atomic_numbers);
@@ -991,7 +991,7 @@ void write_base_mace_inputs_outputs(QMMM_QMrec* qm,
     FILE* f_coordinates = nullptr;
     f_coordinates = fopen("coordinates.txt", "w");
     torch::Tensor coordinates_tensor = input_dict.at("positions").cpu();
-    printf("CHECK COORD QM size %ld %ld\n", coordinates_tensor.size(0), coordinates_tensor.size(1));
+    // printf("CHECK COORD QM size %ld %ld\n", coordinates_tensor.size(0), coordinates_tensor.size(1));
     float coordinates[nAtoms][3];
     for (int i=0; i<nAtoms; i++)
     {
@@ -1001,7 +1001,7 @@ void write_base_mace_inputs_outputs(QMMM_QMrec* qm,
         coordinates[i][0] = x;
         coordinates[i][1] = y;
         coordinates[i][2] = z;
-        printf("CHECK COORD QM Angstrom[%d] = %6.3f %6.3f %6.3f\n", i+1, x, y, z);
+        // printf("CHECK COORD QM Angstrom[%d] = %6.3f %6.3f %6.3f\n", i+1, x, y, z);
         fprintf(f_coordinates, "%6.6f %6.6f %6.6f\n", x, y, z);
     }
     for (int i=0; i<nAtoms; i++)
@@ -1009,7 +1009,7 @@ void write_base_mace_inputs_outputs(QMMM_QMrec* qm,
         x = coordinates[i][0];
         y = coordinates[i][1];
         z = coordinates[i][2];
-        printf("CHECK COORD QM MD units[%d] = %6.3f %6.3f %6.3f\n", i+1, A2NM*x, A2NM*y, A2NM*z);
+        // printf("CHECK COORD QM MD units[%d] = %6.3f %6.3f %6.3f\n", i+1, A2NM*x, A2NM*y, A2NM*z);
     }
     fclose(f_coordinates);
 
@@ -1088,7 +1088,7 @@ void write_base_mace_inputs_outputs(QMMM_QMrec* qm,
     f_output = fopen("output.txt", "w");
 
     energy_predictions = energy_predictions_tensor[0].item<float>();
-    printf("CHECK QM Energy = %6.3f\n", energy_predictions);
+    //printf("CHECK QM Energy = %6.3f\n", energy_predictions);
     fprintf(f_output, "%6.6f\n", energy_predictions);
 
     for (int i=0; i<nAtoms; i++)
@@ -1099,7 +1099,7 @@ void write_base_mace_inputs_outputs(QMMM_QMrec* qm,
         force_predictions[i][0] = x;
         force_predictions[i][1] = y;
         force_predictions[i][2] = z;
-        printf("CHECK QM Grad[%d] = %6.3f %6.3f %6.3f\n", i+1, x, y, z);
+        // printf("CHECK QM Grad[%d] = %6.3f %6.3f %6.3f\n", i+1, x, y, z);
         fprintf(f_output, "%6.6f %6.6f %6.6f\n", x, y, z);
     }
     fclose(f_output);
@@ -1124,6 +1124,7 @@ void write_base_mace_inputs_outputs(QMMM_QMrec* qm,
         fprintf(f_extxyz, "%-2s ", periodic_system[qm->atomicnumberQM_get(i)]);
         fprintf(f_extxyz, "%8.4f %8.4f %8.4f ", coordinates[i][0], coordinates[i][1], coordinates[i][2]);
         fprintf(f_extxyz, "%8.4f %8.4f %8.4f ", force_predictions[i][0], force_predictions[i][1], force_predictions[i][2]);
+        fprintf(f_extxyz, "\n");
     }
     fclose(f_extxyz);
 } // end of write_base_mace_inputs_outputs
@@ -1160,7 +1161,7 @@ void write_maceqeq_inputs_outputs(QMMM_QMrec* qm,
     f_total_charge = fopen("total_charge.txt", "w");
     double total_charge = input_dict.at("total_charge").cpu().item<double>();
     fprintf(f_total_charge, "%1.0f\n", total_charge);
-    printf("CHECK Total Charge %1.0f \n", total_charge);
+    // printf("CHECK Total Charge %1.0f \n", total_charge);
     fclose(f_total_charge);
 
     // esp
@@ -1171,7 +1172,7 @@ void write_maceqeq_inputs_outputs(QMMM_QMrec* qm,
     for (int i=0; i<nAtoms; i++)
     {
         esp[i] = esp_tensor[i].item<float>();
-        printf("CHECK ESP QM[%d] = %6.3f\n", i+1, esp[i]);
+        // printf("CHECK ESP QM[%d] = %6.3f\n", i+1, esp[i]);
         fprintf(f_esp, "%6.6f\n", esp[i]);
     }
     fclose(f_esp);
@@ -1189,7 +1190,7 @@ void write_maceqeq_inputs_outputs(QMMM_QMrec* qm,
         esp_grad[i][0] = x;
         esp_grad[i][1] = y;
         esp_grad[i][2] = z;
-        printf("CHECK ESP GRAD[%d] = %6.3f %6.3f %6.3f\n", i+1, x, y, z);
+        // printf("CHECK ESP GRAD[%d] = %6.3f %6.3f %6.3f\n", i+1, x, y, z);
         fprintf(f_esp_grad, "%6.6f %6.6f %6.6f\n", x, y, z);
     }
     fclose(f_esp_grad);
@@ -1206,7 +1207,7 @@ void write_maceqeq_inputs_outputs(QMMM_QMrec* qm,
     for (int i=0; i<nAtoms; i++)
     {
         charge_predictions[i] = charge_predictions_tensor[i].item<float>();
-        printf("CHECK CHARGE QM[%d] = %6.3f\n", i+1, charge_predictions[i]);
+        // printf("CHECK CHARGE QM[%d] = %6.3f\n", i+1, charge_predictions[i]);
         fprintf(f_output, "%6.6f\n", charge_predictions[i]);
     }
 
@@ -1256,7 +1257,8 @@ void write_maceqeq_inputs_outputs(QMMM_QMrec* qm,
         fprintf(f_extxyz, "%8.4f %8.4f %8.4f ", force_predictions[i][0], force_predictions[i][1], force_predictions[i][2]);
         fprintf(f_extxyz, "%8.4f ", charge_predictions[i]);
         fprintf(f_extxyz, "%8.4f ", esp[i]);
-        fprintf(f_extxyz, "%8.4f %8.4f %8.4f\n", esp_grad[i][0], esp_grad[i][1], esp_grad[i][2]);
+        fprintf(f_extxyz, "%8.4f %8.4f %8.4f", esp_grad[i][0], esp_grad[i][1], esp_grad[i][2]);
+        fprintf(f_extxyz, "\n");
     }
     fclose(f_extxyz);
 } // end of write_maceqeq_inputs_outputs
@@ -1271,20 +1273,20 @@ void write_amp_inputs_outputs(QMMM_QMrec* qm,
 
     int nQMAtoms = qm->nrQMatoms_get();
     int nMMAtoms = std::max(1, mm.nrMMatoms); // buffer for 1 MM atom
-    printf("CHECK nQMAtoms = %d\n", nQMAtoms);
-    printf("CHECK nMMAtoms = %d\n", nMMAtoms);
+    // printf("CHECK nQMAtoms = %d\n", nQMAtoms);
+    // printf("CHECK nMMAtoms = %d\n", nMMAtoms);
     float x, y, z, mm_charge;
 
     // atomic numbers
     FILE* f_atomic_numbers = nullptr;
     f_atomic_numbers = fopen("atomic_numbers.txt", "w");
     torch::Tensor atomic_numbers = input_dict.at("qm_charges").cpu();
-    printf("CHECK Atomic numbers size %ld\n", atomic_numbers.size(0));
+    // printf("CHECK Atomic numbers size %ld\n", atomic_numbers.size(0));
     for (int i=0; i<nQMAtoms; i++)
     {
-        printf("CHECK Atomic numbers %d: %2.0f", i+1, atomic_numbers[i].item<float>());
+        // printf("CHECK Atomic numbers %d: %2.0f", i+1, atomic_numbers[i].item<float>());
         fprintf(f_atomic_numbers, "%6.3f ", atomic_numbers[i].item<float>());
-        printf("\n");
+        // printf("\n");
         fprintf(f_atomic_numbers, "\n");
     }
     fclose(f_atomic_numbers);
@@ -1293,7 +1295,7 @@ void write_amp_inputs_outputs(QMMM_QMrec* qm,
     FILE* f_coordinates = nullptr;
     f_coordinates = fopen("coordinates.txt", "w");
     torch::Tensor coordinates_tensor = input_dict.at("qm_coordinates").cpu();
-    printf("CHECK COORD QM size %ld %ld\n", coordinates_tensor.size(0), coordinates_tensor.size(1));
+    // printf("CHECK COORD QM size %ld %ld\n", coordinates_tensor.size(0), coordinates_tensor.size(1));
     float coordinates[nQMAtoms][3];
     for (int i=0; i<nQMAtoms; i++)
     {
@@ -1303,7 +1305,7 @@ void write_amp_inputs_outputs(QMMM_QMrec* qm,
         coordinates[i][0] = x;
         coordinates[i][1] = y;
         coordinates[i][2] = z;
-        printf("CHECK COORD QM Angstrom[%d] = %6.3f %6.3f %6.3f\n", i+1, x, y, z);
+        // printf("CHECK COORD QM Angstrom[%d] = %6.3f %6.3f %6.3f\n", i+1, x, y, z);
         fprintf(f_coordinates, "%6.6f %6.6f %6.6f\n", x, y, z);
     }
     for (int i=0; i<nQMAtoms; i++)
@@ -1311,7 +1313,7 @@ void write_amp_inputs_outputs(QMMM_QMrec* qm,
         x = coordinates[i][0];
         y = coordinates[i][1];
         z = coordinates[i][2];
-        printf("CHECK COORD QM MD units[%d] = %6.3f %6.3f %6.3f\n", i+1, A2NM*x, A2NM*y, A2NM*z);
+        // printf("CHECK COORD QM MD units[%d] = %6.3f %6.3f %6.3f\n", i+1, A2NM*x, A2NM*y, A2NM*z);
     }
     fclose(f_coordinates);
 
@@ -1319,7 +1321,7 @@ void write_amp_inputs_outputs(QMMM_QMrec* qm,
     FILE* f_mm_coordinates = nullptr;
     f_mm_coordinates = fopen("mm_coordinates.txt", "w");
     torch::Tensor mm_coordinates_tensor = input_dict.at("mm_coordinates").cpu();
-    printf("CHECK COORD MM size %ld %ld %ld\n", mm_coordinates_tensor.size(0), mm_coordinates_tensor.size(1), mm_coordinates_tensor.size(2));
+    // printf("CHECK COORD MM size %ld %ld %ld\n", mm_coordinates_tensor.size(0), mm_coordinates_tensor.size(1), mm_coordinates_tensor.size(2));
     float mm_coordinates[nMMAtoms][3];
     for (int i=0; i<nMMAtoms; i++)
     {
@@ -1345,7 +1347,7 @@ void write_amp_inputs_outputs(QMMM_QMrec* qm,
     FILE* f_mm_charges = nullptr;
     f_mm_charges = fopen("mm_charges.txt", "w");
     torch::Tensor mm_charges_tensor = input_dict.at("mm_charges").cpu();
-    printf("CHECK MM charges size %ld %ld\n", mm_charges_tensor.size(0), mm_charges_tensor.size(1));
+    // printf("CHECK MM charges size %ld %ld\n", mm_charges_tensor.size(0), mm_charges_tensor.size(1));
     float mm_charges[nMMAtoms];
     for (int i=0; i<nMMAtoms; i++)
     {
@@ -1388,7 +1390,7 @@ void write_amp_inputs_outputs(QMMM_QMrec* qm,
     printf("force_conversion_pcgrad = %6.3f\n", force_conversion_pcgrad);
 
     float energy_predictions = energy_predictions_tensor[0].item<float>();
-    printf("CHECK QM Energy = %6.3f\n", energy_predictions);
+    // printf("CHECK QM Energy = %6.3f\n", energy_predictions);
     fprintf(f_output, "%6.6f\n", energy_predictions);
 
     float force_predictions[nQMAtoms][3];
@@ -1400,7 +1402,7 @@ void write_amp_inputs_outputs(QMMM_QMrec* qm,
         force_predictions[i][0] = x;
         force_predictions[i][1] = y;
         force_predictions[i][2] = z;
-        printf("CHECK QM Grad[%d] = %6.3f %6.3f %6.3f\n", i+1, x, y, z);
+        // printf("CHECK QM Grad[%d] = %6.3f %6.3f %6.3f\n", i+1, x, y, z);
         fprintf(f_output, "%6.6f %6.6f %6.6f\n", x, y, z);
     }
 
@@ -1409,7 +1411,7 @@ void write_amp_inputs_outputs(QMMM_QMrec* qm,
     {
         dipole_predictions[i] = dipole_predictions_tensor[i].item<float>();
     }
-    printf("CHECK QM Dipole = %6.3f %6.3f %6.3f\n", dipole_predictions[0], dipole_predictions[1], dipole_predictions[2]);
+    // printf("CHECK QM Dipole = %6.3f %6.3f %6.3f\n", dipole_predictions[0], dipole_predictions[1], dipole_predictions[2]);
     fprintf(f_output, "%6.6f %6.6f %6.6f\n", dipole_predictions[0], dipole_predictions[1], dipole_predictions[2]);
 
     float quadrupole_predictions[3][3];
@@ -1419,24 +1421,24 @@ void write_amp_inputs_outputs(QMMM_QMrec* qm,
         {
             quadrupole_predictions[i][j] = quadrupole_predictions_tensor[i][j].item<float>();
         }
-        printf("CHECK QM Quadrupole[%d] = %6.3f %6.3f %6.3f\n", i+1, quadrupole_predictions[i][0], quadrupole_predictions[i][1], quadrupole_predictions[i][2]);
+        // printf("CHECK QM Quadrupole[%d] = %6.3f %6.3f %6.3f\n", i+1, quadrupole_predictions[i][0], quadrupole_predictions[i][1], quadrupole_predictions[i][2]);
         fprintf(f_output, "%6.6f %6.6f %6.6f\n", quadrupole_predictions[i][0], quadrupole_predictions[i][1], quadrupole_predictions[i][2]);
     }
     fclose(f_output);
 
     // mm gradients
-    printf("CHECK MM Gradients size %ld %ld\n", mm_gradients_tensor.size(0), mm_gradients_tensor.size(1));
+    // printf("CHECK MM Gradients size %ld %ld\n", mm_gradients_tensor.size(0), mm_gradients_tensor.size(1));
     fprintf(f_mm_output, "%d\n", nMMAtoms);
     for (int i=0; i<nMMAtoms; i++)
     {
         x = mm_gradients_tensor[i][0].item<float>();
         y = mm_gradients_tensor[i][1].item<float>();
         z = mm_gradients_tensor[i][2].item<float>();
-        printf("CHECK MM Grad[%d] = %6.3f %6.3f %6.3f\n", i+1, x, y, z);
+        // printf("CHECK MM Grad[%d] = %6.3f %6.3f %6.3f\n", i+1, x, y, z);
         x = x * force_conversion_pcgrad;
         y = y * force_conversion_pcgrad;
         z = z * force_conversion_pcgrad;
-        printf("CHECK MM Grad[%d] = %6.3f %6.3f %6.3f\n", i+1, x, y, z);
+        // printf("CHECK MM Grad[%d] = %6.3f %6.3f %6.3f\n", i+1, x, y, z);
         fprintf(f_mm_output, "%6.6f %6.6f %6.6f\n", x, y, z);
     }
     fclose(f_mm_output);
@@ -1469,10 +1471,11 @@ void write_amp_inputs_outputs(QMMM_QMrec* qm,
     {
         fprintf(f_extxyz, "%-2s ", periodic_system[qm->atomicnumberQM_get(i)]);
         fprintf(f_extxyz, "%8.4f %8.4f %8.4f ", coordinates[i][0], coordinates[i][1], coordinates[i][2]);
-        fprintf(f_extxyz, "%8.4f %8.4f %8.4f\n",
+        fprintf(f_extxyz, "%8.4f %8.4f %8.4f",
             force_predictions[i][0] * force_conversion_extxyz,
             force_predictions[i][1] * force_conversion_extxyz,
             force_predictions[i][2] * force_conversion_extxyz);
+        fprintf(f_extxyz, "\n");
     }
     fclose(f_extxyz);
 }
