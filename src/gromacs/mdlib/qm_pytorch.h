@@ -39,17 +39,18 @@
 #ifndef GMX_MDLIB_QM_PYTORCH_H
 #define GMX_MDLIB_QM_PYTORCH_H
 
-#if GMX_QMMM_PYTORCH
 void init_pytorch(QMMM_QMrec*       qm);
 
 real call_pytorch(QMMM_rec*         qr,
-                  const t_commrec*  cr,
-                  QMMM_QMrec*       qm,
-                  const QMMM_MMrec& mm,
-                  rvec              f[],
-                  rvec              fshift[],
-                  t_nrnb*           nrnb,
-                  gmx_wallcycle_t   wcycle);
+    const t_commrec*  cr,
+    QMMM_QMrec*       qm,
+    const QMMM_MMrec& mm,
+    rvec              f[],
+    rvec              fshift[],
+    t_nrnb*           nrnb,
+    gmx_wallcycle_t   wcycle);
+    
+#if GMX_QMMM_PYTORCH or GMX_QMMM_DFTBPLUS_PYTORCH
 void prepare_base_mace_inputs(QMMM_QMrec* qm,
                               c10::Dict<std::string, torch::Tensor> input_dict);
 

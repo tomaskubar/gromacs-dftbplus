@@ -44,7 +44,7 @@
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wmissing-noreturn"
 
-#if GMX_QMMM_PYTORCH
+#if GMX_QMMM_PYTORCH or GMX_QMMM_DFTBPLUS_PYTORCH
 #include <fstream>
 #include <iostream>
 #include <vector>

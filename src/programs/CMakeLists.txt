@@ -158,15 +158,37 @@ else()
     endif()
 endif()
 
-if (GMX_QMMM_DFTBPLUS)
+if (GMX_QMMM_DFTBPLUS OR GMX_QMMM_DFTBPLUS_PYTORCH OR GMX_QMMM_DFTBPLUS_TENSORFLOW)
     LINK_DIRECTORIES(GMX_QMMM_DFTBPLUS_LIB)
+    
+    # Find OpenBLAS explicitly
+    find_library(OPENBLAS_LIBRARY openblas PATHS /usr/local/run/OpenBLAS-0.3.20-be/lib)
+    if(NOT OPENBLAS_LIBRARY)
+        message(FATAL_ERROR "OpenBLAS required by DFTB+ was not found")
+    endif()
+    message(STATUS "Found OpenBLAS: ${OPENBLAS_LIBRARY}")
+    
+    # Find ARPACK library
+    find_library(ARPACK_LIBRARY arpack PATHS /usr/local/run/arpack-ng-3.7.0-openblas/lib)
+    if(NOT ARPACK_LIBRARY)
+        message(FATAL_ERROR "ARPACK required by DFTB+ was not found")
+    endif()
+    message(STATUS "Found ARPACK: ${ARPACK_LIBRARY}")
+    
+    # Create a unified dependency list with ARPACK included
+    set(DFTBPLUS_DEPS libdftbplus libdftd3 libmudpack gfortran gomp ${OPENBLAS_LIBRARY} ${ARPACK_LIBRARY})
+
+    # Add dependencies to both libgromacs and executables
+    target_link_libraries(libgromacs PRIVATE ${DFTBPLUS_DEPS})
+
+    # Rest of your existing DFTB+ setup...
     add_library(libdftbplus STATIC IMPORTED)
     set_target_properties(libdftbplus PROPERTIES IMPORTED_LOCATION ${GMX_QMMM_DFTBPLUS_LIB}/libdftbplus.a)
     add_library(libdftd3 STATIC IMPORTED)
     set_target_properties(libdftd3 PROPERTIES IMPORTED_LOCATION ${GMX_QMMM_DFTBPLUS_LIB}/libdftd3.a)
     add_library(libmudpack STATIC IMPORTED)
     set_target_properties(libmudpack PROPERTIES IMPORTED_LOCATION ${GMX_QMMM_DFTBPLUS_LIB}/libmudpack.a)
-
+    
     # search for the gfortran and gomp libraries in the system
     # first look for possible library locations
     unset(_lib_env)
@@ -189,10 +211,81 @@ if (GMX_QMMM_DFTBPLUS)
     set_target_properties(gomp PROPERTIES IMPORTED_LOCATION ${GOMP})
 
     if(GMX_BUILD_MDRUN_ONLY)
-        target_link_libraries(mdrun PRIVATE libdftbplus libdftd3 libmudpack gfortran gomp)
+        target_link_libraries(mdrun PRIVATE ${DFTBPLUS_DEPS})
        #target_link_libraries(mdrun libdftbplus libxmlf90 libdftd3 gfortran gomp)
     else()
-        target_link_libraries(gmx PRIVATE libdftbplus libdftd3 libmudpack gfortran gomp)
+        target_link_libraries(gmx PRIVATE ${DFTBPLUS_DEPS})
        #target_link_libraries(gmx libdftbplus libxmlf90 libdftd3 gfortran gomp)
     endif()
+endif()
+
+if("${GMX_QMMM_PROGRAM}" STREQUAL "TENSORFLOW" OR "${GMX_QMMM_PROGRAM}" STREQUAL "DFTBPLUS_TENSORFLOW")
+    find_library(TENSORFLOW_LIB
+        NAMES libtensorflow.so
+        PATHS /usr/local/lib $ENV{TENSORFLOW_ROOT}
+        HINTS $ENV{TENSORFLOW_ROOT}/lib ${CMAKE_PREFIX_PATH}
+        DOC "Find tensorflow library libtensorflow.so"
+        REQUIRED
+    )
+    # find_library(TENSORFLOW_FRAMEWORK_LIB
+    #     NAMES libtensorflow_framework.so
+    #     PATHS /usr/local/lib $ENV{TENSORFLOW_ROOT}/lib
+    #     HINTS $ENV{TENSORFLOW_ROOT} ${CMAKE_PREFIX_PATH}
+    #     DOC "Find tensorflow framework library libtensorflow_framework.so"
+    #     REQUIRED
+    # )
+    find_library(JSONCPP_LIB
+        NAMES libjsoncpp.so libjsoncpp.a 
+        PATHS /usr/local/lib $ENV{JSONCPP_ROOT}/lib
+        HINTS $ENV{JSONCPP_ROOT} ${CMAKE_PREFIX_PATH}
+        DOC "Find jsoncpp library libjsoncpp.so"
+        REQUIRED
+    )
+
+    if(TENSORFLOW_LIB)
+        message(STATUS "Looking for tensorflow at ${TENSORFLOW_LIB}")
+    else()
+        message(WARNING "TensorFlow library not found. Please set the TENSORFLOW_ROOT environment variable or specify the library path manually using -DTENSORFLOW_LIB=<path_to_libtensorflow.so>.")
+        message(FATAL_ERROR "tensorflow library not found.")
+    endif()
+
+    if (TENSORFLOW_FRAMEWORK_LIB)
+        message(STATUS "Looking for tensorflow framework library at ${TENSORFLOW_FRAMEWORK_LIB}")
+    else()
+        message(WARNING "TensorFlow framework library not found. Please set the TENSORFLOW_ROOT environment variable or specify the library path manually using -DTENSORFLOW_FRAMEWORK_LIB=<path_to_libtensorflow_framework.so>.")
+        message(FATAL_ERROR "tensorflow framework library not found.")
+    endif()
+    if (JSONCPP_LIB)
+        message(STATUS "Looking for jsoncpp library at ${JSONCPP_LIB}")
+    else()
+        message(WARNING "jsoncpp library not found. Please set the JSONCPP_ROOT environment variable or specify the library path manually using -DJSONCPP_LIB=<path_to_libjsoncpp.so>.")
+        message(FATAL_ERROR "jsoncpp library not found.")
+    endif()
+
+    add_library(libtensorflow STATIC IMPORTED)
+    set_target_properties(libtensorflow PROPERTIES IMPORTED_LOCATION ${TENSORFLOW_LIB})
+    add_library(libtensorflow_framework STATIC IMPORTED)
+    set_target_properties(libtensorflow_framework PROPERTIES IMPORTED_LOCATION ${TENSORFLOW_FRAMEWORK_LIB})
+    # add_library(libjsoncpp STATIC IMPORTED)
+    # set_target_properties(libjsoncpp PROPERTIES IMPORTED_LOCATION ${JSONCPP_LIB})
+
+    # Link TensorFlow to both libgromacs and gmx
+    target_link_libraries(libgromacs PRIVATE "${TENSORFLOW_LIB}" "${JSONCPP_LIB}")
+    #target_include_directories(libgromacs PRIVATE "${TENSORFLOW_INCLUDE_DIR}")
+    target_link_libraries(gmx PRIVATE "${TENSORFLOW_LIB}" "${JSONCPP_LIB}")
+    #target_include_directories(gmx PRIVATE "${TENSORFLOW_INCLUDE_DIR}")
+endif()
+
+if ("${GMX_QMMM_PROGRAM}" STREQUAL "PYTORCH" OR "${GMX_QMMM_PROGRAM}" STREQUAL "DFTBPLUS_PYTORCH") 
+    find_package(Torch REQUIRED)
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${TORCH_CXX_FLAGS}")
+
+    add_library(libtorch STATIC IMPORTED)
+    set_target_properties(libtorch PROPERTIES IMPORTED_LOCATION "${TORCH_LIBRARIES}")
+    
+    target_link_libraries(gmx PRIVATE "${TORCH_LIBRARIES}")
+    target_include_directories(gmx PRIVATE "${TORCH_INCLUDE_DIRS}")
+    
+    set_property(TARGET libtorch PROPERTY CXX_STANDARD 17)
+    message(STATUS "Torch found (include: ${TORCH_INCLUDE_DIRS}, lib: ${TORCH_LIBRARIES})")
 endif()

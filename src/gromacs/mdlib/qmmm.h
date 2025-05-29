@@ -47,10 +47,10 @@
 #include "gromacs/mdlib/tgroup.h"
 #include "gromacs/utility/arrayref.h"
 #include "gromacs/timing/wallcycle.h"
-#if GMX_QMMM_TENSORFLOW
+#if GMX_QMMM_TENSORFLOW or GMX_QMMM_DFTBPLUS_TENSORFLOW
 #include "tensorflow/c/c_api.h"
 #endif
-#if GMX_QMMM_PYTORCH
+#if GMX_QMMM_PYTORCH or GMX_QMMM_DFTBPLUS_PYTORCH
 #ifdef DIM
 #undef DIM
 #endif
@@ -67,7 +67,7 @@
 //#include "gromacs/mdlib/qm_mopac.h"
 //#include "gromacs/mdlib/qm_orca.h"
 
-#define GMX_QMMM (GMX_QMMM_MOPAC || GMX_QMMM_GAMESS || GMX_QMMM_GAUSSIAN || GMX_QMMM_ORCA || GMX_QMMM_DFTBPLUS || GMX_QMMM_TENSORFLOW || GMX_QMMM_PYTORCH)
+#define GMX_QMMM (GMX_QMMM_MOPAC || GMX_QMMM_GAMESS || GMX_QMMM_GAUSSIAN || GMX_QMMM_ORCA || GMX_QMMM_DFTBPLUS || GMX_QMMM_TENSORFLOW || GMX_QMMM_PYTORCH || GMX_QMMM_DFTBPLUS_PYTORCH || GMX_QMMM_DFTBPLUS_TENSORFLOW)
 
 struct t_nrnb;
 struct nonbonded_verlet_t;
@@ -78,7 +78,7 @@ enum class PbcType : int;
 struct DftbPlus;
 struct Context;
 
-#if GMX_QMMM_TENSORFLOW
+#if GMX_QMMM_TENSORFLOW or GMX_QMMM_DFTBPLUS_TENSORFLOW
 typedef struct {
     TF_Graph*   Graph;
     TF_Status*  Status;
@@ -105,12 +105,12 @@ typedef struct {
 } EnergyForceExtensiveLabelScaler;
 #endif
 
-#if GMX_QMMM_PYTORCH
+#if GMX_QMMM_PYTORCH or GMX_QMMM_DFTBPLUS_PYTORCH
 typedef struct {
     torch::jit::script::Module* model;
     int         NumInputs;
     int         NumOutputs;
-    char modelArchitecture[100]; // network architecture, default "maceqeq", availabe: "maceqeq"
+    char modelArchitecture[100]; // network architecture, default "maceqeq", availabe: "maceqeq", "mace", "amp"
 } PytorchModel;
 #endif
 
@@ -246,11 +246,11 @@ private:
 public:
     DftbPlus        *dpcalc;        // DFTB+ calculator
     Context         *dftbContext;   // some data for DFTB+, referenced to by DFTB through *dpcalc
-    #if GMX_QMMM_TENSORFLOW
+    #if GMX_QMMM_TENSORFLOW or GMX_QMMM_DFTBPLUS_TENSORFLOW
     TFModel*         models[10];
     EnergyForceExtensiveLabelScaler* scaler;
     #endif
-    #if GMX_QMMM_PYTORCH
+    #if GMX_QMMM_PYTORCH or GMX_QMMM_DFTBPLUS_PYTORCH
     PytorchModel*         models[10];
     torch::Device device = torch::kCPU;
     torch::ScalarType torch_float_dtype = torch::kFloat64;

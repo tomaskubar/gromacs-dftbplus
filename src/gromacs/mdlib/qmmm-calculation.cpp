@@ -1,4 +1,3 @@
-
 #include "gmxpre.h"
 
 #include "qmmm.h"

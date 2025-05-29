@@ -43,7 +43,7 @@
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wmissing-noreturn"
 
-#if GMX_QMMM_DFTBPLUS
+#if GMX_QMMM_DFTBPLUS or GMX_QMMM_DFTBPLUS_PYTORCH or GMX_QMMM_DFTBPLUS_TENSORFLOW
 
 #include <math.h>
 #include <stdio.h>

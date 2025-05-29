@@ -38,8 +38,6 @@
 #ifndef GMX_MDLIB_QM_NN_H
 #define GMX_MDLIB_QM_NN_H
 
-#define HARTREE_TO_EV     (27.211396132)
-
 void NoOpDeallocator(void* data, size_t a, void* b);
 
 void init_tensorflow(QMMM_QMrec*       qm);

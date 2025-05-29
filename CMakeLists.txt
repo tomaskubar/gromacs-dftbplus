@@ -240,7 +240,7 @@ gmx_option_multichoice(
     GMX_QMMM_PROGRAM
     "QM package for QM/MM"
     None
-    none gaussian mopac gamess orca dftbplus tensorflow pytorch)
+    none gaussian mopac gamess orca dftbplus tensorflow pytorch dftbplus_tensorflow dftbplus_pytorch)
 
 option(GMX_PLUMED "Link with Plumed (requires 3 symlinks in Gromacs directory)" OFF)
 
@@ -674,6 +674,10 @@ elseif("${GMX_QMMM_PROGRAM}" STREQUAL "TENSORFLOW")
     set(GMX_QMMM_TENSORFLOW 1)
 elseif("${GMX_QMMM_PROGRAM}" STREQUAL "PYTORCH")
     set(GMX_QMMM_PYTORCH 1)
+elseif("${GMX_QMMM_PROGRAM}" STREQUAL "DFTBPLUS_TENSORFLOW")
+    set(GMX_QMMM_DFTBPLUS_TENSORFLOW 1)
+elseif("${GMX_QMMM_PROGRAM}" STREQUAL "DFTBPLUS_PYTORCH")
+    set(GMX_QMMM_DFTBPLUS_PYTORCH 1)
 elseif("${GMX_QMMM_PROGRAM}" STREQUAL "NONE")
     # nothing to do
 else()

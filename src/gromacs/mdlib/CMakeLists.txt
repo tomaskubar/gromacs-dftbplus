@@ -35,27 +35,6 @@
 
 add_library(mdlib INTERFACE)
 
-if("${GMX_QMMM_PROGRAM}" STREQUAL "TENSORFLOW")
-    add_library(libtensorflow SHARED IMPORTED)
-    set_target_properties(libtensorflow PROPERTIES IMPORTED_LOCATION "${TENSORFLOW}")
-    target_include_directories(mdlib INTERFACE "${TENSORFLOW_HEADERS}")
-endif()
-
-if ("${GMX_QMMM_PROGRAM}" STREQUAL "PYTORCH")
-    find_package(Torch REQUIRED)
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${TORCH_CXX_FLAGS}") # apparently insuffienct set CMAKE_CXX_FLAGS after the configuration
-
-    add_library(libtorch SHARED IMPORTED)
-    set_target_properties(libtorch PROPERTIES IMPORTED_LOCATION "${TORCH_LIBRARIES}")
-    #target_include_directories(mdlib INTERFACE ${TORCH_HEADERS})
-    target_link_libraries(mdlib INTERFACE "${TORCH_LIBRARIES}")
-    target_include_directories(mdlib INTERFACE
-        "${TORCH_INCLUDE_DIRS}"
-    ) # seems not sufficient to do the job
-    set_property(TARGET mdlib PROPERTY CXX_STANDARD 17)
-    #message(STATUS "Torch found (include: ${TORCH_INCLUDE_DIRS}, lib: ${TORCH_LIBRARIES})")
-endif()
-
 file(GLOB MDLIB_SOURCES *.cpp)
 # To avoid listing all the necessary files manually, we will remove SYCL-specfific one here:
 list(REMOVE_ITEM MDLIB_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/leapfrog_gpu_sycl.cpp)

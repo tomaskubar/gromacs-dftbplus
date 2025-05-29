@@ -44,7 +44,7 @@
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wmissing-noreturn"
 
-#if GMX_QMMM_TENSORFLOW
+#if GMX_QMMM_TENSORFLOW or GMX_QMMM_DFTBPLUS_TENSORFLOW
 #include <json/value.h>
 #include <json/reader.h>
 #include <fstream>
@@ -267,14 +267,6 @@ real call_tensorflow(   QMMM_rec*         qr,
                 gmx_wallcycle_t   wcycle)
 {
     static int step = 0;
-    static FILE *f_q = nullptr;
-    static FILE *f_p = nullptr;
-    static FILE *f_x_qm = nullptr;
-    static FILE *f_x_mm = nullptr;
-    static int output_freq_q;
-    static int output_freq_p;
-    static int output_freq_x_qm;
-    static int output_freq_x_mm;
 
     static float energy_prediction_std_threshold; // energy threshold deviation
     static float force_prediction_std_threshold; // force threshold deviation
@@ -308,34 +300,6 @@ real call_tensorflow(   QMMM_rec*         qr,
 
     if (step == 0) {
         char *env;
-
-        if ((env = getenv("GMX_DFTB_CHARGES")) != nullptr)
-        {
-            output_freq_q = atoi(env);
-            f_q = fopen("qm_dftb_charges.xvg", "a");
-            printf("The QM charges will be saved in file qm_dftb_charges.xvg every %d steps.\n", output_freq_q);
-        }
-
-        if (qm->qmmm_variant_get() != eqmmmVACUO && (env = getenv("GMX_DFTB_ESP")) != nullptr)
-        {
-            output_freq_p = atoi(env);
-            f_p = fopen("qm_dftb_esp.xvg", "a");
-            printf("The MM potential induced on QM atoms will be saved in file qm_dftb_esp.xvg every %d steps.\n", output_freq_p);
-        }
-
-        if ((env = getenv("GMX_DFTB_QM_COORD")) != nullptr)
-        {
-            output_freq_x_qm = atoi(env);
-            f_x_qm = fopen("qm_dftb_qm.qxyz", "a");
-            printf("The QM coordinates (XYZQ) will be saved in file qm_dftb_qm.qxyz every %d steps.\n", output_freq_x_qm);
-        }
-
-        if (qm->qmmm_variant_get() != eqmmmVACUO && (env = getenv("GMX_DFTB_MM_COORD")) != nullptr)
-        {
-            output_freq_x_mm = atoi(env);
-            f_x_mm = fopen("qm_dftb_mm.qxyz", "a");
-            printf("The MM coordinates (XYZQ) will be saved in file qm_dftb_mm.qxyz every %d steps.\n", output_freq_x_mm);
-        }
 
         // Find threshold deviation, energy threshold has priority
         if (((env = getenv("GMX_ENERGY_PREDICTION_STD_THRESHOLD")) == nullptr) && ((env = getenv("GMX_FORCE_PREDICTION_STD_THRESHOLD")) == nullptr))
@@ -395,7 +359,7 @@ real call_tensorflow(   QMMM_rec*         qr,
     // save the potential in the QMMM_QMrec structure
     for (int j=0; j<n; j++)
     {
-        qm->pot_qmmm_set(j, (double) - pot[j] * HARTREE_TO_EV); // in volt units
+        qm->pot_qmmm_set(j, (double) - pot[j] * AU2EV); // in volt units
     }
 
     /* NN call itself */
@@ -626,61 +590,12 @@ real call_tensorflow(   QMMM_rec*         qr,
         }
     }
 
-    if (f_q && step % output_freq_q == 0)
-    {
-        fprintf(f_q, "%8d", step);
-        for (int i=0; i<n; i++)
-        {
-            fprintf(f_q, " %8.5f", qm->QMcharges_get(i));
-        }
-        fprintf(f_q, "\n");
-    }
-
-    if (f_p && step % output_freq_p == 0)
-    {
-        fprintf(f_p, "%8d", step);
-        for (int i=0; i<n; i++)
-        {
-            fprintf(f_p, " %8.5f", qm->pot_qmmm_get(i) + qm->pot_qmqm_get(i));
-         // if (qm.qmmm_variant == eqmmmPME)
-         // {
-         //     fprintf(f_p, " %8.5f %8.5f %8.5f", qm.pot_qmmm[i], qm.pot_qmqm[i], qm.pot_qmmm[i] + qm.pot_qmqm[i]);
-         // }
-         // else
-         // {
-         //     fprintf(f_p, " %8.5f", qm.pot_qmmm[i]);
-         // }
-        }
-        fprintf(f_p, "\n");
-    }
-
     char periodic_system[37][3]={"XX",
         "h",                               "he",
         "li","be","b", "c", "n", "o", "f", "ne",
         "na","mg","al","si","p", "s", "cl","ar",
         "k", "ca","sc","ti","v", "cr","mn","fe","co",
         "ni","cu","zn","ga","ge","as","se","br","kr"};
-
-    if (f_x_qm && step % output_freq_x_qm == 0)
-    {
-        fprintf(f_x_qm, "\nQM coordinates and charges step %d\n", step);
-        for (int i=0; i<n; i++) {
-            fprintf(f_x_qm, "%-2s %10.5f%10.5f%10.5f %10.7f\n",
-                periodic_system[qm->atomicnumberQM_get(i)],
-                qm->xQM_get(i, 0) * 10., qm->xQM_get(i, 1) * 10., qm->xQM_get(i, 2) * 10.,
-                qm->QMcharges_get(i));
-        }
-    }
-
-    if (f_x_mm && step % output_freq_x_mm == 0)
-    {
-        fprintf(f_x_mm, "\nMM coordinates and charges step %d\n", step);
-        for (int i=0; i<mm.nrMMatoms; i++) {
-            fprintf(f_x_mm, "%10.7f%10.5f%10.5f%10.5f\n",
-                mm.MMcharges[i], // CHECK -- HOW TO DO IT WITH PME / WITH CUT-OFF?
-                mm.xMM[i][0] * 10., mm.xMM[i][1] * 10., mm.xMM[i][2] * 10.);
-        }
-    }
 
     if (qm->significant_structure)
     {   

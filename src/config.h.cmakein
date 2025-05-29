@@ -212,6 +212,12 @@
 /* Use Pytorch for QM-MM calculations */
 #cmakedefine01 GMX_QMMM_PYTORCH
 
+/* Use DFTB+ and Pytorch for Delta-Learning */
+#cmakedefine01 GMX_QMMM_DFTBPLUS_PYTORCH
+
+/* Use DFTB+ and Tensorflow for Delta-Learning */
+#cmakedefine01 GMX_QMMM_DFTBPLUS_TENSORFLOW
+
 /* Use sub-counters */
 #cmakedefine01 GMX_CYCLE_SUBCOUNTERS
 
