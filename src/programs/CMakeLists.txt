@@ -181,7 +181,6 @@ if (GMX_QMMM_DFTBPLUS OR GMX_QMMM_DFTBPLUS_PYTORCH OR GMX_QMMM_DFTBPLUS_TENSORFL
     # Add dependencies to both libgromacs and executables
     target_link_libraries(libgromacs PRIVATE ${DFTBPLUS_DEPS})
 
-    # Rest of your existing DFTB+ setup...
     add_library(libdftbplus STATIC IMPORTED)
     set_target_properties(libdftbplus PROPERTIES IMPORTED_LOCATION ${GMX_QMMM_DFTBPLUS_LIB}/libdftbplus.a)
     add_library(libdftd3 STATIC IMPORTED)
@@ -227,13 +226,6 @@ if("${GMX_QMMM_PROGRAM}" STREQUAL "TENSORFLOW" OR "${GMX_QMMM_PROGRAM}" STREQUAL
         DOC "Find tensorflow library libtensorflow.so"
         REQUIRED
     )
-    # find_library(TENSORFLOW_FRAMEWORK_LIB
-    #     NAMES libtensorflow_framework.so
-    #     PATHS /usr/local/lib $ENV{TENSORFLOW_ROOT}/lib
-    #     HINTS $ENV{TENSORFLOW_ROOT} ${CMAKE_PREFIX_PATH}
-    #     DOC "Find tensorflow framework library libtensorflow_framework.so"
-    #     REQUIRED
-    # )
     find_library(JSONCPP_LIB
         NAMES libjsoncpp.so libjsoncpp.a 
         PATHS /usr/local/lib $ENV{JSONCPP_ROOT}/lib
