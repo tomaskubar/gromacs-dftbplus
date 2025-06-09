@@ -274,10 +274,18 @@ if ("${GMX_QMMM_PROGRAM}" STREQUAL "PYTORCH" OR "${GMX_QMMM_PROGRAM}" STREQUAL "
 
     add_library(libtorch STATIC IMPORTED)
     set_target_properties(libtorch PROPERTIES IMPORTED_LOCATION "${TORCH_LIBRARIES}")
-    
-    target_link_libraries(gmx PRIVATE "${TORCH_LIBRARIES}")
-    target_include_directories(gmx PRIVATE "${TORCH_INCLUDE_DIRS}")
-    
     set_property(TARGET libtorch PROPERTY CXX_STANDARD 17)
+
+    target_link_libraries(libgromacs PRIVATE ${TORCH_LIBRARIES})
+    target_include_directories(libgromacs PRIVATE ${TORCH_INCLUDE_DIRS})
+
+    if(GMX_BUILD_MDRUN_ONLY)
+        target_link_libraries(mdrun-only PRIVATE ${TORCH_LIBRARIES})
+        target_include_directories(mdrun-only PRIVATE ${TORCH_INCLUDE_DIRS})
+    else()
+        target_link_libraries(gmx PRIVATE ${TORCH_LIBRARIES})
+        target_include_directories(gmx PRIVATE ${TORCH_INCLUDE_DIRS})
+    endif()
+    
     message(STATUS "Torch found (include: ${TORCH_INCLUDE_DIRS}, lib: ${TORCH_LIBRARIES})")
 endif()
