@@ -268,23 +268,46 @@ if("${GMX_QMMM_PROGRAM}" STREQUAL "TENSORFLOW" OR "${GMX_QMMM_PROGRAM}" STREQUAL
     #target_include_directories(gmx PRIVATE "${TENSORFLOW_INCLUDE_DIR}")
 endif()
 
-if ("${GMX_QMMM_PROGRAM}" STREQUAL "PYTORCH" OR "${GMX_QMMM_PROGRAM}" STREQUAL "DFTBPLUS_PYTORCH") 
+if ("${GMX_QMMM_PROGRAM}" STREQUAL "PYTORCH" OR "${GMX_QMMM_PROGRAM}" STREQUAL "DFTBPLUS_PYTORCH")
     find_package(Torch REQUIRED)
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${TORCH_CXX_FLAGS}")
 
-    add_library(libtorch STATIC IMPORTED)
-    set_target_properties(libtorch PROPERTIES IMPORTED_LOCATION "${TORCH_LIBRARIES}")
-    set_property(TARGET libtorch PROPERTY CXX_STANDARD 17)
+    # # Create missing PyTorch targets with mock properties
+    # if(NOT TARGET torch_cpu)
+    #     add_library(torch_cpu INTERFACE)
+    #     target_compile_options(torch_cpu INTERFACE ${TORCH_CXX_FLAGS})
+    #     target_compile_definitions(torch_cpu INTERFACE "")
+    #     target_include_directories(torch_cpu INTERFACE ${TORCH_INCLUDE_DIRS})
+    # endif()
+
+    # if(NOT TARGET torch_cuda)
+    #     add_library(torch_cuda INTERFACE)
+    #     target_compile_options(torch_cuda INTERFACE ${TORCH_CXX_FLAGS})
+    #     target_compile_definitions(torch_cuda INTERFACE "")
+    #     target_include_directories(torch_cuda INTERFACE ${TORCH_INCLUDE_DIRS})
+    # endif()
+
+    # Make the targets globally visible
+    set_property(TARGET torch_cpu PROPERTY IMPORTED_GLOBAL TRUE)
+    set_property(TARGET torch_cuda PROPERTY IMPORTED_GLOBAL TRUE) 
+    set_property(TARGET torch PROPERTY IMPORTED_GLOBAL TRUE)
+
+    # Ensure targets exist in parent scope by exporting variables
+    set(torch_cpu_EXISTS TRUE CACHE INTERNAL "torch_cpu target exists")
+    set(torch_cuda_EXISTS TRUE CACHE INTERNAL "torch_cuda target exists")
+    set(torch_EXISTS TRUE CACHE INTERNAL "torch target exists")
 
     target_link_libraries(libgromacs PRIVATE ${TORCH_LIBRARIES})
     target_include_directories(libgromacs PRIVATE ${TORCH_INCLUDE_DIRS})
-
+    target_compile_definitions(libgromacs PRIVATE ${TORCH_CXX_FLAGS})
+    
     if(GMX_BUILD_MDRUN_ONLY)
         target_link_libraries(mdrun-only PRIVATE ${TORCH_LIBRARIES})
         target_include_directories(mdrun-only PRIVATE ${TORCH_INCLUDE_DIRS})
+        target_compile_definitions(mdrun-only PRIVATE ${TORCH_CXX_FLAGS})
     else()
         target_link_libraries(gmx PRIVATE ${TORCH_LIBRARIES})
         target_include_directories(gmx PRIVATE ${TORCH_INCLUDE_DIRS})
+        target_compile_definitions(gmx PRIVATE ${TORCH_CXX_FLAGS})
     endif()
     
     message(STATUS "Torch found (include: ${TORCH_INCLUDE_DIRS}, lib: ${TORCH_LIBRARIES})")
