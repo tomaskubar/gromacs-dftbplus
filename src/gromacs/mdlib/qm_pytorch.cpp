@@ -629,6 +629,11 @@ real call_pytorch(QMMM_rec*       qr,
         {
             write_amp_inputs_outputs(qm, mm, input_dict, output_dicts[0], step);
         }
+        else
+        {
+            printf("The network architecture %s is not implemented for output\n", qm->models[0]->modelArchitecture);
+            exit(-1);
+        }
     }
 
 
@@ -1359,7 +1364,7 @@ void write_amp_inputs_outputs(QMMM_QMrec* qm,
 
     // mm_charges + coordinates
     FILE* f_pcfile = nullptr;
-    f_pcfile = fopen("qm_mlmm.pc", "w");
+    f_pcfile = fopen("qm_mlmm.pc", "a");
     fprintf(f_pcfile, "%d\n", nMMAtoms);
     for (int i=0; i<nMMAtoms; i++)
     {
@@ -1367,14 +1372,15 @@ void write_amp_inputs_outputs(QMMM_QMrec* qm,
         x = mm_coordinates[i][0];
         y = mm_coordinates[i][1];
         z = mm_coordinates[i][2];
-        fprintf(f_pcfile, "%6.6f %6.6f %6.6f %6.6f\n", mm_charge, x, y, z);
+        fprintf(f_pcfile, "%6.4f %6.8f %6.8f %6.8f\n", mm_charge, x, y, z);
     }
+    fclose(f_pcfile);
 
     // output dictionary
     FILE* f_output = nullptr;
     FILE* f_mm_output = nullptr;
     f_output = fopen("output.txt", "w");
-    f_mm_output = fopen("qm_mlmm.pcgrad", "w");
+    f_mm_output = fopen("qm_mlmm.pcgrad", "a");
     torch::Tensor energy_predictions_tensor = output_dict.at("energy").cpu()[0] ; // in kJ/mol
     torch::Tensor force_predictions_tensor = output_dict.at("forces").cpu()[0] ; // from kJ/mol/Angstrom to H/B
     torch::Tensor dipole_predictions_tensor = output_dict.at("dipoles").cpu()[0] ; // in ev/Angstrom
@@ -1386,8 +1392,6 @@ void write_amp_inputs_outputs(QMMM_QMrec* qm,
     float quadrupole_conversion = A2BOHR*A2BOHR; // e*Angstrom^2 to e*Bohr^2
     float force_conversion_extxyz = (1/EV2KJ) / 1; // kJ/mol/Angstrom to eV/Angstrom
     float force_conversion_pcgrad =  0.00038088 / A2BOHR; // kJ/mol/Angstrom to Hartree/Bohr
-    printf("force_conversion_extxyz = %6.3f\n", force_conversion_extxyz);
-    printf("force_conversion_pcgrad = %6.3f\n", force_conversion_pcgrad);
 
     float energy_predictions = energy_predictions_tensor[0].item<float>();
     // printf("CHECK QM Energy = %6.3f\n", energy_predictions);
@@ -1403,7 +1407,7 @@ void write_amp_inputs_outputs(QMMM_QMrec* qm,
         force_predictions[i][1] = y;
         force_predictions[i][2] = z;
         // printf("CHECK QM Grad[%d] = %6.3f %6.3f %6.3f\n", i+1, x, y, z);
-        fprintf(f_output, "%6.6f %6.6f %6.6f\n", x, y, z);
+        fprintf(f_output, "%6.8f %6.8f %6.8f\n", x, y, z);
     }
 
     float dipole_predictions[3];
@@ -1439,7 +1443,7 @@ void write_amp_inputs_outputs(QMMM_QMrec* qm,
         y = y * force_conversion_pcgrad;
         z = z * force_conversion_pcgrad;
         // printf("CHECK MM Grad[%d] = %6.3f %6.3f %6.3f\n", i+1, x, y, z);
-        fprintf(f_mm_output, "%6.6f %6.6f %6.6f\n", x, y, z);
+        fprintf(f_mm_output, "%6.8f %6.8f %6.8f\n", x, y, z);
     }
     fclose(f_mm_output);
 
@@ -1470,8 +1474,8 @@ void write_amp_inputs_outputs(QMMM_QMrec* qm,
     for (int i=0; i<nQMAtoms; i++)
     {
         fprintf(f_extxyz, "%-2s ", periodic_system[qm->atomicnumberQM_get(i)]);
-        fprintf(f_extxyz, "%8.4f %8.4f %8.4f ", coordinates[i][0], coordinates[i][1], coordinates[i][2]);
-        fprintf(f_extxyz, "%8.4f %8.4f %8.4f",
+        fprintf(f_extxyz, "%6.8f %6.8f %6.8f ", coordinates[i][0], coordinates[i][1], coordinates[i][2]);
+        fprintf(f_extxyz, "%6.8f %6.8f %6.8f",
             force_predictions[i][0] * force_conversion_extxyz,
             force_predictions[i][1] * force_conversion_extxyz,
             force_predictions[i][2] * force_conversion_extxyz);

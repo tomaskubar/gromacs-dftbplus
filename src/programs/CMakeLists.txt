@@ -288,7 +288,9 @@ if ("${GMX_QMMM_PROGRAM}" STREQUAL "PYTORCH" OR "${GMX_QMMM_PROGRAM}" STREQUAL "
 
     # Make the targets globally visible
     set_property(TARGET torch_cpu PROPERTY IMPORTED_GLOBAL TRUE)
-    set_property(TARGET torch_cuda PROPERTY IMPORTED_GLOBAL TRUE) 
+    if (TARGET torch_cuda)
+        set_property(TARGET torch_cuda PROPERTY IMPORTED_GLOBAL TRUE)
+    endif()
     set_property(TARGET torch PROPERTY IMPORTED_GLOBAL TRUE)
 
     # Ensure targets exist in parent scope by exporting variables
