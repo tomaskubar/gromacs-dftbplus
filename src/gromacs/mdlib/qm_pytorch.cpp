@@ -909,12 +909,12 @@ void prepare_amp_inputs(QMMM_QMrec* qm,
     float geometry_conversion = NM2A; // nm to angstrom
 
     // atomic numbers
-    int64_t atomic_numbers_dims[] = {nQMAtoms};
+    int64_t atomic_numbers_dims[] = {1, nQMAtoms};
     torch::Tensor atomic_numbers = torch::zeros(atomic_numbers_dims, torch_int_dtype);
     for (int i=0; i<nQMAtoms; i++)
     {
         int atomic_number = qm->atomicnumberQM_get(i);
-        atomic_numbers[i] = atomic_number;
+        atomic_numbers[0][i] = atomic_number;
     }
 
     // qm_coordinates
@@ -1290,7 +1290,7 @@ void write_amp_inputs_outputs(QMMM_QMrec* qm,
     for (int i=0; i<nQMAtoms; i++)
     {
         // printf("CHECK Atomic numbers %d: %2.0f", i+1, atomic_numbers[i].item<float>());
-        fprintf(f_atomic_numbers, "%6.3f ", atomic_numbers[i].item<float>());
+        fprintf(f_atomic_numbers, "%6.3f ", atomic_numbers[0][i].item<float>());
         // printf("\n");
         fprintf(f_atomic_numbers, "\n");
     }
