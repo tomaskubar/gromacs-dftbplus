@@ -1109,29 +1109,29 @@ void write_base_mace_inputs_outputs(QMMM_QMrec* qm,
     }
     fclose(f_output);
 
-    // Write all inputs and outputs in the extended xyz format
-    char periodic_system[37][3]={"XX",
-        "H",                               "He",
-        "Li","Be","B", "C", "N", "O", "F", "Ne",
-        "Na","Mg","Al","Si","P", "S", "Cl","Ar",
-        "K", "Ca","Sc","Ti","V", "Cr","Mn","Fe","Co",
-        "Ni","Cu","Zn","Ga","Ge","As","Se","Br","Kr"};
-    FILE* f_extxyz = nullptr;
-    f_extxyz = fopen("qm_mlmm.extxyz", "a");
-    fprintf(f_extxyz, "%d\n", nAtoms);
-    fprintf(f_extxyz, "Lattice=\"%.1f %.1f %.1f %.1f %.1f %.1f %.1f %.1f %.1f\" ", box[0][0], box[0][1], box[0][2], box[1][0], box[1][1], box[1][2], box[2][0], box[2][1], box[2][2]);
-    fprintf(f_extxyz, "Properties=species:S:1:pos:R:3:pred_force:R:3 ");
-    fprintf(f_extxyz, "pred_energy=%.6f ", energy_predictions);
-    fprintf(f_extxyz, "comment=\"Step %d\" ", step);
-    fprintf(f_extxyz, "pbc=\"F F F\" \n");
-    for (int i=0; i<nAtoms; i++)
-    {
-        fprintf(f_extxyz, "%-2s ", periodic_system[qm->atomicnumberQM_get(i)]);
-        fprintf(f_extxyz, "%8.4f %8.4f %8.4f ", coordinates[i][0], coordinates[i][1], coordinates[i][2]);
-        fprintf(f_extxyz, "%8.4f %8.4f %8.4f ", force_predictions[i][0], force_predictions[i][1], force_predictions[i][2]);
-        fprintf(f_extxyz, "\n");
-    }
-    fclose(f_extxyz);
+    // // Write all inputs and outputs in the extended xyz format
+    // char periodic_system[37][3]={"XX",
+    //     "H",                               "He",
+    //     "Li","Be","B", "C", "N", "O", "F", "Ne",
+    //     "Na","Mg","Al","Si","P", "S", "Cl","Ar",
+    //     "K", "Ca","Sc","Ti","V", "Cr","Mn","Fe","Co",
+    //     "Ni","Cu","Zn","Ga","Ge","As","Se","Br","Kr"};
+    // FILE* f_extxyz = nullptr;
+    // f_extxyz = fopen("qm_mlmm.extxyz", "a");
+    // fprintf(f_extxyz, "%d\n", nAtoms);
+    // fprintf(f_extxyz, "Lattice=\"%.1f %.1f %.1f %.1f %.1f %.1f %.1f %.1f %.1f\" ", box[0][0], box[0][1], box[0][2], box[1][0], box[1][1], box[1][2], box[2][0], box[2][1], box[2][2]);
+    // fprintf(f_extxyz, "Properties=species:S:1:pos:R:3:pred_force:R:3 ");
+    // fprintf(f_extxyz, "pred_energy=%.6f ", energy_predictions);
+    // fprintf(f_extxyz, "comment=\"Step %d\" ", step);
+    // fprintf(f_extxyz, "pbc=\"F F F\" \n");
+    // for (int i=0; i<nAtoms; i++)
+    // {
+    //     fprintf(f_extxyz, "%-2s ", periodic_system[qm->atomicnumberQM_get(i)]);
+    //     fprintf(f_extxyz, "%8.4f %8.4f %8.4f ", coordinates[i][0], coordinates[i][1], coordinates[i][2]);
+    //     fprintf(f_extxyz, "%8.4f %8.4f %8.4f ", force_predictions[i][0], force_predictions[i][1], force_predictions[i][2]);
+    //     fprintf(f_extxyz, "\n");
+    // }
+    // fclose(f_extxyz);
 } // end of write_base_mace_inputs_outputs
     
 
