@@ -157,6 +157,14 @@ static real call_QMroutine(const t_commrec*  cr,
     {
         return call_pytorch(qr, cr, qm, *mm, f, fshift, nrnb, wcycle);
     }
+    else if (GMX_QMMM_DFTBPLUS_PYTORCH)
+    {
+        return call_dftbplus_pytorch(qr, cr, qm, *mm, f, fshift, nrnb, wcycle);
+    }
+    else if (GMX_QMMM_DFTBPLUS_TENSORFLOW)
+    {
+        return call_dftbplus_tensorflow(qr, cr, qm, *mm, f, fshift, nrnb, wcycle);
+    }
     else
     {
         gmx_fatal(FARGS, "Unknown QM software -- should never land here :-/");
