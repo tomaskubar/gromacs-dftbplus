@@ -43,6 +43,8 @@
 #ifndef GMX_ANALYSISDATA_DATAFRAME_H
 #define GMX_ANALYSISDATA_DATAFRAME_H
 
+#include <cstdint>
+
 #include <vector>
 
 #include "gromacs/utility/arrayref.h"
