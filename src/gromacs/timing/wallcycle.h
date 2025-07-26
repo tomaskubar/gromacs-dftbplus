@@ -97,6 +97,8 @@ enum
     ewcIMD,
     ewcTEST,
     ewcQM,
+    ewcQM_DATA_PREP,
+    ewcQM_MODEL_CALL,
     ewcNR
 };
 

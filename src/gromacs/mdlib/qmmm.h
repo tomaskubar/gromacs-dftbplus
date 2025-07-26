@@ -255,6 +255,7 @@ public:
     torch::Device device = torch::kCPU;
     torch::ScalarType torch_float_dtype = torch::kFloat64;
     torch::ScalarType torch_int_dtype = torch::kInt64;
+    int n_models;
     double r_max;
     double r_max_squared;
     int n_present_atomic_numbers;

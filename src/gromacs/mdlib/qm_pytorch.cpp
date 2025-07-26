@@ -102,7 +102,7 @@ void init_pytorch(QMMM_QMrec* qm)
     int n_models;
     if ((n_models_env = getenv("GMX_N_MODELS")) == nullptr)
     {
-        printf("Amount of models to use for adaptive sampling must be given via the env variable GMX_N_MODELS\n");
+        printf("INFO: Amount of models to use for adaptive sampling can be given via the env variable GMX_N_MODELS\n");
         n_models = 1;
         printf("Using %i model \n", n_models);
     }
@@ -115,6 +115,7 @@ void init_pytorch(QMMM_QMrec* qm)
         }
         printf("Using %i models \n", n_models);
     }
+    qm->n_models = n_models;
     
     // Find and set network architecture, default "maceqeq"
     std::vector<std::string> implemented_network_architectures = {"mace", "maceqeq", "amp"};
@@ -225,6 +226,7 @@ real call_pytorch(QMMM_rec*       qr,
 {
     static int step = 0;
     static int output_freq_extxyz;
+    static FILE *f_std = nullptr; // file for saving standard deviations
 
     static float energy_prediction_std_threshold; // energy threshold deviation
     static float force_prediction_std_threshold; // force threshold deviation
@@ -299,6 +301,15 @@ real call_pytorch(QMMM_rec*       qr,
             nn_eval_freq = 1;
             printf("Using %i as default evaluation frequency of additional models\n", nn_eval_freq);
         }
+        // Open file for standard deviations
+        if (qm->n_models > 1)
+        {
+            f_std = fopen("qm_mlmm_std.xyz", "a");
+            printf("The standard deviations of the model predictions will be saved in file qm_mlmm_std.xyz\n");
+        }
+
+        fflush(stdout);
+        fflush(stderr);
     }
 
     /* calculate the QM/MM electrostatics beforehand with Gromacs!
@@ -333,7 +344,7 @@ real call_pytorch(QMMM_rec*       qr,
     /* NN call itself */
     wallcycle_start(wcycle, ewcQM);
 
-    int n_models = std::stoi(getenv("GMX_N_MODELS"));
+    int n_models = qm->n_models;
     int nAtoms = qm->nrQMatoms_get();
     int nMMAtoms = mm.nrMMatoms;
 
@@ -349,6 +360,7 @@ real call_pytorch(QMMM_rec*       qr,
     }
     
     // Prepare inputs
+    wallcycle_start(wcycle, ewcQM_DATA_PREP);
     c10::Dict<std::string, torch::Tensor> input_dict;
     float energy_conversion;
     float force_conversion;
@@ -387,12 +399,17 @@ real call_pytorch(QMMM_rec*       qr,
         mask[i] = true;
     }
 
+    wallcycle_stop(wcycle, ewcQM_DATA_PREP);
+
     // Run the Session
+    wallcycle_start(wcycle, ewcQM_MODEL_CALL);
     c10::Dict<std::string, torch::Tensor> output_dicts[n_active_models];
     for (int model_idx=0; model_idx<n_active_models; model_idx++) {
         c10::Dict<c10::IValue,c10::IValue> output_dict = qm->models[model_idx]->model->forward({input_dict}).toGenericDict();
         output_dicts[model_idx] = convertDict(qm, output_dict);
     }
+
+    wallcycle_stop(wcycle, ewcQM_MODEL_CALL);
 
     // Convert tensors to arrays
     torch::Tensor charge_predictions_tensor, energy_predictions_tensor, force_predictions_tensor, mm_gradient_predictions_tensor;
@@ -508,20 +525,20 @@ real call_pytorch(QMMM_rec*       qr,
     /* Save the QM charges */
     for (int i=0; i<n; i++)
     {
-        qm->QMcharges_set(i, (real) charge_predictions[0][i]); // Using the first model
-        //qm->QMcharges_set(i, charge_means[i]); // Using the mean of all models
+        //qm->QMcharges_set(i, (real) charge_predictions[0][i]); // Using the first model
+        qm->QMcharges_set(i, charge_means[i]); // Using the mean of all models
     }
     
-    QMenergy = energy_predictions[0]; // Using the first model
-    //QMenergy = energy_mean; // Using the mean of all models
+    //QMenergy = energy_predictions[0]; // Using the first model
+    QMenergy = energy_mean; // Using the mean of all models
 
     /* Save the gradient on the QM atoms */
     for (int i=0; i<n; i++)
     {
         for (int j=0; j<3; j++)
         {
-            QMgrad[i][j] = (real) (-1*force_predictions[0][i][j]); // negative of force // Using the first model
-            //QMgrad[i][j] = -1*force_means[i][j]; // negative of force // Using the mean of all models
+            //QMgrad[i][j] = (real) (-1*force_predictions[0][i][j]); // negative of force // Using the first model
+            QMgrad[i][j] = -1*force_means[i][j]; // negative of force // Using the mean of all models
         }
     }
 
@@ -646,8 +663,8 @@ real call_pytorch(QMMM_rec*       qr,
     };
 
 
-    if (qm->significant_structure)
-    {   
+    // if (qm->significant_structure)
+    // {   
         // // Print inputs and outputs of the model at the significant structure
         // if (std::strcmp(qm->models[0]->modelArchitecture, "mace") == 0)
         // {
@@ -661,31 +678,29 @@ real call_pytorch(QMMM_rec*       qr,
         // {
         //     write_amp_inputs_outputs(qm, mm, input_dict, output_dicts[0], step);
         // }
+    // } // end significant structure
 
-        FILE* f_std = nullptr; // file for saving standard deviations of significant structures
-        f_std = fopen("qm_mlmm_std.xyz", "a");
+    // Save the means and stds of the predictions to a file
+    if (n_active_models > 1) {
+        // Save the means
+        fprintf(f_std, "%d\n", n);
+        fprintf(f_std, "Means step %d: %8.4f\n", step, energy_mean);
 
-        fprintf(f_std, "\nMeans of energy predictions step %d\n", step);
-        fprintf(f_std, "%8.4f\n", energy_mean);
-
-        fprintf(f_std, "\nStds of energy predictions step %d\n", step);
-        fprintf(f_std, "%8.4f\n", energy_std);
-
-        fprintf(f_std, "\nMeans of force predictions step %d\n", step);
         for (int i=0; i<n; i++) {
-            fprintf(f_std, "%-2s %4i %8.4f %8.4f %8.4f\n",
-                periodic_system[qm->atomicnumberQM_get(i)], i,
+            fprintf(f_std, "%-2s %8.4f %8.4f %8.4f\n",
+                periodic_system[qm->atomicnumberQM_get(i)], 
                 force_means[i][0], force_means[i][1], force_means[i][2]);
-        }
-        
-        fprintf(f_std, "\nStds of force predictions step %d\n", step);
+            }
+
+        // Save the stds
+        fprintf(f_std, "%d\n", n);   
+        fprintf(f_std, "Stds step %d: %8.4f\n", step, energy_std);
         for (int i=0; i<n; i++) {
             fprintf(f_std, "%-2s %4i %8.4f %8.4f %8.4f\n",
                 periodic_system[qm->atomicnumberQM_get(i)], i,
                 force_stds[i][0], force_stds[i][1], force_stds[i][2]);
         }
-        fclose(f_std);
-    } // end significant structure
+    }
 
     sfree(QMgrad);
     sfree(MMgrad);
@@ -1120,8 +1135,8 @@ void write_base_mace_inputs_outputs(QMMM_QMrec* qm,
     // f_extxyz = fopen("qm_mlmm.extxyz", "a");
     // fprintf(f_extxyz, "%d\n", nAtoms);
     // fprintf(f_extxyz, "Lattice=\"%.1f %.1f %.1f %.1f %.1f %.1f %.1f %.1f %.1f\" ", box[0][0], box[0][1], box[0][2], box[1][0], box[1][1], box[1][2], box[2][0], box[2][1], box[2][2]);
-    // fprintf(f_extxyz, "Properties=species:S:1:pos:R:3:pred_force:R:3 ");
-    // fprintf(f_extxyz, "pred_energy=%.6f ", energy_predictions);
+    // fprintf(f_extxyz, "Properties=species:S:1:pos:R:3:gromacs_force:R:3 ");
+    // fprintf(f_extxyz, "gromacs_energy=%.6f ", energy_predictions);
     // fprintf(f_extxyz, "comment=\"Step %d\" ", step);
     // fprintf(f_extxyz, "pbc=\"F F F\" \n");
     // for (int i=0; i<nAtoms; i++)
@@ -1250,8 +1265,8 @@ void write_maceqeq_inputs_outputs(QMMM_QMrec* qm,
     f_extxyz = fopen("qm_mlmm.extxyz", "a"); // Write to the same file as in write_base_mace_inputs_outputs, TODO: Separate files
     fprintf(f_extxyz, "%d\n", nAtoms);
     fprintf(f_extxyz, "Lattice=\"%.1f %.1f %.1f %.1f %.1f %.1f %.1f %.1f %.1f\" ", box[0][0], box[0][1], box[0][2], box[1][0], box[1][1], box[1][2], box[2][0], box[2][1], box[2][2]);
-    fprintf(f_extxyz, "Properties=species:S:1:pos:R:3:pred_force:R:3:pred_charge:R:1:esp:R:1:esp_gradient:R:3 ");
-    fprintf(f_extxyz, "pred_energy=%.6f ", energy_predictions);
+    fprintf(f_extxyz, "Properties=species:S:1:pos:R:3:gromacs_force:R:3:gromacs_charge:R:1:esp:R:1:esp_gradient:R:3 ");
+    fprintf(f_extxyz, "gromacs_energy=%.6f ", energy_predictions);
     fprintf(f_extxyz, "total_charge=%.1f ", total_charge);
     fprintf(f_extxyz, "comment=\"Step %d\" ", step);
     fprintf(f_extxyz, "pbc=\"F F F\" \n");
@@ -1457,13 +1472,13 @@ void write_amp_inputs_outputs(QMMM_QMrec* qm,
     FILE* f_extxyz = nullptr;
     f_extxyz = fopen("qm_mlmm.extxyz", "a");
     fprintf(f_extxyz, "%d\n", nQMAtoms);
-    fprintf(f_extxyz, "Properties=species:S:1:pos:R:3:pred_force:R:3 ");
-    fprintf(f_extxyz, "pred_energy=%.6f ", energy_predictions*energy_conversion);
-    fprintf(f_extxyz, "pred_dipole='%.3f %.3f %.3f' ", 
+    fprintf(f_extxyz, "Properties=species:S:1:pos:R:3:gromacs_force:R:3 ");
+    fprintf(f_extxyz, "gromacs_energy=%.6f ", energy_predictions*energy_conversion);
+    fprintf(f_extxyz, "gromacs_dipole='%.3f %.3f %.3f' ", 
             dipole_predictions[0] * dipole_conversion, 
             dipole_predictions[1] * dipole_conversion, 
             dipole_predictions[2] * dipole_conversion);
-    fprintf(f_extxyz, "pred_quadrupole='%.3f %.3f %.3f %.3f %.3f %.3f' ", 
+    fprintf(f_extxyz, "gromacs_quadrupole='%.3f %.3f %.3f %.3f %.3f %.3f' ", 
             quadrupole_predictions[0][0] * quadrupole_conversion, 
             quadrupole_predictions[1][1] * quadrupole_conversion, 
             quadrupole_predictions[2][2] * quadrupole_conversion, 
