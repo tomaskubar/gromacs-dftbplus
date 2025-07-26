@@ -655,11 +655,11 @@ real call_pytorch(QMMM_rec*       qr,
 
 
     char periodic_system[37][3]={"XX",
-        "h",                               "he",
-        "li","be","b", "c", "n", "o", "f", "ne",
-        "na","mg","al","si","p", "s", "cl","ar",
-        "k", "ca","sc","ti","v", "cr","mn","fe","co",
-        "ni","cu","zn","ga","ge","as","se","br","kr"
+        "H",                               "He",
+        "Li","Be","B", "C", "N", "O", "F", "Ne",
+        "Na","Mg","Al","Si","P", "S", "Cl","Ar",
+        "K", "Ca","Sc","Ti","V", "Cr","Mn","Fe","Co",
+        "Ni","Cu","Zn","Ga","Ge","As","Se","Br","Kr"
     };
 
 
@@ -696,8 +696,8 @@ real call_pytorch(QMMM_rec*       qr,
         fprintf(f_std, "%d\n", n);   
         fprintf(f_std, "Stds step %d: %8.4f\n", step, energy_std);
         for (int i=0; i<n; i++) {
-            fprintf(f_std, "%-2s %4i %8.4f %8.4f %8.4f\n",
-                periodic_system[qm->atomicnumberQM_get(i)], i,
+            fprintf(f_std, "%-2s %8.4f %8.4f %8.4f\n",
+                periodic_system[qm->atomicnumberQM_get(i)],
                 force_stds[i][0], force_stds[i][1], force_stds[i][2]);
         }
     }
