@@ -33,17 +33,17 @@ real call_dftbplus_tensorflow(QMMM_rec* qr,
                            t_nrnb* nrnb,
                            gmx_wallcycle_t wcycle)
 {
-    int nQMatoms = qm->nrQMatoms_get();
+    int nTotalAtoms = qm->nrQMatoms_get() + mm.nrMMatoms;
     real e_dftb = 0.0;
     real e_delta = 0.0;
     
     // Allocate memory for both force arrays
     rvec* f_dftb = nullptr;
     rvec* f_delta = nullptr;
-    snew(f_dftb, nQMatoms);
-    snew(f_delta, nQMatoms);
+    snew(f_dftb, nTotalAtoms);
+    snew(f_delta, nTotalAtoms);
     
-    for (int i=0; i < nQMatoms; i++)
+    for (int i=0; i < nTotalAtoms; i++)
     {
         clear_rvec(f_dftb[i]);
         clear_rvec(f_delta[i]);
@@ -73,7 +73,7 @@ real call_dftbplus_tensorflow(QMMM_rec* qr,
     }
     
     // Combine the forces
-    for (int i = 0; i < nQMatoms; ++i)
+    for (int i = 0; i < nTotalAtoms; ++i)
         for (int d = 0; d < DIM; ++d)
             f[i][d] = f_dftb[i][d] + f_delta[i][d];
     
