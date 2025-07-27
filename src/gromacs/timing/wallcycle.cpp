@@ -156,7 +156,10 @@ static const char* wcn[ewcNR] = { "Run",
                                   "Add rot. forces",
                                   "Position swapping",
                                   "IMD",
-                                  "Test" };
+                                  "Test",
+                                  "QM",
+                                  "QM Data Prep",
+                                  "QM Model Call" };
 
 static const char* wcsn[ewcsNR] = {
     "DD redist.",
