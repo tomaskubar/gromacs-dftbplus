@@ -226,9 +226,16 @@ if("${GMX_QMMM_PROGRAM}" STREQUAL "TENSORFLOW" OR "${GMX_QMMM_PROGRAM}" STREQUAL
         DOC "Find tensorflow library libtensorflow.so"
         REQUIRED
     )
+    find_library(TENSORFLOW_FRAMEWORK_LIB
+        NAMES libtensorflow_framework.so
+        PATHS /usr/local/lib $ENV{TENSORFLOW_ROOT}
+        HINTS $ENV{TENSORFLOW_ROOT}/lib ${CMAKE_PREFIX_PATH}
+        DOC "Find tensorflow framework library libtensorflow_framework.so"
+        REQUIRED
+    )
     find_library(JSONCPP_LIB
         NAMES libjsoncpp.so libjsoncpp.a 
-        PATHS /usr/local/lib $ENV{JSONCPP_ROOT}/lib
+        PATHS /usr/local/lib $ENV{JSONCPP_ROOT}/lib64 $ENV{JSONCPP_ROOT}/lib
         HINTS $ENV{JSONCPP_ROOT} ${CMAKE_PREFIX_PATH}
         DOC "Find jsoncpp library libjsoncpp.so"
         REQUIRED
@@ -258,14 +265,14 @@ if("${GMX_QMMM_PROGRAM}" STREQUAL "TENSORFLOW" OR "${GMX_QMMM_PROGRAM}" STREQUAL
     set_target_properties(libtensorflow PROPERTIES IMPORTED_LOCATION ${TENSORFLOW_LIB})
     add_library(libtensorflow_framework STATIC IMPORTED)
     set_target_properties(libtensorflow_framework PROPERTIES IMPORTED_LOCATION ${TENSORFLOW_FRAMEWORK_LIB})
-    # add_library(libjsoncpp STATIC IMPORTED)
-    # set_target_properties(libjsoncpp PROPERTIES IMPORTED_LOCATION ${JSONCPP_LIB})
+    add_library(libjsoncpp STATIC IMPORTED)
+    set_target_properties(libjsoncpp PROPERTIES IMPORTED_LOCATION ${JSONCPP_LIB})
 
     # Link TensorFlow to both libgromacs and gmx
     target_link_libraries(libgromacs PRIVATE "${TENSORFLOW_LIB}" "${JSONCPP_LIB}")
-    #target_include_directories(libgromacs PRIVATE "${TENSORFLOW_INCLUDE_DIR}")
+    target_include_directories(libgromacs PRIVATE "${TENSORFLOW_INCLUDE_DIR}")
     target_link_libraries(gmx PRIVATE "${TENSORFLOW_LIB}" "${JSONCPP_LIB}")
-    #target_include_directories(gmx PRIVATE "${TENSORFLOW_INCLUDE_DIR}")
+    target_include_directories(gmx PRIVATE "${TENSORFLOW_INCLUDE_DIR}")
 endif()
 
 if ("${GMX_QMMM_PROGRAM}" STREQUAL "PYTORCH" OR "${GMX_QMMM_PROGRAM}" STREQUAL "DFTBPLUS_PYTORCH")

@@ -59,9 +59,9 @@ void prepare_schnet_painn_inputs(   QMMM_rec* qr,
                                     QMMM_QMrec* qm,
                                     int n_active_models);
 
-void write_hdnnp_inputs_outputs(QMMM_QMrec* qm);
+void write_hdnnp_inputs_outputs(QMMM_QMrec* qm, int step);
 
-void write_schnet_painn_inputs_outputs(QMMM_QMrec* qm);
+void write_schnet_painn_inputs_outputs(QMMM_QMrec* qm, int step);
 
 void load_scaler(QMMM_QMrec* qm, char* scaler_file);
 

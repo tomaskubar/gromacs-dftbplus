@@ -90,7 +90,7 @@ void init_tensorflow(QMMM_QMrec* qm)
     int n_models; 
     if ((n_models_env = getenv("GMX_N_MODELS")) == nullptr)
     {
-        printf("Amount of models to use for adaptive sampling must be given via the env variable GMX_N_MODELS\n");
+        printf("INFO: Amount of models to use for adaptive sampling can be given via the env variable GMX_N_MODELS\n");
         n_models = 1;
         printf("Using %i model \n", n_models);
     }
@@ -103,6 +103,7 @@ void init_tensorflow(QMMM_QMrec* qm)
         }
         printf("Using %i models \n", n_models);
     }
+    qm->n_models = n_models;
     
     // Find and set network architecture, default "hdnnp"
     std::vector<std::string> implemented_network_architectures = {"hdnnp", "schnet", "painn"};
@@ -253,6 +254,8 @@ void init_tensorflow(QMMM_QMrec* qm)
         qm->scaler->use_scaler = false;
     }
 
+    fflush(stdout);
+    fflush(stderr);
     return;
 } /* init_tensorflow */
 
@@ -267,6 +270,8 @@ real call_tensorflow(   QMMM_rec*         qr,
                 gmx_wallcycle_t   wcycle)
 {
     static int step = 0;
+    static int output_freq_extxyz;
+    static FILE *f_std = nullptr; // file for saving standard deviations
 
     static float energy_prediction_std_threshold; // energy threshold deviation
     static float force_prediction_std_threshold; // force threshold deviation
@@ -301,6 +306,16 @@ real call_tensorflow(   QMMM_rec*         qr,
     if (step == 0) {
         char *env;
 
+        if (((env = getenv("GMX_NN_EXTXYZ")) != nullptr) || ((env = getenv("GMX_PYTORCH_EXTXYZ")) != nullptr))
+        {
+            output_freq_extxyz = atoi(env);
+            printf("The model inputs/outputs will be saved in file qm_mlmm.extxyz every %d steps.\n", output_freq_extxyz);
+        }
+        else
+        {
+            output_freq_extxyz = -1; // default no output
+        }
+
         // Find threshold deviation, energy threshold has priority
         if (((env = getenv("GMX_ENERGY_PREDICTION_STD_THRESHOLD")) == nullptr) && ((env = getenv("GMX_FORCE_PREDICTION_STD_THRESHOLD")) == nullptr))
         {
@@ -331,6 +346,15 @@ real call_tensorflow(   QMMM_rec*         qr,
             nn_eval_freq = 1;
             printf("Using %i as default evaluation frequency of additional models\n", nn_eval_freq);
         }
+        // Open file for standard deviations
+        if (qm->n_models > 1)
+        {
+            f_std = fopen("qm_mlmm_std.xyz", "a");
+            printf("The standard deviations of the model predictions will be saved in file qm_mlmm_std.xyz\n");
+        }
+
+        fflush(stdout);
+        fflush(stderr);
     }
 
     /* calculate the QM/MM electrostatics beforehand with Gromacs!
@@ -365,8 +389,9 @@ real call_tensorflow(   QMMM_rec*         qr,
     /* NN call itself */
     wallcycle_start(wcycle, ewcQM);
 
-    int n_models = std::stoi(getenv("GMX_N_MODELS"));
+    int n_models = qm->n_models;
     int nAtoms = qm->nrQMatoms_get();
+    int nMMAtoms = mm.nrMMatoms;
 
     // Decide how many models to use
     int n_active_models;
@@ -380,26 +405,34 @@ real call_tensorflow(   QMMM_rec*         qr,
     }
     
     // Prepare inputs
+    wallcycle_start(wcycle, ewcQM_DATA_PREP);
+    float energy_conversion;
+    float force_conversion;
+    float mm_gradient_conversion;
     if (strcmp(qm->models[0]->modelArchitecture, "hdnnp") == 0)
     {
         prepare_hdnnp_inputs(qr, qm, n_active_models);
+        energy_conversion = HARTREE2KJMOL; // Hartree to kJ/mol
+        force_conversion = HARTREE_BOHR2MD; // Hartree/Bohr to kJ/(mol*nm)
+        mm_gradient_conversion = HARTREE_BOHR2MD; // Hartree/Bohr to kJ/(mol*nm)
     }
-    if ((strcmp(qm->models[0]->modelArchitecture, "schnet") == 0) || (strcmp(qm->models[0]->modelArchitecture, "painn") == 0))
+    else if ((strcmp(qm->models[0]->modelArchitecture, "schnet") == 0) || (strcmp(qm->models[0]->modelArchitecture, "painn") == 0))
     {
         prepare_schnet_painn_inputs(qr, qm, n_active_models);
+        energy_conversion = HARTREE2KJMOL; // Hartree to kJ/mol
+        force_conversion = HARTREE_BOHR2MD; // Hartree/Bohr to kJ/(mol*nm)
+        mm_gradient_conversion = HARTREE_BOHR2MD; // Hartree/Bohr to kJ/(mol*nm)
+    }
+    else
+    {
+        printf("The network architecture %s is not implemented\n", qm->models[0]->modelArchitecture);
+        exit(-1);
     }
     
-    // Check input availability outside of preparation functions
-    for (int input_idx=0; input_idx<qm->models[0]->NumInputs; input_idx++)
-    {
-        if (qm->models[0]->InputValues[input_idx] == NULL)
-        {
-            printf("ERROR: Input %d is NULL\n", input_idx);
-            exit(-1);
-        }
-    }
+    wallcycle_stop(wcycle, ewcQM_DATA_PREP);
 
     // Run the Session
+    wallcycle_start(wcycle, ewcQM_MODEL_CALL);
     float* charge_predictions[n_active_models];
     float* energy_predictions[n_active_models];
     float* grad_predictions[n_active_models];
@@ -417,7 +450,7 @@ real call_tensorflow(   QMMM_rec*         qr,
         {
             charge_predictions[model_idx] = (float*)TF_TensorData(qm->models[model_idx]->OutputValues[0]); // in e-
             energy_predictions[model_idx] = (float*)TF_TensorData(qm->models[model_idx]->OutputValues[1]); // in Hartree
-            grad_predictions[model_idx] = (float*)TF_TensorData(qm->models[model_idx]->OutputValues[2]); // in Hartree/Bohr
+            grad_predictions[model_idx] = (float*)TF_TensorData(qm->models[model_idx]->OutputValues[2]); // in Hartree/Bohr, gradients, not forces 
         }
         else if ((strcmp(qm->models[model_idx]->modelArchitecture, "schnet") == 0) || (strcmp(qm->models[model_idx]->modelArchitecture, "painn") == 0))
         {
@@ -436,7 +469,6 @@ real call_tensorflow(   QMMM_rec*         qr,
             inverse_transform(qm, energy_predictions[model_idx], grad_predictions[model_idx]);
         }
     }
-
 
     // mean and std of charges
     float charge_means[nAtoms] = {};
@@ -513,20 +545,20 @@ real call_tensorflow(   QMMM_rec*         qr,
     /* Save the QM charges */
     for (int i=0; i<n; i++)
     {
-        qm->QMcharges_set(i, (real) charge_predictions[0][i]); // sign OK
-        //qm->QMcharges_set(i, charge_means[i]); // sign OK
+        //qm->QMcharges_set(i, (real) charge_predictions[0][i]); // Using the first model
+        qm->QMcharges_set(i, charge_means[i]); // Using the mean of all models
     }
     
-    QMenergy = energy_predictions[0][0];
-    //QMenergy = energy_mean;
+    //QMenergy = energy_predictions[0][0]; // Using the first model
+    QMenergy = energy_mean; // Using the mean of all models
 
     /* Save the gradient on the QM atoms */
     for (int i=0; i<n; i++)
     {
         for (int j=0; j<3; j++)
         {
-            QMgrad[i][j] = (real) grad_predictions[0][3*i+j]; // negative of force
-            //QMgrad[i][j] = grad_means[i][j]; // negative of force 
+            //QMgrad[i][j] = (real) grad_predictions[0][3*i+j]; // negative of force // Using the first model
+            QMgrad[i][j] = grad_means[i][j]; // negative of force  // Using the mean of all models
         }
     }
 
@@ -535,10 +567,22 @@ real call_tensorflow(   QMMM_rec*         qr,
      *    because it does not know the position and charges of individual atoms,
      *    and instead, it only obtains the external potentials induced at QM atoms.
      */
-    snew(MMgrad, mm.nrMMatoms);
+    snew(MMgrad, nMMAtoms);
     if (qm->qmmm_variant_get() == eqmmmPME)
     {
         snew(MMgrad_full, mm.nrMMatoms_full);
+    }
+
+    for (int j=0; j<nMMAtoms; j++)
+    {
+        clear_rvec(MMgrad[j]);
+    }
+    if (qm->qmmm_variant_get() == eqmmmPME)
+    {
+        for (int j=0; j<mm.nrMMatoms_full; j++)
+        {
+        clear_rvec(MMgrad_full[j]);
+        }
     }
 
     rvec *partgrad;
@@ -560,16 +604,16 @@ real call_tensorflow(   QMMM_rec*         qr,
     {
         for (int j = 0; j < DIM; j++)
         {
-            f[i][j]      = HARTREE_BOHR2MD*QMgrad[i][j];
-         // fshift[i][j] = HARTREE_BOHR2MD*QMgrad[i][j];
+            f[i][j]      = force_conversion*QMgrad[i][j];
+         // fshift[i][j] = force_conversion*QMgrad[i][j];
         }
     }
-    for (int i = 0; i < mm.nrMMatoms; i++)
+    for (int i = 0; i < nMMAtoms; i++)
     {
         for (int j = 0; j < DIM; j++)
         {
-            f[i+qm->nrQMatoms_get()][j]      = -HARTREE_BOHR2MD*MMgrad[i][j];
-         // fshift[i+qm.nrQMatoms_get()][j] = HARTREE_BOHR2MD*MMgrad[i][j];
+            f[i+qm->nrQMatoms_get()][j]      = mm_gradient_conversion*MMgrad[i][j];
+         // fshift[i+qm.nrQMatoms_get()][j] = mm_gradient_conversion*MMgrad[i][j];
         }
     }
     // for (int i = 0; i < n; i++) {
@@ -584,53 +628,77 @@ real call_tensorflow(   QMMM_rec*         qr,
         {
             for (int j = 0; j < DIM; j++)
             {
-                f[i+qm->nrQMatoms_get()+mm.nrMMatoms][j]      = HARTREE_BOHR2MD*MMgrad_full[i][j];
-             // fshift[i+qm.nrQMatoms_get()+mm.nrMMatoms][j] = HARTREE_BOHR2MD*MMgrad_full[i][j];
+                f[i+qm->nrQMatoms_get()+nMMAtoms][j]      = mm_gradient_conversion*MMgrad_full[i][j];
+             // fshift[i+qm.nrQMatoms_get()+nMMAtoms][j] = mm_gradient_conversion*MMgrad_full[i][j];
             }
         }
     }
 
-    char periodic_system[37][3]={"XX",
-        "h",                               "he",
-        "li","be","b", "c", "n", "o", "f", "ne",
-        "na","mg","al","si","p", "s", "cl","ar",
-        "k", "ca","sc","ti","v", "cr","mn","fe","co",
-        "ni","cu","zn","ga","ge","as","se","br","kr"};
-
-    if (qm->significant_structure)
-    {   
+    // Print inputs and outputs of the model every output_freq_extxyz steps
+    if ((output_freq_extxyz > 0) && (step % output_freq_extxyz == 0))
+    {
         if (std::strcmp(qm->models[0]->modelArchitecture, "hdnnp") == 0)
         {
-            write_hdnnp_inputs_outputs(qm);
+            write_hdnnp_inputs_outputs(qm, step);
         }
-        if ((std::strcmp(qm->models[0]->modelArchitecture, "schnet") == 0) || (std::strcmp(qm->models[0]->modelArchitecture, "painn") == 0))
+        else if (std::strcmp(qm->models[0]->modelArchitecture, "schnet") == 0)
         {
-            write_schnet_painn_inputs_outputs(qm);
+            write_schnet_painn_inputs_outputs(qm, step);
         }
+        else if (std::strcmp(qm->models[0]->modelArchitecture, "painn") == 0)
+        {
+            write_schnet_painn_inputs_outputs(qm, step);
+        }
+        else
+        {
+            printf("The network architecture %s is not implemented for output\n", qm->models[0]->modelArchitecture);
+              exit(-1);
+        }
+    }
 
-        FILE* f_std = nullptr; // file for saving standard deviations of significant structures
-        f_std = fopen("qm_mlmm_std.xyz", "a");
+    
+    char periodic_system[37][3]={"XX",
+        "H",                               "He",
+        "Li","Be","B", "C", "N", "O", "F", "Ne",
+        "Na","Mg","Al","Si","P", "S", "Cl","Ar",
+        "K", "Ca","Sc","Ti","V", "Cr","Mn","Fe","Co",
+        "Ni","Cu","Zn","Ga","Ge","As","Se","Br","Kr"
+    };
 
-        fprintf(f_std, "\nMeans of energy predictions step %d\n", step);
-        fprintf(f_std, "%8.4f\n", energy_mean);
 
-        fprintf(f_std, "\nStds of energy predictions step %d\n", step);
-        fprintf(f_std, "%8.4f\n", energy_std);
+    // if (qm->significant_structure)
+    // {   
+        // // Print inputs and outputs of the model at the significant structure
+    //     if (std::strcmp(qm->models[0]->modelArchitecture, "hdnnp") == 0)
+    //     {
+    //         write_hdnnp_inputs_outputs(qm);
+    //     }
+    //     if ((std::strcmp(qm->models[0]->modelArchitecture, "schnet") == 0) || (std::strcmp(qm->models[0]->modelArchitecture, "painn") == 0))
+    //     {
+    //         write_schnet_painn_inputs_outputs(qm);
+    //     }
+    // } // end significant structure
 
-        fprintf(f_std, "\nMeans of force predictions step %d\n", step);
+    // Save the means and stds of the predictions to a file
+    if (n_active_models > 1) {    
+        // Save the means
+        fprintf(f_std, "%d\n", n);
+        fprintf(f_std, "Means step %d: %8.4f\n", step, energy_mean);
+
         for (int i=0; i<n; i++) {
-            fprintf(f_std, "%-2s %4i %8.4f %8.4f %8.4f\n",
-                periodic_system[qm->atomicnumberQM_get(i)], i,
+            fprintf(f_std, "%-2s %8.4f %8.4f %8.4f\n",
+                periodic_system[qm->atomicnumberQM_get(i)],
                 grad_means[i][0], grad_means[i][1], grad_means[i][2]);
         }
         
-        fprintf(f_std, "\nStds of force predictions step %d\n", step);
+        // Save the stds
+        fprintf(f_std, "%d\n", n);   
+        fprintf(f_std, "Stds step %d: %8.4f\n", step, energy_std);
         for (int i=0; i<n; i++) {
-            fprintf(f_std, "%-2s %4i %8.4f %8.4f %8.4f\n",
-                periodic_system[qm->atomicnumberQM_get(i)], i,
+            fprintf(f_std, "%-2s %8.4f %8.4f %8.4f\n",
+                periodic_system[qm->atomicnumberQM_get(i)],
                 grad_stds[i][0], grad_stds[i][1], grad_stds[i][2]);
         }
-        fclose(f_std);
     }
 
     sfree(QMgrad);
@@ -658,7 +726,7 @@ real call_tensorflow(   QMMM_rec*         qr,
 
     step++;
 
-    return (real) QMenergy * HARTREE2KJ * AVOGADRO;
+    return (real) QMenergy * energy_conversion; // in kJ/mol
 } /* call_tensorflow */
 
 void prepare_hdnnp_inputs(  QMMM_rec* qr,
@@ -977,7 +1045,9 @@ void prepare_schnet_painn_inputs(   QMMM_rec* qr,
     (void)qr; // placeholder to avoid warning
 } // end of prepare_schnet_painn_inputs
 
-void write_hdnnp_inputs_outputs(QMMM_QMrec* qm)
+void write_hdnnp_inputs_outputs(QMMM_QMrec* qm,
+                                int step                               
+)
 {
     // Print information and save information for debugging
 
@@ -1083,24 +1153,59 @@ void write_hdnnp_inputs_outputs(QMMM_QMrec* qm)
         fprintf(f_output, "%6.6f %6.6f %6.6f\n", grad_predictions[3*i+0], grad_predictions[3*i+1], grad_predictions[3*i+2]);
     }
 
-    // // Unscale predictions, not necessary, the qm struct got changed with the scaler already due to the pointer
-    // if (qm->scaler->use_scaler)
-    // {
-    //     inverse_transform(qm, energy_predictions, grad_predictions);
+    // Write all inputs and outputs in the extended xyz format
+    float geometry_conversion = BOHR2A; // Bohr to Angstrom
+    float charge_conversion = 1.0; // e- to e-
+    float energy_conversion = AU2EV; // Hartree to eV
+    float force_conversion = AU2EV_A; // Hartree/Bohr to eV/Ang
+    float esp_conversion = AU2EV; // Hartree/e to eV/e=V
+    float esp_grad_conversion = AU2EV_A; // Hartree/e/Bohr to eV/e/Ang
+    char periodic_system[37][3]={"XX",
+        "H",                               "He",
+        "Li","Be","B", "C", "N", "O", "F", "Ne",
+        "Na","Mg","Al","Si","P", "S", "Cl","Ar",
+        "K", "Ca","Sc","Ti","V", "Cr","Mn","Fe","Co",
+        "Ni","Cu","Zn","Ga","Ge","As","Se","Br","Kr"};
+    FILE* f_extxyz = nullptr;
+    f_extxyz = fopen("qm_mlmm.extxyz", "a"); 
+    fprintf(f_extxyz, "%d\n", nAtoms);
+    fprintf(f_extxyz, "Properties=species:S:1:pos:R:3:gromacs_force:R:3:gromacs_charge:R:1:esp:R:1:esp_gradient:R:3 ");
+    fprintf(f_extxyz, "gromacs_energy=%.6f ", energy_predictions[0]*energy_conversion);
+    fprintf(f_extxyz, "total_charge=%.1f ", data_8[0]*charge_conversion);
+    fprintf(f_extxyz, "comment=\"Step %d\" ", step);
+    fprintf(f_extxyz, "pbc=\"F F F\" \n");
+    for (int i=0; i<nAtoms; i++)
+    {
+        fprintf(f_extxyz, "%-2s ", periodic_system[qm->atomicnumberQM_get(i)]);
+        fprintf(f_extxyz, "%8.4f %8.4f %8.4f ", 
+            data_2[3*i+0]*geometry_conversion, 
+            data_2[3*i+1]*geometry_conversion, 
+            data_2[3*i+2]*geometry_conversion
+        );
+        fprintf(f_extxyz, "%8.4f %8.4f %8.4f ",
+            grad_predictions[3*i+0]*force_conversion,
+            grad_predictions[3*i+1]*force_conversion,
+            grad_predictions[3*i+2]*force_conversion
+        );
+        fprintf(f_extxyz, "%8.4f ", charge_predictions[i]*charge_conversion);
+        fprintf(f_extxyz, "%8.4f ", data_9[i]*esp_conversion);
+        fprintf(f_extxyz, "%8.4f %8.4f %8.4f",
+            data_11[3*i+0]*esp_grad_conversion,
+            data_11[3*i+1]*esp_grad_conversion,
+            data_11[3*i+2]*esp_grad_conversion
+        );
+        fprintf(f_extxyz, "\n");
+    }
+    fclose(f_extxyz);
 
-    //     printf("CHECK QM Energy Unscaled = %6.3f\n", energy_predictions[0]);
-    //     fprintf(f_output, "%6.6f\n", energy_predictions[0]);
+    // Unscale predictions not necessary, the qm struct got changed with the scaler already due to the pointer
 
-    //     for (int i=0; i<nAtoms; i++)
-    //     {
-    //         printf("CHECK QM Grad Unscaled[%d] = %6.3f %6.3f %6.3f\n", i+1, grad_predictions[3*i+0], grad_predictions[3*i+1], grad_predictions[3*i+2]);
-    //         fprintf(f_output, "%6.6f %6.6f %6.6f\n", grad_predictions[3*i+0], grad_predictions[3*i+1], grad_predictions[3*i+2]);
-    //     }
-    // }
     fclose(f_output);
 }
 
-void write_schnet_painn_inputs_outputs(QMMM_QMrec* qm)
+void write_schnet_painn_inputs_outputs(QMMM_QMrec* qm,
+                                int step                               
+)
 {
     // Print information and save information for debugging
 
@@ -1158,20 +1263,30 @@ void write_schnet_painn_inputs_outputs(QMMM_QMrec* qm)
         fprintf(f_output, "%6.6f %6.6f %6.6f\n", grad_predictions[3*i+0], grad_predictions[3*i+1], grad_predictions[3*i+2]);
     }
     
-    // // Unscale predictions, not necessary, the qm struct got changed with the scaler already due to the pointer
-    // if (qm->scaler->use_scaler)
-    // {
-    //     inverse_transform(qm, energy_predictions, grad_predictions);
+    // Write all inputs and outputs in the extended xyz format
+    char periodic_system[37][3]={"XX",
+        "H",                               "He",
+        "Li","Be","B", "C", "N", "O", "F", "Ne",
+        "Na","Mg","Al","Si","P", "S", "Cl","Ar",
+        "K", "Ca","Sc","Ti","V", "Cr","Mn","Fe","Co",
+        "Ni","Cu","Zn","Ga","Ge","As","Se","Br","Kr"};
+    FILE* f_extxyz = nullptr;
+    f_extxyz = fopen("qm_mlmm.extxyz", "a"); 
+    fprintf(f_extxyz, "%d\n", nAtoms);
+    fprintf(f_extxyz, "Properties=species:S:1:pos:R:3:gromacs_force:R:3::esp:R:1:esp_gradient:R:3 ");
+    fprintf(f_extxyz, "gromacs_energy=%.6f ", energy_predictions[0]);
+    fprintf(f_extxyz, "comment=\"Step %d\" ", step);
+    fprintf(f_extxyz, "pbc=\"F F F\" \n");
+    for (int i=0; i<nAtoms; i++)
+    {
+        fprintf(f_extxyz, "%-2s ", periodic_system[qm->atomicnumberQM_get(i)]);
+        fprintf(f_extxyz, "%8.4f %8.4f %8.4f ", data_2[3*i+0], data_2[3*i+1], data_2[3*i+2]);
+        fprintf(f_extxyz, "%8.4f %8.4f %8.4f ", grad_predictions[3*i+0], grad_predictions[3*i+1], grad_predictions[3*i+2]);
+        fprintf(f_extxyz, "\n");
+    }
 
-    //     printf("CHECK QM Energy Unscaled = %6.3f\n", energy_predictions[0]);
-    //     fprintf(f_output, "%6.6f\n", energy_predictions[0]);
+    // Unscale predictions not necessary, the qm struct got changed with the scaler already due to the pointer
 
-    //     for (int i=0; i<nAtoms; i++)
-    //     {
-    //         printf("CHECK QM Grad Unscaled[%d] = %6.3f %6.3f %6.3f\n", i+1, grad_predictions[3*i+0], grad_predictions[3*i+1], grad_predictions[3*i+2]);
-    //         fprintf(f_output, "%6.6f %6.6f %6.6f\n", grad_predictions[3*i+0], grad_predictions[3*i+1], grad_predictions[3*i+2]);
-    //     }
-    // }
     fclose(f_output);
 } // end of write_schnet_painn_inputs_outputs
 

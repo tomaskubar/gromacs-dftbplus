@@ -99,20 +99,24 @@
 #define FIELDFAC (FARADAY / KILO)
 
 /* to convert AU to MD units: */
-#define HARTREE2KJ ((2.0 * RYDBERG * PLANCK * SPEED_OF_LIGHT) / AVOGADRO) // I dont trust this. Too large for float?
+#define HARTREE2KJ ((2.0 * RYDBERG * PLANCK * SPEED_OF_LIGHT) / AVOGADRO) // Not kJ/mol, but kJ
+#define HARTREE2KJMOL (HARTREE2KJ * AVOGADRO) /* in kJ/mol */
 #define BOHR2NM (0.0529177210903) /* nm^-1, NIST 2018 CODATA */
-#define HARTREE_BOHR2MD (HARTREE2KJ * AVOGADRO / BOHR2NM)
+#define HARTREE_BOHR2MD (HARTREE2KJMOL / BOHR2NM)
 
 /* to convert kcal/mol based energy and force to MD units */
 #define KCAL2KJ (4.184) /* kcal to kJ*/
 #define KCAL_A2MD (KCAL2KJ / A2NM) /* kcal/mol/A to MD units */
 
 /* to convert electron volt units to MD units*/
-#define EV2KJ ELECTRONVOLT
+#define EV2KJMOL ELECTRONVOLT 
 #define EV_A2MD (ELECTRONVOLT / A2NM)
 #define AU2EV (27.211386245988) /* 1 Hartree in eV*/
 #define EV2AU (1/AU2EV) /* 1 eV in Hartree */
-#define V2AU EV2AU;
+#define EV_A2AU (EV2AU * 1/A2BOHR) /* eV/A to Hartree/Bohr */
+#define AU2EV_A 1/EV_A2AU /* Hartree/Bohr to eV/A */
+#define V2AU EV2AU; /* Volt to Hartree/e */
+#define AU2V 1/V2AU /* Hartree/e to Volt */
 
 /* The four basic units */
 #define unit_length "nm"

@@ -261,7 +261,7 @@ real call_pytorch(QMMM_rec*       qr,
     if (step == 0) {
         char *env;
 
-        if ((env = getenv("GMX_PYTORCH_EXTXYZ")) != nullptr)
+        if (((env = getenv("GMX_NN_EXTXYZ")) != nullptr) || ((env = getenv("GMX_PYTORCH_EXTXYZ")) != nullptr))
         {
             output_freq_extxyz = atoi(env);
             printf("The model inputs/outputs will be saved in file qm_mlmm.extxyz every %d steps.\n", output_freq_extxyz);
@@ -376,7 +376,7 @@ real call_pytorch(QMMM_rec*       qr,
     {
         prepare_base_mace_inputs(qm, input_dict);
         prepare_maceqeq_inputs(qr, qm, input_dict);
-        energy_conversion = EV2KJ; // from eV to kJ/mol
+        energy_conversion = EV2KJMOL; // from eV to kJ/mol
         force_conversion = EV_A2MD; // from eV/A to kJ/mol/nm
         mm_gradient_conversion = HARTREE_BOHR2MD; // from Hartree/Bohr to kJ/mol/nm
     }
@@ -553,17 +553,17 @@ real call_pytorch(QMMM_rec*       qr,
         snew(MMgrad_full, mm.nrMMatoms_full);
     }
 
-        for (int j=0; j<mm.nrMMatoms; j++)
+    for (int j=0; j<mm.nrMMatoms; j++)
+    {
+        clear_rvec(MMgrad[j]);
+    }
+    if (qm->qmmm_variant_get() == eqmmmPME)
+    {
+        for (int j=0; j<mm.nrMMatoms_full; j++)
         {
-            clear_rvec(MMgrad[j]);
+        clear_rvec(MMgrad_full[j]);
         }
-        if (qm->qmmm_variant_get() == eqmmmPME)
-        {
-          for (int j=0; j<mm.nrMMatoms_full; j++)
-          {
-            clear_rvec(MMgrad_full[j]);
-          }
-        }
+    }
 
     if ((strcmp(qm->models[0]->modelArchitecture, "mace") == 0) || (strcmp(qm->models[0]->modelArchitecture, "maceqeq") == 0))
     {
@@ -1402,10 +1402,10 @@ void write_amp_inputs_outputs(QMMM_QMrec* qm,
     torch::Tensor quadrupole_predictions_tensor = output_dict.at("quadrupoles").cpu()[0] ; // in ev/Angstrom^2
     torch::Tensor mm_gradients_tensor = output_dict.at("mm_gradients").cpu()[0] ; // from kJ/mol/Angstrom to H/B
     
-    float energy_conversion = 1/EV2KJ; // kJ/mol to eV
+    float energy_conversion = 1/EV2KJMOL; // kJ/mol to eV
     float dipole_conversion = 1/0.2081943; // e*Angstrom to Debye
     float quadrupole_conversion = A2BOHR*A2BOHR; // e*Angstrom^2 to e*Bohr^2
-    float force_conversion_extxyz = (1/EV2KJ) / 1; // kJ/mol/Angstrom to eV/Angstrom
+    float force_conversion_extxyz = (1/EV2KJMOL) / 1; // kJ/mol/Angstrom to eV/Angstrom
     float force_conversion_pcgrad =  0.00038088 / A2BOHR; // kJ/mol/Angstrom to Hartree/Bohr
 
     float energy_predictions = energy_predictions_tensor[0].item<float>();

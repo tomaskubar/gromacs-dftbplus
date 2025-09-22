@@ -247,6 +247,7 @@ public:
     DftbPlus        *dpcalc;        // DFTB+ calculator
     Context         *dftbContext;   // some data for DFTB+, referenced to by DFTB through *dpcalc
     #if GMX_QMMM_TENSORFLOW or GMX_QMMM_DFTBPLUS_TENSORFLOW
+    int n_models;
     TFModel*         models[10];
     EnergyForceExtensiveLabelScaler* scaler;
     #endif
