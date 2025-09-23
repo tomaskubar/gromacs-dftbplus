@@ -105,8 +105,8 @@ void init_tensorflow(QMMM_QMrec* qm)
     }
     qm->n_models = n_models;
     
-    // Find and set network architecture, default "hdnnp"
-    std::vector<std::string> implemented_network_architectures = {"hdnnp", "schnet", "painn"};
+    // Find and set network architecture, default "hdnnp4th"
+    std::vector<std::string> implemented_network_architectures = {"hdnnp2nd", "hdnnp4th", "schnet", "painn"};
     std::string network_architecture;
     char* env;
     if ((env = getenv("GMX_NN_ARCHITECTURE")) != nullptr)
@@ -126,7 +126,7 @@ void init_tensorflow(QMMM_QMrec* qm)
     }
     else
     {
-        network_architecture = "hdnnp";
+        network_architecture = "hdnnp4th";
         printf("Using %s as default network architecture\n", network_architecture.c_str());
     }
 
@@ -150,12 +150,17 @@ void init_tensorflow(QMMM_QMrec* qm)
     // Architecture differences
     int NumInputs;
     int NumOutputs;
-    if (network_architecture == "hdnnp")
+    if (network_architecture == "hdnnp2nd")
+    {
+        NumInputs = 8;
+        NumOutputs = 2; // energy, force
+    }
+    else if (network_architecture == "hdnnp4th")
     {
         NumInputs = 13;
         NumOutputs = 3; // charge, energy, force
     }
-    if ((network_architecture == "schnet") || (network_architecture == "painn"))
+    else if ((network_architecture == "schnet") || (network_architecture == "painn"))
     {
         NumInputs = 6;
         NumOutputs = 2; // energy, force
@@ -409,9 +414,16 @@ real call_tensorflow(   QMMM_rec*         qr,
     float energy_conversion;
     float force_conversion;
     float mm_gradient_conversion;
-    if (strcmp(qm->models[0]->modelArchitecture, "hdnnp") == 0)
+    if (strcmp(qm->models[0]->modelArchitecture, "hdnnp2nd") == 0)
     {
-        prepare_hdnnp_inputs(qr, qm, n_active_models);
+        prepare_hdnnp2nd_inputs(qr, qm, n_active_models);
+        energy_conversion = HARTREE2KJMOL; // Hartree to kJ/mol
+        force_conversion = HARTREE_BOHR2MD; // Hartree/Bohr to kJ/(mol*nm)
+        mm_gradient_conversion = HARTREE_BOHR2MD; // Hartree/Bohr to kJ/(mol*nm)
+    }
+    else if (strcmp(qm->models[0]->modelArchitecture, "hdnnp4th") == 0)
+    {
+        prepare_hdnnp4th_inputs(qr, qm, n_active_models);
         energy_conversion = HARTREE2KJMOL; // Hartree to kJ/mol
         force_conversion = HARTREE_BOHR2MD; // Hartree/Bohr to kJ/(mol*nm)
         mm_gradient_conversion = HARTREE_BOHR2MD; // Hartree/Bohr to kJ/(mol*nm)
@@ -446,13 +458,17 @@ real call_tensorflow(   QMMM_rec*         qr,
         printf("%s",TF_Message(qm->models[model_idx]->Status));
         }
 
-        if (strcmp(qm->models[model_idx]->modelArchitecture, "hdnnp") == 0)
+        if (strcmp(qm->models[model_idx]->modelArchitecture, "hdnnp4th") == 0)
         {
             charge_predictions[model_idx] = (float*)TF_TensorData(qm->models[model_idx]->OutputValues[0]); // in e-
             energy_predictions[model_idx] = (float*)TF_TensorData(qm->models[model_idx]->OutputValues[1]); // in Hartree
             grad_predictions[model_idx] = (float*)TF_TensorData(qm->models[model_idx]->OutputValues[2]); // in Hartree/Bohr, gradients, not forces 
         }
-        else if ((strcmp(qm->models[model_idx]->modelArchitecture, "schnet") == 0) || (strcmp(qm->models[model_idx]->modelArchitecture, "painn") == 0))
+        else if (
+        (strcmp(qm->models[model_idx]->modelArchitecture, "hdnnp2nd") == 0) ||
+        (strcmp(qm->models[model_idx]->modelArchitecture, "schnet") == 0) || 
+        (strcmp(qm->models[model_idx]->modelArchitecture, "painn") == 0)
+        )
         {
             float charges[nAtoms] = {};
             for (int at_idx=0; at_idx<nAtoms; at_idx++) {
@@ -461,6 +477,11 @@ real call_tensorflow(   QMMM_rec*         qr,
             charge_predictions[model_idx] = (float*)charges;
             energy_predictions[model_idx] = (float*)TF_TensorData(qm->models[model_idx]->OutputValues[0]); // in Hartree
             grad_predictions[model_idx] = (float*)TF_TensorData(qm->models[model_idx]->OutputValues[1]); // in Hartree/Bohr
+        }
+        else
+        {
+            printf("The network architecture %s is not implemented\n", qm->models[model_idx]->modelArchitecture);
+            exit(-1);
         }
 
         // Unscale predictions
@@ -637,23 +658,7 @@ real call_tensorflow(   QMMM_rec*         qr,
     // Print inputs and outputs of the model every output_freq_extxyz steps
     if ((output_freq_extxyz > 0) && (step % output_freq_extxyz == 0))
     {
-        if (std::strcmp(qm->models[0]->modelArchitecture, "hdnnp") == 0)
-        {
-            write_hdnnp_inputs_outputs(qm, step);
-        }
-        else if (std::strcmp(qm->models[0]->modelArchitecture, "schnet") == 0)
-        {
-            write_schnet_painn_inputs_outputs(qm, step);
-        }
-        else if (std::strcmp(qm->models[0]->modelArchitecture, "painn") == 0)
-        {
-            write_schnet_painn_inputs_outputs(qm, step);
-        }
-        else
-        {
-            printf("The network architecture %s is not implemented for output\n", qm->models[0]->modelArchitecture);
-              exit(-1);
-        }
+        write_inputs_outputs(qm, step);
     }
 
     
@@ -666,18 +671,10 @@ real call_tensorflow(   QMMM_rec*         qr,
     };
 
 
-    // if (qm->significant_structure)
-    // {   
-        // // Print inputs and outputs of the model at the significant structure
-    //     if (std::strcmp(qm->models[0]->modelArchitecture, "hdnnp") == 0)
-    //     {
-    //         write_hdnnp_inputs_outputs(qm);
-    //     }
-    //     if ((std::strcmp(qm->models[0]->modelArchitecture, "schnet") == 0) || (std::strcmp(qm->models[0]->modelArchitecture, "painn") == 0))
-    //     {
-    //         write_schnet_painn_inputs_outputs(qm);
-    //     }
-    // } // end significant structure
+    if (qm->significant_structure)
+    {   
+        write_inputs_outputs(qm, step);
+    }
 
     // Save the means and stds of the predictions to a file
     if (n_active_models > 1) {    
@@ -729,7 +726,7 @@ real call_tensorflow(   QMMM_rec*         qr,
     return (real) QMenergy * energy_conversion; // in kJ/mol
 } /* call_tensorflow */
 
-void prepare_hdnnp_inputs(  QMMM_rec* qr,
+void prepare_hdnnp2nd_inputs(QMMM_rec* qr,
                             QMMM_QMrec* qm,
                             int n_active_models)
 {
@@ -864,6 +861,27 @@ void prepare_hdnnp_inputs(  QMMM_rec* qr,
         qm->models[model_idx]->InputValues[7] = TF_NewTensor(TF_INT64, dims_7, ndims_7, data_7, ndata_7, &NoOpDeallocator, nullptr);
     }
 
+
+    // Check input availability
+    if (std::strcmp(qm->models[0]->modelArchitecture, "hdnnp2nd") == 0) {
+        for (int input_idx=0; input_idx<qm->models[0]->NumInputs; input_idx++) {
+            if (qm->models[0]->InputValues[input_idx] == NULL)
+            {
+                printf("ERROR: Input %d is NULL\n", input_idx);
+                exit(-1);
+            }
+        }
+    }
+} // end of prepare_hdnnp2nd_inputs
+
+void prepare_hdnnp4th_inputs(QMMM_rec* qr,
+                            QMMM_QMrec* qm,
+                            int n_active_models)
+{
+    prepare_hdnnp2nd_inputs(qr, qm, n_active_models); // First prepare the inputs of hdnnp2nd
+
+    int nAtoms = qm->nrQMatoms_get();
+
     // total charge 8
     int ndims_8 = 1;
     int64_t dims_8[] = {1};
@@ -874,14 +892,13 @@ void prepare_hdnnp_inputs(  QMMM_rec* qr,
     }
 
     // esp flat values 9
-    float V_to_au = 1/27.211386245988;
     int ndims_9 = 1;
     int64_t dims_9[] = {nAtoms};
     float* data_9;
     snew(data_9, nAtoms);
     for (int i=0; i<nAtoms; i++)
     {
-        data_9[i] = qm->pot_qmmm_get(i)*V_to_au; // in atomic units
+        data_9[i] = qm->pot_qmmm_get(i)*V2AU; // from volt to atomic units
     }
     int ndata_9 = sizeof(*data_9)*nAtoms; 
     for (int model_idx=0; model_idx<n_active_models; model_idx++) {
@@ -938,7 +955,6 @@ void prepare_hdnnp_inputs(  QMMM_rec* qr,
             exit(-1);
         }
     }
-
 } // end of prepare_hdnnp_inputs
 
 
@@ -1045,15 +1061,13 @@ void prepare_schnet_painn_inputs(   QMMM_rec* qr,
     (void)qr; // placeholder to avoid warning
 } // end of prepare_schnet_painn_inputs
 
-void write_hdnnp_inputs_outputs(QMMM_QMrec* qm,
-                                int step                               
+void write_schnet_painn_inputs(QMMM_QMrec* qm                            
 )
 {
     // Print information and save information for debugging
 
     int nAtoms = qm->nrQMatoms_get();
     int nEdgeCombinations = nAtoms*(nAtoms-1);
-    int nAngleCombinations = nAtoms*(nAtoms-1)*(nAtoms-2);
 
     // node number flat values 0
     FILE* f_input_0 = nullptr;
@@ -1090,6 +1104,16 @@ void write_hdnnp_inputs_outputs(QMMM_QMrec* qm,
         fprintf(f_input_4, "%ld %ld\n", data_4[2*i+0], data_4[2*i+1]);
     }
     fclose(f_input_4);
+} // end of write_schnet_painn_inputs
+
+void write_hdnnp2nd_inputs(QMMM_QMrec* qm)
+{
+    // Print information and save information for debugging
+
+    int nAtoms = qm->nrQMatoms_get();
+    int nAngleCombinations = nAtoms*(nAtoms-1)*(nAtoms-2);
+
+    write_schnet_painn_inputs(qm); // write inputs 0,2,4
 
     // angle indces flat values 6
     FILE* f_input_6 = nullptr;
@@ -1100,6 +1124,13 @@ void write_hdnnp_inputs_outputs(QMMM_QMrec* qm,
         fprintf(f_input_6, "%ld %ld %ld\n", data_6[3*i+0], data_6[3*i+1],  data_6[3*i+2]);
     }
     fclose(f_input_6);
+} // end of write_hdnnp2nd_inputs
+
+void write_hdnnp4th_inputs(QMMM_QMrec* qm)
+{
+    write_hdnnp2nd_inputs(qm); // write inputs 0,2,4,6
+
+    int nAtoms = qm->nrQMatoms_get();
 
     // total charge 8
     FILE* f_input_8 = nullptr;
@@ -1130,7 +1161,34 @@ void write_hdnnp_inputs_outputs(QMMM_QMrec* qm,
         fprintf(f_input_11, "%6.6f %6.6f %6.6f\n", data_11[3*i+0], data_11[3*i+1], data_11[3*i+2]);
     }
     fclose(f_input_11);
+}
 
+void write_base_outputs(QMMM_QMrec* qm)
+{
+    // Print and save only energy and forces
+    int nAtoms = qm->nrQMatoms_get();
+
+    float* energy_predictions = (float*)TF_TensorData(qm->models[0]->OutputValues[0]); // in Hartree
+    float* grad_predictions = (float*)TF_TensorData(qm->models[0]->OutputValues[1]); // in Hartree/Bohr
+
+    FILE* f_output = nullptr;
+    f_output = fopen("output.txt", "w");
+
+    printf("CHECK QM Energy = %6.3f\n", energy_predictions[0]);
+    fprintf(f_output, "%6.6f\n", energy_predictions[0]);
+
+    for (int i=0; i<nAtoms; i++)
+    {
+        printf("CHECK QM Grad[%d] = %6.3f %6.3f %6.3f\n", i+1, grad_predictions[3*i+0], grad_predictions[3*i+1], grad_predictions[3*i+2]);
+        fprintf(f_output, "%6.6f %6.6f %6.6f\n", grad_predictions[3*i+0], grad_predictions[3*i+1], grad_predictions[3*i+2]);
+    }
+    fclose(f_output);
+} // end of write_base_outputs
+
+void write_extended_outputs(QMMM_QMrec* qm)
+{
+    // Print and save energy, forces, charges
+    int nAtoms = qm->nrQMatoms_get();
 
     float* charge_predictions = (float*)TF_TensorData(qm->models[0]->OutputValues[0]); // in e-
     float* energy_predictions = (float*)TF_TensorData(qm->models[0]->OutputValues[1]); // in Hartree
@@ -1152,12 +1210,19 @@ void write_hdnnp_inputs_outputs(QMMM_QMrec* qm,
         printf("CHECK QM Grad[%d] = %6.3f %6.3f %6.3f\n", i+1, grad_predictions[3*i+0], grad_predictions[3*i+1], grad_predictions[3*i+2]);
         fprintf(f_output, "%6.6f %6.6f %6.6f\n", grad_predictions[3*i+0], grad_predictions[3*i+1], grad_predictions[3*i+2]);
     }
+    fclose(f_output);
+} // end of write_extended_outputs
 
+void write_extxyz(
+    QMMM_QMrec* qm,
+    int step
+)
+{
     // Write all inputs and outputs in the extended xyz format
     float geometry_conversion = BOHR2A; // Bohr to Angstrom
     float charge_conversion = 1.0; // e- to e-
     float energy_conversion = AU2EV; // Hartree to eV
-    float force_conversion = AU2EV_A; // Hartree/Bohr to eV/Ang
+    float force_conversion = AU2EV_A*-1; // Hartree/Bohr to eV/Ang, inverse sign to get physical forces
     float esp_conversion = AU2EV; // Hartree/e to eV/e=V
     float esp_grad_conversion = AU2EV_A; // Hartree/e/Bohr to eV/e/Ang
     char periodic_system[37][3]={"XX",
@@ -1166,12 +1231,47 @@ void write_hdnnp_inputs_outputs(QMMM_QMrec* qm,
         "Na","Mg","Al","Si","P", "S", "Cl","Ar",
         "K", "Ca","Sc","Ti","V", "Cr","Mn","Fe","Co",
         "Ni","Cu","Zn","Ga","Ge","As","Se","Br","Kr"};
+
+    bool is_hdnnp4th = false;
+    if (std::strcmp(qm->models[0]->modelArchitecture, "hdnnp4th") == 0)
+    {
+        is_hdnnp4th = true;
+    }
+
+    int nAtoms = qm->nrQMatoms_get();
+    float* data_2 = (float*)(TF_TensorData(qm->models[0]->InputValues[2]));
+    float* data_8 = nullptr;
+    float* data_9 = nullptr;
+    float* data_11 = nullptr;
+    float* charge_predictions = nullptr;
+    float* energy_predictions = nullptr;
+    float* grad_predictions = nullptr;
+
+    if (!is_hdnnp4th)
+    {
+        energy_predictions = (float*)TF_TensorData(qm->models[0]->OutputValues[0]); // in Hartree
+        grad_predictions = (float*)TF_TensorData(qm->models[0]->OutputValues[1]); // in Hartree/Bohr        
+    }
+    else {
+        data_8 = (float*)(TF_TensorData(qm->models[0]->InputValues[8]));
+        data_9 = (float*)(TF_TensorData(qm->models[0]->InputValues[9]));
+        data_11 = (float*)(TF_TensorData(qm->models[0]->InputValues[11]));
+        charge_predictions = (float*)TF_TensorData(qm->models[0]->OutputValues[0]); // in e-
+        energy_predictions = (float*)TF_TensorData(qm->models[0]->OutputValues[1]); // in Hartree
+        grad_predictions = (float*)TF_TensorData(qm->models[0]->OutputValues[2]); // in Hartree/Bohr
+    }
+
     FILE* f_extxyz = nullptr;
     f_extxyz = fopen("qm_mlmm.extxyz", "a"); 
     fprintf(f_extxyz, "%d\n", nAtoms);
-    fprintf(f_extxyz, "Properties=species:S:1:pos:R:3:gromacs_force:R:3:gromacs_charge:R:1:esp:R:1:esp_gradient:R:3 ");
+    if (!is_hdnnp4th) {
+        fprintf(f_extxyz, "Properties=species:S:1:pos:R:3:gromacs_force:R:3 ");
+    }
+    else {
+        fprintf(f_extxyz, "Properties=species:S:1:pos:R:3:gromacs_force:R:3:gromacs_charge:R:1:esp:R:1:esp_gradient:R:3 ");
+        fprintf(f_extxyz, "total_charge=%.1f ", data_8[0]*charge_conversion);
+    }
     fprintf(f_extxyz, "gromacs_energy=%.6f ", energy_predictions[0]*energy_conversion);
-    fprintf(f_extxyz, "total_charge=%.1f ", data_8[0]*charge_conversion);
     fprintf(f_extxyz, "comment=\"Step %d\" ", step);
     fprintf(f_extxyz, "pbc=\"F F F\" \n");
     for (int i=0; i<nAtoms; i++)
@@ -1187,6 +1287,11 @@ void write_hdnnp_inputs_outputs(QMMM_QMrec* qm,
             grad_predictions[3*i+1]*force_conversion,
             grad_predictions[3*i+2]*force_conversion
         );
+        if (!is_hdnnp4th) {
+            fprintf(f_extxyz, "\n");
+            continue;
+        }
+        // hdnnp4th additional properties
         fprintf(f_extxyz, "%8.4f ", charge_predictions[i]*charge_conversion);
         fprintf(f_extxyz, "%8.4f ", data_9[i]*esp_conversion);
         fprintf(f_extxyz, "%8.4f %8.4f %8.4f",
@@ -1199,96 +1304,34 @@ void write_hdnnp_inputs_outputs(QMMM_QMrec* qm,
     fclose(f_extxyz);
 
     // Unscale predictions not necessary, the qm struct got changed with the scaler already due to the pointer
-
-    fclose(f_output);
 }
 
-void write_schnet_painn_inputs_outputs(QMMM_QMrec* qm,
+void write_inputs_outputs(QMMM_QMrec* qm,
                                 int step                               
 )
 {
-    // Print information and save information for debugging
-
-    int nAtoms = qm->nrQMatoms_get();
-    int nEdgeCombinations = nAtoms*(nAtoms-1);
-
-    // node number flat values 0
-    FILE* f_input_0 = nullptr;
-    f_input_0 = fopen("input_00.txt", "w");
-    int64_t* data_0 = (int64_t*)(TF_TensorData(qm->models[0]->InputValues[0]));
-    for (int i=0; i<nAtoms; i++)
-    {
-        printf("CHECK Atomic numbers %d %ld\n", i, data_0[i]);
-        fprintf(f_input_0, "%ld\n", data_0[i]);
-    }
-    fclose(f_input_0);
-
-    // node coordinates flat values 2
-    FILE* f_input_2 = nullptr;
-    f_input_2 = fopen("input_02.txt", "w");
-    float* data_2 = (float*)(TF_TensorData(qm->models[0]->InputValues[2]));
-    for (int i=0; i<nAtoms; i++)
-    {
-        printf("CHECK COORD QM Bohr[%d] = %6.3f %6.3f %6.3f\n", i+1, data_2[3*i+0], data_2[3*i+1], data_2[3*i+2]);
-        fprintf(f_input_2, "%6.6f %6.6f %6.6f\n", data_2[3*i+0], data_2[3*i+1], data_2[3*i+2]);
-    }
-    for (int i=0; i<nAtoms; i++)
-    {
-        printf("CHECK COORD QM MD units[%d] = %6.3f %6.3f %6.3f\n", i+1, BOHR2NM*data_2[3*i+0], BOHR2NM*data_2[3*i+1], BOHR2NM*data_2[3*i+2]);
-    }
-    fclose(f_input_2);
-
-    // edge indices flat values 4
-    FILE* f_input_4 = nullptr;
-    f_input_4 = fopen("input_04.txt", "w");
-    int64_t* data_4 = (int64_t*)(TF_TensorData(qm->models[0]->InputValues[4]));
-    for (int i=0; i<nEdgeCombinations; i++)
-    {
-        fprintf(f_input_4, "%ld %ld\n", data_4[2*i+0], data_4[2*i+1]);
-    }
-    fclose(f_input_4);
-
-    float* energy_predictions = (float*)TF_TensorData(qm->models[0]->OutputValues[0]); // in Hartree
-    float* grad_predictions = (float*)TF_TensorData(qm->models[0]->OutputValues[1]); // in Hartree/Bohr
-
-    FILE* f_output = nullptr;
-    f_output = fopen("output.txt", "w");
-
-    printf("CHECK QM Energy = %6.3f\n", energy_predictions[0]);
-    fprintf(f_output, "%6.6f\n", energy_predictions[0]);
-
-    for (int i=0; i<nAtoms; i++)
-    {
-        printf("CHECK QM Grad [%d] = %6.3f %6.3f %6.3f\n", i+1, grad_predictions[3*i+0], grad_predictions[3*i+1], grad_predictions[3*i+2]);
-        fprintf(f_output, "%6.6f %6.6f %6.6f\n", grad_predictions[3*i+0], grad_predictions[3*i+1], grad_predictions[3*i+2]);
-    }
-    
-    // Write all inputs and outputs in the extended xyz format
-    char periodic_system[37][3]={"XX",
-        "H",                               "He",
-        "Li","Be","B", "C", "N", "O", "F", "Ne",
-        "Na","Mg","Al","Si","P", "S", "Cl","Ar",
-        "K", "Ca","Sc","Ti","V", "Cr","Mn","Fe","Co",
-        "Ni","Cu","Zn","Ga","Ge","As","Se","Br","Kr"};
-    FILE* f_extxyz = nullptr;
-    f_extxyz = fopen("qm_mlmm.extxyz", "a"); 
-    fprintf(f_extxyz, "%d\n", nAtoms);
-    fprintf(f_extxyz, "Properties=species:S:1:pos:R:3:gromacs_force:R:3::esp:R:1:esp_gradient:R:3 ");
-    fprintf(f_extxyz, "gromacs_energy=%.6f ", energy_predictions[0]);
-    fprintf(f_extxyz, "comment=\"Step %d\" ", step);
-    fprintf(f_extxyz, "pbc=\"F F F\" \n");
-    for (int i=0; i<nAtoms; i++)
-    {
-        fprintf(f_extxyz, "%-2s ", periodic_system[qm->atomicnumberQM_get(i)]);
-        fprintf(f_extxyz, "%8.4f %8.4f %8.4f ", data_2[3*i+0], data_2[3*i+1], data_2[3*i+2]);
-        fprintf(f_extxyz, "%8.4f %8.4f %8.4f ", grad_predictions[3*i+0], grad_predictions[3*i+1], grad_predictions[3*i+2]);
-        fprintf(f_extxyz, "\n");
-    }
-
-    // Unscale predictions not necessary, the qm struct got changed with the scaler already due to the pointer
-
-    fclose(f_output);
-} // end of write_schnet_painn_inputs_outputs
+    // if (strcmp(qm->models[0]->modelArchitecture, "hdnnp2nd") == 0)
+    // {
+    //     write_hdnnp2nd_inputs(qm);
+    //     write_base_outputs(qm);
+    // }
+    // else if (strcmp(qm->models[0]->modelArchitecture, "hdnnp4th") == 0)
+    // {
+    //     write_hdnnp4th_inputs(qm);
+    //     write_extended_outputs(qm);
+    // }
+    // else if ((strcmp(qm->models[0]->modelArchitecture, "schnet") == 0) || (strcmp(qm->models[0]->modelArchitecture, "painn") == 0))
+    // {
+    //     write_schnet_painn_inputs(qm);
+    //     write_base_outputs(qm);
+    // }
+    // else
+    // {
+    //     printf("ERROR: Unknown model architecture %s\n", qm->models[0]->modelArchitecture);
+    //     exit(-1);
+    // }
+    write_extxyz(qm, step);
+} // end of write_inputs_outputs
 
 void load_scaler(QMMM_QMrec* qm, char* scaler_file)
 {

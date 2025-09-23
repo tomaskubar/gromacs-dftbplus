@@ -51,7 +51,11 @@ real call_tensorflow(QMMM_rec*          qr,
               t_nrnb*           nrnb,
               gmx_wallcycle_t   wcycle);
 
-void prepare_hdnnp_inputs(  QMMM_rec* qr,
+void prepare_hdnnp2nd_inputs(  QMMM_rec* qr,
+                            QMMM_QMrec* qm,
+                            int n_active_models);
+
+void prepare_hdnnp4th_inputs(  QMMM_rec* qr,
                             QMMM_QMrec* qm,
                             int n_active_models);
 
@@ -59,9 +63,13 @@ void prepare_schnet_painn_inputs(   QMMM_rec* qr,
                                     QMMM_QMrec* qm,
                                     int n_active_models);
 
-void write_hdnnp_inputs_outputs(QMMM_QMrec* qm, int step);
-
-void write_schnet_painn_inputs_outputs(QMMM_QMrec* qm, int step);
+void write_hdnnp2nd_inputs(QMMM_QMrec* qm);
+void write_hdnnp4th_inputs(QMMM_QMrec* qm);
+void write_schnet_painn_inputs(QMMM_QMrec* qm);
+void write_base_outputs(QMMM_QMrec* qm);
+void write_extended_outputs(QMMM_QMrec* qm);
+void write_extxyz(QMMM_QMrec* qm, int step);
+void write_inputs_outputs(QMMM_QMrec* qm, int step);
 
 void load_scaler(QMMM_QMrec* qm, char* scaler_file);
 
