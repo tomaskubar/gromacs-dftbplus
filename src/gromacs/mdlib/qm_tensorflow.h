@@ -39,6 +39,7 @@
 #define GMX_MDLIB_QM_NN_H
 
 void NoOpDeallocator(void* data, size_t a, void* b);
+void SFreeDeallocator(void* data, size_t a, void* b);
 
 void init_tensorflow(QMMM_QMrec*       qm);
 
