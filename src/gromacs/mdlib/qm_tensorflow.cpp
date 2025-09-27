@@ -266,8 +266,8 @@ void init_tensorflow(QMMM_QMrec* qm)
 
 void NoOpDeallocator(void* data, size_t a, void* b) {(void)b; if (a > 0) {(void)data;}} //Nonsense Deallocator to make compiler happy
 void SFreeDeallocator(void* data, size_t a, void* b) {
-    int model_idx = (intptr_t)b;  // Convert pointer value to int directly
-    if ((a > 0) && data != nullptr && model_idx == 0) { // Free only once
+    bool is_last_model = (bool)(intptr_t)b;  // Convert pointer value to bool
+    if ((a > 0) && data != nullptr && is_last_model) { // Free only for last model
         sfree(data);
     }
 } //sfree memory after TF_DeleteTensor
@@ -751,18 +751,12 @@ void prepare_hdnnp2nd_inputs(QMMM_rec* qr,
         data_0[i] = qm->atomicnumberQM_get(i);
     }
     int ndata_0 = nAtoms * sizeof(*data_0);
-    for (int model_idx=0; model_idx<n_active_models; model_idx++) {
-        qm->models[model_idx]->InputValues[0] = TF_NewTensor(TF_INT64, dims_0, ndims_0, data_0, ndata_0, &SFreeDeallocator, (void*)(intptr_t)model_idx);
-    }
 
     // node number row splits 1
     int ndims_1 = 1;
     int64_t dims_1[] = {2};
     static int64_t data_1[2] = {0, nAtoms};
     int ndata_1 = sizeof(data_1);
-    for (int model_idx=0; model_idx<n_active_models; model_idx++) {
-        qm->models[model_idx]->InputValues[1] = TF_NewTensor(TF_INT64, dims_1, ndims_1, data_1, ndata_1, &NoOpDeallocator, nullptr);
-    }
 
     // node coordinates flat values 2
     int ndims_2 = 2;
@@ -777,18 +771,12 @@ void prepare_hdnnp2nd_inputs(QMMM_rec* qr,
         }
     }
     int ndata_2 = nAtoms * sizeof(*data_2);
-    for (int model_idx=0; model_idx<n_active_models; model_idx++) {
-        qm->models[model_idx]->InputValues[2] = TF_NewTensor(TF_FLOAT, dims_2, ndims_2, data_2, ndata_2, &SFreeDeallocator, (void*)(intptr_t)model_idx);
-    }
 
     // node coordinates row splits 3
     int ndims_3 = 1;
     int64_t dims_3[] = {2};
     static int64_t data_3[2] = {0, nAtoms};
     int ndata_3 = sizeof(data_3);
-    for (int model_idx=0; model_idx<n_active_models; model_idx++) {
-        qm->models[model_idx]->InputValues[3] = TF_NewTensor(TF_INT64, dims_3, ndims_3, data_3, ndata_3, &NoOpDeallocator, nullptr);
-    }
 
     // edge indices flat values 4
     int nEdgeCombinations = nAtoms*(nAtoms-1); // Cheap Combinations nCr(nAtoms 2)
@@ -809,24 +797,16 @@ void prepare_hdnnp2nd_inputs(QMMM_rec* qr,
             edge_index++;
         }
     }
-    
     int ndata_4 = sizeof(*data_4)*nEdgeCombinations;
-    for (int model_idx=0; model_idx<n_active_models; model_idx++) {
-        qm->models[model_idx]->InputValues[4] = TF_NewTensor(TF_INT64, dims_4, ndims_4, data_4, ndata_4, &SFreeDeallocator, (void*)(intptr_t)model_idx);
-    }
 
     // edge indces row splits 5
     int ndims_5 = 1;
     int64_t dims_5[] = {2};
     static int64_t data_5[2] = {0, nEdgeCombinations};
     int ndata_5 = sizeof(data_5);
-    for (int model_idx=0; model_idx<n_active_models; model_idx++) {
-        qm->models[model_idx]->InputValues[5] = TF_NewTensor(TF_INT64, dims_5, ndims_5, data_5, ndata_5, &NoOpDeallocator, nullptr);
-    }
 
     // angle indces flat values 6
     int nAngleCombinations = nAtoms*(nAtoms-1)*(nAtoms-2); // Cheap Combinations nAtoms*nCr(nAtoms-1 2)
-
     int ndims_6 = 2;
     int64_t dims_6[] = {nAngleCombinations, 3};
     int_triple* data_6;
@@ -852,18 +832,25 @@ void prepare_hdnnp2nd_inputs(QMMM_rec* qr,
             }
         }
     }
-    
     int ndata_6 = sizeof(*data_6)*nAngleCombinations;
-    for (int model_idx=0; model_idx<n_active_models; model_idx++) {
-        qm->models[model_idx]->InputValues[6] = TF_NewTensor(TF_INT64, dims_6, ndims_6, data_6, ndata_6, &SFreeDeallocator, (void*)(intptr_t)model_idx);
-    }
 
     // angle indces row splits 7
     int ndims_7 = 1;
     int64_t dims_7[] = {2};
     static int64_t data_7[2] = {0, nAngleCombinations};
-    int ndata_7 = sizeof(data_7); 
+    int ndata_7 = sizeof(data_7);
+
+    // Assign inputs to all models in one loop
     for (int model_idx=0; model_idx<n_active_models; model_idx++) {
+        bool is_last_model = (model_idx == n_active_models-1);
+        
+        qm->models[model_idx]->InputValues[0] = TF_NewTensor(TF_INT64, dims_0, ndims_0, data_0, ndata_0, &SFreeDeallocator, (void*)(intptr_t)is_last_model);
+        qm->models[model_idx]->InputValues[1] = TF_NewTensor(TF_INT64, dims_1, ndims_1, data_1, ndata_1, &NoOpDeallocator, nullptr);
+        qm->models[model_idx]->InputValues[2] = TF_NewTensor(TF_FLOAT, dims_2, ndims_2, data_2, ndata_2, &SFreeDeallocator, (void*)(intptr_t)is_last_model);
+        qm->models[model_idx]->InputValues[3] = TF_NewTensor(TF_INT64, dims_3, ndims_3, data_3, ndata_3, &NoOpDeallocator, nullptr);
+        qm->models[model_idx]->InputValues[4] = TF_NewTensor(TF_INT64, dims_4, ndims_4, data_4, ndata_4, &SFreeDeallocator, (void*)(intptr_t)is_last_model);
+        qm->models[model_idx]->InputValues[5] = TF_NewTensor(TF_INT64, dims_5, ndims_5, data_5, ndata_5, &NoOpDeallocator, nullptr);
+        qm->models[model_idx]->InputValues[6] = TF_NewTensor(TF_INT64, dims_6, ndims_6, data_6, ndata_6, &SFreeDeallocator, (void*)(intptr_t)is_last_model);
         qm->models[model_idx]->InputValues[7] = TF_NewTensor(TF_INT64, dims_7, ndims_7, data_7, ndata_7, &NoOpDeallocator, nullptr);
     }
 
@@ -893,9 +880,6 @@ void prepare_hdnnp4th_inputs(QMMM_rec* qr,
     int64_t dims_8[] = {1};
     static float data_8[1] = {(float)qm->QMcharge_get()};
     int ndata_8 = sizeof(data_8);
-    for (int model_idx=0; model_idx<n_active_models; model_idx++) {
-        qm->models[model_idx]->InputValues[8] = TF_NewTensor(TF_FLOAT, dims_8, ndims_8, data_8, ndata_8, &NoOpDeallocator, nullptr);
-    }
 
     // esp flat values 9
     int ndims_9 = 1;
@@ -906,19 +890,13 @@ void prepare_hdnnp4th_inputs(QMMM_rec* qr,
     {
         data_9[i] = qm->pot_qmmm_get(i)*V2AU; // from volt to atomic units
     }
-    int ndata_9 = sizeof(*data_9)*nAtoms; 
-    for (int model_idx=0; model_idx<n_active_models; model_idx++) {
-        qm->models[model_idx]->InputValues[9] = TF_NewTensor(TF_FLOAT, dims_9, ndims_9, data_9, ndata_9, &SFreeDeallocator, (void*)(intptr_t)model_idx);
-    }
+    int ndata_9 = sizeof(*data_9)*nAtoms;
 
     // esp row splits 10
     int ndims_10 = 1;
     int64_t dims_10[] = {2};
     static int64_t data_10[2] = {0, nAtoms};
     int ndata_10 = sizeof(data_10);
-    for (int model_idx=0; model_idx<n_active_models; model_idx++) {
-        qm->models[model_idx]->InputValues[10] = TF_NewTensor(TF_INT64, dims_10, ndims_10, data_10, ndata_10, &NoOpDeallocator, nullptr);
-    }
 
     // esp_grad flat values 11
     rvec *ESPgrad = nullptr, *ESPgrad_full = nullptr;
@@ -934,16 +912,21 @@ void prepare_hdnnp4th_inputs(QMMM_rec* qr,
     // qr->gradient_ESP(//cr, nrnb, wcycle, nullptr, qm->qmmm_variant_get(), data_11, ESPgrad_full);
     qr->gradient_ESP(qm->qmmm_variant_get(), data_11, ESPgrad_full);
     int ndata_11 = sizeof(*data_11)*nAtoms;
-    for (int model_idx=0; model_idx<n_active_models; model_idx++) {
-        qm->models[model_idx]->InputValues[11] = TF_NewTensor(TF_FLOAT, dims_11, ndims_11, data_11, ndata_11, &SFreeDeallocator, (void*)(intptr_t)model_idx);
-    }
 
     // esp grad row splits 12
     int ndims_12 = 1;
     int64_t dims_12[] = {2};
     static int64_t data_12[2] = {0, nAtoms};
     int ndata_12 = sizeof(data_12);
+
+    // Assign additional hdnnp4th inputs to all models in one loop
     for (int model_idx=0; model_idx<n_active_models; model_idx++) {
+        bool is_last_model = (model_idx == n_active_models-1);
+        
+        qm->models[model_idx]->InputValues[8] = TF_NewTensor(TF_FLOAT, dims_8, ndims_8, data_8, ndata_8, &NoOpDeallocator, nullptr);
+        qm->models[model_idx]->InputValues[9] = TF_NewTensor(TF_FLOAT, dims_9, ndims_9, data_9, ndata_9, &SFreeDeallocator, (void*)(intptr_t)is_last_model);
+        qm->models[model_idx]->InputValues[10] = TF_NewTensor(TF_INT64, dims_10, ndims_10, data_10, ndata_10, &NoOpDeallocator, nullptr);
+        qm->models[model_idx]->InputValues[11] = TF_NewTensor(TF_FLOAT, dims_11, ndims_11, data_11, ndata_11, &SFreeDeallocator, (void*)(intptr_t)is_last_model);
         qm->models[model_idx]->InputValues[12] = TF_NewTensor(TF_INT64, dims_12, ndims_12, data_12, ndata_12, &NoOpDeallocator, nullptr);
     }
 
@@ -982,18 +965,12 @@ void prepare_schnet_painn_inputs(   QMMM_rec* qr,
         data_0[i] = qm->atomicnumberQM_get(i);
     }
     int ndata_0 = nAtoms * sizeof(*data_0);
-    for (int model_idx=0; model_idx<n_active_models; model_idx++) {
-        qm->models[model_idx]->InputValues[0] = TF_NewTensor(TF_INT64, dims_0, ndims_0, data_0, ndata_0, &SFreeDeallocator, (void*)(intptr_t)model_idx);
-    }
 
     // node number row splits 1
     int ndims_1 = 1;
     int64_t dims_1[] = {2};
     static int64_t data_1[2] = {0, nAtoms};
     int ndata_1 = sizeof(data_1);
-    for (int model_idx=0; model_idx<n_active_models; model_idx++) {
-        qm->models[model_idx]->InputValues[1] = TF_NewTensor(TF_INT64, dims_1, ndims_1, data_1, ndata_1, &NoOpDeallocator, nullptr);
-    }
 
     // node coordinates flat values 2
     int ndims_2 = 2;
@@ -1008,18 +985,12 @@ void prepare_schnet_painn_inputs(   QMMM_rec* qr,
         }
     }
     int ndata_2 = nAtoms * sizeof(*data_2);
-    for (int model_idx=0; model_idx<n_active_models; model_idx++) {
-        qm->models[model_idx]->InputValues[2] = TF_NewTensor(TF_FLOAT, dims_2, ndims_2, data_2, ndata_2, &SFreeDeallocator, (void*)(intptr_t)model_idx);
-    }
 
     // node coordinates row splits 3
     int ndims_3 = 1;
     int64_t dims_3[] = {2};
     static int64_t data_3[2] = {0, nAtoms};
     int ndata_3 = sizeof(data_3);
-    for (int model_idx=0; model_idx<n_active_models; model_idx++) {
-        qm->models[model_idx]->InputValues[3] = TF_NewTensor(TF_INT64, dims_3, ndims_3, data_3, ndata_3, &NoOpDeallocator, nullptr);
-    }
 
     // edge indices flat values 4
     int nEdgeCombinations = nAtoms*(nAtoms-1); // Cheap Combinations nCr(nAtoms 2)
@@ -1040,18 +1011,23 @@ void prepare_schnet_painn_inputs(   QMMM_rec* qr,
             edge_index++;
         }
     }
-    
     int ndata_4 = sizeof(*data_4)*nEdgeCombinations;
-    for (int model_idx=0; model_idx<n_active_models; model_idx++) {
-        qm->models[model_idx]->InputValues[4] = TF_NewTensor(TF_INT64, dims_4, ndims_4, data_4, ndata_4, &SFreeDeallocator, (void*)(intptr_t)model_idx);
-    }
 
     // edge indces row splits 5
     int ndims_5 = 1;
     int64_t dims_5[] = {2};
     static int64_t data_5[2] = {0, nEdgeCombinations};
     int ndata_5 = sizeof(data_5);
+
+    // Assign inputs to all models in one loop
     for (int model_idx=0; model_idx<n_active_models; model_idx++) {
+        bool is_last_model = (model_idx == n_active_models-1);
+        
+        qm->models[model_idx]->InputValues[0] = TF_NewTensor(TF_INT64, dims_0, ndims_0, data_0, ndata_0, &SFreeDeallocator, (void*)(intptr_t)is_last_model);
+        qm->models[model_idx]->InputValues[1] = TF_NewTensor(TF_INT64, dims_1, ndims_1, data_1, ndata_1, &NoOpDeallocator, nullptr);
+        qm->models[model_idx]->InputValues[2] = TF_NewTensor(TF_FLOAT, dims_2, ndims_2, data_2, ndata_2, &SFreeDeallocator, (void*)(intptr_t)is_last_model);
+        qm->models[model_idx]->InputValues[3] = TF_NewTensor(TF_INT64, dims_3, ndims_3, data_3, ndata_3, &NoOpDeallocator, nullptr);
+        qm->models[model_idx]->InputValues[4] = TF_NewTensor(TF_INT64, dims_4, ndims_4, data_4, ndata_4, &SFreeDeallocator, (void*)(intptr_t)is_last_model);
         qm->models[model_idx]->InputValues[5] = TF_NewTensor(TF_INT64, dims_5, ndims_5, data_5, ndata_5, &NoOpDeallocator, nullptr);
     }
 
