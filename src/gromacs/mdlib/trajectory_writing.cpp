@@ -40,6 +40,7 @@
 #include "gromacs/commandline/filenm.h"
 #include "gromacs/fileio/confio.h"
 #include "gromacs/fileio/tngio.h"
+#include "gromacs/fileio/xtcio.h"
 #include "gromacs/math/vec.h"
 #include "gromacs/mdlib/mdoutf.h"
 #include "gromacs/mdlib/stat.h"
@@ -53,6 +54,7 @@
 #include "gromacs/pbcutil/pbc.h"
 #include "gromacs/timing/wallcycle.h"
 #include "gromacs/topology/topology.h"
+#include "gromacs/utility/fatalerror.h"
 #include "gromacs/utility/smalloc.h"
 
 void do_md_trajectory_writing(FILE*                          fplog,
@@ -80,6 +82,36 @@ void do_md_trajectory_writing(FILE*                          fplog,
 {
     int   mdof_flags;
     rvec* x_for_confout = nullptr;
+
+    // Quick and dirty custom xtc for significant structures during adaptive sampling
+    // Would be better be done by defining a new mdoutf flag and handling it in mdoutf_write_to_trajectory_files
+    if (fr->qr->qm[0].significant_structure)
+    {
+        auto adaptive_sampling_xtc_file = open_xtc("adaptive_sampling.xtc", "w");
+
+        if (write_xtc(adaptive_sampling_xtc_file, outf->natoms_global, step, t, state->box, state_global->x.rvec_array(),
+                        outf->x_compression_precision)
+            == 0)
+        {
+            gmx_fatal(FARGS,
+                        "XTC error. This indicates you are out of disk space, or a "
+                        "simulation with major instabilities resulting in coordinates "
+                        "that are NaN or too large to be represented in the XTC format.\n");
+        }
+        if (write_xtc(outf->fp_xtc, outf->natoms_x_compressed, step, t, state->box, state_global->x.rvec_array(),
+                    outf->x_compression_precision)
+            == 0)
+        {
+            gmx_fatal(FARGS,
+                    "XTC error. This indicates you are out of disk space, or a "
+                    "simulation with major instabilities resulting in coordinates "
+                    "that are NaN or too large to be represented in the XTC format.\n");
+        }
+        close_xtc(adaptive_sampling_xtc_file);
+        close_xtc(outf->fp_xtc);
+        fprintf(stderr, "\nHit a significant structure at step %6li\n", step);
+        exit(1);
+    }
 
     mdof_flags = 0;
     if (do_per_step(step, ir->nstxout))
