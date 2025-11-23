@@ -684,7 +684,7 @@ real call_pytorch(QMMM_rec*       qr,
     if (n_active_models > 1) {
         // Save the means
         fprintf(f_std, "%d\n", n);
-        fprintf(f_std, "Means step %d: %8.4f\n", step, energy_mean);
+        fprintf(f_std, "means step=%d energy_mean=%8.4f\n", step, energy_mean);
 
         for (int i=0; i<n; i++) {
             fprintf(f_std, "%-2s %8.4f %8.4f %8.4f\n",
@@ -694,7 +694,7 @@ real call_pytorch(QMMM_rec*       qr,
 
         // Save the stds
         fprintf(f_std, "%d\n", n);   
-        fprintf(f_std, "Stds step %d: %8.4f\n", step, energy_std);
+        fprintf(f_std, "stds step=%d energy_std=%8.4f\n", step, energy_std);
         for (int i=0; i<n; i++) {
             fprintf(f_std, "%-2s %8.4f %8.4f %8.4f\n",
                 periodic_system[qm->atomicnumberQM_get(i)],
