@@ -80,6 +80,7 @@ void write_amp_inputs_outputs(QMMM_QMrec* qm,
                               int step);
 
 c10::Dict<std::string, torch::Tensor> convertDict(QMMM_QMrec* qm, const c10::impl::GenericDict& inputDict);
+float calculate_distance(QMMM_QMrec* qm, const int x1_idx, const int x2_idx);
 #endif
 
 #endif

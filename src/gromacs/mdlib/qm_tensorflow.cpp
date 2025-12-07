@@ -259,6 +259,20 @@ void init_tensorflow(QMMM_QMrec* qm)
         qm->scaler->use_scaler = false;
     }
 
+    // Read r_max from environment variable
+    if ((env = getenv("GMX_NN_R_MAX")) != nullptr)
+    {
+        qm->r_max = atof(env);
+        qm->r_max_squared = qm->r_max*qm->r_max;
+        printf("Using cutoff distance GMX_NN_R_MAX = %.2f Bohr\n", qm->r_max);
+    }
+    else
+    {
+        qm->r_max = 20.0; // Default cutoff distance (in Bohr). Adjust to cutoff
+        qm->r_max_squared = qm->r_max*qm->r_max;
+        printf("Using default cutoff distance GMX_NN_R_MAX = %.2f Bohr\n", qm->r_max);
+    }
+
     fflush(stdout);
     fflush(stderr);
     return;
@@ -640,7 +654,7 @@ real call_tensorflow(QMMM_rec*         qr,
         for (int j = 0; j < DIM; j++)
         {
             f[i+qm->nrQMatoms_get()][j]      = mm_gradient_conversion*MMgrad[i][j];
-         // fshift[i+qm.nrQMatoms_get()][j] = mm_gradient_conversion*MMgrad[i][j];
+         // fshift[i+qm->nrQMatoms_get()][j] = mm_gradient_conversion*MMgrad[i][j];
         }
     }
     // for (int i = 0; i < n; i++) {
@@ -656,7 +670,7 @@ real call_tensorflow(QMMM_rec*         qr,
             for (int j = 0; j < DIM; j++)
             {
                 f[i+qm->nrQMatoms_get()+nMMAtoms][j]      = mm_gradient_conversion*MMgrad_full[i][j];
-             // fshift[i+qm.nrQMatoms_get()+nMMAtoms][j] = mm_gradient_conversion*MMgrad_full[i][j];
+             // fshift[i+qm->nrQMatoms_get()+nMMAtoms][j] = mm_gradient_conversion*MMgrad_full[i][j];
             }
         }
     }
@@ -736,77 +750,55 @@ void prepare_hdnnp2nd_inputs(QMMM_rec* qr,
                             QMMM_QMrec* qm,
                             int n_active_models)
 {
-    typedef int64_t int_pair[2];
     typedef int64_t int_triple[3];
 
+    // Prepare base inputs (0-5) using prepare_schnet_painn_inputs
+    prepare_schnet_painn_inputs(qr, qm, n_active_models);
+
     int nAtoms = qm->nrQMatoms_get();
-
-    // node number flat values 0
-    int ndims_0 = 1;
-    int64_t dims_0[] = {nAtoms};
-    int64_t* data_0;
-    snew(data_0, nAtoms);
-    for (int i=0; i<nAtoms; i++)
-    {
-        data_0[i] = qm->atomicnumberQM_get(i);
-    }
-    int ndata_0 = nAtoms * sizeof(*data_0);
-
-    // node number row splits 1
-    int ndims_1 = 1;
-    int64_t dims_1[] = {2};
-    static int64_t data_1[2] = {0, nAtoms};
-    int ndata_1 = sizeof(data_1);
-
-    // node coordinates flat values 2
-    int ndims_2 = 2;
-    int64_t dims_2[] = {nAtoms, 3};
-    rvec* data_2;
-    snew(data_2, nAtoms);
-    for (int i=0; i<nAtoms; i++)
-    {
-        for (int j=0; j<3; j++)
-        {
-            data_2[i][j] = qm->xQM_get(i,j) / BOHR2NM; // from nm to bohr for NN model
-        }
-    }
-    int ndata_2 = nAtoms * sizeof(*data_2);
-
-    // node coordinates row splits 3
-    int ndims_3 = 1;
-    int64_t dims_3[] = {2};
-    static int64_t data_3[2] = {0, nAtoms};
-    int ndata_3 = sizeof(data_3);
-
-    // edge indices flat values 4
-    int nEdgeCombinations = nAtoms*(nAtoms-1); // Cheap Combinations nCr(nAtoms 2)
-    int ndims_4 = 2;
-    int64_t dims_4[] = {nEdgeCombinations, 2};
-    int_pair* data_4;
-    snew(data_4, nEdgeCombinations);
-    int edge_index = 0;
-    for (int i=0; i<nAtoms; i++)
-    {   
-        for (int j=0; j<nAtoms; j++)
-        {
-            if (i==j) {
-                continue;
-            }
-            data_4[edge_index][0] = i;
-            data_4[edge_index][1] = j;
-            edge_index++;
-        }
-    }
-    int ndata_4 = sizeof(*data_4)*nEdgeCombinations;
-
-    // edge indces row splits 5
-    int ndims_5 = 1;
-    int64_t dims_5[] = {2};
-    static int64_t data_5[2] = {0, nEdgeCombinations};
-    int ndata_5 = sizeof(data_5);
+    float r_max = qm->r_max;
+    float geometry_conversion = 1.0 / BOHR2NM; // nm to bohr
 
     // angle indces flat values 6
-    int nAngleCombinations = nAtoms*(nAtoms-1)*(nAtoms-2); // Cheap Combinations nAtoms*nCr(nAtoms-1 2)
+    // First, count the number of angles within the cutoff distance
+    int nAngleCombinations = 0;
+    for (int i=0; i<nAtoms; i++)
+    {
+        for (int j=0; j<nAtoms; j++)
+        {
+            if (i == j) {
+                continue;
+            }
+
+            float r_ij = calculate_distance(qm, i, j) * geometry_conversion;
+            
+            if (r_ij > r_max) {
+                continue;
+            }
+            
+            for (int k=j+1; k<nAtoms; k++)
+            {
+                if (i == k)  {
+                    continue;
+                }
+                
+                float r_ik = calculate_distance(qm, i, k) * geometry_conversion;
+                
+                if (r_ik > r_max) {
+                    continue;
+                }
+                
+                float r_jk = calculate_distance(qm, j, k) * geometry_conversion;
+                
+                if (r_jk > r_max) {
+                    continue;
+                }
+                
+                nAngleCombinations += 2;
+            }
+        }
+    }
+    
     int ndims_6 = 2;
     int64_t dims_6[] = {nAngleCombinations, 3};
     int_triple* data_6;
@@ -820,14 +812,39 @@ void prepare_hdnnp2nd_inputs(QMMM_rec* qr,
             if (i == j) {
                 continue;
             }
-            for (int k=0; k<nAtoms; k++)
+            
+            float r_ij = calculate_distance(qm, i, j) * geometry_conversion;
+            
+            if (r_ij > r_max) {
+                continue;
+            }
+            
+            for (int k=j+1; k<nAtoms; k++)
             {
-                if ((i == k) || (j == k))  {
+                if (i == k)  {
                     continue;
                 }
+                
+                float r_ik = calculate_distance(qm, i, k) * geometry_conversion;
+                
+                if (r_ik > r_max) {
+                    continue;
+                }
+                
+                float r_jk = calculate_distance(qm, j, k) * geometry_conversion;
+                
+                if (r_jk > r_max) {
+                    continue;
+                }
+                
                 data_6[angle_index][0] = i;
                 data_6[angle_index][1] = j;
-                data_6[angle_index][2] = k; 
+                data_6[angle_index][2] = k;
+                angle_index++;
+                
+                data_6[angle_index][0] = i;
+                data_6[angle_index][1] = k;
+                data_6[angle_index][2] = j; 
                 angle_index++;
             }
         }
@@ -837,19 +854,14 @@ void prepare_hdnnp2nd_inputs(QMMM_rec* qr,
     // angle indces row splits 7
     int ndims_7 = 1;
     int64_t dims_7[] = {2};
-    static int64_t data_7[2] = {0, nAngleCombinations};
+    static int64_t data_7[2] = {0, 0};
+    data_7[1] = nAngleCombinations;
     int ndata_7 = sizeof(data_7);
 
     // Assign inputs to all models in one loop
     for (int model_idx=0; model_idx<n_active_models; model_idx++) {
         bool is_last_model = (model_idx == n_active_models-1);
         
-        qm->models[model_idx]->InputValues[0] = TF_NewTensor(TF_INT64, dims_0, ndims_0, data_0, ndata_0, &SFreeDeallocator, (void*)(intptr_t)is_last_model);
-        qm->models[model_idx]->InputValues[1] = TF_NewTensor(TF_INT64, dims_1, ndims_1, data_1, ndata_1, &NoOpDeallocator, nullptr);
-        qm->models[model_idx]->InputValues[2] = TF_NewTensor(TF_FLOAT, dims_2, ndims_2, data_2, ndata_2, &SFreeDeallocator, (void*)(intptr_t)is_last_model);
-        qm->models[model_idx]->InputValues[3] = TF_NewTensor(TF_INT64, dims_3, ndims_3, data_3, ndata_3, &NoOpDeallocator, nullptr);
-        qm->models[model_idx]->InputValues[4] = TF_NewTensor(TF_INT64, dims_4, ndims_4, data_4, ndata_4, &SFreeDeallocator, (void*)(intptr_t)is_last_model);
-        qm->models[model_idx]->InputValues[5] = TF_NewTensor(TF_INT64, dims_5, ndims_5, data_5, ndata_5, &NoOpDeallocator, nullptr);
         qm->models[model_idx]->InputValues[6] = TF_NewTensor(TF_INT64, dims_6, ndims_6, data_6, ndata_6, &SFreeDeallocator, (void*)(intptr_t)is_last_model);
         qm->models[model_idx]->InputValues[7] = TF_NewTensor(TF_INT64, dims_7, ndims_7, data_7, ndata_7, &NoOpDeallocator, nullptr);
     }
@@ -954,6 +966,8 @@ void prepare_schnet_painn_inputs(   QMMM_rec* qr,
     typedef int64_t int_pair[2];
 
     int nAtoms = qm->nrQMatoms_get();
+    float r_max = qm->r_max;
+    float geometry_conversion = 1.0 / BOHR2NM; // nm to bohr
 
     // node number flat values 0
     int ndims_0 = 1;
@@ -981,7 +995,7 @@ void prepare_schnet_painn_inputs(   QMMM_rec* qr,
     {
         for (int j=0; j<3; j++)
         {
-            data_2[i][j] = qm->xQM_get(i,j) / BOHR2NM; // from nm to bohr for NN model
+            data_2[i][j] = qm->xQM_get(i,j) * geometry_conversion;
         }
     }
     int ndata_2 = nAtoms * sizeof(*data_2);
@@ -993,7 +1007,22 @@ void prepare_schnet_painn_inputs(   QMMM_rec* qr,
     int ndata_3 = sizeof(data_3);
 
     // edge indices flat values 4
-    int nEdgeCombinations = nAtoms*(nAtoms-1); // Cheap Combinations nCr(nAtoms 2)
+    // First, count the number of edges within the cutoff distance (only j>i, then create both directions)
+    int nEdgeCombinations = 0;
+    for (int i=0; i<nAtoms; i++)
+    {
+        for (int j=i+1; j<nAtoms; j++)
+        {
+            float r = calculate_distance(qm, i, j) * geometry_conversion;
+            
+            if (r > r_max) {
+                continue;
+            }
+
+            nEdgeCombinations += 2; // both directions
+        }
+    }
+    
     int ndims_4 = 2;
     int64_t dims_4[] = {nEdgeCombinations, 2};
     int_pair* data_4;
@@ -1001,13 +1030,21 @@ void prepare_schnet_painn_inputs(   QMMM_rec* qr,
     int edge_index = 0;
     for (int i=0; i<nAtoms; i++)
     {   
-        for (int j=0; j<nAtoms; j++)
+        for (int j=i+1; j<nAtoms; j++)
         {
-            if (i==j) {
+            float r = calculate_distance(qm, i, j) * geometry_conversion;
+            
+            if (r > r_max) {
                 continue;
             }
+            
+            // Add both directions
             data_4[edge_index][0] = i;
             data_4[edge_index][1] = j;
+            edge_index++;
+            
+            data_4[edge_index][0] = j;
+            data_4[edge_index][1] = i;
             edge_index++;
         }
     }
@@ -1016,7 +1053,8 @@ void prepare_schnet_painn_inputs(   QMMM_rec* qr,
     // edge indces row splits 5
     int ndims_5 = 1;
     int64_t dims_5[] = {2};
-    static int64_t data_5[2] = {0, nEdgeCombinations};
+    static int64_t data_5[2] = {0, 0};
+    data_5[1] = nEdgeCombinations; // Update of static array after initialization
     int ndata_5 = sizeof(data_5);
 
     // Assign inputs to all models in one loop
@@ -1032,11 +1070,14 @@ void prepare_schnet_painn_inputs(   QMMM_rec* qr,
     }
 
     // Check input availability
-    for (int input_idx=0; input_idx<qm->models[0]->NumInputs; input_idx++) {
-        if (qm->models[0]->InputValues[input_idx] == NULL)
-        {
-            printf("ERROR: Input %d is NULL\n", input_idx);
-            exit(-1);
+    if (strcmp(qm->models[0]->modelArchitecture, "schnet") == 0 ||
+        strcmp(qm->models[0]->modelArchitecture, "painn") == 0) {
+        for (int input_idx=0; input_idx<qm->models[0]->NumInputs; input_idx++) {
+            if (qm->models[0]->InputValues[input_idx] == NULL)
+            {
+                printf("ERROR: Input %d is NULL\n", input_idx);
+                exit(-1);
+            }
         }
     }
 
@@ -1049,7 +1090,8 @@ void write_schnet_painn_inputs(QMMM_QMrec* qm
     // Print information and save information for debugging
 
     int nAtoms = qm->nrQMatoms_get();
-    int nEdgeCombinations = nAtoms*(nAtoms-1);
+    // Get actual number of edges from tensor dimensions
+    int nEdgeCombinations = TF_Dim(qm->models[0]->InputValues[4], 0);
 
     // node number flat values 0
     FILE* f_input_0 = nullptr;
@@ -1092,8 +1134,8 @@ void write_hdnnp2nd_inputs(QMMM_QMrec* qm)
 {
     // Print information and save information for debugging
 
-    int nAtoms = qm->nrQMatoms_get();
-    int nAngleCombinations = nAtoms*(nAtoms-1)*(nAtoms-2);
+    // Get actual number of angles from tensor dimensions
+    int nAngleCombinations = TF_Dim(qm->models[0]->InputValues[6], 0);
 
     write_schnet_painn_inputs(qm); // write inputs 0,2,4
 
@@ -1488,6 +1530,21 @@ void inverse_transform(QMMM_QMrec* qm, float* energy_predictions, float* grad_pr
     }
 
 } // end of inverse_transform
+
+/****************************************
+ ******   AUXILIARY ROUTINES   **********
+ ****************************************/
+
+// adopted from src/gmxlib/pbc.c and qmmm-calculation.cpp
+real calculate_distance(QMMM_QMrec* qm, const int x1_idx, const int x2_idx)
+{
+    rvec bond;
+    for(int i=0; i<DIM; i++) {
+        bond[i] = qm->xQM_get(x1_idx,i) - qm->xQM_get(x2_idx,i);
+    }
+
+    return norm(bond);
+}
 
 /* end of NN sub routines */
 #endif

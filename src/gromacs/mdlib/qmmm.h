@@ -250,6 +250,8 @@ public:
     int n_models;
     TFModel*         models[10];
     EnergyForceExtensiveLabelScaler* scaler;
+    double r_max;
+    float r_max_squared;
     #endif
     #if GMX_QMMM_PYTORCH or GMX_QMMM_DFTBPLUS_PYTORCH
     PytorchModel*         models[10];

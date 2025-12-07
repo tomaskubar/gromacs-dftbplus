@@ -75,5 +75,6 @@ void write_inputs_outputs(QMMM_QMrec* qm, int step);
 void load_scaler(QMMM_QMrec* qm, char* scaler_file);
 
 void inverse_transform(QMMM_QMrec* qm, float* energy_predictions, float* grad_predictions);
+float calculate_distance(QMMM_QMrec* qm, const int x1_idx, const int x2_idx);
 
 #endif

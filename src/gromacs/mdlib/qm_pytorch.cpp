@@ -684,7 +684,7 @@ real call_pytorch(QMMM_rec*       qr,
     if (n_active_models > 1) {
         // Save the means
         fprintf(f_std, "%d\n", n);
-        fprintf(f_std, "means step=%d energy_mean=%8.4f\n", step, energy_mean);
+        fprintf(f_std, "Means step %d: %8.4f\n", step, energy_mean);
 
         for (int i=0; i<n; i++) {
             fprintf(f_std, "%-2s %8.4f %8.4f %8.4f\n",
@@ -694,7 +694,7 @@ real call_pytorch(QMMM_rec*       qr,
 
         // Save the stds
         fprintf(f_std, "%d\n", n);   
-        fprintf(f_std, "stds step=%d energy_std=%8.4f\n", step, energy_std);
+        fprintf(f_std, "Stds step %d: %8.4f\n", step, energy_std);
         for (int i=0; i<n; i++) {
             fprintf(f_std, "%-2s %8.4f %8.4f %8.4f\n",
                 periodic_system[qm->atomicnumberQM_get(i)],
@@ -775,15 +775,14 @@ void prepare_base_mace_inputs(QMMM_QMrec* qm,
                 continue;
             }
 
-            double r_squared = 0.0;
-            for (int k=0; k<3; k++) {
-                double delta = (qm->xQM_get(i,k) - qm->xQM_get(j,k)) * geometry_conversion;
-                r_squared += delta*delta;
+            float r = calculate_distance(qm, i, j) * geometry_conversion;
+
+            if (r > qm->r_max) {
+                continue;
             }
-            if (r_squared < qm->r_max_squared) {
-                n_edges += 1;
-                n_edges_vec[i] += 1;
-            }
+
+            n_edges++;
+            n_edges_vec[i] += 1;
         }
     }
   
@@ -806,12 +805,8 @@ void prepare_base_mace_inputs(QMMM_QMrec* qm,
                 continue;
             }
 
-            double r_squared = 0.0;
-            for (int k=0; k<3; k++) {
-                double delta = (qm->xQM_get(i,k) - qm->xQM_get(j,k)) * geometry_conversion;
-                r_squared += delta*delta;
-            }
-            if (r_squared > qm->r_max_squared) {
+            float r = calculate_distance(qm, i, j) * geometry_conversion;
+            if (r > qm->r_max) {
                 continue;
             }
             
@@ -1123,6 +1118,12 @@ void write_base_mace_inputs_outputs(QMMM_QMrec* qm,
         // fprintf(f_output, "%6.6f %6.6f %6.6f\n", x, y, z);
     }
     // fclose(f_output);
+
+    // Only proceed to write extended xyz if the model is mace
+    if (std::strcmp(qm->models[0]->modelArchitecture, "mace") != 0)
+    {
+        return;
+    }
 
     // Write all inputs and outputs in the extended xyz format
     char periodic_system[37][3]={"XX",
@@ -1523,6 +1524,22 @@ c10::Dict<std::string, torch::Tensor> convertDict(QMMM_QMrec* qm, const c10::imp
 
     return outputDict;
 } // end of convertDict
+
+/****************************************
+ ******   AUXILIARY ROUTINES   **********
+ ****************************************/
+
+// adopted from src/gmxlib/pbc.c and qmmm-calculation.cpp
+real calculate_distance(QMMM_QMrec* qm, const int x1_idx, const int x2_idx)
+{
+    rvec bond;
+    for(int i=0; i<DIM; i++) {
+        bond[i] = qm->xQM_get(x1_idx,i) - qm->xQM_get(x2_idx,i);
+    }
+
+    return norm(bond);
+}
+
 /* end of NN sub routines */
 #endif
 
