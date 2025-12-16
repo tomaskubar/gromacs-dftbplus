@@ -37,6 +37,9 @@ real call_dftbplus_pytorch(QMMM_rec* qr,
     real e_dftb = 0.0;
     real e_delta = 0.0;
     
+    // Create a copy of qm with zero QM charge for the ML delta calculation
+    QMMM_QMrec* qm_zero_charge = QMMM_QMrec::create_copy_with_zero_charge(qm);
+    
     // Allocate memory for both force arrays
     rvec* f_dftb = nullptr;
     rvec* f_delta = nullptr;
@@ -60,11 +63,11 @@ real call_dftbplus_pytorch(QMMM_rec* qr,
                 e_dftb = call_dftbplus(qr, cr, qm, mm, f_dftb, fshift, nrnb, wcycle);
             }
             
-            // Task for PyTorch calculation
-            #pragma omp task shared(e_delta, f_delta)
+            // Task for PyTorch calculation with zero charge
+            #pragma omp task shared(e_delta, f_delta, qm_zero_charge)
             {
-                // Call PyTorch for delta correction (using f_delta)
-                e_delta = call_pytorch(qr, cr, qm, mm, f_delta, fshift, nrnb, wcycle);
+                // Call PyTorch for delta correction using zero-charge qm (using f_delta)
+                e_delta = call_pytorch(qr, cr, qm_zero_charge, mm, f_delta, fshift, nrnb, wcycle);
             }
             
             // Wait for both tasks to complete
@@ -79,6 +82,7 @@ real call_dftbplus_pytorch(QMMM_rec* qr,
     
     sfree(f_dftb);
     sfree(f_delta);
+    delete qm_zero_charge;
     
     // Return total energy (DFTB+ + delta)
     return e_dftb + e_delta;

@@ -378,6 +378,22 @@ void QMMM_QMrec::QMcharges_set(const int atom, const real value)
     QMcharges[atom] = value;
 }
 
+void QMMM_QMrec::QMcharge_set(const int value)
+{
+    QMcharge = value;
+}
+
+QMMM_QMrec* QMMM_QMrec::create_copy_with_zero_charge(const QMMM_QMrec* qm_original)
+{
+    // Create a copy of the QMMM_QMrec structure
+    QMMM_QMrec* qm_copy = new QMMM_QMrec(*qm_original);
+    
+    // Set QMcharge to 0
+    qm_copy->QMcharge_set(0);
+    
+    return qm_copy;
+}
+
 double QMMM_QMrec::pot_qmmm_get(const int atom) const
 {
     return pot_qmmm[atom];

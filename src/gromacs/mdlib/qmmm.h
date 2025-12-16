@@ -289,8 +289,12 @@ public:
     bool             significant_structure; // to mark significant deviations during multiple neural network calls
     // input
     void             QMcharges_set(int atom, real value);
+    void             QMcharge_set(int value);
     void             pot_qmmm_set(int atom, double value);
     void             pot_qmqm_set(int atom, double value);
+    
+    // Helper function to create a copy with zero QM charge
+    static QMMM_QMrec* create_copy_with_zero_charge(const QMMM_QMrec* qm_original);
 } ;
 
 class QMMM_MMrec {
