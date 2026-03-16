@@ -166,7 +166,16 @@ void init_pytorch(QMMM_QMrec* qm)
         printf("Reading model %d\n", model_idx);
         std::strcpy(qm->models[model_idx]->modelArchitecture, network_architecture.c_str()); // Save network architecture for later use
 
-        snprintf(model_path, sizeof(model_path), "%s%d%s", model_path_prefix, model_idx, ".pt");
+        if (n_models == 1) {
+            // Try model_path_prefix.pt first, then model_path_prefix0.pt
+            snprintf(model_path, sizeof(model_path), "%s.pt", model_path_prefix);
+            std::ifstream model_file(model_path);
+            if (!model_file.good()) {
+            snprintf(model_path, sizeof(model_path), "%s%d%s", model_path_prefix, model_idx, ".pt");
+            }
+        } else {
+            snprintf(model_path, sizeof(model_path), "%s%d%s", model_path_prefix, model_idx, ".pt");
+        }
 
         try {
             // Attempt to load the model
@@ -368,8 +377,11 @@ real call_pytorch(QMMM_rec*       qr,
     if (strcmp(qm->models[0]->modelArchitecture, "mace") == 0)
     {
         prepare_base_mace_inputs(qm, input_dict);
-        energy_conversion = KCAL2KJ; // from kcal/mol to kJ/mol
-        force_conversion = KCAL_A2MD; // from kcal/mol/A to kJ/mol/nm
+        // energy_conversion = KCAL2KJ; // from kcal/mol to kJ/mol
+        // force_conversion = KCAL_A2MD; // from kcal/mol/A to kJ/mol/nm
+        // mm_gradient_conversion = HARTREE_BOHR2MD; // from Hartree/Bohr to kJ/mol/nm
+        energy_conversion = EV2KJMOL; // from eV to kJ/mol
+        force_conversion = EV_A2MD; // from eV/A to kJ/mol/nm
         mm_gradient_conversion = HARTREE_BOHR2MD; // from Hartree/Bohr to kJ/mol/nm
     }
     else if (strcmp(qm->models[0]->modelArchitecture, "maceqeq") == 0)
