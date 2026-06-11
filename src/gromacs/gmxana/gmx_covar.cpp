@@ -89,7 +89,7 @@ void throwErrorIfIndexOutOfBounds(ArrayRef<const int> indices,
         return;
     }
     const int largestIndex = *std::max_element(indices.begin(), indices.end());
-    if (largestIndex < largestOkayIndex)
+    if (largestIndex > largestOkayIndex)
     {
         GMX_THROW(RangeError("The provided structure file only contains "
                              + std::to_string(largestOkayIndex) + " coordinates, but coordinate index "

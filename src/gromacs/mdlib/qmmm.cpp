@@ -411,6 +411,21 @@ int QMMM_QMrec::CASorbitals_get()const
     return CASorbitals;
 }
 
+real QMMM_QMrec::box_xx_get() const
+{
+    return box[0][0];
+}
+
+real QMMM_QMrec::box_yy_get() const
+{
+    return box[1][1];
+}
+
+real QMMM_QMrec::box_zz_get() const
+{
+    return box[2][2];
+}
+
 void QMMM_MMrec::init_MMrec(real scalefactor_in,
                             int  nrMMatoms_full_in,
                             int  natoms,
