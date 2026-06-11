@@ -286,6 +286,9 @@ public:
     int              nelectrons_get()const;
     int              CASelectrons_get()const;
     int              CASorbitals_get()const;
+    real             box_xx_get()const;
+    real             box_yy_get()const;
+    real             box_zz_get()const;
     bool             significant_structure; // to mark significant deviations during multiple neural network calls
     // input
     void             QMcharges_set(int atom, real value);

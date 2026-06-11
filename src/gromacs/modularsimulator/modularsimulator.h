@@ -50,6 +50,8 @@
 #ifndef GROMACS_MODULARSIMULATOR_MODULARSIMULATOR_H
 #define GROMACS_MODULARSIMULATOR_MODULARSIMULATOR_H
 
+#include <cstdlib>
+
 #include "gromacs/mdrun/isimulator.h"
 
 struct t_fcdata;
