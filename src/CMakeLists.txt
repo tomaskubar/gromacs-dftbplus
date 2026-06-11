@@ -126,6 +126,12 @@ add_library(common INTERFACE)
 target_include_directories(common INTERFACE
                            ${CMAKE_CURRENT_SOURCE_DIR}/include
                            ${CMAKE_CURRENT_BINARY_DIR}/include)
+# resolve compile errors with QM/MM using DFTB+
+target_link_libraries(common INTERFACE
+		      ${CMAKE_EXE_ADDITIONAL_LIBRARY1}
+		      ${CMAKE_EXE_ADDITIONAL_LIBRARY2}
+		      ${CMAKE_EXE_ADDITIONAL_LIBRARY3}
+		      ${CMAKE_EXE_ADDITIONAL_LIBRARY4})
 
 add_subdirectory(external)
 
