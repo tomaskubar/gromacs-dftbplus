@@ -1,11 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2014,2015,2016,2017,2018 by the GROMACS development team.
- * Copyright (c) 2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2014- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -19,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -28,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 
 /*! \libinternal
@@ -64,11 +62,12 @@
 #ifndef GMX_IMD_IMD_H
 #define GMX_IMD_IMD_H
 
-#include <memory>
+#include <cstdint>
 
-#include "gromacs/math/vectypes.h"
-#include "gromacs/utility/basedefinitions.h"
-#include "gromacs/utility/classhelpers.h"
+#include <memory>
+#include <string_view>
+
+#include "gromacs/utility/vectypes.h"
 
 struct gmx_domdec_t;
 struct gmx_enerdata_t;
@@ -76,7 +75,6 @@ struct gmx_mtop_t;
 struct gmx_multisim_t;
 struct gmx_output_env_t;
 struct gmx_wallcycle;
-struct t_commrec;
 struct t_filenm;
 struct t_IMD;
 struct t_inputrec;
@@ -84,6 +82,7 @@ class t_state;
 
 namespace gmx
 {
+class MpiComm;
 enum class StartingBehavior;
 class IMDModule;
 class ImdSession;
@@ -91,11 +90,22 @@ class InteractiveMolecularDynamics;
 class MDLogger;
 struct ImdOptions;
 struct MdrunOptions;
+template<typename>
+class ArrayRef;
 
-/*! \brief
- * Creates a module for interactive molecular dynamics.
+/*! \libinternal \brief Information about the interactive molecular dynamics module
+ *
+ * Provides name and method to create an interactive molecular dynamics module.
  */
-std::unique_ptr<IMDModule> createInteractiveMolecularDynamicsModule();
+struct InteractiveMolecularDynamicsModuleInfo
+{
+    /*! \brief
+     * Creates a module for interactive molecular dynamics.
+     */
+    static std::unique_ptr<IMDModule> create();
+    //! The name of the module
+    static constexpr std::string_view sc_name = "interactive-molecular-dynamics";
+};
 
 static const char IMDstr[] = "IMD:"; /**< Tag output from the IMD module with this string. */
 
@@ -115,7 +125,7 @@ static const char IMDstr[] = "IMD:"; /**< Tag output from the IMD module with th
 void write_IMDgroup_to_file(bool              bIMD,
                             t_inputrec*       ir,
                             const t_state*    state,
-                            const gmx_mtop_t* sys,
+                            const gmx_mtop_t& sys,
                             int               nfile,
                             const t_filenm    fnm[]);
 
@@ -125,38 +135,40 @@ void write_IMDgroup_to_file(bool              bIMD,
  * This function is called before the main MD loop over time steps.
  *
  * \param ir           The inputrec structure containing the MD input parameters
- * \param cr           Information structure for MPI communication.
+ * \param mpiComm      Communication object for my group.
+ * \param dd           Domain decomposition object, pass nullptr when DD is not active.
  * \param wcycle       Count wallcycles of IMD routines for diagnostic output.
  * \param enerd        Contains the GROMACS energies for the different interaction types.
  * \param ms           Handler for multi-simulations.
  * \param top_global   The topology of the whole system.
  * \param mdlog        Logger
- * \param x            The starting positions of the atoms.
+ * \param coords       The starting positions of the atoms.
  * \param nfile        Number of files.
  * \param fnm          Struct containing file names etc.
  * \param oenv         Output options.
  * \param options      Options for interactive MD.
  * \param startingBehavior  Describes whether this is a restart appending to output files
  */
-std::unique_ptr<ImdSession> makeImdSession(const t_inputrec*       ir,
-                                           const t_commrec*        cr,
-                                           gmx_wallcycle*          wcycle,
-                                           gmx_enerdata_t*         enerd,
-                                           const gmx_multisim_t*   ms,
-                                           const gmx_mtop_t*       top_global,
-                                           const MDLogger&         mdlog,
-                                           const rvec              x[],
-                                           int                     nfile,
-                                           const t_filenm          fnm[],
-                                           const gmx_output_env_t* oenv,
-                                           const ImdOptions&       options,
-                                           StartingBehavior        startingBehavior);
+std::unique_ptr<ImdSession> makeImdSession(const t_inputrec*              ir,
+                                           const MpiComm&                 mpiComm,
+                                           const gmx_domdec_t*            dd,
+                                           gmx_wallcycle*                 wcycle,
+                                           gmx_enerdata_t*                enerd,
+                                           const gmx_multisim_t*          ms,
+                                           const gmx_mtop_t&              top_global,
+                                           const MDLogger&                mdlog,
+                                           gmx::ArrayRef<const gmx::RVec> coords,
+                                           int                            nfile,
+                                           const t_filenm                 fnm[],
+                                           const gmx_output_env_t*        oenv,
+                                           const ImdOptions&              options,
+                                           StartingBehavior               startingBehavior);
 
 class ImdSession
 {
 private:
     //! Private constructor, to force the use of makeImdSession()
-    ImdSession(const MDLogger& mdlog);
+    ImdSession(const MDLogger& mdlog, const MpiComm& mpiComm, const gmx_domdec_t* dd);
 
 public:
     ~ImdSession();
@@ -167,7 +179,7 @@ public:
      * Each node checks which of the atoms from "ind" are local and puts its local
      * atom numbers into the "ind_local" array. Furthermore, in "xa_ind" it is
      * stored at which position each local atom belongs in the assembled/collective
-     * array, so that on the master node all positions can be merged into the
+     * array, so that on the main node all positions can be merged into the
      * assembled array correctly.
      *
      * \param dd          Structure containing domain decomposition data.
@@ -180,18 +192,18 @@ public:
      * \param step         The time step.
      * \param bNS          Is this a neighbor searching step?
      * \param box          The simulation box.
-     * \param x            The local atomic positions on this node.
+     * \param coords       The local atomic positions on this node.
      * \param t            The time.
      *
      * \returns            Whether or not we have to do IMD communication at this step.
      */
-    bool run(int64_t step, bool bNS, const matrix box, const rvec x[], double t);
+    bool run(int64_t step, bool bNS, const matrix box, gmx::ArrayRef<const gmx::RVec> coords, double t);
 
     /*! \brief Add external forces from a running interactive molecular dynamics session.
      *
-     * \param f            The forces.
+     * \param force The forces.
      */
-    void applyForces(rvec* f);
+    void applyForces(gmx::ArrayRef<gmx::RVec> force);
 
     /*! \brief Copy energies and convert to float from enerdata to the IMD energy record.
      *
@@ -217,23 +229,24 @@ private:
     //! Implementation type.
     class Impl;
     //! Implementation object.
-    PrivateImplPointer<Impl> impl_;
+    std::unique_ptr<Impl> impl_;
 
 public:
     // Befriend the factory function.
-    friend std::unique_ptr<ImdSession> makeImdSession(const t_inputrec*       ir,
-                                                      const t_commrec*        cr,
-                                                      gmx_wallcycle*          wcycle,
-                                                      gmx_enerdata_t*         enerd,
-                                                      const gmx_multisim_t*   ms,
-                                                      const gmx_mtop_t*       top_global,
-                                                      const MDLogger&         mdlog,
-                                                      const rvec              x[],
-                                                      int                     nfile,
-                                                      const t_filenm          fnm[],
-                                                      const gmx_output_env_t* oenv,
-                                                      const ImdOptions&       options,
-                                                      StartingBehavior        startingBehavior);
+    friend std::unique_ptr<ImdSession> makeImdSession(const t_inputrec*              ir,
+                                                      const MpiComm&                 mpiComm,
+                                                      const gmx_domdec_t*            dd,
+                                                      gmx_wallcycle*                 wcycle,
+                                                      gmx_enerdata_t*                enerd,
+                                                      const gmx_multisim_t*          ms,
+                                                      const gmx_mtop_t&              top_global,
+                                                      const MDLogger&                mdlog,
+                                                      gmx::ArrayRef<const gmx::RVec> coords,
+                                                      int                            nfile,
+                                                      const t_filenm                 fnm[],
+                                                      const gmx_output_env_t*        oenv,
+                                                      const ImdOptions&              options,
+                                                      StartingBehavior startingBehavior);
 };
 
 } // namespace gmx

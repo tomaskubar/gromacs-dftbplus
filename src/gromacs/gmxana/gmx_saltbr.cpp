@@ -1,13 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
- * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2016,2017 by the GROMACS development team.
- * Copyright (c) 2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 1991- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -21,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -30,29 +26,43 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 #include "gmxpre.h"
 
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
+
+#include <filesystem>
+#include <string>
 
 #include "gromacs/commandline/filenm.h"
 #include "gromacs/commandline/pargs.h"
+#include "gromacs/fileio/filetypes.h"
+#include "gromacs/fileio/oenv.h"
 #include "gromacs/fileio/trxio.h"
 #include "gromacs/fileio/xvgr.h"
 #include "gromacs/gmxana/gmx_ana.h"
-#include "gromacs/math/vec.h"
 #include "gromacs/pbcutil/pbc.h"
+#include "gromacs/topology/atoms.h"
 #include "gromacs/topology/topology.h"
+#include "gromacs/utility/arrayref.h"
 #include "gromacs/utility/arraysize.h"
+#include "gromacs/utility/basedefinitions.h"
 #include "gromacs/utility/cstringutil.h"
-#include "gromacs/utility/fatalerror.h"
-#include "gromacs/utility/futil.h"
+#include "gromacs/utility/real.h"
 #include "gromacs/utility/smalloc.h"
+#include "gromacs/utility/stringutil.h"
+#include "gromacs/utility/vec.h"
+#include "gromacs/utility/vectypes.h"
+
+enum class PbcType : int;
+struct gmx_output_env_t;
 
 typedef struct
 {
@@ -113,15 +123,15 @@ int gmx_saltbr(int argc, char* argv[])
     static gmx_bool bSep     = FALSE;
     static real     truncate = 1000.0;
     t_pargs         pa[]     = { { "-t",
-                       FALSE,
-                       etREAL,
-                       { &truncate },
-                       "Groups that are never closer than this distance are not plotted" },
-                     { "-sep",
-                       FALSE,
-                       etBOOL,
-                       { &bSep },
-                       "Use separate files for each interaction (may be MANY)" } };
+                                   FALSE,
+                                   etREAL,
+                                   { &truncate },
+                                   "Groups that are never closer than this distance are not plotted" },
+                                 { "-sep",
+                                   FALSE,
+                                   etBOOL,
+                                   { &bSep },
+                                   "Use separate files for each interaction (may be MANY)" } };
     t_filenm        fnm[]    = {
         { efTRX, "-f", nullptr, ffREAD },
         { efTPR, nullptr, nullptr, ffREAD },
@@ -137,7 +147,6 @@ int gmx_saltbr(int argc, char* argv[])
 
     t_topology*  top;
     PbcType      pbcType;
-    char*        buf;
     t_trxstatus* status;
     int          i, j, k, m, nnn, teller, ncg;
     real         t, *time, qi, qj;
@@ -150,8 +159,8 @@ int gmx_saltbr(int argc, char* argv[])
     matrix            box;
     gmx_output_env_t* oenv;
 
-    if (!parse_common_args(&argc, argv, PCA_CAN_TIME, NFILE, fnm, asize(pa), pa, asize(desc), desc,
-                           0, nullptr, &oenv))
+    if (!parse_common_args(
+                &argc, argv, PCA_CAN_TIME, NFILE, fnm, asize(pa), pa, asize(desc), desc, 0, nullptr, &oenv))
     {
         return 0;
     }
@@ -199,15 +208,14 @@ int gmx_saltbr(int argc, char* argv[])
 
     if (bSep)
     {
-        snew(buf, 256);
         for (i = 0; (i < ncg); i++)
         {
             for (j = i + 1; (j < ncg); j++)
             {
                 if (nWithin[i][j])
                 {
-                    sprintf(buf, "sb-%s:%s.xvg", cg[i].label, cg[j].label);
-                    fp = xvgropen(buf, buf, "Time (ps)", "Distance (nm)", oenv);
+                    std::string buf = gmx::formatString("sb-%s:%s.xvg", cg[i].label, cg[j].label);
+                    fp = xvgropen(buf.c_str(), buf.c_str(), "Time (ps)", "Distance (nm)", oenv);
                     for (k = 0; (k < teller); k++)
                     {
                         fprintf(fp, "%10g  %10g\n", time[k], cgdist[i][j][k]);
@@ -216,7 +224,6 @@ int gmx_saltbr(int argc, char* argv[])
                 }
             }
         }
-        sfree(buf);
     }
     else
     {
@@ -226,7 +233,6 @@ int gmx_saltbr(int argc, char* argv[])
             out[m] = xvgropen(fn[m], title[m], "Time (ps)", "Distance (nm)", oenv);
         }
 
-        snew(buf, 256);
         for (i = 0; (i < ncg); i++)
         {
             qi = cg[i].q;
@@ -235,7 +241,7 @@ int gmx_saltbr(int argc, char* argv[])
                 qj = cg[j].q;
                 if (nWithin[i][j])
                 {
-                    sprintf(buf, "%s:%s", cg[i].label, cg[j].label);
+                    auto buf = gmx::formatString("%s:%s", cg[i].label, cg[j].label);
                     if (qi * qj < 0)
                     {
                         nnn = 2;
@@ -251,17 +257,17 @@ int gmx_saltbr(int argc, char* argv[])
 
                     if (nset[nnn] == 0)
                     {
-                        xvgr_legend(out[nnn], 1, &buf, oenv);
+                        xvgrLegend(out[nnn], gmx::arrayRefFromArray(&buf, 1), oenv);
                     }
                     else
                     {
                         if (output_env_get_xvg_format(oenv) == XvgFormat::Xmgr)
                         {
-                            fprintf(out[nnn], "@ legend string %d \"%s\"\n", nset[nnn], buf);
+                            fprintf(out[nnn], "@ legend string %d \"%s\"\n", nset[nnn], buf.c_str());
                         }
                         else if (output_env_get_xvg_format(oenv) == XvgFormat::Xmgrace)
                         {
-                            fprintf(out[nnn], "@ s%d legend \"%s\"\n", nset[nnn], buf);
+                            fprintf(out[nnn], "@ s%d legend \"%s\"\n", nset[nnn], buf.c_str());
                         }
                     }
                     nset[nnn]++;
@@ -297,7 +303,7 @@ int gmx_saltbr(int argc, char* argv[])
             xvgrclose(out[m]);
             if (nset[m] == 0)
             {
-                remove(fn[m]);
+                std::remove(fn[m]);
             }
         }
     }

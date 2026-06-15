@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2018,2019, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2018- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \libinternal \file
  *
@@ -48,7 +47,6 @@
 #include "gromacs/utility/real.h"
 
 struct gmx_domdec_t;
-struct t_commrec;
 
 
 /*! \brief We check if to turn on DLB at the first and every 100 DD partitionings.
@@ -67,7 +65,7 @@ constexpr int c_checkTurnDlbOffInterval = 20;
 
 /*! \brief Return the PME/PP force load ratio, or -1 if nothing was measured.
  *
- * Should only be called on the DD master node.
+ * Should only be called on the DD main node.
  */
 float dd_pme_f_ratio(const gmx_domdec_t* dd);
 
@@ -82,7 +80,7 @@ void set_dlb_limits(gmx_domdec_t* dd);
  * should still be possible after subsequently setting a shorter cut-off
  * with change_dd_cutoff.
  */
-void set_dd_dlb_max_cutoff(struct t_commrec* cr, real cutoff);
+void set_dd_dlb_max_cutoff(gmx_domdec_t* dd, real cutoff);
 
 /*! \brief Sets whether we should later check the load imbalance data, so that
  * we can trigger dynamic load balancing if enough imbalance has

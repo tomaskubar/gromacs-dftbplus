@@ -1,11 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2012,2013,2014,2015,2016 by the GROMACS development team.
- * Copyright (c) 2017,2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2012- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -19,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -28,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \file
  * \brief
@@ -56,8 +54,8 @@
 #include <utility>
 #include <vector>
 
-#if __has_include(<boost/stl_interfaces/iterator_interface.hpp>)
-#    include <boost/stl_interfaces/iterator_interface.hpp>
+#if __has_include("external/boost/stl_interfaces/iterator_interface.hpp")
+#    include "external/boost/stl_interfaces/iterator_interface.hpp"
 #else // fallback for installed headers
 #    include <gromacs/external/boost/stl_interfaces/iterator_interface.hpp>
 #endif
@@ -67,13 +65,12 @@ namespace gmx
 
 template<class T>
 struct ArrayRefIter :
-    boost::stl_interfaces::iterator_interface<ArrayRefIter<T>, std::random_access_iterator_tag, T>
+    gmx::boost::stl_interfaces::iterator_interface<ArrayRefIter<T>, std::random_access_iterator_tag, T>
 {
     // This default constructor does not initialize it_
     constexpr ArrayRefIter() noexcept {}
     constexpr explicit ArrayRefIter(T* it) noexcept : it_(it) {}
-    // TODO: Use std::is_const_v when CUDA 11 is a requirement.
-    template<class T2 = T, class = std::enable_if_t<std::is_const<T2>::value>>
+    template<class T2 = T, class = std::enable_if_t<std::is_const_v<T2>>>
     constexpr ArrayRefIter(ArrayRefIter<std::remove_const_t<T2>> it) noexcept : it_(&*it)
     {
     }
@@ -87,7 +84,7 @@ struct ArrayRefIter :
     constexpr auto operator-(ArrayRefIter other) const noexcept { return it_ - other.it_; }
 
 private:
-    T* it_;
+    T* it_ = nullptr;
 };
 
 /*! \brief STL-like interface to a C array of T (or part
@@ -99,7 +96,7 @@ private:
  * following main differences:
  *  - This class does not have its own storage.  Instead, it references an
  *    existing array of values (either a C-style array or part of an existing
- *    std::vector<T, A> or std::array<T>).
+ *    \c std::vector<T, A> or \c std::array<T>).
  *  - It is only possible to modify the values themselves through ArrayRef;
  *    it is not possible to add or remove values.
  *  - Copying objects of this type is cheap, and the copies behave identically
@@ -114,13 +111,13 @@ private:
  * Note that due to a Doxygen limitation, the constructor that takes a C array
  * whose size is known at compile time does not appear in the documentation.
  *
- * To refer to const data of type T, ArrayRef<const T> is used. For both const
- * and non-const std::vector and std::array an ArrayRef view can be created.
+ * To refer to const data of type T, \c ArrayRef<const T> is used. For both const
+ * and non-const \c std::vector and \c std::array an ArrayRef view can be created.
  * Attempting to create a non-const ArrayRef of a const vector/array will result
  * in a compiler error in the respective constructor.
  *
  * For SIMD types there is template specialization available
- * (e.g. ArrayRef<SimdReal>) in gromacs/simd/simd_memory.h which should have
+ * (e.g. \c ArrayRef<SimdReal>) in gromacs/simd/simd_memory.h which should have
  * the same functionality as much as possible.
  *
  * \todo
@@ -175,10 +172,8 @@ public:
      *
      * This constructor is not explicit to allow directly passing
      * a container to a method that takes ArrayRef.
-     *
-     * \todo Use std::is_convertible_v when CUDA 11 is a requirement.
      */
-    template<typename U, typename = std::enable_if_t<std::is_convertible<typename std::remove_reference_t<U>::pointer, pointer>::value>>
+    template<typename U, typename = std::enable_if_t<std::is_convertible_v<typename std::remove_reference_t<U>::pointer, pointer>>>
     ArrayRef(U&& o) : begin_(o.data()), end_(o.data() + o.size())
     {
     }
@@ -193,6 +188,8 @@ public:
     ArrayRef(pointer begin, pointer end) : begin_(begin), end_(end)
     {
         assert((end >= begin && "Invalid range"));
+        assert((begin != nullptr || (begin == nullptr && end == nullptr))
+               && "If begin is nullptr, end needs to be nullptr as well");
     }
     /*! \brief
      * Constructs a reference to a particular range.
@@ -205,6 +202,8 @@ public:
     ArrayRef(iterator begin, iterator end) : begin_(begin), end_(end)
     {
         assert((end >= begin && "Invalid range"));
+        assert((begin.data() != nullptr || (begin.data() == nullptr && end.data() == nullptr))
+               && "If begin is nullptr, end needs to be nullptr as well");
     }
     //! \cond
     // Doxygen 1.8.5 doesn't parse the declaration correctly...
@@ -282,7 +281,7 @@ public:
      * The actual memory areas are not modified, only the references are
      * swapped.
      */
-    void swap(ArrayRef<T>& other)
+    void swap(ArrayRef<T>& other) noexcept
     {
         std::swap(begin_, other.begin_);
         std::swap(end_, other.end_);
@@ -300,12 +299,13 @@ private:
  * \param[in] size   Number of elements in array.
  *
  * Passed array must remain valid for the lifetime of this object.
+ * If \c begin is nullptr, return an empty ArrayRef.
  */
 //! \related ArrayRef
 template<typename T>
 ArrayRef<T> arrayRefFromArray(T* begin, size_t size)
 {
-    return ArrayRef<T>(begin, begin + size);
+    return (begin != nullptr) ? ArrayRef<T>(begin, begin + size) : ArrayRef<T>{};
 }
 
 //! \copydoc arrayRefFromArray
@@ -313,18 +313,16 @@ ArrayRef<T> arrayRefFromArray(T* begin, size_t size)
 template<typename T>
 ArrayRef<const T> constArrayRefFromArray(const T* begin, size_t size)
 {
-    return ArrayRef<const T>(begin, begin + size);
+    return (begin != nullptr) ? ArrayRef<const T>(begin, begin + size) : ArrayRef<const T>{};
 }
 
 /*! \brief
  * Create ArrayRef from container with type deduction
  *
  * \see ArrayRef
- *
- * \todo Use std::is_const_v when CUDA 11 is a requirement.
  */
 template<typename T>
-ArrayRef<std::conditional_t<std::is_const<T>::value, const typename T::value_type, typename T::value_type>>
+ArrayRef<std::conditional_t<std::is_const_v<T>, const typename T::value_type, typename T::value_type>>
 makeArrayRef(T& c)
 {
     return c;
@@ -349,7 +347,7 @@ ArrayRef<const typename T::value_type> makeConstArrayRef(const T& c)
  * \ingroup module_utility
  */
 template<typename T>
-void swap(ArrayRef<T>& a, ArrayRef<T>& b)
+void swap(ArrayRef<T>& a, ArrayRef<T>& b) noexcept
 {
     a.swap(b);
 }

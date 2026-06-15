@@ -1,11 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2014,2015,2016,2017,2018 by the GROMACS development team.
- * Copyright (c) 2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2014- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -19,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -28,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \internal \file
  * \brief
@@ -42,21 +40,26 @@
  */
 #include "gmxpre.h"
 
-#include "datafilefinder.h"
+#include "gromacs/utility/datafilefinder.h"
 
 #include <cstdlib>
 
+#include <filesystem>
+#include <memory>
 #include <set>
 #include <string>
 #include <vector>
 
-#include "buildinfo.h"
 #include "gromacs/utility/directoryenumerator.h"
 #include "gromacs/utility/exceptions.h"
+#include "gromacs/utility/fileptr.h"
 #include "gromacs/utility/filestream.h"
 #include "gromacs/utility/path.h"
 #include "gromacs/utility/programcontext.h"
 #include "gromacs/utility/stringutil.h"
+#include "gromacs/utility/unique_cptr.h"
+
+#include "buildinfo.h"
 
 namespace gmx
 {
@@ -68,24 +71,24 @@ namespace gmx
 class DataFileFinder::Impl
 {
 public:
-    static std::string getDefaultPath();
+    static std::filesystem::path getDefaultPath();
 
     Impl() : envName_(nullptr), bEnvIsSet_(false) {}
 
-    const char*              envName_;
-    bool                     bEnvIsSet_;
-    std::vector<std::string> searchPath_;
+    const char*                        envName_;
+    bool                               bEnvIsSet_;
+    std::vector<std::filesystem::path> searchPath_;
 };
 
-std::string DataFileFinder::Impl::getDefaultPath()
+std::filesystem::path DataFileFinder::Impl::getDefaultPath()
 {
     const InstallationPrefixInfo installPrefix = getProgramContext().installationPrefix();
-    if (!isNullOrEmpty(installPrefix.path))
+    if (!installPrefix.path_.empty())
     {
-        const char* const dataPath = installPrefix.bSourceLayout ? "share" : GMX_INSTALL_GMXDATADIR;
-        return Path::join(installPrefix.path, dataPath, "top");
+        const char* const dataPath = installPrefix.sourceLayoutTreeLike_ ? "share" : GMX_INSTALL_GMXDATADIR;
+        return std::filesystem::path(installPrefix.path_).append(dataPath).append("top");
     }
-    return std::string();
+    return std::filesystem::path();
 }
 
 /********************************************************************
@@ -100,17 +103,16 @@ void DataFileFinder::setSearchPathFromEnv(const char* envVarName)
 {
     if (!impl_)
     {
-        impl_.reset(new Impl());
+        impl_ = std::make_unique<Impl>();
     }
     impl_->envName_       = envVarName;
-    const char* const lib = getenv(envVarName);
+    const char* const lib = std::getenv(envVarName);
     if (!isNullOrEmpty(lib))
     {
-        std::vector<std::string>& path        = impl_->searchPath_; // convenience
-        const std::string         defaultPath = impl_->getDefaultPath();
-        std::vector<std::string>  tmpPath;
-        Path::splitPathEnvironment(lib, &tmpPath);
-        std::set<std::string> pathsSeen;
+        auto&                              path        = impl_->searchPath_; // convenience
+        auto                               defaultPath = impl_->getDefaultPath();
+        std::vector<std::filesystem::path> tmpPath     = splitPathEnvironment(lib);
+        std::set<std::filesystem::path>    pathsSeen;
         pathsSeen.insert(defaultPath);
         for (auto& d : tmpPath)
         {
@@ -130,45 +132,38 @@ FilePtr DataFileFinder::openFile(const DataFileOptions& options) const
     // the exists() calls and actually opening the file.  It would be better
     // to leave the file open after a successful exists() if the desire is to
     // actually open the file.
-    std::string filename = findFile(options);
+    auto filename = findFile(options);
     if (filename.empty())
     {
         return nullptr;
     }
-#if 0
-    if (debug)
-    {
-        fprintf(debug, "Opening library file %s\n", fn);
-    }
-#endif
     return TextInputFile::openRawHandle(filename);
 }
 
-std::string DataFileFinder::findFile(const DataFileOptions& options) const
+std::filesystem::path DataFileFinder::findFile(const DataFileOptions& options) const
 {
-    if (options.bCurrentDir_ && Path::exists(options.filename_))
+    if (options.bCurrentDir_ && std::filesystem::exists(options.filename_))
     {
         return options.filename_;
     }
     if (impl_ != nullptr)
     {
-        std::vector<std::string>::const_iterator i;
-        for (i = impl_->searchPath_.begin(); i != impl_->searchPath_.end(); ++i)
+        for (auto path : impl_->searchPath_)
         {
             // TODO: Deal with an empty search path entry more reasonably.
-            std::string testPath = Path::join(*i, options.filename_);
+            path.append(options.filename_.string());
             // TODO: Consider skipping directories.
-            if (Path::exists(testPath))
+            if (std::filesystem::exists(path))
             {
-                return testPath;
+                return path;
             }
         }
     }
-    const std::string& defaultPath = Impl::getDefaultPath();
+    const auto& defaultPath = Impl::getDefaultPath();
     if (!defaultPath.empty())
     {
-        std::string testPath = Path::join(defaultPath, options.filename_);
-        if (Path::exists(testPath))
+        auto testPath = std::filesystem::path(defaultPath).append(options.filename_.string());
+        if (std::filesystem::exists(testPath))
         {
             return testPath;
         }
@@ -177,7 +172,8 @@ std::string DataFileFinder::findFile(const DataFileOptions& options) const
     {
         const char* const envName   = (impl_ != nullptr ? impl_->envName_ : nullptr);
         const bool        bEnvIsSet = (impl_ != nullptr ? impl_->bEnvIsSet_ : false);
-        std::string       message(formatString("Library file '%s' not found", options.filename_));
+        std::string       message(
+                formatString("Library file '%s' not found", options.filename_.string().c_str()));
         if (options.bCurrentDir_)
         {
             message.append(" in current dir nor");
@@ -190,22 +186,21 @@ std::string DataFileFinder::findFile(const DataFileOptions& options) const
         if (options.bCurrentDir_)
         {
             message.append("\n  ");
-            message.append(Path::getWorkingDirectory());
+            message.append(std::filesystem::current_path().string());
             message.append(" (current dir)");
         }
         if (impl_ != nullptr)
         {
-            std::vector<std::string>::const_iterator i;
-            for (i = impl_->searchPath_.begin(); i != impl_->searchPath_.end(); ++i)
+            for (const auto& path : impl_->searchPath_)
             {
                 message.append("\n  ");
-                message.append(*i);
+                message.append(path.string());
             }
         }
         if (!defaultPath.empty())
         {
             message.append("\n  ");
-            message.append(defaultPath);
+            message.append(defaultPath.string());
             message.append(" (default)");
         }
         if (!bEnvIsSet && envName != nullptr)
@@ -225,38 +220,36 @@ std::vector<DataFileInfo> DataFileFinder::enumerateFiles(const DataFileOptions& 
     // TODO: Consider if not being able to list one of the directories should
     // really be a fatal error. Or alternatively, check somewhere else that
     // paths in GMXLIB are valid.
-    std::vector<DataFileInfo>                result;
-    std::vector<std::string>::const_iterator i;
+    std::vector<DataFileInfo> result;
     if (options.bCurrentDir_)
     {
-        std::vector<std::string> files =
-                DirectoryEnumerator::enumerateFilesWithExtension(".", options.filename_, false);
-        for (i = files.begin(); i != files.end(); ++i)
+        auto files = DirectoryEnumerator::enumerateFilesWithExtension(
+                std::filesystem::current_path(), options.filename_.string(), false);
+        for (const auto& file : files)
         {
-            result.emplace_back(".", *i, false);
+            result.emplace_back(".", file, false);
         }
     }
     if (impl_ != nullptr)
     {
-        std::vector<std::string>::const_iterator j;
-        for (j = impl_->searchPath_.begin(); j != impl_->searchPath_.end(); ++j)
+        for (const auto& path : impl_->searchPath_)
         {
-            std::vector<std::string> files = DirectoryEnumerator::enumerateFilesWithExtension(
-                    j->c_str(), options.filename_, false);
-            for (i = files.begin(); i != files.end(); ++i)
+            auto files = DirectoryEnumerator::enumerateFilesWithExtension(
+                    path, options.filename_.string(), false);
+            for (const auto& file : files)
             {
-                result.emplace_back(*j, *i, false);
+                result.emplace_back(path, file, false);
             }
         }
     }
-    const std::string& defaultPath = Impl::getDefaultPath();
+    const auto& defaultPath = Impl::getDefaultPath();
     if (!defaultPath.empty())
     {
-        std::vector<std::string> files = DirectoryEnumerator::enumerateFilesWithExtension(
-                defaultPath.c_str(), options.filename_, false);
-        for (i = files.begin(); i != files.end(); ++i)
+        auto files = DirectoryEnumerator::enumerateFilesWithExtension(
+                defaultPath, options.filename_.string(), false);
+        for (const auto& file : files)
         {
-            result.emplace_back(defaultPath, *i, true);
+            result.emplace_back(defaultPath, file, true);
         }
     }
     if (result.empty() && options.bThrow_)
@@ -265,7 +258,7 @@ std::vector<DataFileInfo> DataFileFinder::enumerateFiles(const DataFileOptions& 
         std::string message(
                 formatString("Could not find any files ending on '%s' in the "
                              "current directory or the GROMACS library search path",
-                             options.filename_));
+                             options.filename_.string().c_str()));
         GMX_THROW(FileIOError(message));
     }
     return result;

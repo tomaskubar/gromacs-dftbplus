@@ -1,11 +1,9 @@
 #
 # This file is part of the GROMACS molecular simulation package.
 #
-# Copyright (c) 2011,2012,2014,2016,2018 by the GROMACS development team.
-# Copyright (c) 2019,2020, by the GROMACS development team, led by
-# Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
-# and including many others, as listed in the AUTHORS file in the
-# top-level source directory and at http://www.gromacs.org.
+# Copyright 2011- The GROMACS Authors
+# and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+# Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
 #
 # GROMACS is free software; you can redistribute it and/or
 # modify it under the terms of the GNU Lesser General Public License
@@ -19,7 +17,7 @@
 #
 # You should have received a copy of the GNU Lesser General Public
 # License along with GROMACS; if not, see
-# http://www.gnu.org/licenses, or write to the Free Software Foundation,
+# https://www.gnu.org/licenses, or write to the Free Software Foundation,
 # Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
 #
 # If you want to redistribute modifications to GROMACS, please
@@ -28,20 +26,34 @@
 # consider code for inclusion in the official distribution, but
 # derived work must not be called official GROMACS. Details are found
 # in the README & COPYING files - if they are missing, get the
-# official version at http://www.gromacs.org.
+# official version at https://www.gromacs.org.
 #
 # To help us fund GROMACS development, we humbly ask that you cite
-# the research papers on the package. Check out http://www.gromacs.org.
+# the research papers on the package. Check out https://www.gromacs.org.
 
 add_executable(template template.cpp)
-if (WIN32)
+if (MSVC)
     gmx_target_warning_suppression(template /wd4244 HAS_NO_MSVC_LOSSY_CONVERSION_DOUBLE_TO_REAL)
     gmx_target_warning_suppression(template /wd4267 HAS_NO_MSVC_LOSSY_CONVERSION_SIZE_T_TO_INT)
 endif()
 # This should be removable once object libraries can directly use target_link_libraries
 # with CMake 3.12, #3290
 target_include_directories(template SYSTEM PRIVATE ${PROJECT_SOURCE_DIR}/src/external)
-target_link_libraries(template libgromacs legacy_modules ${GMX_EXE_LINKER_FLAGS})
+target_link_libraries(template PRIVATE libgromacs legacy_modules legacy_api ${GMX_EXE_LINKER_FLAGS})
+
+# Ensure that libsycl is properly linked when libgromacs is a static
+# library.
+#
+# TODO The second predicate is used in release-2025 branch to
+# maximize stability of the default shared-library build
+# configuration. After merging to main branch, remove the second
+# predicate, because it may be useful and seems unlikely to cause
+# harm.
+if(GMX_GPU_SYCL AND NOT BUILD_SHARED_LIBS)
+    # There are no source files to gmx that need to compile as
+    # SYCL, so none are provided here.
+    add_sycl_to_target(TARGET template)
+endif()
 
 if (GMX_QMMM_DFTBPLUS)
     LINK_DIRECTORIES(GMX_QMMM_DFTBPLUS_LIB)
@@ -49,10 +61,10 @@ if (GMX_QMMM_DFTBPLUS)
     set_target_properties(libdftbplus PROPERTIES IMPORTED_LOCATION ${GMX_QMMM_DFTBPLUS_LIB}/libdftbplus.a)
    #add_library(libxmlf90 STATIC IMPORTED)
    #set_target_properties(libxmlf90 PROPERTIES IMPORTED_LOCATION ${GMX_QMMM_DFTBPLUS_LIB}/libxmlf90.a)
-    add_library(libdftd3 STATIC IMPORTED)
-    set_target_properties(libdftd3 PROPERTIES IMPORTED_LOCATION ${GMX_QMMM_DFTBPLUS_LIB}/libdftd3.a)
-    add_library(libmudpack STATIC IMPORTED)
-    set_target_properties(libmudpack PROPERTIES IMPORTED_LOCATION ${GMX_QMMM_DFTBPLUS_LIB}/libmudpack.a)
+#   add_library(libdftd3 STATIC IMPORTED)
+#   set_target_properties(libdftd3 PROPERTIES IMPORTED_LOCATION ${GMX_QMMM_DFTBPLUS_LIB}/libdftd3.a)
+#   add_library(libmudpack STATIC IMPORTED)
+#   set_target_properties(libmudpack PROPERTIES IMPORTED_LOCATION ${GMX_QMMM_DFTBPLUS_LIB}/libmudpack.a)
 
     # search for the gfortran and gomp libraries in the system
     # first look for possible library locations
@@ -77,12 +89,13 @@ if (GMX_QMMM_DFTBPLUS)
 
 #   add_library(gfortran-7.2 SHARED IMPORTED)
 #   set_target_properties(gfortran-7.2 PROPERTIES IMPORTED_LOCATION /usr/local/src/gcc-7.2.0-release/lib64/libgfortran.so.4)
-    target_link_libraries(template libdftbplus libdftd3 libmudpack gfortran gomp)
+    target_link_libraries(template libdftbplus gfortran gomp)
+   #target_link_libraries(template libdftbplus libdftd3 libmudpack gfortran gomp)
    #target_link_libraries(template libdftbplus libxmlf90 libdftd3 gfortran gomp)
 endif()
 
 set(DOCUMENTATION_HTTP_URL_BASE
-    http://jenkins.gromacs.org/job/Documentation_Nightly_master/javadoc)
+    https://manual.gromacs.org/nightly/index.html)
 if (SOURCE_IS_SOURCE_DISTRIBUTION)
     set(DOCUMENTATION_HTTP_URL_BASE
         http://manual.gromacs.org/documentation/${GMX_VERSION_STRING})

@@ -1,12 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
- * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2017,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 1991- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -20,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -29,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \libinternal \file
  *
@@ -48,17 +45,17 @@
 #ifndef GMX_LISTED_FORCES_POSITION_RESTRAINTS_H
 #define GMX_LISTED_FORCES_POSITION_RESTRAINTS_H
 
-#include <stdio.h>
+#include <cstdio>
 
-#include "gromacs/math/vectypes.h"
+#include "gromacs/topology/ifunc.h"
+#include "gromacs/utility/arrayref.h"
 #include "gromacs/utility/real.h"
+#include "gromacs/utility/vectypes.h"
 
 struct gmx_enerdata_t;
 struct gmx_wallcycle;
 struct t_forcerec;
 class InteractionDefinitions;
-struct t_lambda;
-struct t_nrnb;
 struct t_pbc;
 
 namespace gmx
@@ -66,35 +63,48 @@ namespace gmx
 class ForceWithVirial;
 }
 
-/*! \brief Helper function that wraps calls to posres */
-void posres_wrapper(t_nrnb*                       nrnb,
-                    const InteractionDefinitions& idef,
-                    const struct t_pbc*           pbc,
-                    const rvec*                   x,
-                    gmx_enerdata_t*               enerd,
-                    const real*                   lambda,
-                    const t_forcerec*             fr,
-                    gmx::ForceWithVirial*         forceWithVirial);
+/*! \brief Helper function that wraps calls to posres
+ *
+ * \returns the potential
+ */
+real posres_wrapper(gmx::ArrayRef<const int>                  iatoms,
+                    gmx::ArrayRef<const t_iparams>            iparamsPosres,
+                    const t_pbc&                              pbc,
+                    const rvec*                               x,
+                    gmx::ArrayRef<const real>                 lambda,
+                    const t_forcerec*                         fr,
+                    const gmx::ArrayRef<const unsigned short> refScaleComIndices,
+                    gmx::ArrayRef<gmx::RVec>                  centersOfMassScaledBuffer,
+                    gmx::ArrayRef<gmx::RVec>                  centersOfMassBScaledBuffer,
+                    gmx::ArrayRef<rvec4>                      forces,
+                    gmx::RVec*                                virial,
+                    real*                                     dvdl);
 
 /*! \brief Helper function that wraps calls to posres for free-energy
     pertubation */
-void posres_wrapper_lambda(struct gmx_wallcycle*         wcycle,
-                           const t_lambda*               fepvals,
-                           const InteractionDefinitions& idef,
-                           const struct t_pbc*           pbc,
-                           const rvec                    x[],
-                           gmx_enerdata_t*               enerd,
-                           const real*                   lambda,
-                           const t_forcerec*             fr);
+void posres_wrapper_lambda(struct gmx_wallcycle*                     wcycle,
+                           const InteractionDefinitions&             idef,
+                           const t_pbc&                              pbc,
+                           const rvec                                x[],
+                           gmx_enerdata_t*                           enerd,
+                           gmx::ArrayRef<const real>                 lambda,
+                           const t_forcerec*                         fr,
+                           const gmx::ArrayRef<const unsigned short> refScaleComIndices,
+                           gmx::ArrayRef<gmx::RVec>                  centersOfMassScaledBuffer,
+                           gmx::ArrayRef<gmx::RVec>                  centersOfMassBScaledBuffer);
 
-/*! \brief Helper function that wraps calls to fbposres for
-    free-energy perturbation */
-void fbposres_wrapper(t_nrnb*                       nrnb,
-                      const InteractionDefinitions& idef,
-                      const struct t_pbc*           pbc,
-                      const rvec*                   x,
-                      gmx_enerdata_t*               enerd,
-                      const t_forcerec*             fr,
-                      gmx::ForceWithVirial*         forceWithVirial);
+/*! \brief Helper function that wraps calls to fbposres for free-energy perturbation
+ *
+ * \returns the potential
+ */
+real fbposres_wrapper(gmx::ArrayRef<const int>                  iatoms,
+                      gmx::ArrayRef<const t_iparams>            iparamsFBPosres,
+                      const t_pbc&                              pbc,
+                      const rvec*                               x,
+                      const t_forcerec*                         fr,
+                      const gmx::ArrayRef<const unsigned short> refScaleComIndices,
+                      gmx::ArrayRef<gmx::RVec>                  centersOfMassScaledBuffer,
+                      gmx::ArrayRef<rvec4>                      forces,
+                      gmx::RVec*                                virial);
 
 #endif

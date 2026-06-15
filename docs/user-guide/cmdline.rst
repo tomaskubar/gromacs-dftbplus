@@ -3,26 +3,24 @@
 Command-line reference
 ======================
 
+|Gromacs| includes many tools for preparing, running and analyzing
+molecular dynamics simulations. These are all structured as part of a single
+:command:`gmx` wrapper binary, and invoked with commands like :command:`gmx grompp`.
+or :command:`gmx mdrun`. Documentation for these can
+be found at the respective sections below, as well as on man pages (e.g.,
+:manpage:`gmx-grompp(1)`) and with :samp:`gmx help {command}` or
+:samp:`gmx {command} -h`.
+
+If you have installed an MPI version of |Gromacs|, by default the
+:command:`gmx` binary is called :command:`gmx_mpi` and you should adapt
+accordingly.
+
 .. toctree::
    :hidden:
    :glob:
 
    /onlinehelp/gmx
    /onlinehelp/gmx-*
-
-|Gromacs| includes many tools for preparing, running and analyzing
-molecular dynamics simulations. These are all structured as part of a single
-:command:`gmx` wrapper binary, and invoked with commands like :command:`gmx grompp`.
-:ref:`mdrun <gmx mdrun>` is the only other binary that
-:ref:`can be built <building just the mdrun binary>`; in the normal
-build it can be run with :command:`gmx mdrun`. Documentation for these can
-be found at the respective sections below, as well as on man pages (e.g.,
-:manpage:`gmx-grompp(1)`) and with :samp:`gmx help {command}` or
-:samp:`gmx {command} -h`.
-
-If you've installed an MPI version of |Gromacs|, by default the
-:command:`gmx` binary is called :command:`gmx_mpi` and you should adapt
-accordingly.
 
 Command-line interface and conventions
 --------------------------------------
@@ -109,9 +107,6 @@ Special topics
 The information in these topics is also accessible through
 :samp:`gmx help {topic}` on the command line.
 
-Selection syntax and usage
-^^^^^^^^^^^^^^^^^^^^^^^^^^
-
 .. toctree::
 
    /onlinehelp/selections
@@ -144,7 +139,7 @@ This section lists only major changes; minor changes like additional/removed
 options or bug fixes are not typically included.
 
 For more information about changed features, please check out the
-:ref:`release notes <release-notes>`.
+:ref:`release-notes`.
 
 Version 2020
 ^^^^^^^^^^^^
@@ -163,7 +158,7 @@ gmx extract-cluster
 **new**
 
 :ref:`gmx extract-cluster` has been introduced as a selection-enabled way to
-write sub-trajectories based on the output from a cluster analysis. The 
+write sub-trajectories based on the output from a cluster analysis. The
 corresponding option **-sub** in :ref:`gmx trjconv` has been removed.
 
 Version 2018
@@ -345,7 +340,7 @@ gmx protonate
 This was a very old tool originally written for united atom force fields,
 where it was necessary to generate all hydrogens after running a trajectory
 in order to calculate e.g. distance restraint violations. The functionality
-to simply protonate a structure is available in :ref:`gmx pdb2gmx`. 
+to simply protonate a structure is available in :ref:`gmx pdb2gmx`.
 If there is significant interest, we might reintroduce it after moving to new
 topology formats in the future.
 

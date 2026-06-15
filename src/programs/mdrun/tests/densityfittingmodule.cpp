@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2019- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 
 /*! \internal \file
@@ -42,15 +41,19 @@
  */
 #include "gmxpre.h"
 
+#include <filesystem>
 #include <string>
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
 #include "gromacs/topology/ifunc.h"
+#include "gromacs/utility/real.h"
 #include "gromacs/utility/stringutil.h"
 
+#include "testutils/cmdlinetest.h"
 #include "testutils/refdata.h"
+#include "testutils/testasserts.h"
 #include "testutils/testfilemanager.h"
 
 #include "energycomparison.h"
@@ -75,7 +78,7 @@ public:
     DensityFittingTest()
     {
         runner_.useTopGroAndNdxFromDatabase("argon12");
-        runner_.edrFileName_ = fileManager_.getTemporaryFilePath(".edr");
+        runner_.edrFileName_ = fileManager_.getTemporaryFilePath(".edr").string();
     }
 
     //! Check the output of mdrun
@@ -85,8 +88,8 @@ public:
                 relativeToleranceAsFloatingPoint(energyTermMagnitude, 1e-4);
 
         EnergyTermsToCompare energyTermsToCompare{
-            { { interaction_function[F_DENSITYFITTING].longname, energyTermTolerance },
-              { interaction_function[F_EPOT].longname, energyTermTolerance } }
+            { { interaction_function[InteractionFunction::DensityFitting].longname, energyTermTolerance },
+              { interaction_function[InteractionFunction::PotentialEnergy].longname, energyTermTolerance } }
         };
 
         TestReferenceData refData;
@@ -102,7 +105,7 @@ public:
             "density-guided-simulation-active = yes\n"
             "density-guided-simulation-group  = FirstThreeOfTwelve\n"
             "density-guided-simulation-reference-density-filename = %s\n",
-            TestFileManager::getInputFilePath("ellipsoid-density.mrc").c_str());
+            TestFileManager::getInputFilePath("ellipsoid-density.mrc").string().c_str());
 
     //! Mdp values for md integrator with default density fitting parameters.
     const std::string mdpMdDensfitYesUnsetValues = formatString(
@@ -112,7 +115,7 @@ public:
             "density-guided-simulation-active = yes\n"
             "density-guided-simulation-group  = FirstThreeOfTwelve\n"
             "density-guided-simulation-reference-density-filename = %s\n",
-            TestFileManager::getInputFilePath("ellipsoid-density.mrc").c_str());
+            TestFileManager::getInputFilePath("ellipsoid-density.mrc").string().c_str());
 
     //! Mdp values for steepest-decent energy minimization with density fitting values set to non-defaults.
     const std::string mdpDensiftAllDefaultsChanged_ = formatString(
@@ -138,9 +141,9 @@ public:
     const std::string mdpTranslationSetWrongValues_ =
             formatString("density-guided-simulation-shift-vector = 0.1 -0.2\n");
     //! A 45 degree rotation around the y axis expressed as matrix transformation
-    const std::string mdpTransformationMatrix1degAroundY_ = formatString(
-            "density-guided-simulation-transformation-matrix = 0.9998477 0.0000000 0.0174524 "
-            "0.0000000 1.0000000 0.0000000 -0.0174524 0.0000000 0.9998477 \n");
+    const std::string mdpTransformationMatrix45degAroundY_ = formatString(
+            "density-guided-simulation-transformation-matrix = 0.7071068 0.0000000 0.7071068 "
+            "0.0000000 1.0000000 0.0000000 -0.7071068 0.0000000 0.7071068 \n");
     //! The identity matrix as transformation matrix
     const std::string mdpTransformationMatrixIdentity_ = formatString(
             "density-guided-simulation-transformation-matrix = 1 0 0 "
@@ -206,8 +209,9 @@ TEST_F(DensityFittingTest, EnergyMinimizationEnergyTranslationParametersOff)
 TEST_F(DensityFittingTest, EnergyMinimizationEnergyCorrectInnerProductTranslationAndTransformationMatrix)
 {
     runner_.useStringAsMdpFile(mdpEminDensfitYesUnsetValues + mdpTranslationSet_
-                               + mdpTransformationMatrix1degAroundY_);
+                               + mdpTransformationMatrix45degAroundY_);
 
+    runner_.nsteps_ = 4;
     ASSERT_EQ(0, runner_.callGrompp());
     ASSERT_EQ(0, runner_.callMdrun(commandLineForMdrun_));
 
@@ -276,8 +280,6 @@ TEST_F(DensityFittingTest, GromppErrorWhenEnergyEvaluationFrequencyMismatch)
 TEST_F(DensityFittingTest, CheckpointWorks)
 {
     runner_.useStringAsMdpFile(mdpMdDensfitYesUnsetValues + mdpSkipDensityfittingEveryOtherStep_);
-    runner_.cptFileName_ = fileManager_.getTemporaryFilePath(".cpt");
-    commandLineForMdrun_.addOption("-cpo", runner_.cptFileName_);
 
     ASSERT_EQ(0, runner_.callGrompp());
     ASSERT_EQ(0, runner_.callMdrun(commandLineForMdrun_));
@@ -285,7 +287,7 @@ TEST_F(DensityFittingTest, CheckpointWorks)
     // checkMdrun(expectedEnergyTermMagnitude);
 
     CommandLine commandLineForRestart;
-    commandLineForRestart.addOption("-cpi", runner_.cptFileName_);
+    commandLineForRestart.addOption("-cpi", runner_.cptOutputFileName_);
     commandLineForRestart.addOption("-noappend");
     runner_.nsteps_ = 4;
     ASSERT_EQ(0, runner_.callMdrun(commandLineForRestart));

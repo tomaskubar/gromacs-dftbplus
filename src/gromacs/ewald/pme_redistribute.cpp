@@ -1,13 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
- * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2016,2018 by the GROMACS development team.
- * Copyright (c) 2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 1991- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -21,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -30,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 
 /*! \internal \file
@@ -51,14 +47,19 @@
 
 #include "config.h"
 
-#include <algorithm>
+#include <cstdio>
 
-#include "gromacs/math/vec.h"
-#include "gromacs/mdtypes/commrec.h"
+#include <algorithm>
+#include <array>
+#include <filesystem>
+#include <vector>
+
+#include "gromacs/utility/arrayref.h"
 #include "gromacs/utility/exceptions.h"
 #include "gromacs/utility/fatalerror.h"
+#include "gromacs/utility/gmxassert.h"
 #include "gromacs/utility/gmxmpi.h"
-#include "gromacs/utility/smalloc.h"
+#include "gromacs/utility/vec.h"
 
 #include "pme_internal.h"
 
@@ -78,7 +79,7 @@ static void pme_calc_pidx(int                            start,
     int*        pd;
 
     /* Calculate PME task index (pidx) for each grid index.
-     * Here we always assign equally sized slabs to each node
+     * Here we always assign equally sized slabs to each rank
      * for load balancing reasons (the PME grid spacing is not used).
      */
 
@@ -96,7 +97,7 @@ static void pme_calc_pidx(int                            start,
         rxx = recipbox[XX][XX];
         ryx = recipbox[YY][XX];
         rzx = recipbox[ZZ][XX];
-        /* Calculate the node index in x-dimension */
+        /* Calculate the slab index in x-dimension */
         for (i = start; i < end; i++)
         {
             xptr = x[i];
@@ -111,7 +112,7 @@ static void pme_calc_pidx(int                            start,
     {
         ryy = recipbox[YY][YY];
         rzy = recipbox[ZZ][YY];
-        /* Calculate the node index in y-dimension */
+        /* Calculate the slab index in y-dimension */
         for (i = start; i < end; i++)
         {
             xptr = x[i];
@@ -135,8 +136,12 @@ static void pme_calc_pidx_wrapper(gmx::ArrayRef<const gmx::RVec> x, const matrix
         try
         {
             const int natoms = x.ssize();
-            pme_calc_pidx(natoms * thread / nthread, natoms * (thread + 1) / nthread, recipbox, x,
-                          atc, atc->count_thread[thread].data());
+            pme_calc_pidx(natoms * thread / nthread,
+                          natoms * (thread + 1) / nthread,
+                          recipbox,
+                          x,
+                          atc,
+                          atc->count_thread[thread].data());
         }
         GMX_CATCH_ALL_AND_EXIT_WITH_FATAL_ERROR
     }
@@ -240,12 +245,12 @@ void PmeAtomComm::setNumAtoms(const int numAtoms)
 
 //! Communicates buffers between rank separated by \p shift slabs
 static void pme_dd_sendrecv(PmeAtomComm gmx_unused* atc,
-                            gmx_bool gmx_unused bBackward,
-                            int gmx_unused shift,
-                            void gmx_unused* buf_s,
-                            int gmx_unused nbyte_s,
-                            void gmx_unused* buf_r,
-                            int gmx_unused nbyte_r)
+                            gmx_bool gmx_unused     bBackward,
+                            int gmx_unused          shift,
+                            void gmx_unused*        buf_s,
+                            int gmx_unused          nbyte_s,
+                            void gmx_unused*        buf_r,
+                            int gmx_unused          nbyte_r)
 {
 #if GMX_MPI
     int        dest, src;
@@ -264,8 +269,8 @@ static void pme_dd_sendrecv(PmeAtomComm gmx_unused* atc,
 
     if (nbyte_s > 0 && nbyte_r > 0)
     {
-        MPI_Sendrecv(buf_s, nbyte_s, MPI_BYTE, dest, shift, buf_r, nbyte_r, MPI_BYTE, src, shift,
-                     atc->mpi_comm, &stat);
+        MPI_Sendrecv(
+                buf_s, nbyte_s, MPI_BYTE, dest, shift, buf_r, nbyte_r, MPI_BYTE, src, shift, atc->mpi_comm, &stat);
     }
     else if (nbyte_s > 0)
     {
@@ -282,69 +287,74 @@ static void pme_dd_sendrecv(PmeAtomComm gmx_unused* atc,
 static void dd_pmeredist_pos_coeffs(gmx_pme_t*                     pme,
                                     const gmx_bool                 bX,
                                     gmx::ArrayRef<const gmx::RVec> x,
-                                    const real*                    data,
+                                    gmx::ArrayRef<const real>      data,
                                     PmeAtomComm*                   atc)
 {
-    int nnodes_comm, i, local_pos, buf_pos, node;
+    int nnodes_comm, local_pos, buf_pos;
 
     nnodes_comm = std::min(2 * atc->maxshift, atc->nslab - 1);
 
     auto sendCount = atc->sendCount();
     int  nsend     = 0;
-    for (i = 0; i < nnodes_comm; i++)
+    for (int nodeIdx = 0; nodeIdx < nnodes_comm; nodeIdx++)
     {
-        const int commnode                     = atc->slabCommSetup[i].node_dest;
-        atc->slabCommSetup[commnode].buf_index = nsend;
+        const int commnode           = atc->slabCommSetup[nodeIdx].node_dest;
+        atc->bufferIndices[commnode] = nsend;
         nsend += sendCount[commnode];
     }
     if (bX)
     {
-        if (sendCount[atc->nodeid] + nsend != x.ssize())
+        if (sendCount[atc->slabIndex] + nsend != x.ssize())
         {
             gmx_fatal(
                     FARGS,
                     "%zd particles communicated to PME rank %d are more than 2/3 times the cut-off "
                     "out of the domain decomposition cell of their charge group in dimension %c.\n"
                     "This usually means that your system is not well equilibrated.",
-                    x.ssize() - (sendCount[atc->nodeid] + nsend), pme->nodeid, 'x' + atc->dimind);
+                    x.ssize() - (sendCount[atc->slabIndex] + nsend),
+                    pme->nodeid,
+                    'x' + atc->dimind);
         }
 
-        if (nsend > pme->buf_nalloc)
+        if (nsend > gmx::ssize(pme->bufr) || nsend > gmx::ssize(pme->bufv))
         {
-            pme->buf_nalloc = over_alloc_dd(nsend);
-            srenew(pme->bufv, pme->buf_nalloc);
-            srenew(pme->bufr, pme->buf_nalloc);
+            pme->bufv.resize(nsend);
+            pme->bufr.resize(nsend);
         }
 
-        int numAtoms = sendCount[atc->nodeid];
-        for (i = 0; i < nnodes_comm; i++)
+        int numAtoms = sendCount[atc->slabIndex];
+        for (int nodeIdx = 0; nodeIdx < nnodes_comm; nodeIdx++)
         {
-            const int commnode = atc->slabCommSetup[i].node_dest;
+            const int commnode = atc->slabCommSetup[nodeIdx].node_dest;
             int       scount   = sendCount[commnode];
             /* Communicate the count */
             if (debug)
             {
-                fprintf(debug, "dimind %d PME rank %d send to rank %d: %d\n", atc->dimind,
-                        atc->nodeid, commnode, scount);
+                fprintf(debug,
+                        "dimind %d PME rank %d send to rank %d: %d\n",
+                        atc->dimind,
+                        atc->slabIndex,
+                        commnode,
+                        scount);
             }
-            pme_dd_sendrecv(atc, FALSE, i, &scount, sizeof(int), &atc->slabCommSetup[i].rcount,
-                            sizeof(int));
-            numAtoms += atc->slabCommSetup[i].rcount;
+            pme_dd_sendrecv(
+                    atc, FALSE, nodeIdx, &scount, sizeof(int), &atc->slabCommSetup[nodeIdx].rcount, sizeof(int));
+            numAtoms += atc->slabCommSetup[nodeIdx].rcount;
         }
 
         atc->setNumAtoms(numAtoms);
     }
 
     local_pos = 0;
-    for (gmx::index i = 0; i < x.ssize(); i++)
+    for (gmx::Index i = 0; i < x.ssize(); i++)
     {
-        node = atc->pd[i];
-        if (node == atc->nodeid)
+        const int slabIndex = atc->pd[i];
+        if (slabIndex == atc->slabIndex)
         {
             /* Copy direct to the receive buffer */
             if (bX)
             {
-                copy_rvec(x[i], atc->xBuffer[local_pos]);
+                atc->xBuffer[local_pos] = x[i];
             }
             atc->coefficientBuffer[local_pos] = data[i];
             local_pos++;
@@ -352,10 +362,10 @@ static void dd_pmeredist_pos_coeffs(gmx_pme_t*                     pme,
         else
         {
             /* Copy to the send buffer */
-            int& buf_index = atc->slabCommSetup[node].buf_index;
+            int& buf_index = atc->bufferIndices[slabIndex];
             if (bX)
             {
-                copy_rvec(x[i], pme->bufv[buf_index]);
+                pme->bufv[buf_index] = x[i];
             }
             pme->bufr[buf_index] = data[i];
             buf_index++;
@@ -363,23 +373,33 @@ static void dd_pmeredist_pos_coeffs(gmx_pme_t*                     pme,
     }
 
     buf_pos = 0;
-    for (i = 0; i < nnodes_comm; i++)
+    for (int nodeIdx = 0; nodeIdx < nnodes_comm; nodeIdx++)
     {
-        const int scount = atc->sendCount()[atc->slabCommSetup[i].node_dest];
-        const int rcount = atc->slabCommSetup[i].rcount;
+        const int scount = atc->sendCount()[atc->slabCommSetup[nodeIdx].node_dest];
+        const int rcount = atc->slabCommSetup[nodeIdx].rcount;
         if (scount > 0 || rcount > 0)
         {
             if (bX)
             {
                 /* Communicate the coordinates */
-                pme_dd_sendrecv(atc, FALSE, i, pme->bufv + buf_pos, scount * sizeof(rvec),
-                                atc->xBuffer.data() + local_pos, rcount * sizeof(rvec));
+                pme_dd_sendrecv(atc,
+                                FALSE,
+                                nodeIdx,
+                                pme->bufv.data() + buf_pos,
+                                scount * sizeof(rvec),
+                                atc->xBuffer.data() + local_pos,
+                                rcount * sizeof(rvec));
             }
             /* Communicate the coefficients */
-            pme_dd_sendrecv(atc, FALSE, i, pme->bufr + buf_pos, scount * sizeof(real),
-                            atc->coefficientBuffer.data() + local_pos, rcount * sizeof(real));
+            pme_dd_sendrecv(atc,
+                            FALSE,
+                            nodeIdx,
+                            pme->bufr.data() + buf_pos,
+                            scount * sizeof(real),
+                            atc->coefficientBuffer.data() + local_pos,
+                            rcount * sizeof(real));
             buf_pos += scount;
-            local_pos += atc->slabCommSetup[i].rcount;
+            local_pos += atc->slabCommSetup[nodeIdx].rcount;
         }
     }
     GMX_ASSERT(local_pos == atc->numAtoms(), "After receiving we should have numAtoms coordinates");
@@ -387,79 +407,83 @@ static void dd_pmeredist_pos_coeffs(gmx_pme_t*                     pme,
 
 void dd_pmeredist_f(struct gmx_pme_t* pme, PmeAtomComm* atc, gmx::ArrayRef<gmx::RVec> f, gmx_bool bAddF)
 {
-    int nnodes_comm, local_pos, buf_pos, i, node;
+    int nnodes_comm, local_pos, buf_pos;
 
     nnodes_comm = std::min(2 * atc->maxshift, atc->nslab - 1);
 
-    local_pos = atc->sendCount()[atc->nodeid];
+    local_pos = atc->sendCount()[atc->slabIndex];
     buf_pos   = 0;
-    for (i = 0; i < nnodes_comm; i++)
+    for (int nodeIdx = 0; nodeIdx < nnodes_comm; nodeIdx++)
     {
-        const int commnode = atc->slabCommSetup[i].node_dest;
-        const int scount   = atc->slabCommSetup[i].rcount;
+        const int commnode = atc->slabCommSetup[nodeIdx].node_dest;
+        const int scount   = atc->slabCommSetup[nodeIdx].rcount;
         const int rcount   = atc->sendCount()[commnode];
         if (scount > 0 || rcount > 0)
         {
             /* Communicate the forces */
-            pme_dd_sendrecv(atc, TRUE, i, atc->f.data() + local_pos, scount * sizeof(rvec),
-                            pme->bufv + buf_pos, rcount * sizeof(rvec));
+            pme_dd_sendrecv(atc,
+                            TRUE,
+                            nodeIdx,
+                            atc->f.data() + local_pos,
+                            scount * sizeof(rvec),
+                            pme->bufv.data() + buf_pos,
+                            rcount * sizeof(rvec));
             local_pos += scount;
         }
-        atc->slabCommSetup[commnode].buf_index = buf_pos;
+        atc->bufferIndices[commnode] = buf_pos;
         buf_pos += rcount;
     }
 
     local_pos = 0;
     if (bAddF)
     {
-        for (gmx::index i = 0; i < f.ssize(); i++)
+        for (gmx::Index i = 0; i < f.ssize(); i++)
         {
-            node = atc->pd[i];
-            if (node == atc->nodeid)
+            const int slabIndex = atc->pd[i];
+            if (slabIndex == atc->slabIndex)
             {
                 /* Add from the local force array */
-                rvec_inc(f[i], atc->f[local_pos]);
+                f[i] += atc->f[local_pos];
                 local_pos++;
             }
             else
             {
                 /* Add from the receive buffer */
-                rvec_inc(f[i], pme->bufv[atc->slabCommSetup[node].buf_index]);
-                atc->slabCommSetup[node].buf_index++;
+                f[i] += pme->bufv[atc->bufferIndices[slabIndex]];
+                atc->bufferIndices[slabIndex]++;
             }
         }
     }
     else
     {
-        for (gmx::index i = 0; i < f.ssize(); i++)
+        for (gmx::Index i = 0; i < f.ssize(); i++)
         {
-            node = atc->pd[i];
-            if (node == atc->nodeid)
+            const int slabIndex = atc->pd[i];
+            if (slabIndex == atc->slabIndex)
             {
                 /* Copy from the local force array */
-                copy_rvec(atc->f[local_pos], f[i]);
+                f[i] = atc->f[local_pos];
                 local_pos++;
             }
             else
             {
                 /* Copy from the receive buffer */
-                copy_rvec(pme->bufv[atc->slabCommSetup[node].buf_index], f[i]);
-                atc->slabCommSetup[node].buf_index++;
+                f[i] = pme->bufv[atc->bufferIndices[slabIndex]];
+                atc->bufferIndices[slabIndex]++;
             }
         }
     }
 }
 
 void do_redist_pos_coeffs(struct gmx_pme_t*              pme,
-                          const t_commrec*               cr,
                           gmx_bool                       bFirst,
                           gmx::ArrayRef<const gmx::RVec> x,
-                          const real*                    data)
+                          gmx::ArrayRef<const real>      data)
 {
     for (int d = pme->ndecompdim - 1; d >= 0; d--)
     {
         gmx::ArrayRef<const gmx::RVec> xRef;
-        const real*                    param_d;
+        gmx::ArrayRef<const real>      param_d;
         if (d == pme->ndecompdim - 1)
         {
             /* Start out with the local coordinates and charges */
@@ -471,13 +495,13 @@ void do_redist_pos_coeffs(struct gmx_pme_t*              pme,
             /* Redistribute the data collected along the previous dimension */
             const PmeAtomComm& atc = pme->atc[d + 1];
             xRef                   = atc.x;
-            param_d                = atc.coefficient.data();
+            param_d                = atc.coefficient;
         }
         PmeAtomComm& atc = pme->atc[d];
         atc.pd.resize(xRef.size());
         pme_calc_pidx_wrapper(xRef, pme->recipbox, &atc);
         /* Redistribute x (only once) and qA/c6A or qB/c6B */
-        if (DOMAINDECOMP(cr))
+        if (pme->haveDDAtomOrdering)
         {
             dd_pmeredist_pos_coeffs(pme, bFirst, xRef, param_d, &atc);
         }

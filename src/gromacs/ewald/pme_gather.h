@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2014,2015,2017,2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2014- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 #ifndef GMX_EWALD_PME_GATHER_H
 #define GMX_EWALD_PME_GATHER_H
@@ -42,17 +41,52 @@ class PmeAtomComm;
 struct gmx_pme_t;
 struct splinedata_t;
 
-void gather_f_bsplines(const struct gmx_pme_t* pme,
-                       const real*             grid,
-                       gmx_bool                bClearF,
-                       const PmeAtomComm*      atc,
-                       const splinedata_t*     spline,
-                       real                    scale,
-                       bool                    bForQMMM,
-                       int                     nrQMatoms,
-                       bool                    bMMforcesOnly);
+namespace gmx
+{
+template<typename T>
+class ArrayRef;
+}
 
-real gather_energy_bsplines(struct gmx_pme_t* pme, const real* grid, PmeAtomComm* atc,
+/*! Gather the forces from the grid
+ *
+ * \param[in] pme          General PME settings
+ * \param[in] grid         The grid with potential values to gather the forces from
+ * \param[in] clearForces  Whether the forces in \p atc should be cleared (set instead of accumulate)
+ * \param[in,out] atc      Contains atom indices, charges and force output buffer
+ * \param[in] spline       The spline coefficients for the atoms
+ * \param[in] scaleFactor  Factor to scale the forces with
+ * \param[in] bForQMMM     Whether this is a QM/MM calculation
+ * \param[in] nrQMatoms    The number of QM atoms, only used if \p bForQMMM is true
+ * \param[in] bMMforcesOnly Whether to calculate only the MM forces in a QM/MM calculation,
+ *                          ignoring the charge of the QM atoms and not multiplying the forces by it.
+ */
+void gather_f_bsplines(const gmx_pme_t&          pme,
+                       gmx::ArrayRef<const real> grid,
+                       bool                      clearForces,
+                       PmeAtomComm*              atc,
+                       const splinedata_t&       spline,
+                       real                      scaleFactor,
+                       bool                      bForQMMM,
+                       int                       nrQMatoms,
+                       bool                      bMMforcesOnly);
+
+/*! Computes and returns the potential energy of the PME mesh part
+ *
+ * Computes and return the potential energy of the PME mesh part using the potential values
+ * stored in \p pme and the charges \p atc. This is only useful when the charges in \p atc
+ * are different from those used to compute the potential (otherwise is simpler and
+ * computationally cheaper to get the potential from the solve function).
+ *
+ * \note: Does not support MPI or OpenMP parallelization (is asserted)
+ *
+ * \param[in] pme   General PME settings
+ * \param[in] grid  The grid with potential values to gather the forces from
+ * \param[in] atc   Contains atom indices, charges and force output buffer
+ * \param[in] nrQMatoms The number of QM atoms, only used if \p bForQMMM is true
+ * \param[out] potential The buffer to store the computed potential values for each atom,
+ *            only used if \p nrQMatoms > 0 (QM/MM case), otherwise can be set to nullptr
+ */
+real gather_energy_bsplines(const gmx_pme_t& pme, gmx::ArrayRef<const real> grid, const PmeAtomComm& atc,
                             int nrQMatoms, real *potential);
 
 #endif

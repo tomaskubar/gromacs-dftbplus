@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2016,2018,2019, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2016- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \internal \file
  * \brief
@@ -43,6 +42,9 @@
 
 #include "gromacs/utility/path.h"
 
+#include <filesystem>
+#include <string>
+#include <string_view>
 #include <utility>
 
 #include <gtest/gtest.h>
@@ -59,65 +61,63 @@ namespace
 
 TEST(PathTest, StripSourcePrefixWorks)
 {
-    EXPECT_STREQ("", Path::stripSourcePrefix(""));
-    EXPECT_STREQ("foo.cpp", Path::stripSourcePrefix("foo.cpp"));
-    EXPECT_STREQ("foo.cpp", Path::stripSourcePrefix("some/dir/foo.cpp"));
-    EXPECT_STREQ("foo.cpp", Path::stripSourcePrefix("src/some/dir/foo.cpp"));
-    EXPECT_STREQ("foo.cpp", Path::stripSourcePrefix("srcx/gromacs/foo.cpp"));
-    EXPECT_STREQ("src/gromacs/foo.cpp", Path::stripSourcePrefix("src/gromacs/foo.cpp"));
-    EXPECT_STREQ("src/gromacs/foo.cpp", Path::stripSourcePrefix("some/dir/src/gromacs/foo.cpp"));
+    EXPECT_EQ("", stripSourcePrefix(""));
+    EXPECT_EQ("foo.cpp", stripSourcePrefix("foo.cpp"));
+    EXPECT_EQ("foo.cpp", stripSourcePrefix("some/dir/foo.cpp"));
+    EXPECT_EQ("foo.cpp", stripSourcePrefix("src/some/dir/foo.cpp"));
+    EXPECT_EQ("foo.cpp", stripSourcePrefix("srcx/gromacs/foo.cpp"));
+    EXPECT_EQ("src/gromacs/foo.cpp", stripSourcePrefix("src/gromacs/foo.cpp"));
+    EXPECT_EQ("src/gromacs/foo.cpp", stripSourcePrefix("some/dir/src/gromacs/foo.cpp"));
     // TODO: For in-source builds, this might not work.
-    EXPECT_EQ(Path::normalize("src/gromacs/utility/tests/path.cpp"), Path::stripSourcePrefix(__FILE__))
+    EXPECT_EQ(std::filesystem::path("src/gromacs/utility/tests/path.cpp").make_preferred(), stripSourcePrefix(__FILE__))
             << "stripSourcePrefix() does not work with compiler-produced file names. "
             << "This only affects source paths reported in fatal error messages.";
 }
 
-TEST(PathTest, SearchOperationsWork)
+class PathSearchTest : public testing::TestWithParam<std::string>
+{
+};
+
+TEST_P(PathSearchTest, SearchOperationsWork)
 {
     gmx::test::TestReferenceData    data;
     gmx::test::TestReferenceChecker rootChecker(data.rootChecker());
-    for (const std::string& input :
-         { "", "md.log", "md", "/tmp/absolute.txt", "simpledir/traj.tng", "simpledir/traj",
-           "windowsdir\\traj.tng", "complex.dir/traj.tng", "complex.dir/traj",
-           "nested/dir/conf.pdb", "/tmp/absolutedir/conf.pdb" })
+    std::string                     input = GetParam();
+
+    auto checker = rootChecker.checkCompound("PathToTest", input);
     {
-        SCOPED_TRACE(std::string("for input '") + input + "'");
-        auto checker = rootChecker.checkCompound("PathToTest", input);
-        {
-            std::string result;
-            ASSERT_NO_THROW_GMX(result = Path::getParentPath(input));
-            checker.checkString(result, "getParentPath");
-        }
-        {
-            std::string result;
-            ASSERT_NO_THROW_GMX(result = Path::getFilename(input));
-            checker.checkString(result, "getFilename");
-        }
-        {
-            bool result = false;
-            ASSERT_NO_THROW_GMX(result = Path::hasExtension(input));
-            checker.checkBoolean(result, "hasExtension");
-        }
-        {
-            bool result = false;
-            ASSERT_NO_THROW_GMX(result = Path::extensionMatches(input, "pdb"));
-            checker.checkBoolean(result, "extensionMatchesPdb");
-            // The match is exclusive of the dot separator, so no
-            // input string can match.
-            ASSERT_FALSE(Path::extensionMatches(input, ".pdb"));
-        }
-        {
-            std::string result;
-            ASSERT_NO_THROW_GMX(result = Path::stripExtension(input));
-            checker.checkString(result, "stripExtension");
-        }
-        {
-            std::string result;
-            ASSERT_NO_THROW_GMX(result = Path::concatenateBeforeExtension(input, "_34"));
-            checker.checkString(result, "concatenateBeforeExtension");
-        }
+        bool result = false;
+        ASSERT_NO_THROW_GMX(result = extensionMatches(input, "pdb"));
+        checker.checkBoolean(result, "extensionMatchesPdb");
+        // The match is exclusive of the dot separator, so no
+        // input string can match.
+        ASSERT_FALSE(extensionMatches(input, ".pdb"));
+    }
+    {
+        std::string result;
+        ASSERT_NO_THROW_GMX(result = stripExtension(input).generic_string());
+        checker.checkString(result, "stripExtension");
+    }
+    {
+        std::string result;
+        ASSERT_NO_THROW_GMX(result = concatenateBeforeExtension(input, "_34").generic_string());
+        checker.checkString(result, "concatenateBeforeExtension");
     }
 }
+
+INSTANTIATE_TEST_SUITE_P(WithInputPaths,
+                         PathSearchTest,
+                         testing::Values("",
+                                         "md.log",
+                                         "md",
+                                         "/tmp/absolute.txt",
+                                         "simpledir/traj.tng",
+                                         "simpledir/traj",
+                                         "windowsdir/traj.tng",
+                                         "complex.dir/traj.tng",
+                                         "complex.dir/traj",
+                                         "nested/dir/conf.pdb",
+                                         "/tmp/absolutedir/conf.pdb"));
 
 } // namespace
 } // namespace test

@@ -1,13 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
- * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2016,2017 by the GROMACS development team.
- * Copyright (c) 2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 1991- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -21,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -30,36 +26,41 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 #include "gmxpre.h"
 
 #include "sfactor.h"
 
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 
 #include <algorithm>
+#include <filesystem>
+#include <string>
 
 #include "gromacs/fileio/confio.h"
 #include "gromacs/fileio/trxio.h"
 #include "gromacs/fileio/xvgr.h"
 #include "gromacs/math/functions.h"
-#include "gromacs/math/utilities.h"
-#include "gromacs/math/vec.h"
+#include "gromacs/math/units.h"
 #include "gromacs/mdtypes/md_enums.h"
 #include "gromacs/topology/index.h"
 #include "gromacs/topology/topology.h"
 #include "gromacs/trajectory/trajectoryframe.h"
 #include "gromacs/utility/arraysize.h"
+#include "gromacs/utility/basedefinitions.h"
 #include "gromacs/utility/cstringutil.h"
 #include "gromacs/utility/fatalerror.h"
+#include "gromacs/utility/fileptr.h"
 #include "gromacs/utility/futil.h"
 #include "gromacs/utility/smalloc.h"
 #include "gromacs/utility/strdb.h"
+#include "gromacs/utility/vec.h"
 
 
 typedef struct gmx_structurefactors
@@ -85,7 +86,6 @@ typedef struct reduced_atom
 typedef struct structure_factor
 {
     int      n_angles;
-    int      n_groups;
     double   lambda;
     double   energy;
     double   momentum;
@@ -199,7 +199,7 @@ extern void compute_structure_factor(structure_factor_t* sft,
     for (i = 0; i < maxkx; i++)
     {
         fprintf(stderr, "\rdone %3.1f%%     ", (100.0 * (i + 1)) / maxkx);
-        fflush(stderr);
+        std::fflush(stderr);
         kx = i * k_factor[XX];
         for (j = 0; j < maxky; j++)
         {
@@ -232,12 +232,12 @@ extern void compute_structure_factor(structure_factor_t* sft,
             }
         }
     } /* end loop on i */
-      /*
-       *  compute the square modulus of the structure factor, averaging on the surface
-       *  kx*kx + ky*ky + kz*kz = krr*krr
-       *  note that this is correct only for a (on the macroscopic scale)
-       *  isotropic system.
-       */
+    /*
+     *  compute the square modulus of the structure factor, averaging on the surface
+     *  kx*kx + ky*ky + kz*kz = krr*krr
+     *  note that this is correct only for a (on the macroscopic scale)
+     *  isotropic system.
+     */
     for (i = 0; i < maxkx; i++)
     {
         kx = i * k_factor[XX];
@@ -295,8 +295,7 @@ extern gmx_structurefactors_t* gmx_structurefactors_init(const char* datfn)
     while (get_a_line(fp.get(), line, STRLEN))
     {
         i = line_no;
-        if (sscanf(line, "%s %d %lf %lf %lf %lf %lf %lf %lf %lf %lf", atomn, &p, &a1, &a2, &a3, &a4,
-                   &b1, &b2, &b3, &b4, &c)
+        if (sscanf(line, "%s %d %lf %lf %lf %lf %lf %lf %lf %lf %lf", atomn, &p, &a1, &a2, &a3, &a4, &b1, &b2, &b3, &b4, &c)
             == 11)
         {
             gsf->atomnm[i] = gmx_strdup(atomn);
@@ -541,8 +540,8 @@ extern int do_scattering_intensity(const char*             fnTPS,
         {
             rearrange_atoms(red[i], &fr, index[i], isize[i], &top, FALSE, gmx_sf);
 
-            compute_structure_factor(static_cast<structure_factor_t*>(sf), box, red[i], isize[i],
-                                     start_q, end_q, i, sf_table);
+            compute_structure_factor(
+                    static_cast<structure_factor_t*>(sf), box, red[i], isize[i], start_q, end_q, i, sf_table);
         }
     }
 
@@ -612,7 +611,6 @@ extern void save_data(structure_factor_t*     sft,
     xvgrclose(fp);
 }
 
-
 extern double CMSF(gmx_structurefactors_t* gsf, int type, int nh, double lambda, double sin_theta)
 /*
  * return Cromer-Mann fit for the atomic scattering factor:
@@ -651,7 +649,7 @@ extern double CMSF(gmx_structurefactors_t* gsf, int type, int nh, double lambda,
         tmp = c;
         for (i = 0; (i < 4); i++)
         {
-            tmp += a[i] * exp(-b[i] * k2);
+            tmp += a[i] * std::exp(-b[i] * k2);
         }
     }
     return tmp;

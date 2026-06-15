@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2014,2015,2016,2018,2019, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2014- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \internal \file
  * \brief
@@ -42,6 +41,8 @@
 #include "gmxpre.h"
 
 #include "manyautocorrelation.h"
+
+#include <cstddef>
 
 #include <algorithm>
 
@@ -67,8 +68,11 @@ int many_auto_correl(std::vector<std::vector<real>>* c)
         if ((*c)[i].size() != ndata)
         {
             char buf[256];
-            snprintf(buf, sizeof(buf), "Vectors of different lengths supplied (%d %d)",
-                     static_cast<int>((*c)[i].size()), static_cast<int>(ndata));
+            snprintf(buf,
+                     sizeof(buf),
+                     "Vectors of different lengths supplied (%d %d)",
+                     static_cast<int>((*c)[i].size()),
+                     static_cast<int>(ndata));
             GMX_THROW(gmx::InconsistentInputError(buf));
         }
     }
@@ -90,7 +94,16 @@ int many_auto_correl(std::vector<std::vector<real>>* c)
             int nthreads  = gmx_omp_get_max_threads();
             int thread_id = gmx_omp_get_thread_num();
             int i0        = (thread_id * nfunc) / nthreads;
-            int i1        = std::min(nfunc, ((thread_id + 1) * nfunc) / nthreads);
+// nvc++ 24.1+ version has bug due to which it generates incorrect OMP code for this region
+// with std::min() so we add a macro for min() function.
+#if defined(__NVCOMPILER)
+#    define min(l, r) (l < r ? l : r)
+            int i1 = min(nfunc, ((thread_id + 1) * nfunc) / nthreads);
+#    undef min
+#else
+            int i1 = std::min(nfunc, ((thread_id + 1) * nfunc) / nthreads);
+#endif
+
 
             gmx_fft_init_1d(&fft1, nfft, GMX_FFT_FLAG_CONSERVATIVE);
             /* Allocate temporary arrays */

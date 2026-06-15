@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2020- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \internal \file
  * \brief
@@ -41,14 +40,29 @@
  * \author Prashanth Kanduri <kanduri@cscs.ch>
  * \author Sebastian Keller <keller@cscs.ch>
  */
+#include "nblib/topology.h"
+
+#include <cstddef>
+
+#include <algorithm>
+#include <array>
+#include <iterator>
+#include <map>
+
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
 #include "gromacs/topology/exclusionblocks.h"
+#include "gromacs/utility/listoflists.h"
+
 #include "nblib/exception.h"
+#include "nblib/particlesequencer.h"
 #include "nblib/particletype.h"
+#include "nblib/sequencing.hpp"
 #include "nblib/tests/testsystems.h"
-#include "nblib/topology.h"
+#include "nblib/topologyhelpers.h"
+#include "nblib/util/traits.hpp"
+#include "nblib/util/util.hpp"
 
 namespace nblib
 {
@@ -60,9 +74,7 @@ namespace
 using ::testing::Eq;
 using ::testing::Pointwise;
 
-//! Compares all element between two lists of lists
-//! Todo: unify this with the identical function in nbkernelsystem test make this a method
-//!       of ListOfLists<>
+//! \brief Compares all element between two lists of lists
 template<typename T>
 void compareLists(const gmx::ListOfLists<T>& list, const std::vector<std::vector<T>>& v)
 {
@@ -73,13 +85,6 @@ void compareLists(const gmx::ListOfLists<T>& list, const std::vector<std::vector
         EXPECT_THAT(list[i], Pointwise(Eq(), v[i]));
     }
 }
-
-// This is defined in src/gromacs/mdtypes/forcerec.h but there is also a
-// legacy C6 macro defined there that conflicts with the nblib C6 type.
-// Todo: Once that C6 has been refactored into a regular function, this
-//       file can just include forcerec.h
-//! Macro to marks particles to have Van der Waals interactions
-#define SET_CGINFO_HAS_VDW(cgi) (cgi) = ((cgi) | (1 << 23))
 
 TEST(NBlibTest, TopologyHasNumParticles)
 {
@@ -105,8 +110,8 @@ TEST(NBlibTest, TopologyHasMasses)
     WaterTopologyBuilder waters;
     Topology             watersTopology = waters.buildTopology(2);
 
-    const Mass              refOwMass = waters.water().at("Ow").mass();
-    const Mass              refHwMass = waters.water().at("H").mass();
+    const Mass refOwMass = waters.water().at("Ow").mass();
+    const Mass refHwMass = waters.water().at("H").mass();
     const std::vector<Mass> ref = { refOwMass, refHwMass, refHwMass, refOwMass, refHwMass, refHwMass };
     const std::vector<Mass> test = expandQuantity(watersTopology, &ParticleType::mass);
     EXPECT_EQ(ref, test);
@@ -167,9 +172,11 @@ TEST(NBlibTest, TopologyThrowsIdenticalParticleType)
 
 TEST(NBlibTest, TopologyHasExclusions)
 {
-    WaterTopologyBuilder         waters;
-    Topology                     watersTopology = waters.buildTopology(2);
-    const gmx::ListOfLists<int>& testExclusions = watersTopology.getGmxExclusions();
+    WaterTopologyBuilder        waters;
+    Topology                    watersTopology = waters.buildTopology(2);
+    ExclusionLists<int>         exclusionLists = watersTopology.exclusionLists();
+    const gmx::ListOfLists<int> testExclusions(std::move(exclusionLists.ListRanges),
+                                               std::move(exclusionLists.ListElements));
 
     const std::vector<std::vector<int>>& refExclusions = { { 0, 1, 2 }, { 0, 1, 2 }, { 0, 1, 2 },
                                                            { 3, 4, 5 }, { 3, 4, 5 }, { 3, 4, 5 } };
@@ -182,12 +189,10 @@ TEST(NBlibTest, TopologyHasSequencing)
     WaterTopologyBuilder waters;
     Topology             watersTopology = waters.buildTopology(2);
 
-    EXPECT_EQ(0, watersTopology.sequenceID(MoleculeName("SOL"), 0, ResidueName("SOL"),
-                                           ParticleName("Oxygen")));
+    EXPECT_EQ(0, watersTopology.sequenceID(MoleculeName("SOL"), 0, ResidueName("SOL"), ParticleName("Oxygen")));
     EXPECT_EQ(1, watersTopology.sequenceID(MoleculeName("SOL"), 0, ResidueName("SOL"), ParticleName("H1")));
     EXPECT_EQ(2, watersTopology.sequenceID(MoleculeName("SOL"), 0, ResidueName("SOL"), ParticleName("H2")));
-    EXPECT_EQ(3, watersTopology.sequenceID(MoleculeName("SOL"), 1, ResidueName("SOL"),
-                                           ParticleName("Oxygen")));
+    EXPECT_EQ(3, watersTopology.sequenceID(MoleculeName("SOL"), 1, ResidueName("SOL"), ParticleName("Oxygen")));
     EXPECT_EQ(4, watersTopology.sequenceID(MoleculeName("SOL"), 1, ResidueName("SOL"), ParticleName("H1")));
     EXPECT_EQ(5, watersTopology.sequenceID(MoleculeName("SOL"), 1, ResidueName("SOL"), ParticleName("H2")));
 }
@@ -205,7 +210,9 @@ TEST(NBlibTest, TopologyCanAggregateBonds)
 
     std::vector<HarmonicBondType> bondsTest;
     // use the expansionArray (bondsExpansion) to expand to the full list if bonds
-    std::transform(begin(bondsExpansion), end(bondsExpansion), std::back_inserter(bondsTest),
+    std::transform(begin(bondsExpansion),
+                   end(bondsExpansion),
+                   std::back_inserter(bondsTest),
                    [&bonds](size_t i) { return bonds[i]; });
 
     std::vector<HarmonicBondType> waterBonds =
@@ -228,7 +235,7 @@ TEST(NBlibTest, TopologyCanSequencePairIDs)
 
     std::vector<std::tuple<Molecule, int>> molecules{ std::make_tuple(water, 2),
                                                       std::make_tuple(methanol, 1) };
-    detail::ParticleSequencer              particleSequencer;
+    ParticleSequencer                      particleSequencer;
     particleSequencer.build(molecules);
     auto pairs = detail::sequenceIDs<HarmonicBondType>(molecules, particleSequencer);
 
@@ -263,7 +270,7 @@ TEST(NBlibTest, TopologySequenceIdThrows)
 
     std::vector<std::tuple<Molecule, int>> molecules{ std::make_tuple(water, 2),
                                                       std::make_tuple(methanol, 1) };
-    detail::ParticleSequencer              particleSequencer;
+    ParticleSequencer                      particleSequencer;
     particleSequencer.build(molecules);
     auto pairs = detail::sequenceIDs<HarmonicBondType>(molecules, particleSequencer);
 
@@ -349,19 +356,17 @@ TEST(NBlibTest, TopologyListedInteractions)
 #undef SORT
     /// \endcond
 
-    EXPECT_TRUE(std::equal(begin(interactions_reference), end(interactions_reference),
-                           begin(interactions_test)));
+    EXPECT_TRUE(std::equal(
+            begin(interactions_reference), end(interactions_reference), begin(interactions_test)));
 }
 
 TEST(NBlibTest, TopologyListedInteractionsMultipleTypes)
 {
-    // Todo: add an angle type here
-
     Molecule water    = WaterMoleculeBuilder{}.waterMolecule();
     Molecule methanol = MethanolMoleculeBuilder{}.methanolMolecule();
 
     CubicBondType testBond(1., 1., 1.);
-    DefaultAngle  testAngle(Degrees(1), 1);
+    HarmonicAngle testAngle(1, Degrees(1));
 
     water.addInteraction(ParticleName("H1"), ParticleName("H2"), testBond);
     water.addInteraction(ParticleName("H1"), ParticleName("Oxygen"), ParticleName("H2"), testAngle);
@@ -383,7 +388,7 @@ TEST(NBlibTest, TopologyListedInteractionsMultipleTypes)
     auto  interactionData   = topology.getInteractionData();
     auto& harmonicBonds     = pickType<HarmonicBondType>(interactionData);
     auto& cubicBonds        = pickType<CubicBondType>(interactionData);
-    auto& angleInteractions = pickType<DefaultAngle>(interactionData);
+    auto& angleInteractions = pickType<HarmonicAngle>(interactionData);
 
     HarmonicBondType              ohBond(1., 1.);
     HarmonicBondType              ohBondMethanol(1.01, 1.02);
@@ -401,14 +406,15 @@ TEST(NBlibTest, TopologyListedInteractionsMultipleTypes)
     int MeH1 = topology.sequenceID(MoleculeName("MeOH"), 0, ResidueName("MeOH"), ParticleName("H3"));
 
     std::vector<CubicBondType>                   cubicBondsReference{ testBond };
-    std::vector<InteractionIndex<CubicBondType>> cubicIndicesReference{ { std::min(H1, H2),
-                                                                          std::max(H1, H2), 0 } };
+    std::vector<InteractionIndex<CubicBondType>> cubicIndicesReference{
+        { std::min(H1, H2), std::max(H1, H2), 0 }
+    };
     EXPECT_EQ(cubicBondsReference, cubicBonds.parameters);
     EXPECT_EQ(cubicIndicesReference, cubicBonds.indices);
 
-    DefaultAngle                                methanolAngle(Degrees(108.52), 397.5);
-    std::vector<DefaultAngle>                   angleReference{ testAngle, methanolAngle };
-    std::vector<InteractionIndex<DefaultAngle>> angleIndicesReference{
+    HarmonicAngle                                methanolAngle(397.5, Degrees(108.52));
+    std::vector<HarmonicAngle>                   angleReference{ testAngle, methanolAngle };
+    std::vector<InteractionIndex<HarmonicAngle>> angleIndicesReference{
         { std::min(H1, H2), Ow, std::max(H1, H2), 0 }, { std::min(MeH1, MeO1), Me1, std::max(MeO1, MeH1), 1 }
     };
     EXPECT_EQ(angleReference, angleInteractions.parameters);
@@ -457,7 +463,7 @@ TEST(NBlibTest, toGmxExclusionBlockWorks)
     reference.push_back(localBlock);
     reference.push_back(localBlock);
 
-    std::vector<gmx::ExclusionBlock> probe = detail::toGmxExclusionBlock(testInput);
+    std::vector<gmx::ExclusionBlock> probe = toGmxExclusionBlock(testInput);
 
     ASSERT_EQ(reference.size(), probe.size());
     for (size_t i = 0; i < reference.size(); ++i)

@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2019- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \internal \file
  * \brief Declares the signallers for the modular simulator
@@ -44,6 +43,9 @@
 #ifndef GMX_MODULARSIMULATOR_SIGNALLERS_H
 #define GMX_MODULARSIMULATOR_SIGNALLERS_H
 
+#include <memory>
+#include <optional>
+#include <utility>
 #include <vector>
 
 #include "gromacs/compat/pointers.h"
@@ -54,6 +56,7 @@ namespace gmx
 {
 class StopHandler;
 class TrajectoryElement;
+enum class StartingBehavior;
 
 /*! \internal
  * \ingroup module_modularsimulator
@@ -115,7 +118,7 @@ public:
     void signal(Step step, Time time) override;
 
     //! Do nothing at setup time
-    void setup() override{};
+    void setup() override {};
 
     //! Allow builder to construct
     friend class SignallerBuilder<NeighborSearchSignaller>;
@@ -228,12 +231,15 @@ public:
 private:
     /*! \brief Constructor
      *
-     * \param callbacks  A vector of pointers to callbacks
-     * \param nstlog     The logging frequency
-     * \param initStep   The first step of the simulation
-     * \param initTime   The start time of the simulation
+     * \param callbacks         A vector of pointers to callbacks
+     * \param nstlog            The logging frequency
+     * \param initStep          The first step of the simulation
+     * \param startingBehavior  Whether this is a new simulation or restarting from checkpoint
      */
-    LoggingSignaller(std::vector<SignallerCallback> callbacks, Step nstlog, Step initStep, Time initTime);
+    LoggingSignaller(std::vector<SignallerCallback> callbacks,
+                     Step                           nstlog,
+                     Step                           initStep,
+                     StartingBehavior               startingBehavior);
 
     //! Client callbacks
     std::vector<SignallerCallback> callbacks_;
@@ -242,8 +248,8 @@ private:
     const Step nstlog_;
     //! The initial step of the simulation
     const Step initStep_;
-    //! The initial time of the simulation
-    const Time initTime_;
+    //! How we are starting the simulation
+    const StartingBehavior startingBehavior_;
 
     //! ILastStepSignallerClient implementation
     std::optional<SignallerCallback> registerLastStepCallback() override;
@@ -329,6 +335,15 @@ private:
     std::optional<SignallerCallback> registerLastStepCallback() override;
 };
 
+//! When we calculate virial
+enum class EnergySignallerVirialMode
+{
+    Off,           //!< No specific virial calculation - calculate when energy is calculated
+    OnStep,        //!< Calculate on virial frequency steps
+    OnStepAndNext, //!< Calculate on virial frequency steps and on step after
+    Count          //!< The number of entries
+};
+
 /*! \internal
  * \ingroup module_modularsimulator
  * \brief Element signalling energy related special steps
@@ -368,13 +383,15 @@ private:
      * \param nstcalcenergy                 The energy calculation frequency
      * \param nstcalcfreeenergy             The free energy calculation frequency
      * \param nstcalcvirial                 The free energy calculation frequency
+     * \param virialMode                    Indicates which steps will calculate virial
      */
     EnergySignaller(std::vector<SignallerCallback> calculateEnergyCallbacks,
                     std::vector<SignallerCallback> calculateVirialCallbacks,
                     std::vector<SignallerCallback> calculateFreeEnergyCallbacks,
                     int                            nstcalcenergy,
                     int                            nstcalcfreeenergy,
-                    int                            nstcalcvirial);
+                    int                            nstcalcvirial,
+                    EnergySignallerVirialMode      virialMode);
 
     //! Client callbacks
     //! {
@@ -389,6 +406,8 @@ private:
     const int nstcalcfreeenergy_;
     //! The virial calculation frequency
     const int nstcalcvirial_;
+    //! The virial calculation mode
+    const EnergySignallerVirialMode virialMode_;
 
     //! ITrajectorySignallerClient implementation
     std::optional<SignallerCallback> registerTrajectorySignallerCallback(TrajectoryEvent event) override;
@@ -458,15 +477,16 @@ template<>
 template<typename... Args>
 std::unique_ptr<EnergySignaller> SignallerBuilder<EnergySignaller>::build(Args&&... args)
 {
-    state_                        = ModularSimulatorBuilderState::NotAcceptingClientRegistrations;
+    state_ = ModularSimulatorBuilderState::NotAcceptingClientRegistrations;
     auto calculateEnergyCallbacks = buildCallbackVector(EnergySignallerEvent::EnergyCalculationStep);
     auto calculateVirialCallbacks = buildCallbackVector(EnergySignallerEvent::VirialCalculationStep);
     auto calculateFreeEnergyCallbacks =
             buildCallbackVector(EnergySignallerEvent::FreeEnergyCalculationStep);
     // NOLINTNEXTLINE(modernize-make-unique): make_unique does not work with private constructor
-    return std::unique_ptr<EnergySignaller>(new EnergySignaller(
-            std::move(calculateEnergyCallbacks), std::move(calculateVirialCallbacks),
-            std::move(calculateFreeEnergyCallbacks), std::forward<Args>(args)...));
+    return std::unique_ptr<EnergySignaller>(new EnergySignaller(std::move(calculateEnergyCallbacks),
+                                                                std::move(calculateVirialCallbacks),
+                                                                std::move(calculateFreeEnergyCallbacks),
+                                                                std::forward<Args>(args)...));
 }
 
 //! Helper function to get the callbacks from the clients
@@ -478,7 +498,7 @@ std::vector<SignallerCallback> SignallerBuilder<Signaller>::buildCallbackVector(
     // Allow clients to register their callbacks
     for (auto& client : signallerClients_)
     {
-        if (auto callback = getSignallerCallback(client, std::forward<Args>(args)...)) // don't register nullptr
+        if (auto callback = getSignallerCallback(client, args...)) // don't register nullptr
         {
             callbacks.emplace_back(std::move(*callback));
         }

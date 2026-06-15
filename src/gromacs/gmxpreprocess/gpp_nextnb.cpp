@@ -1,12 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
- * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2011,2014,2015,2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 1991- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -20,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -29,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /* This file is completely threadsafe - keep it that way! */
 #include "gmxpre.h"
@@ -41,11 +38,16 @@
 
 #include <cstdlib>
 
+#include <filesystem>
+#include <string>
+#include <vector>
+
 #include "gromacs/gmxpreprocess/grompp_impl.h"
 #include "gromacs/gmxpreprocess/toputil.h"
-#include "gromacs/topology/ifunc.h"
+#include "gromacs/utility/arrayref.h"
 #include "gromacs/utility/fatalerror.h"
 #include "gromacs/utility/gmxassert.h"
+#include "gromacs/utility/listoflists.h"
 #include "gromacs/utility/smalloc.h"
 
 /* #define DEBUG_NNB */
@@ -93,7 +95,7 @@ static void __prints(char* str, int n, sortable* s)
             fprintf(debug, "%d\t%d\n", s[i].ai, s[i].aj);
         }
 
-        fflush(debug);
+        std::fflush(debug);
     }
 }
 #else
@@ -210,7 +212,7 @@ static void nnb2excl(t_nextnb* nnb, gmx::ListOfLists<int>* excls)
         prints("nnb2excl before qsort", nr_of_sortables, s);
         if (nr_of_sortables > 1)
         {
-            qsort(s, nr_of_sortables, static_cast<size_t>(sizeof(s[0])), bond_sort);
+            std::qsort(s, nr_of_sortables, static_cast<size_t>(sizeof(s[0])), bond_sort);
             prints("nnb2excl after qsort", nr_of_sortables, s);
         }
 
@@ -262,7 +264,7 @@ static void nnb2excl(t_nextnb* nnb, gmx::ListOfLists<int>* excls)
  */
 static bool atom_is_present_in_nnb(const t_nextnb* nnb, int atom, int highest_order, int query)
 {
-    GMX_RELEASE_ASSERT(highest_order < nnb->nrex, "Inconsistent nnb seach parameters");
+    GMX_RELEASE_ASSERT(highest_order < nnb->nrex, "Inconsistent nnb search parameters");
 
     for (int order = 0; order <= highest_order; order++)
     {
@@ -280,7 +282,7 @@ static bool atom_is_present_in_nnb(const t_nextnb* nnb, int atom, int highest_or
 static void do_gen(int       nrbonds, /* total number of bonds in s	*/
                    sortable* s,       /* bidirectional list of bonds    */
                    t_nextnb* nnb)     /* the tmp storage for excl     */
-/* Assume excl is initalised and s[] contains all bonds bidirectional */
+/* Assume excl is initialised and s[] contains all bonds bidirectional */
 {
     int i, j, k, n, nb;
 
@@ -351,13 +353,13 @@ static void add_b(InteractionsOfType* bonds, int* nrf, sortable* s)
     }
 }
 
-void gen_nnb(t_nextnb* nnb, gmx::ArrayRef<InteractionsOfType> plist)
+void gen_nnb(t_nextnb* nnb, gmx::EnumerationArray<InteractionFunction, InteractionsOfType>& plist)
 {
     sortable* s;
     int       nrbonds, nrf;
 
     nrbonds = 0;
-    for (int i = 0; (i < F_NRE); i++)
+    for (const auto i : gmx::EnumerationWrapper<InteractionFunction>{})
     {
         if (IS_CHEMBOND(i))
         {
@@ -369,7 +371,7 @@ void gen_nnb(t_nextnb* nnb, gmx::ArrayRef<InteractionsOfType> plist)
     snew(s, nrbonds);
 
     nrf = 0;
-    for (int i = 0; (i < F_NRE); i++)
+    for (const auto i : gmx::EnumerationWrapper<InteractionFunction>{})
     {
         if (IS_CHEMBOND(i))
         {
@@ -381,7 +383,7 @@ void gen_nnb(t_nextnb* nnb, gmx::ArrayRef<InteractionsOfType> plist)
     prints("gen_excl before qsort", nrbonds, s);
     if (nrbonds > 1)
     {
-        qsort(s, nrbonds, static_cast<size_t>(sizeof(sortable)), bond_sort);
+        std::qsort(s, nrbonds, static_cast<size_t>(sizeof(sortable)), bond_sort);
         prints("gen_excl after qsort", nrbonds, s);
     }
 
@@ -401,7 +403,7 @@ static void sort_and_purge_nnb(t_nextnb* nnb)
             /* Sort atoms in this list */
             if (nnb->nrexcl[i][n] > 0)
             {
-                qsort(nnb->a[i][n], nnb->nrexcl[i][n], sizeof(int), compare_int);
+                std::qsort(nnb->a[i][n], nnb->nrexcl[i][n], sizeof(int), compare_int);
             }
             cnt  = 0;
             prev = -1;
@@ -431,7 +433,10 @@ static void sort_and_purge_nnb(t_nextnb* nnb)
 }
 
 
-void generate_excl(int nrexcl, int nratoms, gmx::ArrayRef<InteractionsOfType> plist, gmx::ListOfLists<int>* excls)
+void generate_excl(int                                                             nrexcl,
+                   int                                                             nratoms,
+                   gmx::EnumerationArray<InteractionFunction, InteractionsOfType>& plist,
+                   gmx::ListOfLists<int>*                                          excls)
 {
     t_nextnb nnb;
     if (nrexcl < 0)

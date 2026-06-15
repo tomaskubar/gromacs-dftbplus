@@ -1,11 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2012,2013,2014,2015,2017 by the GROMACS development team.
- * Copyright (c) 2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2012- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -19,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -28,16 +26,11 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
-
-#define UNROLLI 4
-#define UNROLLJ 4
-
-static_assert(UNROLLI == c_nbnxnCpuIClusterSize, "UNROLLI should match the i-cluster size");
 
 /* We could use nbat->xstride and nbat->fstride, but macros might be faster */
 #define X_STRIDE 3
@@ -56,27 +49,36 @@ static_assert(UNROLLI == c_nbnxnCpuIClusterSize, "UNROLLI should match the i-clu
 #define CALC_SHIFTFORCES
 
 #ifdef CALC_COUL_RF
-#    define NBK_FUNC_NAME2(ljt, feg) nbnxn_kernel##_ElecRF##ljt##feg##_ref
+#    define NBK_FUNC_NAME2(ui, uj, ljt, feg) nbnxn_kernel_##ui##x##uj##_ElecRF##ljt##feg##_ref
 #endif
 #ifdef CALC_COUL_TAB
 #    ifndef VDW_CUTOFF_CHECK
-#        define NBK_FUNC_NAME2(ljt, feg) nbnxn_kernel##_ElecQSTab##ljt##feg##_ref
+#        define NBK_FUNC_NAME2(ui, uj, ljt, feg) \
+            nbnxn_kernel_##ui##x##uj##_ElecQSTab##ljt##feg##_ref
 #    else
-#        define NBK_FUNC_NAME2(ljt, feg) nbnxn_kernel##_ElecQSTabTwinCut##ljt##feg##_ref
+#        define NBK_FUNC_NAME2(ui, uj, ljt, feg) \
+            nbnxn_kernel_##ui##x##uj##_ElecQSTabTwinCut##ljt##feg##_ref
 #    endif
 #endif
 
+#ifdef CALC_COUL_NONE
+#    define NBK_FUNC_NAME2(ui, uj, ljt, feg) nbnxn_kernel_##ui##x##uj##_ElecNone##ljt##feg##_ref
+#    define HAVE_ELECTROSTATICS 0
+#else
+#    define HAVE_ELECTROSTATICS 1
+#endif
+
 #if defined LJ_CUT && !defined LJ_EWALD
-#    define NBK_FUNC_NAME(feg) NBK_FUNC_NAME2(_VdwLJ, feg)
+#    define NBK_FUNC_NAME(ui, uj, feg) NBK_FUNC_NAME2(ui, uj, _VdwLJ, feg)
 #elif defined LJ_FORCE_SWITCH
-#    define NBK_FUNC_NAME(feg) NBK_FUNC_NAME2(_VdwLJFsw, feg)
+#    define NBK_FUNC_NAME(ui, uj, feg) NBK_FUNC_NAME2(ui, uj, _VdwLJFsw, feg)
 #elif defined LJ_POT_SWITCH
-#    define NBK_FUNC_NAME(feg) NBK_FUNC_NAME2(_VdwLJPsw, feg)
+#    define NBK_FUNC_NAME(ui, uj, feg) NBK_FUNC_NAME2(ui, uj, _VdwLJPsw, feg)
 #elif defined LJ_EWALD
 #    ifdef LJ_EWALD_COMB_GEOM
-#        define NBK_FUNC_NAME(feg) NBK_FUNC_NAME2(_VdwLJEwCombGeom, feg)
+#        define NBK_FUNC_NAME(ui, uj, feg) NBK_FUNC_NAME2(ui, uj, _VdwLJEwCombGeom, feg)
 #    else
-#        define NBK_FUNC_NAME(feg) NBK_FUNC_NAME2(_VdwLJEwCombLB, feg)
+#        define NBK_FUNC_NAME(ui, uj, feg) NBK_FUNC_NAME2(ui, uj, _VdwLJEwCombLB, feg)
 #    endif
 #else
 #    error "No VdW type defined"
@@ -84,22 +86,29 @@ static_assert(UNROLLI == c_nbnxnCpuIClusterSize, "UNROLLI should match the i-clu
 
 void
 #ifndef CALC_ENERGIES
-        NBK_FUNC_NAME(_F) // NOLINT(misc-definitions-in-headers)
+        NBK_FUNC_NAME(UNROLLI, UNROLLJ, _F) // NOLINT(misc-definitions-in-headers)
 #else
 #    ifndef ENERGY_GROUPS
-        NBK_FUNC_NAME(_VF) // NOLINT(misc-definitions-in-headers)
+        NBK_FUNC_NAME(UNROLLI, UNROLLJ, _VF) // NOLINT(misc-definitions-in-headers)
 #    else
-        NBK_FUNC_NAME(_VgrpF) // NOLINT(misc-definitions-in-headers)
+        NBK_FUNC_NAME(UNROLLI, UNROLLJ, _VgrpF) // NOLINT(misc-definitions-in-headers)
 #    endif
 #endif
 #undef NBK_FUNC_NAME
 #undef NBK_FUNC_NAME2
-        (const NbnxnPairlistCpu*    nbl,
-         const nbnxn_atomdata_t*    nbat,
-         const interaction_const_t* ic,
+        (const NbnxnPairlistCpu&    pairlist,
+         const nbnxn_atomdata_t&    nbat,
+         const interaction_const_t& ic,
          const rvec*                shift_vec,
          nbnxn_atomdata_output_t*   out)
 {
+    GMX_RELEASE_ASSERT(UNROLLI == pairlist.na_ci && UNROLLJ == pairlist.na_cj,
+                       "Kernel and list cluster sizes should match");
+
+    static_assert(GMX_USE_EXT_FMM || HAVE_ELECTROSTATICS,
+                  "Reference kernels that do not compute Coulomb interactions are supported only "
+                  "with an FMM build configuration");
+
     /* Unpack pointers for output */
     real* f = out->f.data();
 #ifdef CALC_SHIFTFORCES
@@ -107,61 +116,15 @@ void
 #endif
 #ifdef CALC_ENERGIES
     real* Vvdw = out->Vvdw.data();
-    real* Vc   = out->Vc.data();
+#    if HAVE_ELECTROSTATICS
+    real* Vc = out->Vc.data();
+#    endif
 #endif
-
-    const nbnxn_cj_t* l_cj;
-    real              rcut2;
-#ifdef VDW_CUTOFF_CHECK
-    real rvdw2;
-#endif
-    int      ntype2;
-    real     facel;
-    int      ci, ci_sh;
-    int      ish, ishf;
-    gmx_bool do_LJ, half_LJ, do_coul;
-    int      cjind0, cjind1, cjind;
 
     real xi[UNROLLI * XI_STRIDE];
     real fi[UNROLLI * FI_STRIDE];
+#if HAVE_ELECTROSTATICS
     real qi[UNROLLI];
-
-#ifdef CALC_ENERGIES
-#    ifndef ENERGY_GROUPS
-
-    real Vvdw_ci, Vc_ci;
-#    else
-    int         egp_mask;
-    int         egp_sh_i[UNROLLI];
-#    endif
-#endif
-#ifdef LJ_POT_SWITCH
-    real swV3, swV4, swV5;
-    real swF2, swF3, swF4;
-#endif
-#ifdef LJ_EWALD
-    real lje_coeff2, lje_coeff6_6;
-#    ifdef CALC_ENERGIES
-    real lje_vc;
-#    endif
-#endif
-
-#ifdef CALC_COUL_RF
-    real k_rf2;
-#    ifdef CALC_ENERGIES
-    real k_rf, c_rf;
-#    endif
-#endif
-#ifdef CALC_COUL_TAB
-#    ifdef CALC_ENERGIES
-    real halfsp;
-#    endif
-#    if !GMX_DOUBLE
-    const real* tab_coul_FDV0;
-#    else
-    const real* tab_coul_F;
-    const real gmx_unused* tab_coul_V;
-#    endif
 #endif
 
 #ifdef COUNT_PAIRS
@@ -169,149 +132,155 @@ void
 #endif
 
 #ifdef LJ_POT_SWITCH
-    swV3 = ic->vdw_switch.c3;
-    swV4 = ic->vdw_switch.c4;
-    swV5 = ic->vdw_switch.c5;
-    swF2 = 3 * ic->vdw_switch.c3;
-    swF3 = 4 * ic->vdw_switch.c4;
-    swF4 = 5 * ic->vdw_switch.c5;
+    const real swV3 = ic.vdw.switchConstants.c3;
+    const real swV4 = ic.vdw.switchConstants.c4;
+    const real swV5 = ic.vdw.switchConstants.c5;
+    const real swF2 = 3 * ic.vdw.switchConstants.c3;
+    const real swF3 = 4 * ic.vdw.switchConstants.c4;
+    const real swF4 = 5 * ic.vdw.switchConstants.c5;
 #endif
 
-    const nbnxn_atomdata_t::Params& nbatParams = nbat->params();
+    const nbnxn_atomdata_t::Params& nbatParams = nbat.params();
 
 #ifdef LJ_EWALD
-    lje_coeff2   = ic->ewaldcoeff_lj * ic->ewaldcoeff_lj;
-    lje_coeff6_6 = lje_coeff2 * lje_coeff2 * lje_coeff2 / 6.0;
+    const real lje_coeff2   = gmx::square(ic.vdw.ewaldCoeff);
+    const real lje_coeff6_6 = lje_coeff2 * lje_coeff2 * lje_coeff2 / 6.0;
 #    ifdef CALC_ENERGIES
-    lje_vc = ic->sh_lj_ewald;
+    const real lje_vc = ic.vdw.ewaldShift;
 #    endif
 
     const real* ljc = nbatParams.nbfp_comb.data();
 #endif
 
 #ifdef CALC_COUL_RF
-    k_rf2 = 2 * ic->k_rf;
+    const real k_rf2 = 2 * ic.coulomb.reactionFieldCoefficient;
 #    ifdef CALC_ENERGIES
-    k_rf = ic->k_rf;
-    c_rf = ic->c_rf;
+    const real reactionFieldCoefficient = ic.coulomb.reactionFieldCoefficient;
+    const real reactionFieldShift       = ic.coulomb.reactionFieldShift;
 #    endif
 #endif
 #ifdef CALC_COUL_TAB
-    const real tab_coul_scale = ic->coulombEwaldTables->scale;
+    const real tab_coul_scale = ic.coulombEwaldTables->scale;
 #    ifdef CALC_ENERGIES
-    halfsp = 0.5 / tab_coul_scale;
+    const real halfsp = 0.5 / tab_coul_scale;
 #    endif
 
 #    if !GMX_DOUBLE
-    tab_coul_FDV0 = ic->coulombEwaldTables->tableFDV0.data();
+    const real* tab_coul_FDV0 = ic.coulombEwaldTables->tableFDV0.data();
 #    else
-    tab_coul_F = ic->coulombEwaldTables->tableF.data();
-    tab_coul_V = ic->coulombEwaldTables->tableV.data();
+    const real* tab_coul_F = ic.coulombEwaldTables->tableF.data();
+#        ifdef CALC_ENERGIES
+    const real* tab_coul_V = ic.coulombEwaldTables->tableV.data();
+#        endif
 #    endif
 #endif
 
-#ifdef ENERGY_GROUPS
-    egp_mask = (1 << nbatParams.neg_2log) - 1;
-#endif
-
-
-    rcut2 = ic->rcoulomb * ic->rcoulomb;
+    const real rcut2 = gmx::square(ic.coulomb.cutoff);
 #ifdef VDW_CUTOFF_CHECK
-    rvdw2 = ic->rvdw * ic->rvdw;
+    const real rvdw2 = gmx::square(ic.vdw.cutoff);
 #endif
 
-    ntype2               = nbatParams.numTypes * 2;
-    const real* nbfp     = nbatParams.nbfp.data();
-    const real* q        = nbatParams.q.data();
-    const int*  type     = nbatParams.type.data();
-    facel                = ic->epsfac;
+    const int   ntype2 = nbatParams.numTypes * 2;
+    const real* nbfp   = nbatParams.nbfp.data();
+#if HAVE_ELECTROSTATICS
+    const real* q     = nbatParams.q.data();
+    const real  facel = ic.coulomb.epsfac;
+#endif
+    const int* type = nbatParams.type.data();
+
     const real* shiftvec = shift_vec[0];
-    const real* x        = nbat->x().data();
+    const real* x        = nbat.x().data();
 
-    l_cj = nbl->cj.data();
+    const nbnxn_cj_t* l_cj = pairlist.cj.list_.data();
 
-    for (const nbnxn_ci_t& ciEntry : nbl->ci)
+    for (const nbnxn_ci_t& ciEntry : pairlist.ci)
     {
-        int i, d;
-
-        ish = (ciEntry.shift & NBNXN_CI_SHIFT);
+        const int ish = (ciEntry.shift & NBNXN_CI_SHIFT);
         /* x, f and fshift are assumed to be stored with stride 3 */
-        ishf   = ish * DIM;
-        cjind0 = ciEntry.cj_ind_start;
-        cjind1 = ciEntry.cj_ind_end;
+        const int ishf   = ish * DIM;
+        const int cjind0 = ciEntry.cj_ind_start;
+        const int cjind1 = ciEntry.cj_ind_end;
         /* Currently only works super-cells equal to sub-cells */
-        ci    = ciEntry.ci;
-        ci_sh = (ish == CENTRAL ? ci : -1);
-
-        /* We have 5 LJ/C combinations, but use only three inner loops,
-         * as the other combinations are unlikely and/or not much faster:
-         * inner half-LJ + C for half-LJ + C / no-LJ + C
-         * inner LJ + C      for full-LJ + C
-         * inner LJ          for full-LJ + no-C / half-LJ + no-C
-         */
-        do_LJ   = ((ciEntry.shift & NBNXN_CI_DO_LJ(0)) != 0);
-        do_coul = ((ciEntry.shift & NBNXN_CI_DO_COUL(0)) != 0);
-        half_LJ = (((ciEntry.shift & NBNXN_CI_HALF_LJ(0)) != 0) || !do_LJ) && do_coul;
+        const int ci = ciEntry.ci;
+#if HAVE_ELECTROSTATICS || defined(LJ_EWALD)
+        const int ci_sh = (ish == gmx::c_centralShiftIndex ? ci : -1);
+#endif
+/* We have 5 LJ/C combinations, but use only three inner loops,
+ * as the other combinations are unlikely and/or not much faster:
+ * inner half-LJ + C for half-LJ + C / no-LJ + C
+ * inner LJ + C      for full-LJ + C
+ * inner LJ          for full-LJ + no-C / half-LJ + no-C
+ */
+#if HAVE_ELECTROSTATICS
+        const bool do_LJ   = ((ciEntry.shift & NBNXN_CI_DO_LJ(0)) != 0);
+        const bool do_coul = ((ciEntry.shift & NBNXN_CI_DO_COUL(0)) != 0);
+        const bool half_LJ = (((ciEntry.shift & NBNXN_CI_HALF_LJ(0)) != 0) || !do_LJ) && do_coul;
+#endif
 #ifdef CALC_ENERGIES
 
 #    ifdef LJ_EWALD
-        gmx_bool do_self = TRUE;
-#    else
-        gmx_bool do_self = do_coul;
+        const bool do_self = true;
+#    elif HAVE_ELECTROSTATICS
+        const bool do_self = do_coul;
 #    endif
 
+
 #    ifndef ENERGY_GROUPS
-        Vvdw_ci = 0;
-        Vc_ci   = 0;
+        real Vvdw_ci = 0;
+#        if HAVE_ELECTROSTATICS
+        real Vc_ci = 0;
+#        endif
 #    else
-        for (i = 0; i < UNROLLI; i++)
+        int egp_sh_i[UNROLLI];
+        for (int i = 0; i < UNROLLI; i++)
         {
-            egp_sh_i[i] = ((nbatParams.energrp[ci] >> (i * nbatParams.neg_2log)) & egp_mask)
-                          * nbatParams.nenergrp;
+            egp_sh_i[i] = nbatParams.energyGroupsPerCluster->getEnergyGroup(ci, i) * nbatParams.numEnergyGroups;
         }
 #    endif
 #endif
 
-        for (i = 0; i < UNROLLI; i++)
+        for (int i = 0; i < UNROLLI; i++)
         {
-            for (d = 0; d < DIM; d++)
+            for (int d = 0; d < DIM; d++)
             {
                 xi[i * XI_STRIDE + d] = x[(ci * UNROLLI + i) * X_STRIDE + d] + shiftvec[ishf + d];
                 fi[i * FI_STRIDE + d] = 0;
             }
 
+#if HAVE_ELECTROSTATICS
             qi[i] = facel * q[ci * UNROLLI + i];
+#endif
         }
 
-#ifdef CALC_ENERGIES
+#if defined CALC_ENERGIES && (HAVE_ELECTROSTATICS || defined LJ_EWALD)
         if (do_self)
         {
-            real Vc_sub_self;
-
 #    ifdef CALC_COUL_RF
-            Vc_sub_self = 0.5 * c_rf;
+            const real Vc_sub_self = 0.5 * reactionFieldShift;
 #    endif
 #    ifdef CALC_COUL_TAB
 #        if GMX_DOUBLE
-            Vc_sub_self = 0.5 * tab_coul_V[0];
+            const real Vc_sub_self = 0.5 * tab_coul_V[0];
 #        else
-            Vc_sub_self = 0.5 * tab_coul_FDV0[2];
+            const real Vc_sub_self = 0.5 * tab_coul_FDV0[2];
 #        endif
 #    endif
 
             if (l_cj[ciEntry.cj_ind_start].cj == ci_sh)
             {
-                for (i = 0; i < UNROLLI; i++)
+                for (int i = 0; i < UNROLLI; i++)
                 {
-                    int egp_ind;
 #    ifdef ENERGY_GROUPS
-                    egp_ind = egp_sh_i[i]
-                              + ((nbatParams.energrp[ci] >> (i * nbatParams.neg_2log)) & egp_mask);
+                    const int egp_ind =
+                            egp_sh_i[i] + nbatParams.energyGroupsPerCluster->getEnergyGroup(ci, i);
 #    else
-                    egp_ind = 0;
+                    const int egp_ind = 0;
 #    endif
+
+#    if HAVE_ELECTROSTATICS
                     /* Coulomb self interaction */
                     Vc[egp_ind] -= qi[i] * q[ci * UNROLLI + i] * Vc_sub_self;
+#    endif
 
 #    ifdef LJ_EWALD
                     /* LJ Ewald self interaction */
@@ -325,58 +294,74 @@ void
         }
 #endif /* CALC_ENERGIES */
 
-        cjind = cjind0;
-        while (cjind < cjind1 && nbl->cj[cjind].excl != 0xffff)
+        // Without loop vectorization we first loop over all pairs with exclusions and then loop
+        // over the remaining pairs without exclusion without checking for exclusions
+        int cjind = cjind0;
+        // Don't force vectorization with energy groups, see #5534
+#if VECTORIZE_JLOOP && !(defined(ENERGY_GROUPS) && defined(CALC_ENERGIES)) && defined __clang__
+#    pragma clang loop vectorize(assume_safety)
+#endif
+        for (; cjind < cjind1 && (VECTORIZE_JLOOP || pairlist.cj.excl(cjind) != 0xffff); cjind++)
         {
 #define CHECK_EXCLS
+#if HAVE_ELECTROSTATICS
             if (half_LJ)
             {
-#define CALC_COULOMB
-#define HALF_LJ
-#include "kernel_ref_inner.h"
-#undef HALF_LJ
-#undef CALC_COULOMB
+#    define CALC_COULOMB
+#    define HALF_LJ
+#    include "kernel_ref_inner.h"
+#    undef HALF_LJ
+#    undef CALC_COULOMB
             }
             else if (do_coul)
             {
-#define CALC_COULOMB
-#include "kernel_ref_inner.h"
-#undef CALC_COULOMB
+#    define CALC_COULOMB
+#    include "kernel_ref_inner.h"
+#    undef CALC_COULOMB
             }
             else
             {
-#include "kernel_ref_inner.h"
+#    include "kernel_ref_inner.h"
             }
+#else
+#    include "kernel_ref_inner.h"
+#endif
 #undef CHECK_EXCLS
-            cjind++;
         }
 
+#if !VECTORIZE_JLOOP
+        // Second part of the j-loop, does not check for exclusions
         for (; (cjind < cjind1); cjind++)
         {
+#    if HAVE_ELECTROSTATICS
             if (half_LJ)
             {
-#define CALC_COULOMB
-#define HALF_LJ
-#include "kernel_ref_inner.h"
-#undef HALF_LJ
-#undef CALC_COULOMB
+#        define CALC_COULOMB
+#        define HALF_LJ
+#        include "kernel_ref_inner.h"
+#        undef HALF_LJ
+#        undef CALC_COULOMB
             }
             else if (do_coul)
             {
-#define CALC_COULOMB
-#include "kernel_ref_inner.h"
-#undef CALC_COULOMB
+#        define CALC_COULOMB
+#        include "kernel_ref_inner.h"
+#        undef CALC_COULOMB
             }
             else
             {
-#include "kernel_ref_inner.h"
+#        include "kernel_ref_inner.h"
             }
+#    else
+#        include "kernel_ref_inner.h"
+#    endif
         }
+#endif // !VECTORIZE_JLOOP
 
         /* Add accumulated i-forces to the force array */
-        for (i = 0; i < UNROLLI; i++)
+        for (int i = 0; i < UNROLLI; i++)
         {
-            for (d = 0; d < DIM; d++)
+            for (int d = 0; d < DIM; d++)
             {
                 f[(ci * UNROLLI + i) * F_STRIDE + d] += fi[i * FI_STRIDE + d];
             }
@@ -385,9 +370,9 @@ void
         if (fshift != nullptr)
         {
             /* Add i forces to shifted force list */
-            for (i = 0; i < UNROLLI; i++)
+            for (int i = 0; i < UNROLLI; i++)
             {
-                for (d = 0; d < DIM; d++)
+                for (int d = 0; d < DIM; d++)
                 {
                     fshift[ishf + d] += fi[i * FI_STRIDE + d];
                 }
@@ -398,7 +383,10 @@ void
 #ifdef CALC_ENERGIES
 #    ifndef ENERGY_GROUPS
         *Vvdw += Vvdw_ci;
+
+#        if HAVE_ELECTROSTATICS
         *Vc += Vc_ci;
+#        endif
 #    endif
 #endif
     }
@@ -414,6 +402,4 @@ void
 #undef F_STRIDE
 #undef XI_STRIDE
 #undef FI_STRIDE
-
-#undef UNROLLI
-#undef UNROLLJ
+#undef HAVE_ELECTROSTATICS

@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2018,2019, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2018- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,26 +26,36 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 #include "gmxpre.h"
 
 #include "report_methods.h"
+
+#include <filesystem>
+#include <memory>
 
 #include "gromacs/commandline/cmdlineoptionsmodule.h"
 #include "gromacs/fileio/confio.h"
 #include "gromacs/fileio/filetypes.h"
 #include "gromacs/fileio/tpxio.h"
 #include "gromacs/mdtypes/inputrec.h"
+#include "gromacs/mdtypes/md_enums.h"
 #include "gromacs/mdtypes/state.h"
 #include "gromacs/options/basicoptions.h"
 #include "gromacs/options/filenameoption.h"
 #include "gromacs/options/ioptionscontainer.h"
+#include "gromacs/options/optionfiletype.h"
 #include "gromacs/selection/selectionoptionbehavior.h"
+#include "gromacs/topology/atoms.h"
+#include "gromacs/topology/mtop_atomloops.h"
 #include "gromacs/topology/mtop_util.h"
+#include "gromacs/topology/topology.h"
+#include "gromacs/topology/topology_enums.h"
+#include "gromacs/utility/arrayref.h"
 #include "gromacs/utility/fatalerror.h"
 #include "gromacs/utility/fileredirector.h"
 #include "gromacs/utility/filestream.h"
@@ -54,6 +63,7 @@
 
 namespace gmx
 {
+class CommandLineModuleSettings;
 
 void writeHeader(TextWriter* writer, const std::string& text, const std::string& section, bool writeFormattedText)
 {
@@ -76,17 +86,18 @@ void writeSystemInformation(TextWriter* writer, const gmx_mtop_t& top, bool writ
     const t_atom*             atom;
 
     writeHeader(writer, "Simulation system", "subsection", writeFormattedText);
-    aloop = gmx_mtop_atomloop_block_init(&top);
+    aloop = gmx_mtop_atomloop_block_init(top);
     while (gmx_mtop_atomloop_block_next(aloop, &atom, &nmol))
     {
-        if (atom->ptype == eptVSite)
+        if (atom->ptype == ParticleType::VSite)
         {
             nvsite += nmol;
         }
     }
     {
         writer->writeLine(formatString("A system of %d molecules (%d atoms) was simulated.",
-                                       gmx_mtop_num_molecules(top), top.natoms - nvsite));
+                                       gmx_mtop_num_molecules(top),
+                                       top.natoms - nvsite));
     }
     if (nvsite)
     {
@@ -99,29 +110,33 @@ void writeParameterInformation(TextWriter* writer, const t_inputrec& ir, bool wr
 {
     writeHeader(writer, "Simulation settings", "subsection", writeFormattedText);
     writer->writeLine(formatString("A total of %g ns were simulated with a time step of %g fs.",
-                                   ir.nsteps * ir.delta_t * 0.001, 1000 * ir.delta_t));
+                                   ir.nsteps * ir.delta_t * 0.001,
+                                   1000 * ir.delta_t));
     writer->writeLine(formatString("Neighbor searching was performed every %d steps.", ir.nstlist));
     writer->writeLine(formatString("The %s algorithm was used for electrostatic interactions.",
-                                   EELTYPE(ir.coulombtype)));
+                                   enumValueToString(ir.coulombtype)));
     writer->writeLine(formatString("with a cut-off of %g nm.", ir.rcoulomb));
-    if (ir.coulombtype == eelPME)
+    if (ir.coulombtype == CoulombInteractionType::Pme)
     {
         writer->writeLine(
                 formatString("A reciprocal grid of %d x %d x %d cells was used with %dth order "
                              "B-spline interpolation.",
-                             ir.nkx, ir.nky, ir.nkz, ir.pme_order));
+                             ir.nkx,
+                             ir.nky,
+                             ir.nkz,
+                             ir.pme_order));
     }
     writer->writeLine(formatString(
             "A single cut-off of %g nm was used for Van der Waals interactions.", ir.rlist));
-    if (ir.etc != 0)
+    if (ir.etc != TemperatureCoupling::No)
     {
         writer->writeLine(formatString("Temperature coupling was done with the %s algorithm.",
-                                       etcoupl_names[ir.etc]));
+                                       enumValueToString(ir.etc)));
     }
-    if (ir.epc != 0)
+    if (ir.pressureCouplingOptions.epc != PressureCoupling::No)
     {
         writer->writeLine(formatString("Pressure coupling was done with the %s algorithm.",
-                                       epcoupl_names[ir.epc]));
+                                       enumValueToString(ir.pressureCouplingOptions.epc)));
     }
     writer->ensureEmptyLine();
 }
@@ -175,7 +190,7 @@ private:
 void ReportMethods::initOptions(IOptionsContainer* options, ICommandLineOptionsModuleSettings* settings)
 {
     const char* const desc[] = { "[THISMODULE] reports basic system information for the run input",
-                                 "file specfied with [TT]-s[tt] either to the",
+                                 "file specified with [TT]-s[tt] either to the",
                                  "terminal, to a LaTeX formatted output file if run with",
                                  "the [TT]-m[tt] option or to an unformatted file with",
                                  "the [TT]-o[tt] option.",
@@ -185,7 +200,7 @@ void ReportMethods::initOptions(IOptionsContainer* options, ICommandLineOptionsM
     settings->setHelpText(desc);
 
     options->addOption(FileNameOption("s")
-                               .filetype(eftTopology)
+                               .filetype(OptionFileType::Topology)
                                .inputFile()
                                .required()
                                .store(&inputTopology_)
@@ -216,7 +231,7 @@ int ReportMethods::run()
     t_state    state;
     t_inputrec ir;
     gmx_mtop_t top;
-    read_tpx_state(inputTopology_.c_str(), &ir, &state, &top);
+    read_tpx_state(inputTopology_, &ir, &state, &top);
     if (writeLatex_)
     {
         TextOutputFile file(outputFileLatex_);
@@ -235,8 +250,8 @@ int ReportMethods::run()
 
 } // namespace
 
-const char ReportMethodsInfo::name[] = "report-methods";
-const char ReportMethodsInfo::shortDescription[] =
+LIBGROMACS_EXPORT const char ReportMethodsInfo::name[] = "report-methods";
+LIBGROMACS_EXPORT const char ReportMethodsInfo::shortDescription[] =
         "Write short summary about the simulation setup to a text file "
         "and/or to the standard output.";
 ICommandLineOptionsModulePointer ReportMethodsInfo::create()

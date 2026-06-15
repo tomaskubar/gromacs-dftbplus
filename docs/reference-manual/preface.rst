@@ -3,21 +3,14 @@ Preface and Disclaimer
 
 |Gromacs| - |version|
 
-Contributions from:
+Current Contributors:
+|GMX_CURRENT_CONTRIBUTORS|
 
-Emile Apol, Rossen Apostolov, Paul Bauer, Herman J.C. Berendsen,
-Pär Bjelkmar, Christian Blau, Viacheslav Bolnykh, Kevin Boyd,
-Aldert van Buuren, Rudi van Drunen, Anton Feenstra, Gerrit Groenhof,
-Anca Hamuraru, Vincent Hindriksen, M. Eric Irrgang, Aleksei Iupinov,
-Christoph Junghans, Joe Jordan, Dimitrios Karkoulis, Peter Kasson,
-Jiri Kraus, Carsten Kutzner, Per Larsson, Justin A. Lemkul,
-Viveca Lindahl, Magnus Lundborg, Erik Marklund,Pascal Merz,
-Pieter Meulenhoff, Teemu Murtola, Szilárd Páll, Sander Pronk,
-Roland Schulz, Michael Shirts, Alexey Shvetsov, Alfons Sijbers,
-Peter Tieleman, Teemu Virolainen, Christian Wennberg, Maarten Wolf,
-and Artem Zhmurov.
+Previous Contributors:
+|GMX_PREVIOUS_CONTRIBUTORS|
 
-Mark Abraham, Berk Hess, David van der Spoel, and Erik Lindahl.
+Project leaders:
+|GMX_CURRENT_PROJECT_LEADERS|
 
 © 1991 -- 2000:
 
@@ -30,13 +23,14 @@ Mark Abraham, Berk Hess, David van der Spoel, and Erik Lindahl.
     Uppsala University, Sweden.
 
 
-This manual is not complete and has no pretension to be so due
+This manual is not complete and has no pretension to be so, due
 to lack of time of the contributors -- our first priority is to improve
 the software. It is worked on continuously,
 which in some cases might mean the information is not entirely correct.
 
-Comments on form and content are welcome, please send them to one of
-the mailing lists (see our `webpage`_ or this section on
+Comments on form and content are welcome, please send them to the
+`user discussion forum`_ or the `developer discussion forum`_
+(see our `webpage`_ or this section on
 how to :ref:`contribute <gmx-contribute>`), or open an issue
 on our `issue tracker`_. Corrections can also be made in the |Gromacs| git
 source repository and uploaded to the |Gromacs| `GitLab`_.
@@ -72,7 +66,7 @@ grants, since the package is distributed as free software!
 ----------------------------
 
 The entire |Gromacs| package is available under the GNU Lesser
-General Public License (LGPL), version 2.1. This means it's free as in free
+General Public License (LGPL), version 2.1. This means it is free as in free
 speech, not just that you can use it without paying us money.
 You can redistribute |Gromacs| and/or modify it under the terms of the LGPL
 as published by the Free Software Foundation;
@@ -81,7 +75,7 @@ For details, check the COPYING file in the source code or consult
 `this page <http://www.gnu.org/licenses/old-licenses/lgpl-2.1.html>`__.
 
 The |Gromacs| source code and selected set of binary packages are
-available on our homepage, `www.gromacs.org <http://www.gromacs.org>`__. Have fun.
+available on our homepage, `www.gromacs.org <http://www.gromacs.org>`__. Have fun!
 
 .. raw:: latex
 

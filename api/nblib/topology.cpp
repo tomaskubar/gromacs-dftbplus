@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2020- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \internal \file
  * \brief
@@ -42,22 +41,34 @@
  * \author Sebastian Keller <keller@cscs.ch>
  * \author Artem Zhmurov <zhmurov@gmail.com>
  */
+#include "nblib/topology.h"
+
+#include <cassert>
+
+#include <algorithm>
+#include <array>
+#include <iterator>
 #include <numeric>
+#include <type_traits>
 
 #include "gromacs/topology/exclusionblocks.h"
+#include "gromacs/utility/arrayref.h"
 #include "gromacs/utility/listoflists.h"
 #include "gromacs/utility/smalloc.h"
+
 #include "nblib/exception.h"
 #include "nblib/particletype.h"
-#include "nblib/topology.h"
-#include "nblib/util/internal.h"
+#include "nblib/util/util.hpp"
+
+#include "sequencing.hpp"
+#include "topologyhelpers.h"
 
 namespace nblib
 {
 
 TopologyBuilder::TopologyBuilder() : numParticles_(0) {}
 
-gmx::ListOfLists<int> TopologyBuilder::createExclusionsListOfLists() const
+ExclusionLists<int> TopologyBuilder::createExclusionsLists() const
 {
     const auto& moleculesList = molecules_;
 
@@ -76,16 +87,15 @@ gmx::ListOfLists<int> TopologyBuilder::createExclusionsListOfLists() const
                 "No exclusions found in the " + molecule.name().value() + " molecule.";
         assert((!exclusions.empty() && message.c_str()));
 
-        std::vector<gmx::ExclusionBlock> exclusionBlockPerMolecule =
-                detail::toGmxExclusionBlock(exclusions);
+        std::vector<gmx::ExclusionBlock> exclusionBlockPerMolecule = toGmxExclusionBlock(exclusions);
 
         // duplicate the exclusionBlockPerMolecule for the number of Molecules of (numMols)
         for (size_t i = 0; i < numMols; ++i)
         {
-            auto offsetExclusions =
-                    detail::offsetGmxBlock(exclusionBlockPerMolecule, particleNumberOffset);
+            auto offsetExclusions = offsetGmxBlock(exclusionBlockPerMolecule, particleNumberOffset);
 
-            std::copy(std::begin(offsetExclusions), std::end(offsetExclusions),
+            std::copy(std::begin(offsetExclusions),
+                      std::end(offsetExclusions),
                       std::back_inserter(exclusionBlockGlobal));
 
             particleNumberOffset += molecule.numParticlesInMolecule();
@@ -98,10 +108,18 @@ gmx::ListOfLists<int> TopologyBuilder::createExclusionsListOfLists() const
         exclusionsListOfListsGlobal.pushBack(block.atomNumber);
     }
 
-    return exclusionsListOfListsGlobal;
+    std::vector<int>    listRanges(exclusionsListOfListsGlobal.listRangesView().begin(),
+                                exclusionsListOfListsGlobal.listRangesView().end());
+    std::vector<int>    listElements(exclusionsListOfListsGlobal.elementsView().begin(),
+                                  exclusionsListOfListsGlobal.elementsView().end());
+    ExclusionLists<int> exclusionListsGlobal;
+    exclusionListsGlobal.ListRanges   = std::move(listRanges);
+    exclusionListsGlobal.ListElements = std::move(listElements);
+
+    return exclusionListsGlobal;
 }
 
-ListedInteractionData TopologyBuilder::createInteractionData(const detail::ParticleSequencer& particleSequencer)
+ListedInteractionData TopologyBuilder::createInteractionData(const ParticleSequencer& particleSequencer)
 {
     ListedInteractionData interactionData;
 
@@ -109,7 +127,8 @@ ListedInteractionData TopologyBuilder::createInteractionData(const detail::Parti
     // for (int i = 0; i < interactionData.size(); ++i)
     //     create(get<i>(interactionData));
 
-    auto create = [this, &particleSequencer](auto& interactionDataElement) {
+    auto create = [this, &particleSequencer](auto& interactionDataElement)
+    {
         using InteractionType = typename std::decay_t<decltype(interactionDataElement)>::type;
 
         // first compression stage: each bond per molecule listed once,
@@ -125,8 +144,10 @@ ListedInteractionData TopologyBuilder::createInteractionData(const detail::Parti
 
         // combine stage 1 + 2 expansion arrays
         std::vector<size_t> expansionArray(expansionArrayStage1.size());
-        std::transform(begin(expansionArrayStage1), end(expansionArrayStage1), begin(expansionArray),
-                       [& S2 = expansionArrayStage2](size_t S1Element) { return S2[S1Element]; });
+        std::transform(begin(expansionArrayStage1),
+                       end(expansionArrayStage1),
+                       begin(expansionArray),
+                       [&S2 = expansionArrayStage2](size_t S1Element) { return S2[S1Element]; });
 
         // add data about InteractionType instances
         interactionDataElement.parameters = std::move(uniqueInteractionInstances);
@@ -135,9 +156,12 @@ ListedInteractionData TopologyBuilder::createInteractionData(const detail::Parti
         // coordinateIndices contains the particle sequence IDs of all interaction coordinates of type <BondType>
         auto coordinateIndices = detail::sequenceIDs<InteractionType>(this->molecules_, particleSequencer);
         // zip coordinateIndices(i,j,...) + expansionArray(k) -> interactionDataElement.indices(i,j,...,k)
-        std::transform(begin(coordinateIndices), end(coordinateIndices), begin(expansionArray),
+        std::transform(begin(coordinateIndices),
+                       end(coordinateIndices),
+                       begin(expansionArray),
                        begin(interactionDataElement.indices),
-                       [](auto coordinateIndex, auto interactionIndex) {
+                       [](auto coordinateIndex, auto interactionIndex)
+                       {
                            std::array<int, coordinateIndex.size() + 1> ret{ 0 };
                            for (int i = 0; i < int(coordinateIndex.size()); ++i)
                            {
@@ -189,11 +213,9 @@ Topology TopologyBuilder::buildTopology()
     }
     topology_.numParticles_ = numParticles_;
 
-    topology_.exclusions_ = createExclusionsListOfLists();
-    topology_.charges_    = extractParticleTypeQuantity<real>([](const auto& data, auto& map) {
-        ignore_unused(map);
-        return data.charge_;
-    });
+    topology_.exclusionLists_ = createExclusionsLists();
+    topology_.charges_        = extractParticleTypeQuantity<real>(
+            [](const auto& data, [[maybe_unused]] auto& map) { return data.charge_; });
 
     // map unique ParticleTypes to IDs
     std::unordered_map<std::string, int> nameToId;
@@ -204,12 +226,10 @@ Topology TopologyBuilder::buildTopology()
     }
 
     topology_.particleTypeIdOfAllParticles_ =
-            extractParticleTypeQuantity<int>([&nameToId](const auto& data, auto& map) {
-                ignore_unused(map);
-                return nameToId[data.particleTypeName_];
-            });
+            extractParticleTypeQuantity<int>([&nameToId](const auto& data, [[maybe_unused]] auto& map)
+                                             { return nameToId[data.particleTypeName_]; });
 
-    detail::ParticleSequencer particleSequencer;
+    ParticleSequencer particleSequencer;
     particleSequencer.build(molecules_);
     topology_.particleSequencer_ = std::move(particleSequencer);
 
@@ -230,7 +250,8 @@ Topology TopologyBuilder::buildTopology()
             {
                 std::string message =
                         formatString("Missing nonbonded interaction parameters for pair {} {}",
-                                     particleType1.first, particleType2.first);
+                                     particleType1.first,
+                                     particleType2.first);
                 throw InputException(message);
             }
         }
@@ -316,9 +337,9 @@ CombinationRule Topology::getCombinationRule() const
     return combinationRule_;
 }
 
-gmx::ListOfLists<int> Topology::getGmxExclusions() const
+ExclusionLists<int> Topology::exclusionLists() const
 {
-    return exclusions_;
+    return exclusionLists_;
 }
 
 } // namespace nblib

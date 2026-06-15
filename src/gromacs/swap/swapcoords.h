@@ -1,12 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2013, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2016,2017 by the GROMACS development team.
- * Copyright (c) 2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2013- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -20,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -29,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \libinternal
  * \defgroup module_swap "Computational Electrophysiology" position swapping (swap)
@@ -53,38 +50,62 @@
 #ifndef GMX_SWAP_SWAPCOORDS_H
 #define GMX_SWAP_SWAPCOORDS_H
 
+#include <cstdint>
 #include <cstdio>
 
 #include <memory>
+#include <string_view>
 
-#include "gromacs/math/vectypes.h"
 #include "gromacs/utility/basedefinitions.h"
+#include "gromacs/utility/vectypes.h"
 
 struct gmx_domdec_t;
 struct gmx_mtop_t;
 struct gmx_output_env_t;
 struct gmx_wallcycle;
 struct swaphistory_t;
-struct t_commrec;
 struct t_inputrec;
 class t_state;
-struct t_swap;
 struct t_swapcoords;
 struct ObservablesHistory;
 
 namespace gmx
 {
+template<typename T>
+class ArrayRef;
+class MpiComm;
 enum class StartingBehavior;
 class IMDModule;
 class LocalAtomSetManager;
 struct MdrunOptions;
 
-/*! \brief
- * Creates a module for Computational Electrophysiology swapping.
+/*! \internal
+    \brief Information about the computational-electrophysiology module.
+ *
+ * Provides name and method to create a computational-electrophysiology module.
  */
-std::unique_ptr<IMDModule> createSwapCoordinatesModule();
+struct SwapCoordinatesModuleInfo
+{
+    /*! \brief
+     * Creates a module for Computational Electrophysiology swapping.
+     */
+    static std::unique_ptr<IMDModule> create();
+    //! The name of the module
+    static constexpr std::string_view sc_name = "swap-coordinates";
+};
 
 } // namespace gmx
+
+class SwapCoords
+{
+public:
+    SwapCoords();
+    ~SwapCoords();
+    //! Impl class, currently public while module evolves
+    class Impl;
+    //! Impl object, currently public while module evolves
+    std::unique_ptr<Impl> impl_;
+};
 
 /*! \brief Initialize ion / water position swapping ("Computational Electrophysiology").
  *
@@ -96,37 +117,32 @@ std::unique_ptr<IMDModule> createSwapCoordinatesModule();
  *                          also the structure needed for position swapping.
  * \param[in] fn            Output file name for swap data.
  * \param[in] mtop          Molecular topology.
- * \param[in] globalState   The global state, only used on the master rank.
+ * \param[in] globalState   The global state, only used on the main rank.
  * \param[in] oh            Contains struct with swap data that is read from or written to checkpoint.
- * \param[in] cr            Pointer to MPI communication data.
+ * \param[in] mpiComm       Communicator object for my group.
+ * \param[in] dd            Domain decomposition object, is nullptr when DD is not active.
  * \param[in] atomSets      Manager tending to swap atom indices.
  * \param[in] oenv          Needed to open the swap output XVGR file.
  * \param[in] mdrunOptions  Options for mdrun.
  * \param[in] startingBehavior  Describes whether this is a restart appending to output files
  */
-t_swap* init_swapcoords(FILE*                     fplog,
-                        const t_inputrec*         ir,
-                        const char*               fn,
-                        gmx_mtop_t*               mtop,
-                        const t_state*            globalState,
-                        ObservablesHistory*       oh,
-                        t_commrec*                cr,
-                        gmx::LocalAtomSetManager* atomSets,
-                        const gmx_output_env_t*   oenv,
-                        const gmx::MdrunOptions&  mdrunOptions,
-                        gmx::StartingBehavior     startingBehavior);
-
-
-/*! \brief Finalizes ion / water position swapping, if it was active.
- *
- * \param[in] s             Pointer to swap data.
- */
-void finish_swapcoords(t_swap* s);
+std::unique_ptr<SwapCoords> init_swapcoords(FILE*                     fplog,
+                                            const t_inputrec*         ir,
+                                            const char*               fn,
+                                            const gmx_mtop_t&         mtop,
+                                            const t_state*            globalState,
+                                            ObservablesHistory*       oh,
+                                            const gmx::MpiComm&       mpiComm,
+                                            const gmx_domdec_t*       dd,
+                                            gmx::LocalAtomSetManager* atomSets,
+                                            const gmx_output_env_t*   oenv,
+                                            const gmx::MdrunOptions&  mdrunOptions,
+                                            gmx::StartingBehavior     startingBehavior);
 
 
 /*! \brief "Computational Electrophysiology" main routine within MD loop.
  *
- * \param[in] cr       Pointer to MPI communication data.
+ * \param[in] mpiComm  Communicator object for my group.
  * \param[in] step     The number of the MD time step.
  * \param[in] t        The time.
  * \param[in] ir       Structure containing MD input parameters
@@ -139,15 +155,15 @@ void finish_swapcoords(t_swap* s);
  *
  * \returns Whether at least one pair of molecules was swapped.
  */
-gmx_bool do_swapcoords(t_commrec*     cr,
-                       int64_t        step,
-                       double         t,
-                       t_inputrec*    ir,
-                       t_swap*        s,
-                       gmx_wallcycle* wcycle,
-                       rvec           x[],
-                       matrix         box,
-                       gmx_bool       bVerbose,
-                       gmx_bool       bRerun);
+gmx_bool do_swapcoords(const gmx::MpiComm&      mpiComm,
+                       int64_t                  step,
+                       double                   t,
+                       const t_inputrec*        ir,
+                       SwapCoords*              s,
+                       gmx_wallcycle*           wcycle,
+                       gmx::ArrayRef<gmx::RVec> x,
+                       matrix                   box,
+                       gmx_bool                 bVerbose,
+                       gmx_bool                 bRerun);
 
 #endif

@@ -1158,8 +1158,8 @@ Fundam.*, **11** [3] 379–387 (1972).
 
 :sup:`83` M. Bulacu, N. Goga, W. Zhao, G. Rossi, L. Monticelli, X.
 Periole, D. Tieleman, and S. Marrink, "Improved angle potentials for
-coarse-grained molecular dynamics simulations," *J. Chem. Phys.*,
-**123** [11] (2005).
+coarse-grained molecular dynamics simulations," *J. Chem. Theory Comput.*,
+**9** [8] 3282-3292 (2013).
 
 .. raw:: html
 
@@ -1231,7 +1231,7 @@ peptide and protein torsional energetics with the oPLS-aA force field,"
 
 :sup:`88` M. Bulacu and E. van der Giessen, "Effect of bending and
 torsion rigidity on self-diffusion in polymer melts: A
-molecular-dynamics study," *JCTC*, **9** [8] 3282–3292 (2013).
+molecular-dynamics study," *J. Chem. Phys.*, **123** [11] 114901 (2005).
 
 .. raw:: html
 
@@ -1399,35 +1399,6 @@ dynamics simulations," *J. Chem. Phys.*, **108** 6109–6116 (1998).
 W.F. van Gunsteren, "Avoiding singularities and numerical instabilities
 in free energy calculations based on molecular simulations," *Chem.
 Phys. Lett.*, **222** 529–539 (1994).
-
-.. raw:: html
-
-   </div>
-
-.. raw:: html
-
-   <div id="ref-Pham2011">
-
-.. _refPham2011:
-
-:sup:`101` T.T. Pham and M.R. Shirts, "Identifying low variance pathways
-for free energy calculations of molecular transformations in solution
-phase," *J. Chem. Phys.*, **135** 034114 (2011).
-
-.. raw:: html
-
-   </div>
-
-.. raw:: html
-
-   <div id="ref-Pham2012">
-
-.. _refPham2012:
-
-:sup:`102` T.T. Pham and M.R. Shirts, "Optimal pairwise and non-pairwise
-alchemical pathways for free energy calculations of molecular
-transformation in solution phase," *J. Chem. Phys.*, **136** 124120
-(2012).
 
 .. raw:: html
 
@@ -2420,7 +2391,7 @@ protein dynamics and random diffusion," *Phys. Rev. **E***, **62**
 .. _refMu2005a:
 
 :sup:`172` Y. Mu, P.H. Nguyen, and G. Stock, "Energy landscape of a
-small peptide revelaed by dihedral angle principal component analysis,"
+small peptide revealed by dihedral angle principal component analysis,"
 *PROTEINS: Struct. Funct. Gen.*, **58** 45–52 (2005).
 
 .. raw:: html
@@ -2566,6 +2537,121 @@ molecular dynamics simulations*, (2002).
 
    </div>
 
+.. raw:: html
+
+   <div id="ref-Gapsys2012">
+
+.. _refGapsys2012:
+
+:sup:`183` V. Gapsys, D. Seeliger, and B.L. de Groot,
+"New Soft-Core Potential Function for Molecular Dynamics Based Alchemical Free Energy Calculations", *J. Chem. Theor. Comput.*, **8** 2373-2382 (2012).
+
+.. raw:: html
+
+   </div>
+
+.. raw:: html
+
+   <div id="ref-Bernetti2020">
+
+.. _refBernetti2020:
+
+:sup:`184` Bernetti, M. and Bussi G.,
+"Pressure control using stochastic cell rescaling", *J. Chem. Phys.*, **153**, 114107 (2020).
+
+.. raw:: html
+
+   </div>
+
+.. raw:: html
+
+  <div id="ref-Lidmar2012">
+
+.. _refLidmar2012:
+
+:sup:`185` Lidmar J.,
+"Improving the efficiency of extended ensemble simulations: The accelerated weight histogram method", *Phys. Rev. E*, **85**, 0256708 (2012).
+
+.. raw:: html
+
+   </div>
+
+.. raw:: html
+
+   <div id="ref-Lindahl2018">
+
+.. _refLindahl2018:
+
+:sup:`186` Lindahl V., Lidmar J. and Hess B.,
+"Riemann metric approach to optimal sampling of multidimensional free-energy landscapes", *Phys. Rev. E*, **98**, 023312 (2018).
+
+.. raw:: html
+
+   </div>
+
+.. raw:: html
+
+   <div id="ref-LundBorg2021">
+
+.. _refLundborg2021:
+
+:sup:`187` Lundborg M., Lidmar J. and Hess B.,
+"The accelerated weight histogram method for alchemical free energy calculations", *J. Chem. Phys.*, **154**, 204103 (2021).
+
+.. raw:: html
+
+   </div>
+
+.. raw:: html
+
+   <div id="refcp2k2020">
+
+.. _refcp2k2020:
+
+:sup:`188` Kühne T., Iannuzzi M., Del Ben M. and Hutter J. *et al.*,
+"CP2K: An electronic structure and molecular dynamics software package - Quickstep: Efficient and accurate electronic structure calculations",
+*J. Chem. Phys.*, **152**, 194103 (2020).
+
+.. raw:: html
+
+   </div>
+
+.. raw:: html
+
+   <div id="refLaino2005">
+
+.. _refLaino2005:
+
+:sup:`189` Laino T., Mohamed F., Laio A. and Parrinello M.,
+"An Efficient Real Space Multigrid QM/MM Electrostatic Coupling", *J. Chem. Theory Comput.*, **1**, 1176 (2005).
+
+.. raw:: html
+
+   </div>
+
+.. raw:: html
+
+   <div id="refSpoel2020">
+
+.. _refSpoel2020:
+
+:sup:`190` D. van der Spoel, H. Henschel, P. J. van Maaren, M. M. Ghahremanpour , and L. T. Costa, "A potential for molecular simulation of compounds with linear moieties", *J. Chem. Phys.*, **153** 084503 (2020).
+
+.. raw:: html
+
+   </div>
+
+.. raw:: html
+
+   <div id="refTuckerman92">
+
+.. _refTuckerman92:
+
+:sup:`191` M. Tuckerman, B. J. Berne, and G. J. Martyna, "Reversible multiple time scale molecular dynamics", *J. Chem. Phys.*, **97** 1990 (1992).
+
+.. raw:: html
+
+   </div>
 
 .. raw:: html
 
@@ -2573,7 +2659,7 @@ molecular dynamics simulations*, (2002).
 
 .. _refOrzechowski2008:
 
-:sup:`182` Orzechowski M, Tama F., "Flexible fitting of high-resolution x-ray 
+:sup:`192` Orzechowski M, Tama F., "Flexible fitting of high-resolution x-ray
 structures into cryoelectron microscopy maps using biased molecular dynamics simulations",
 *Biophysical journal*, *95*, 5692–705, (2008).
 
@@ -2587,7 +2673,7 @@ structures into cryoelectron microscopy maps using biased molecular dynamics sim
 
 .. _refIgaev2019:
 
-:sup:`183` Igaev, M., Kutzner, C., Bock, L. V., Vaiana, A. C., & Grubmüller, H.,
+:sup:`193` Igaev, M., Kutzner, C., Bock, L. V., Vaiana, A. C., & Grubmüller, H.,
 "Automated cryo-EM structure refinement using correlation-driven molecular dynamics", *eLife*, **8**, e43542 (2019).
 
 .. raw:: html
@@ -2596,16 +2682,59 @@ structures into cryoelectron microscopy maps using biased molecular dynamics sim
 
 .. raw:: html
 
-   <div id="ref-Bernetti2020">
+   <div id="ref-Lundborg2023">
 
-.. _refBernetti2020:
+.. _refLundborg2023:
 
-:sup:`184` Bernetti, M. and Bussi, G.,
-"Pressure control using stochastic cell rescaling", *J. Chem. Phys.*, **153**, 114107 (2020).
+:sup:`194` Lundborg M., Lidmar J. and Hess B., "On the Path to Optimal Alchemistry", *Protein J.*, **42**, 477–489 (2023).
 
 .. raw:: html
 
    </div>
+
+.. raw:: html
+
+   <div id="refFiorin13">
+
+.. _refFiorin13:
+
+:sup:`195` G. Fiorin, M. L. Klein, and J. Hénin, "Using collective variables to drive molecular dynamics simulations", *Mol. Phys.* **111** 3345-3362 (2013).
+
+.. raw:: html
+
+   </div>
+
+.. raw:: html
+
+   <div id="refGreengard1987">
+
+.. _refGreengard1987:
+
+:sup:`196` L. Greengard and V. Rokhlin, "A fast algorithm for particle simulations", *J. Comput. Phys.* **73**, 325–348 (1987).
+
+.. raw:: html
+
+   </div>
+
+.. raw:: html
+
+   <div id="refMaier2015">
+
+.. _refMaier2015:
+
+:sup:`197` Maier, J. A., Martinez, C., Kasavajhala, K., Wickstrom, L., Hauser, K. E., and Simmerling, C. , and Simmerling, C., "ff14SB: Improving the Accuracy of Protein Side Chain and Backbone Parameters from ff99SB", *J. Chem. Theory Comput.* **11**, 3696–3713 (2015).
+
+.. raw:: html
+
+   </div>
+
+.. raw:: html
+
+   <div id="refTian2020">
+
+.. _refTian2020:
+
+:sup:`198` Tian, C., Kasavajhala, K., Belfon, K. A. A., Raguette, L., Huang, H., Migues, A. N., Bickel, J., Wang, Y., Pincay, J., Wu, Q., and Simmerling, C., "ff19SB: Amino-Acid-Specific Protein Backbone Parameters Trained against Quantum Mechanics Energy Surfaces in Solution", *J. Chem. Theory Comput.* **16**, 528–552 (2020).
 
 .. raw:: html
 

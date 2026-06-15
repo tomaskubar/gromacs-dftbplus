@@ -1,13 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
- * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2016,2017 The GROMACS development team.
- * Copyright (c) 2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 1991- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -21,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -30,12 +26,15 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
-
+/*!
+ * \defgroup module_mdlib Module MdLib
+ * \brief A brief description for Module MdLib
+ */
 #include "gmxpre.h"
 
 #include "md_support.h"
@@ -44,12 +43,18 @@
 #include <cmath>
 
 #include <algorithm>
+#include <array>
+#include <filesystem>
+#include <memory>
+#include <string>
+#include <vector>
 
 #include "gromacs/domdec/domdec.h"
 #include "gromacs/gmxlib/network.h"
 #include "gromacs/gmxlib/nrnb.h"
+#include "gromacs/math/units.h"
 #include "gromacs/math/utilities.h"
-#include "gromacs/math/vec.h"
+#include "gromacs/mdlib/boxdeformation.h"
 #include "gromacs/mdlib/coupling.h"
 #include "gromacs/mdlib/gmx_omp_nthreads.h"
 #include "gromacs/mdlib/simulationsignal.h"
@@ -57,7 +62,6 @@
 #include "gromacs/mdlib/tgroup.h"
 #include "gromacs/mdlib/update.h"
 #include "gromacs/mdlib/vcm.h"
-#include "gromacs/mdtypes/commrec.h"
 #include "gromacs/mdtypes/df_history.h"
 #include "gromacs/mdtypes/enerdata.h"
 #include "gromacs/mdtypes/energyhistory.h"
@@ -66,40 +70,69 @@
 #include "gromacs/mdtypes/inputrec.h"
 #include "gromacs/mdtypes/md_enums.h"
 #include "gromacs/mdtypes/mdatom.h"
+#include "gromacs/mdtypes/observablesreducer.h"
+#include "gromacs/mdtypes/pull_params.h"
 #include "gromacs/mdtypes/state.h"
 #include "gromacs/pbcutil/pbc.h"
 #include "gromacs/pulling/pull.h"
 #include "gromacs/timing/wallcycle.h"
+#include "gromacs/topology/ifunc.h"
 #include "gromacs/topology/mtop_util.h"
 #include "gromacs/trajectory/trajectoryframe.h"
 #include "gromacs/utility/arrayref.h"
+#include "gromacs/utility/booltype.h"
 #include "gromacs/utility/cstringutil.h"
+#include "gromacs/utility/enumerationhelpers.h"
 #include "gromacs/utility/fatalerror.h"
 #include "gromacs/utility/gmxassert.h"
 #include "gromacs/utility/logger.h"
+#include "gromacs/utility/mpicomm.h"
+#include "gromacs/utility/real.h"
 #include "gromacs/utility/smalloc.h"
 #include "gromacs/utility/snprintf.h"
+#include "gromacs/utility/vec.h"
 
-static void calc_ke_part_normal(gmx::ArrayRef<const gmx::RVec> v,
+template<bool haveBoxDeformation>
+static void calc_ke_part_normal(const matrix                   deform,
+                                gmx::ArrayRef<const gmx::RVec> x,
+                                gmx::ArrayRef<const gmx::RVec> v,
+                                const matrix                   box,
                                 const t_grpopts*               opts,
                                 const t_mdatoms*               md,
                                 gmx_ekindata_t*                ekind,
                                 t_nrnb*                        nrnb,
                                 gmx_bool                       bEkinAveVel)
 {
+    matrix gmx_unused deformFlowMatrix;
+    if constexpr (haveBoxDeformation)
+    {
+        GMX_ASSERT(ekind->systemMomenta, "Need system momenta with box deformation");
+
+        if (opts->ngtc != 1)
+        {
+            // With box deformation we can only correct Ekin of the whole system for COM motion.
+            // grompp now does this check, but we could have read an old tpr file.
+            gmx_fatal(FARGS,
+                      "With box deformation a single temperature coupling group is required.");
+        }
+
+        gmx::setBoxDeformationFlowMatrix(deform, box, deformFlowMatrix);
+    }
+    else
+    {
+        GMX_UNUSED_VALUE(deform);
+        GMX_UNUSED_VALUE(box);
+    }
+
     int                         g;
-    gmx::ArrayRef<t_grp_tcstat> tcstat  = ekind->tcstat;
-    gmx::ArrayRef<t_grp_acc>    grpstat = ekind->grpstat;
+    gmx::ArrayRef<t_grp_tcstat> tcstat = ekind->tcstat;
 
     /* three main: VV with AveVel, vv with AveEkin, leap with AveEkin.  Leap with AveVel is also
        an option, but not supported now.
        bEkinAveVel: If TRUE, we sum into ekin, if FALSE, into ekinh.
      */
 
-    /* group velocities are calculated in update_ekindata and
-     * accumulated in acumulate_groups.
-     * Now the partial global and groups ekin.
-     */
+    // Now accumulate the partial global and groups ekin.
     for (g = 0; (g < opts->ngtc); g++)
     {
         copy_mat(tcstat[g].ekinh, tcstat[g].ekinh_old);
@@ -114,7 +147,14 @@ static void calc_ke_part_normal(gmx::ArrayRef<const gmx::RVec> v,
         }
     }
     ekind->dekindl_old = ekind->dekindl;
-    int nthread        = gmx_omp_nthreads_get(emntUpdate);
+    if constexpr (haveBoxDeformation)
+    {
+        ekind->systemMomenta->momentumOldHalfStep = ekind->systemMomenta->momentumHalfStep;
+        ekind->systemMomenta->momentumFullStep.clear();
+        ekind->systemMomenta->momentumHalfStep.clear();
+    }
+
+    const int nthread = gmx_omp_nthreads_get(ModuleMultiThread::Update);
 
 #pragma omp parallel for num_threads(nthread) schedule(static)
     for (int thread = 0; thread < nthread; thread++)
@@ -123,8 +163,7 @@ static void calc_ke_part_normal(gmx::ArrayRef<const gmx::RVec> v,
         // or memory allocation. It should not be able to throw, so for now
         // we do not need a try/catch wrapper.
         int     start_t, end_t, n;
-        int     ga, gt;
-        rvec    v_corrt;
+        int     gt;
         real    hm;
         int     d, m;
         matrix* ekin_sum;
@@ -142,35 +181,57 @@ static void calc_ke_part_normal(gmx::ArrayRef<const gmx::RVec> v,
         }
         *dekindl_sum = 0.0;
 
-        ga = 0;
+        SystemMomentum* systemMomentumWork;
+        if constexpr (haveBoxDeformation)
+        {
+            systemMomentumWork = ekind->systemMomentumWork[thread].get();
+            systemMomentumWork->clear();
+        }
+
         gt = 0;
         for (n = start_t; n < end_t; n++)
         {
-            if (md->cACC)
-            {
-                ga = md->cACC[n];
-            }
-            if (md->cTC)
+            if (!md->cTC.empty())
             {
                 gt = md->cTC[n];
             }
             hm = 0.5 * md->massT[n];
 
-            for (d = 0; (d < DIM); d++)
+            gmx::RVec vn = v[n];
+            if constexpr (haveBoxDeformation)
             {
-                v_corrt[d] = v[n][d] - grpstat[ga].u[d];
+                // Subtract the deformation flow profile.
+                // Note that this profile does not have a universal zero point. This means
+                // that the zero point chosen here affects the kinetic energy. We correct
+                // for this later by subtracting the velocity of the whole system which
+                // we compute below as well.
+                for (d = 0; (d < DIM); d++)
+                {
+                    vn[d] -= iprod(x[n], deformFlowMatrix[d]);
+                }
             }
+
             for (d = 0; (d < DIM); d++)
             {
                 for (m = 0; (m < DIM); m++)
                 {
-                    /* if we're computing a full step velocity, v_corrt[d] has v(t).  Otherwise, v(t+dt/2) */
-                    ekin_sum[gt][m][d] += hm * v_corrt[m] * v_corrt[d];
+                    /* if we're computing a full step velocity, v[d] has v(t).  Otherwise, v(t+dt/2) */
+                    ekin_sum[gt][m][d] += hm * vn[m] * vn[d];
+                }
+
+                if constexpr (haveBoxDeformation)
+                {
+                    systemMomentumWork->momentum[d] += md->massT[n] * vn[d];
                 }
             }
             if (md->nMassPerturbed && md->bPerturbed[n])
             {
-                *dekindl_sum += 0.5 * (md->massB[n] - md->massA[n]) * iprod(v_corrt, v_corrt);
+                *dekindl_sum += 0.5 * (md->massB[n] - md->massA[n]) * iprod(vn, vn);
+            }
+
+            if constexpr (haveBoxDeformation)
+            {
+                systemMomentumWork->mass += md->massT[n];
             }
         }
     }
@@ -183,10 +244,24 @@ static void calc_ke_part_normal(gmx::ArrayRef<const gmx::RVec> v,
             if (bEkinAveVel)
             {
                 m_add(tcstat[g].ekinf, ekind->ekin_work[thread][g], tcstat[g].ekinf);
+
+                if constexpr (haveBoxDeformation)
+                {
+                    ekind->systemMomenta->momentumFullStep.momentum +=
+                            ekind->systemMomentumWork[thread]->momentum;
+                    ekind->systemMomenta->momentumFullStep.mass += ekind->systemMomentumWork[thread]->mass;
+                }
             }
             else
             {
                 m_add(tcstat[g].ekinh, ekind->ekin_work[thread][g], tcstat[g].ekinh);
+
+                if constexpr (haveBoxDeformation)
+                {
+                    ekind->systemMomenta->momentumHalfStep.momentum +=
+                            ekind->systemMomentumWork[thread]->momentum;
+                    ekind->systemMomenta->momentumHalfStep.mass += ekind->systemMomentumWork[thread]->mass;
+                }
             }
         }
 
@@ -194,6 +269,11 @@ static void calc_ke_part_normal(gmx::ArrayRef<const gmx::RVec> v,
     }
 
     inc_nrnb(nrnb, eNR_EKIN, md->homenr);
+
+    if constexpr (!haveBoxDeformation)
+    {
+        GMX_UNUSED_VALUE(x);
+    }
 }
 
 static void calc_ke_part_visc(const matrix                   box,
@@ -227,7 +307,7 @@ static void calc_ke_part_visc(const matrix                   box,
     dekindl = 0;
     for (n = start; n < start + homenr; n++)
     {
-        if (md->cTC)
+        if (!md->cTC.empty())
         {
             gt = md->cTC[n];
         }
@@ -273,7 +353,9 @@ static void calc_ke_part_visc(const matrix                   box,
     inc_nrnb(nrnb, eNR_EKIN, homenr);
 }
 
-static void calc_ke_part(gmx::ArrayRef<const gmx::RVec> x,
+static void calc_ke_part(const bool                     haveBoxDeformation,
+                         const matrix                   deform,
+                         gmx::ArrayRef<const gmx::RVec> x,
                          gmx::ArrayRef<const gmx::RVec> v,
                          const matrix                   box,
                          const t_grpopts*               opts,
@@ -284,7 +366,14 @@ static void calc_ke_part(gmx::ArrayRef<const gmx::RVec> x,
 {
     if (ekind->cosacc.cos_accel == 0)
     {
-        calc_ke_part_normal(v, opts, md, ekind, nrnb, bEkinAveVel);
+        if (haveBoxDeformation)
+        {
+            calc_ke_part_normal<true>(deform, x, v, box, opts, md, ekind, nrnb, bEkinAveVel);
+        }
+        else
+        {
+            calc_ke_part_normal<false>(deform, x, v, box, opts, md, ekind, nrnb, bEkinAveVel);
+        }
     }
     else
     {
@@ -292,10 +381,51 @@ static void calc_ke_part(gmx::ArrayRef<const gmx::RVec> x,
     }
 }
 
+static void correctEkin(matrix ekin, const SystemMomentum& systemMomentum)
+{
+    GMX_ASSERT(systemMomentum.mass > 0, "Expect a postive system mass");
+    const double halfInvMass = 0.5 / systemMomentum.mass;
+
+    for (int d1 = 0; d1 < DIM; d1++)
+    {
+        for (int d2 = 0; d2 < DIM; d2++)
+        {
+            ekin[d1][d2] -= systemMomentum.momentum[d1] * systemMomentum.momentum[d2] * halfInvMass;
+        }
+    }
+}
+
+static void correctEkinForBoxDeformation(gmx_ekindata_t* ekind,
+                                         const bool      haveEkinFromAverageVelocities,
+                                         const bool      correctEkinHOld)
+{
+    if (haveEkinFromAverageVelocities)
+    {
+        for (auto& tcstat : ekind->tcstat)
+        {
+            correctEkin(tcstat.ekinf, ekind->systemMomenta->momentumFullStep);
+        }
+    }
+    else
+    {
+        if (correctEkinHOld)
+        {
+            for (auto& tcstat : ekind->tcstat)
+            {
+                correctEkin(tcstat.ekinh_old, ekind->systemMomenta->momentumOldHalfStep);
+            }
+        }
+        for (auto& tcstat : ekind->tcstat)
+        {
+            correctEkin(tcstat.ekinh, ekind->systemMomenta->momentumHalfStep);
+        }
+    }
+}
+
 /* TODO Specialize this routine into init-time and loop-time versions?
    e.g. bReadEkin is only true when restoring from checkpoint */
 void compute_globals(gmx_global_stat*               gstat,
-                     t_commrec*                     cr,
+                     const gmx::MpiComm&            mpiComm,
                      const t_inputrec*              ir,
                      t_forcerec*                    fr,
                      gmx_ekindata_t*                ekind,
@@ -305,58 +435,56 @@ void compute_globals(gmx_global_stat*               gstat,
                      const t_mdatoms*               mdatoms,
                      t_nrnb*                        nrnb,
                      t_vcm*                         vcm,
-                     gmx_wallcycle_t                wcycle,
+                     gmx_wallcycle*                 wcycle,
                      gmx_enerdata_t*                enerd,
                      tensor                         force_vir,
                      tensor                         shake_vir,
                      tensor                         total_vir,
                      tensor                         pres,
-                     gmx::Constraints*              constr,
                      gmx::SimulationSignaller*      signalCoordinator,
                      const matrix                   lastbox,
-                     int*                           totalNumberOfBondedInteractions,
                      gmx_bool*                      bSumEkinhOld,
-                     const int                      flags)
+                     const int                      flags,
+                     int64_t                        step,
+                     gmx::ObservablesReducer*       observablesReducer)
 {
     gmx_bool bEner, bPres, bTemp;
     gmx_bool bStopCM, bGStat, bReadEkin, bEkinAveVel, bScaleEkin, bConstrain;
-    gmx_bool bCheckNumberOfBondedInteractions;
     real     dvdl_ekin;
 
     /* translate CGLO flags to gmx_booleans */
-    bStopCM                          = ((flags & CGLO_STOPCM) != 0);
-    bGStat                           = ((flags & CGLO_GSTAT) != 0);
-    bReadEkin                        = ((flags & CGLO_READEKIN) != 0);
-    bScaleEkin                       = ((flags & CGLO_SCALEEKIN) != 0);
-    bEner                            = ((flags & CGLO_ENERGY) != 0);
-    bTemp                            = ((flags & CGLO_TEMPERATURE) != 0);
-    bPres                            = ((flags & CGLO_PRESSURE) != 0);
-    bConstrain                       = ((flags & CGLO_CONSTRAINT) != 0);
-    bCheckNumberOfBondedInteractions = ((flags & CGLO_CHECK_NUMBER_OF_BONDED_INTERACTIONS) != 0);
+    bStopCM    = ((flags & CGLO_STOPCM) != 0);
+    bGStat     = ((flags & CGLO_GSTAT) != 0);
+    bReadEkin  = ((flags & CGLO_READEKIN) != 0);
+    bScaleEkin = ((flags & CGLO_SCALEEKIN) != 0);
+    bEner      = ((flags & CGLO_ENERGY) != 0);
+    bTemp      = ((flags & CGLO_TEMPERATURE) != 0);
+    bPres      = ((flags & CGLO_PRESSURE) != 0);
+    bConstrain = ((flags & CGLO_CONSTRAINT) != 0);
+
+    const bool computeEkin = bTemp || ((flags & CGLO_COMPUTEEKIN) != 0);
 
     /* we calculate a full state kinetic energy either with full-step velocity verlet
        or half step where we need the pressure */
 
-    bEkinAveVel = (ir->eI == eiVV || (ir->eI == eiVVAK && bPres) || bReadEkin);
+    bEkinAveVel = (ir->eI == IntegrationAlgorithm::VV
+                   || (ir->eI == IntegrationAlgorithm::VVAK && bPres) || bReadEkin);
 
-    /* in initalization, it sums the shake virial in vv, and to
+    /* in initialization, it sums the shake virial in vv, and to
        sums ekinh_old in leapfrog (or if we are calculating ekinh_old) for other reasons */
 
     /* ########## Kinetic energy  ############## */
 
-    if (bTemp)
-    {
-        /* Non-equilibrium MD: this is parallellized, but only does communication
-         * when there really is NEMD.
-         */
+    const bool haveLeapFrog = (ir->eI == IntegrationAlgorithm::MD || EI_SD(ir->eI));
+    const bool haveEkinhOld = (haveLeapFrog && step == ekind->lastComputeGlobalsStep + 1);
 
-        if (PAR(cr) && (ekind->bNEMD))
-        {
-            accumulate_u(cr, &(ir->opts), ekind);
-        }
+    if (computeEkin)
+    {
         if (!bReadEkin)
         {
-            calc_ke_part(x, v, box, &(ir->opts), mdatoms, ekind, nrnb, bEkinAveVel);
+            wallcycle_start(wcycle, WallCycleCounter::ComputeEKin);
+            calc_ke_part(fr->haveBoxDeformation, ir->deform, x, v, box, &(ir->opts), mdatoms, ekind, nrnb, bEkinAveVel);
+            wallcycle_stop(wcycle, WallCycleCounter::ComputeEKin);
         }
     }
 
@@ -366,7 +494,8 @@ void compute_globals(gmx_global_stat*               gstat,
         calc_vcm_grp(*mdatoms, x, v, vcm);
     }
 
-    if (bTemp || bStopCM || bPres || bEner || bConstrain || bCheckNumberOfBondedInteractions)
+    if (computeEkin || bTemp || bStopCM || bPres || bEner || bConstrain
+        || observablesReducer->isReductionRequired())
     {
         if (!bGStat)
         {
@@ -378,15 +507,38 @@ void compute_globals(gmx_global_stat*               gstat,
         else
         {
             gmx::ArrayRef<real> signalBuffer = signalCoordinator->getCommunicationBuffer();
-            if (PAR(cr))
+            if (mpiComm.isParallel())
             {
-                wallcycle_start(wcycle, ewcMoveE);
-                global_stat(gstat, cr, enerd, force_vir, shake_vir, ir, ekind, constr,
-                            bStopCM ? vcm : nullptr, signalBuffer.size(), signalBuffer.data(),
-                            totalNumberOfBondedInteractions, *bSumEkinhOld, flags);
-                wallcycle_stop(wcycle, ewcMoveE);
+                wallcycle_start(wcycle, WallCycleCounter::MoveE);
+                global_stat(*gstat,
+                            mpiComm,
+                            enerd,
+                            force_vir,
+                            shake_vir,
+                            *ir,
+                            ekind,
+                            bStopCM ? vcm : nullptr,
+                            signalBuffer,
+                            *bSumEkinhOld && haveEkinhOld,
+                            flags,
+                            step,
+                            observablesReducer);
+                wallcycle_stop(wcycle, WallCycleCounter::MoveE);
+            }
+            if (signalCoordinator->haveInterSimulationSignalling())
+            {
+                wallcycle_start(wcycle, WallCycleCounter::InterSimulationSignalling);
             }
             signalCoordinator->finalizeSignals();
+            if (signalCoordinator->haveInterSimulationSignalling())
+            {
+                wallcycle_stop(wcycle, WallCycleCounter::InterSimulationSignalling);
+            }
+
+            if (fr->haveBoxDeformation && bTemp && !bReadEkin)
+            {
+                correctEkinForBoxDeformation(ekind, bEkinAveVel, *bSumEkinhOld);
+            }
             *bSumEkinhOld = FALSE;
         }
     }
@@ -406,10 +558,30 @@ void compute_globals(gmx_global_stat*               gstat,
            bEkinAveVel: If TRUE, we simply multiply ekin by ekinscale to get a full step kinetic energy.
            If FALSE, we average ekinh_old and ekinh*ekinscale_nhc to get an averaged half step kinetic energy.
          */
-        enerd->term[F_TEMP] = sum_ekin(&(ir->opts), ekind, &dvdl_ekin, bEkinAveVel, bScaleEkin);
-        enerd->dvdl_lin[efptMASS] = static_cast<double>(dvdl_ekin);
+        if (haveLeapFrog && !haveEkinhOld && step >= ir->init_step)
+        {
+            /* We need to compute the average kinetic energy over the previous
+             * and the current step, but we do not have the previous value.
+             * This should only happen when a run is interrupted.
+             * As an emergency measure, copy the new values to the old.
+             * In this way we obtain the current half step kinetic energy
+             * instead of the average of the previous and the current.
+             */
+            GMX_ASSERT(step % ir->nstcalcenergy != 0,
+                       "We should only ignore ekinh_old when terminating mdrun at a "
+                       "non-nstcalcenergy step");
+            for (auto& tcstat : ekind->tcstat)
+            {
+                copy_mat(tcstat.ekinh, tcstat.ekinh_old);
+            }
+        }
+        enerd->term[InteractionFunction::Temperature] =
+                sum_ekin(&(ir->opts), ekind, &dvdl_ekin, bEkinAveVel, bScaleEkin);
+        enerd->dvdl_lin[FreeEnergyPerturbationCouplingType::Mass] = static_cast<double>(dvdl_ekin);
 
-        enerd->term[F_EKIN] = trace(ekind->ekin);
+        enerd->term[InteractionFunction::KineticEnergy] = trace(ekind->ekin);
+
+        ekind->lastComputeGlobalsStep = step;
     }
 
     /* ########## Now pressure ############## */
@@ -422,7 +594,8 @@ void compute_globals(gmx_global_stat*               gstat,
          * Use the box from last timestep since we already called update().
          */
 
-        enerd->term[F_PRES] = calc_pres(fr->pbcType, ir->nwall, lastbox, ekind->ekin, total_vir, pres);
+        enerd->term[InteractionFunction::Pressure] =
+                calc_pres(fr->pbcType, ir->nwall, lastbox, ekind->ekin, total_vir, pres);
     }
 }
 
@@ -434,23 +607,20 @@ static void min_zero(int* n, int i)
     }
 }
 
-static int lcd4(int i1, int i2, int i3, int i4)
+// Returns the lowest common denominator of all values > 0
+static int lcd3(const int i1, const int i2, const int i3)
 {
-    int nst;
+    int nst = 0;
 
-    nst = 0;
     min_zero(&nst, i1);
     min_zero(&nst, i2);
     min_zero(&nst, i3);
-    min_zero(&nst, i4);
     if (nst == 0)
     {
-        gmx_incons("All 4 inputs for determining nstglobalcomm are <= 0");
+        gmx_incons("All 3 inputs for determining nstglobalcomm are <= 0");
     }
 
-    while (nst > 1
-           && ((i1 > 0 && i1 % nst != 0) || (i2 > 0 && i2 % nst != 0) || (i3 > 0 && i3 % nst != 0)
-               || (i4 > 0 && i4 % nst != 0)))
+    while (nst > 1 && ((i1 > 0 && i1 % nst != 0) || (i2 > 0 && i2 % nst != 0) || (i3 > 0 && i3 % nst != 0)))
     {
         nst--;
     }
@@ -458,49 +628,47 @@ static int lcd4(int i1, int i2, int i3, int i4)
     return nst;
 }
 
-int computeGlobalCommunicationPeriod(const gmx::MDLogger& mdlog, t_inputrec* ir, const t_commrec* cr)
+int computeGlobalCommunicationPeriod(const t_inputrec* ir)
 {
+    // Maximum period for intra/inter simulation signalling
+    const int c_maximumCommunicationPeriod = 200;
+
     int nstglobalcomm;
+
+    if (ir->nstcalcenergy == 0 && ir->etc == TemperatureCoupling::No
+        && ir->pressureCouplingOptions.epc != PressureCoupling::No)
     {
-        // Set up the default behaviour
-        if (!(ir->nstcalcenergy > 0 || ir->nstlist > 0 || ir->etc != etcNO || ir->epc != epcNO))
+        nstglobalcomm = c_maximumCommunicationPeriod;
+    }
+    else
+    {
+        /* Some algorithms assume that certain energies are available
+         * at nstglobalcomm steps.
+         * We plan to remove nstglobalcomm. To achieve that, we need
+         * to figure out the needs of these algorithms.
+         */
+        nstglobalcomm = lcd3(ir->nstcalcenergy,
+                             ir->etc != TemperatureCoupling::No ? ir->nsttcouple : 0,
+                             ir->pressureCouplingOptions.epc != PressureCoupling::No
+                                     ? ir->pressureCouplingOptions.nstpcouple
+                                     : 0);
+        if (nstglobalcomm > c_maximumCommunicationPeriod)
         {
-            /* The user didn't choose the period for anything
-               important, so we just make sure we can send signals and
-               write output suitably. */
-            nstglobalcomm = 10;
-            if (ir->nstenergy > 0 && ir->nstenergy < nstglobalcomm)
-            {
-                nstglobalcomm = ir->nstenergy;
-            }
-        }
-        else
-        {
-            /* The user has made a choice (perhaps implicitly), so we
-             * ensure that we do timely intra-simulation communication
-             * for (possibly) each of the four parts that care.
-             *
-             * TODO Does the Verlet scheme (+ DD) need any
-             * communication at nstlist steps? Is the use of nstlist
-             * here a leftover of the twin-range scheme? Can we remove
-             * nstlist when we remove the group scheme?
+            /* As this is an uncommon situation, we simply use the LCD of
+             * the current value and the maximum.
              */
-            nstglobalcomm = lcd4(ir->nstcalcenergy, ir->nstlist, ir->etc != etcNO ? ir->nsttcouple : 0,
-                                 ir->epc != epcNO ? ir->nstpcouple : 0);
+            nstglobalcomm = lcd3(nstglobalcomm, c_maximumCommunicationPeriod, 0);
         }
     }
 
-    // TODO change this behaviour. Instead grompp should print
-    // a (performance) note and mdrun should not change ir.
-    if (ir->comm_mode != ecmNO && ir->nstcomm < nstglobalcomm)
-    {
-        GMX_LOG(mdlog.warning)
-                .asParagraph()
-                .appendTextFormatted("WARNING: Changing nstcomm from %d to %d", ir->nstcomm, nstglobalcomm);
-        ir->nstcomm = nstglobalcomm;
-    }
+    return nstglobalcomm;
+}
 
-    if (cr->nnodes > 1)
+int computeGlobalCommunicationPeriod(const gmx::MDLogger& mdlog, const t_inputrec* ir, const gmx::MpiComm& mpiComm)
+{
+    const int nstglobalcomm = computeGlobalCommunicationPeriod(ir);
+
+    if (mpiComm.isParallel())
     {
         GMX_LOG(mdlog.info)
                 .appendTextFormatted("Intra-simulation communication will occur every %d steps.\n",
@@ -509,17 +677,17 @@ int computeGlobalCommunicationPeriod(const gmx::MDLogger& mdlog, t_inputrec* ir,
     return nstglobalcomm;
 }
 
-void rerun_parallel_comm(t_commrec* cr, t_trxframe* fr, gmx_bool* bLastStep)
+void rerun_parallel_comm(const gmx::MpiComm& mpiComm, t_trxframe* fr, gmx_bool* bLastStep)
 {
     rvec *xp, *vp;
 
-    if (MASTER(cr) && *bLastStep)
+    if (mpiComm.isMainRank() && *bLastStep)
     {
         fr->natoms = -1;
     }
     xp = fr->x;
     vp = fr->v;
-    gmx_bcast(sizeof(*fr), fr, cr->mpi_comm_mygroup);
+    gmx_bcast(sizeof(*fr), fr, mpiComm.comm());
     fr->x = xp;
     fr->v = vp;
 
@@ -532,75 +700,77 @@ void set_state_entries(t_state* state, const t_inputrec* ir, bool useModularSimu
     /* The entries in the state in the tpx file might not correspond
      * with what is needed, so we correct this here.
      */
-    state->flags = 0;
-    if (ir->efep != efepNO || ir->bExpanded)
+    int flags = 0;
+    if (ir->efep != FreeEnergyPerturbationType::No || ir->bExpanded)
     {
-        state->flags |= (1 << estLAMBDA);
-        state->flags |= (1 << estFEPSTATE);
+        flags |= enumValueToBitMask(StateEntry::Lambda);
+        flags |= enumValueToBitMask(StateEntry::FepState);
     }
-    state->flags |= (1 << estX);
-    GMX_RELEASE_ASSERT(state->x.size() == state->natoms,
+    flags |= enumValueToBitMask(StateEntry::X);
+    GMX_RELEASE_ASSERT(state->x.size() == state->numAtoms(),
                        "We should start a run with an initialized state->x");
     if (EI_DYNAMICS(ir->eI))
     {
-        state->flags |= (1 << estV);
+        flags |= enumValueToBitMask(StateEntry::V);
     }
 
     state->nnhpres = 0;
     if (ir->pbcType != PbcType::No)
     {
-        state->flags |= (1 << estBOX);
-        if (inputrecPreserveShape(ir))
+        flags |= enumValueToBitMask(StateEntry::Box);
+        if (shouldPreserveBoxShape(ir->pressureCouplingOptions, ir->deform))
         {
-            state->flags |= (1 << estBOX_REL);
+            flags |= enumValueToBitMask(StateEntry::BoxRel);
         }
-        if ((ir->epc == epcPARRINELLORAHMAN) || (ir->epc == epcMTTK))
+        if ((ir->pressureCouplingOptions.epc == PressureCoupling::ParrinelloRahman)
+            || (ir->pressureCouplingOptions.epc == PressureCoupling::Mttk))
         {
-            state->flags |= (1 << estBOXV);
+            flags |= enumValueToBitMask(StateEntry::BoxV);
             if (!useModularSimulator)
             {
-                state->flags |= (1 << estPRES_PREV);
+                flags |= enumValueToBitMask(StateEntry::PressurePrevious);
             }
         }
         if (inputrecNptTrotter(ir) || (inputrecNphTrotter(ir)))
         {
             state->nnhpres = 1;
-            state->flags |= (1 << estNHPRES_XI);
-            state->flags |= (1 << estNHPRES_VXI);
-            state->flags |= (1 << estSVIR_PREV);
-            state->flags |= (1 << estFVIR_PREV);
-            state->flags |= (1 << estVETA);
-            state->flags |= (1 << estVOL0);
+            flags |= enumValueToBitMask(StateEntry::Nhpresxi);
+            flags |= enumValueToBitMask(StateEntry::Nhpresvxi);
+            flags |= enumValueToBitMask(StateEntry::SVirPrev);
+            flags |= enumValueToBitMask(StateEntry::FVirPrev);
+            flags |= enumValueToBitMask(StateEntry::Veta);
+            flags |= enumValueToBitMask(StateEntry::Vol0);
         }
-        if (ir->epc == epcBERENDSEN || ir->epc == epcCRESCALE)
+        if (ir->pressureCouplingOptions.epc == PressureCoupling::Berendsen
+            || ir->pressureCouplingOptions.epc == PressureCoupling::CRescale)
         {
-            state->flags |= (1 << estBAROS_INT);
+            flags |= enumValueToBitMask(StateEntry::BarosInt);
         }
     }
 
-    if (ir->etc == etcNOSEHOOVER)
+    if (ir->etc == TemperatureCoupling::NoseHoover)
     {
-        state->flags |= (1 << estNH_XI);
-        state->flags |= (1 << estNH_VXI);
+        flags |= enumValueToBitMask(StateEntry::Nhxi);
+        flags |= enumValueToBitMask(StateEntry::Nhvxi);
     }
 
-    if (ir->etc == etcVRESCALE || ir->etc == etcBERENDSEN)
+    if (ir->etc == TemperatureCoupling::VRescale || ir->etc == TemperatureCoupling::Berendsen)
     {
-        state->flags |= (1 << estTHERM_INT);
+        flags |= enumValueToBitMask(StateEntry::ThermInt);
     }
 
-    init_gtc_state(state, state->ngtc, state->nnhpres,
-                   ir->opts.nhchainlength); /* allocate the space for nose-hoover chains */
+    init_gtc_state(state, state->ngtc, state->nnhpres, ir->opts.nhchainlength); /* allocate the space for nose-hoover chains */
     init_ekinstate(&state->ekinstate, ir);
 
-    if (ir->bExpanded)
+    if (ir->bExpanded && !useModularSimulator)
     {
-        snew(state->dfhist, 1);
-        init_df_history(state->dfhist, ir->fepvals->n_lambda);
+        state->dfhist = std::make_shared<df_history_t>(ir->fepvals->n_lambda);
     }
 
     if (ir->pull && ir->pull->bSetPbcRefToPrevStepCOM)
     {
-        state->flags |= (1 << estPULLCOMPREVSTEP);
+        flags |= enumValueToBitMask(StateEntry::PullComPrevStep);
     }
+
+    state->setFlags(flags);
 }

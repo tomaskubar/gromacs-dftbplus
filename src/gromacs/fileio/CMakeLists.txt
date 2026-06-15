@@ -1,10 +1,9 @@
 #
 # This file is part of the GROMACS molecular simulation package.
 #
-# Copyright (c) 2013,2014,2015,2016,2019,2020, by the GROMACS development team, led by
-# Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
-# and including many others, as listed in the AUTHORS file in the
-# top-level source directory and at http://www.gromacs.org.
+# Copyright 2013- The GROMACS Authors
+# and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+# Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
 #
 # GROMACS is free software; you can redistribute it and/or
 # modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
 #
 # You should have received a copy of the GNU Lesser General Public
 # License along with GROMACS; if not, see
-# http://www.gnu.org/licenses, or write to the Free Software Foundation,
+# https://www.gnu.org/licenses, or write to the Free Software Foundation,
 # Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
 #
 # If you want to redistribute modifications to GROMACS, please
@@ -27,19 +26,21 @@
 # consider code for inclusion in the official distribution, but
 # derived work must not be called official GROMACS. Details are found
 # in the README & COPYING files - if they are missing, get the
-# official version at http://www.gromacs.org.
+# official version at https://www.gromacs.org.
 #
 # To help us fund GROMACS development, we humbly ask that you cite
-# the research papers on the package. Check out http://www.gromacs.org.
+# the research papers on the package. Check out https://www.gromacs.org.
 
 # Set up the module library
 add_library(fileio INTERFACE)
 file(GLOB FILEIO_SOURCES *.cpp)
 
+add_subdirectory(h5md)
+
 if(GMX_USE_PLUGINS)
     add_library(vmddlopen OBJECT ${CMAKE_SOURCE_DIR}/src/external/vmd_molfile/vmddlopen.cpp)
     gmx_target_compile_options(vmddlopen)
-    if (WIN32)
+    if (MSVC)
         gmx_target_warning_suppression(vmddlopen /wd4996 HAS_NO_MSVC_UNSAFE_FUNCTION)
     endif()
     list(APPEND libgromacs_object_library_dependencies vmddlopen)
@@ -57,13 +58,18 @@ target_link_libraries(fileio PRIVATE
 #                      tng_io
                       )
 
+# Only needed for XDR routines that cast xdr_char and the like to xdrproc_t.
+# TODO: Convert to gmx_target_warning_suppression when fileio in an OBJECT target
+gmx_target_interface_warning_suppression(fileio "-Wno-cast-function-type-strict" HAS_WARNING_NO_CAST_FUNCTION_TYPE_STRICT)
+
 # Public interface for modules, including dependencies and interfaces
 #target_include_directories(fileio PUBLIC
-target_include_directories(fileio INTERFACE
-                           $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>)
+#                           $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>)
 #target_link_libraries(fileio PUBLIC
 target_link_libraries(fileio INTERFACE
+                      h5md
                       legacy_api
+                      math
                       )
 
 # TODO: when fileio is an OBJECT target
@@ -74,8 +80,10 @@ target_link_libraries(fileio INTERFACE
 # fileio interfaces convey transitive dependence on these modules.
 #target_link_libraries(fileio PUBLIC
 target_link_libraries(fileio INTERFACE
+                      serialization
                       utility
                       )
+
 # Source files have the following private module dependencies.
 #target_link_libraries(fileio PRIVATE tng_io)
 # TODO: Explicitly link specific modules.

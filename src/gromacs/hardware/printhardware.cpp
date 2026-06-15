@@ -1,11 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2012,2013,2014,2015,2016, The GROMACS development team.
- * Copyright (c) 2017,2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2012- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -19,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -28,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 #include "gmxpre.h"
 
@@ -41,6 +39,9 @@
 
 #include <cstdlib>
 
+#include <filesystem>
+#include <memory>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -49,7 +50,7 @@
 #include "gromacs/hardware/hardwaretopology.h"
 #include "gromacs/hardware/hw_info.h"
 #include "gromacs/hardware/identifyavx512fmaunits.h"
-#include "gromacs/simd/support.h"
+#include "gromacs/hardware/simd_support.h"
 #include "gromacs/utility/basedefinitions.h"
 #include "gromacs/utility/basenetwork.h"
 #include "gromacs/utility/cstringutil.h"
@@ -62,7 +63,9 @@
 
 #include "architecture.h"
 
-//! Constant used to help minimize preprocessed code
+struct DeviceInformation;
+
+//! Constant used to help minimize preprocessed code.
 static constexpr bool bGPUBinary = (GMX_GPU != 0);
 
 /*! \internal \brief
@@ -125,7 +128,8 @@ static void check_use_of_rdtscp_on_this_cpu(const gmx::MDLogger& mdlog, const gm
                             "speed as accurate timings are needed for load-balancing.\n"
                             "Please consider rebuilding %s with the GMX_USE_RDTSCP=ON CMake "
                             "option.",
-                            programName, programName);
+                            programName,
+                            programName);
         }
     }
 }
@@ -138,23 +142,25 @@ static std::string detected_hardware_string(const gmx_hw_info_t* hwinfo, bool bF
     const gmx::HardwareTopology& hwTop   = *hwinfo->hardwareTopology;
 
     s = gmx::formatString("\n");
-    s += gmx::formatString("Running on %d node%s with total", hwinfo->nphysicalnode,
+    s += gmx::formatString("Running on %d node%s with total",
+                           hwinfo->nphysicalnode,
                            hwinfo->nphysicalnode == 1 ? "" : "s");
     if (hwinfo->ncore_tot > 0)
     {
         s += gmx::formatString(" %d cores,", hwinfo->ncore_tot);
     }
-    s += gmx::formatString(" %d logical cores", hwinfo->nhwthread_tot);
-    if (canPerformDeviceDetection(nullptr))
+    s += gmx::formatString(" %d processing units", hwinfo->nProcessingUnits_tot);
+    if (std::string deviceDetectionErrors; canPerformDeviceDetection(&deviceDetectionErrors))
     {
-        s += gmx::formatString(", %d compatible GPU%s", hwinfo->ngpu_compatible_tot,
+        s += gmx::formatString(", %d compatible GPU%s",
+                               hwinfo->ngpu_compatible_tot,
                                hwinfo->ngpu_compatible_tot == 1 ? "" : "s");
     }
     else if (bGPUBinary)
     {
         if (isDeviceDetectionEnabled())
         {
-            s += gmx::formatString(" (GPU detection failed)");
+            s += gmx::formatString(" (GPU detection failed: %s)", deviceDetectionErrors.c_str());
         }
         else
         {
@@ -175,10 +181,17 @@ static std::string detected_hardware_string(const gmx_hw_info_t* hwinfo, bool bF
             }
             s += gmx::formatString("\n");
         }
-        s += gmx::formatString("  Logical cores per node:   %2d", hwinfo->nhwthread_min);
-        if (hwinfo->nhwthread_max > hwinfo->nhwthread_min)
+        s += gmx::formatString("  Logical processing units per node:   %2d", hwinfo->nProcessingUnits_min);
+        if (hwinfo->nProcessingUnits_max > hwinfo->nProcessingUnits_min)
         {
-            s += gmx::formatString(" - %2d", hwinfo->nhwthread_max);
+            s += gmx::formatString(" - %2d", hwinfo->nProcessingUnits_max);
+        }
+        s += gmx::formatString("\n");
+        s += gmx::formatString("  OS CPU Limit / recommended threads to start per node:   %2d",
+                               hwinfo->maxThreads_min);
+        if (hwinfo->maxThreads_max > hwinfo->maxThreads_min)
+        {
+            s += gmx::formatString(" - %2d", hwinfo->maxThreads_max);
         }
         s += gmx::formatString("\n");
         if (bGPUBinary)
@@ -207,18 +220,15 @@ static std::string detected_hardware_string(const gmx_hw_info_t* hwinfo, bool bF
         }
     }
 
-#if GMX_LIB_MPI
-    int  rank;
     char host[STRLEN];
-
     gmx_gethostname(host, STRLEN);
 
+#if GMX_LIB_MPI
+    int rank;
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-
-    // TODO Use a wrapper around MPI_Get_processor_name instead.
     s += gmx::formatString("Hardware detected on host %s (the node of MPI rank %d):\n", host, rank);
 #else
-    s += gmx::formatString("Hardware detected:\n");
+    s += gmx::formatString("Hardware detected on host %s:\n", host);
 #endif
     s += gmx::formatString("  CPU info:\n");
 
@@ -228,18 +238,20 @@ static std::string detected_hardware_string(const gmx_hw_info_t* hwinfo, bool bF
 
     if (bFullCpuInfo)
     {
-        s += gmx::formatString("    Family: %d   Model: %d   Stepping: %d\n", cpuInfo.family(),
-                               cpuInfo.model(), cpuInfo.stepping());
+        s += gmx::formatString("    Family: %d   Model: %d   Stepping: %d\n",
+                               cpuInfo.family(),
+                               cpuInfo.model(),
+                               cpuInfo.stepping());
 
         s += gmx::formatString("    Features:");
-        for (auto& f : cpuInfo.featureSet())
+        for (const auto& f : cpuInfo.featureSet())
         {
             s += gmx::formatString(" %s", gmx::CpuInfo::featureString(f).c_str());
         }
         s += gmx::formatString("\n");
     }
 
-    if (cpuInfo.feature(gmx::CpuInfo::Feature::X86_Avx512F))
+    if (cpuInfo.feature(gmx::CpuInfo::Feature::X86_Avx512F) && cpuInfo.vendor() == gmx::CpuInfo::Vendor::Intel)
     {
         int avx512fmaunits = gmx::identifyAvx512FmaUnits();
         s += gmx::formatString("    Number of AVX-512 FMA units:");
@@ -248,7 +260,7 @@ static std::string detected_hardware_string(const gmx_hw_info_t* hwinfo, bool bF
             s += gmx::formatString(" %d", avx512fmaunits);
             if (avx512fmaunits == 1)
             {
-                s += gmx::formatString(" (AVX2 is faster w/o 2 AVX-512 FMA units)");
+                s += gmx::formatString(" (For Intel, AVX2 is faster w/o 2 AVX-512 FMA units)");
             }
         }
         else
@@ -285,32 +297,37 @@ static std::string detected_hardware_string(const gmx_hw_info_t* hwinfo, bool bF
     {
         if (hwTop.supportLevel() >= gmx::HardwareTopology::SupportLevel::Basic)
         {
-            s += gmx::formatString("    Sockets, cores, and logical processors:\n");
+            s += gmx::formatString("    Packages, cores, and logical processors:\n");
+            s += gmx::formatString("    [indices refer to OS logical processors]\n");
 
-            for (auto& socket : hwTop.machine().sockets)
+            for (const auto& package : hwTop.machine().packages)
             {
-                s += gmx::formatString("      Socket %2d:", socket.id);
-                for (auto& c : socket.cores)
+                s += gmx::formatString("      Package %2d:", package.id);
+                for (const auto& c : package.cores)
                 {
                     s += gmx::formatString(" [");
-                    for (auto& t : c.hwThreads)
+                    for (const auto& pu : c.processingUnits)
                     {
-                        s += gmx::formatString(" %3d", t.logicalProcessorId);
+                        s += gmx::formatString(" %3d", pu.osId);
                     }
                     s += gmx::formatString("]");
                 }
                 s += gmx::formatString("\n");
             }
         }
+        s += gmx::formatString(
+                "    CPU limit set by OS: %g   Recommended max number of threads: %d\n",
+                hwTop.cpuLimit(),
+                hwTop.maxThreads());
         if (hwTop.supportLevel() >= gmx::HardwareTopology::SupportLevel::Full)
         {
             s += gmx::formatString("    Numa nodes:\n");
-            for (auto& n : hwTop.machine().numa.nodes)
+            for (const auto& n : hwTop.machine().numa.nodes)
             {
                 s += gmx::formatString("      Node %2d (%zu bytes mem):", n.id, n.memory);
-                for (auto& l : n.logicalProcessorId)
+                for (const auto& l : n.processingUnits)
                 {
-                    s += gmx::formatString(" %3d", l);
+                    s += gmx::formatString(" %3d", hwTop.machine().logicalProcessors[l].osId);
                 }
                 s += gmx::formatString("\n");
             }
@@ -332,21 +349,32 @@ static std::string detected_hardware_string(const gmx_hw_info_t* hwinfo, bool bF
 
 
             s += gmx::formatString("    Caches:\n");
-            for (auto& c : hwTop.machine().caches)
+            for (const auto& c : hwTop.machine().caches)
             {
                 s += gmx::formatString(
                         "      L%d: %zu bytes, linesize %d bytes, assoc. %d, shared %d ways\n",
-                        c.level, c.size, c.linesize, c.associativity, c.shared);
+                        c.level,
+                        c.size,
+                        c.linesize,
+                        c.associativity,
+                        c.shared);
             }
         }
         if (hwTop.supportLevel() >= gmx::HardwareTopology::SupportLevel::FullWithDevices)
         {
             s += gmx::formatString("    PCI devices:\n");
-            for (auto& d : hwTop.machine().devices)
+            for (const auto& d : hwTop.machine().devices)
             {
                 s += gmx::formatString(
-                        "      %04x:%02x:%02x.%1x  Id: %04x:%04x  Class: 0x%04x  Numa: %d\n", d.domain,
-                        d.bus, d.dev, d.func, d.vendorId, d.deviceId, d.classId, d.numaNodeId);
+                        "      %04x:%02x:%02x.%1x  Id: %04x:%04x  Class: 0x%04x  Numa: %d\n",
+                        d.domain,
+                        d.bus,
+                        d.dev,
+                        d.func,
+                        d.vendorId,
+                        d.deviceId,
+                        d.classId,
+                        d.numaNodeId);
             }
         }
     }
@@ -375,6 +403,20 @@ void gmx_print_detected_hardware(FILE*                fplog,
         detected = detected_hardware_string(hwinfo, TRUE);
 
         fprintf(fplog, "%s\n", detected.c_str());
+
+        // Logically this should come at the end of
+        // detected_hardware_string(), and can become so once that
+        // function uses the MDLogger properly.
+        if constexpr (bGPUBinary)
+        {
+            if (!hwinfo->deviceInfoList.empty())
+            {
+                for (const auto& deviceInfo : hwinfo->deviceInfoList)
+                {
+                    warnWhenDeviceNotTargeted(mdlog, *deviceInfo);
+                }
+            }
+        }
     }
 
     // Do not spam stderr with all our internal information unless
@@ -386,7 +428,7 @@ void gmx_print_detected_hardware(FILE*                fplog,
      */
     if (cpuInfo.supportLevel() >= gmx::CpuInfo::SupportLevel::Features)
     {
-        gmx::simdCheck(static_cast<gmx::SimdType>(hwinfo->simd_suggest_min), fplog, warnToStdErr);
+        gmx::simdCheck(cpuInfo, static_cast<gmx::SimdType>(hwinfo->simd_suggest_min), fplog, warnToStdErr);
     }
 
     /* For RDTSCP we only check on our local node and skip the MPI reduction, only on x86 */

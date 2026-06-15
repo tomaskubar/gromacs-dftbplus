@@ -1,10 +1,9 @@
 #
 # This file is part of the GROMACS molecular simulation package.
 #
-# Copyright (c) 2018,2019,2020, by the GROMACS development team, led by
-# Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
-# and including many others, as listed in the AUTHORS file in the
-# top-level source directory and at http://www.gromacs.org.
+# Copyright 2018- The GROMACS Authors
+# and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+# Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
 #
 # GROMACS is free software; you can redistribute it and/or
 # modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
 #
 # You should have received a copy of the GNU Lesser General Public
 # License along with GROMACS; if not, see
-# http://www.gnu.org/licenses, or write to the Free Software Foundation,
+# https://www.gnu.org/licenses, or write to the Free Software Foundation,
 # Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
 #
 # If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
 # consider code for inclusion in the official distribution, but
 # derived work must not be called official GROMACS. Details are found
 # in the README & COPYING files - if they are missing, get the
-# official version at http://www.gromacs.org.
+# official version at https://www.gromacs.org.
 #
 # To help us fund GROMACS development, we humbly ask that you cite
-# the research papers on the package. Check out http://www.gromacs.org.
+# the research papers on the package. Check out https://www.gromacs.org.
 
 # - Define macro to check if image conversion using ImageMagick convert
 # actually works, because recent changes to it made it necessary to set
@@ -44,12 +43,25 @@
 #  if convert is working or not.
 
 function(GMX_TEST_IMAGEMAGICK VARIABLE)
-    if(NOT ${ImageMagick_CONVERT_FOUND})
-        MESSAGE(STATUS "No image conversion possible without ImageMagick")
+    # Do nothing and keep quiet if detection has already been run
+    if(DEFINED ${VARIABLE})
+        # Ensure that ${VARIABLE} is always an advanced CMake cache variable
+        mark_as_advanced(${VARIABLE})
+        return()
+    endif()
+
+    if (GMX_BUILD_MANUAL)
+        set(failure_level_ "WARNING")
+    else()
+        set(failure_level_ "STATUS")
+    endif()
+
+    if(NOT ImageMagick_convert_FOUND)
+        message(${failure_level_} "No image conversion possible without ImageMagick")
         set(value_ OFF)
-    elseif(NOT DEFINED ${VARIABLE})
+    else()
         set(TEMPDIR "${CMAKE_CURRENT_BINARY_DIR}/imagemagicktmp")
-        FILE(MAKE_DIRECTORY ${TEMPDIR})
+        file(MAKE_DIRECTORY ${TEMPDIR})
         set(SAMPLE_INPUT "${CMAKE_CURRENT_SOURCE_DIR}/cmake/TestImageMagickConvert.pdf")
         set(SAMPLE_OUTPUT "${TEMPDIR}/TestImageMagickConvert.png")
         execute_process(
@@ -61,18 +73,12 @@ function(GMX_TEST_IMAGEMAGICK VARIABLE)
         if (EXISTS ${SAMPLE_OUTPUT})
             set(value_ ON)
         else()
-            if (GMX_BUILD_MANUAL)
-                set(type_ "WARNING")
-            else()
-                set(type_ "STATUS")
-            endif()
-            MESSAGE(${type_} "Could not convert sample image, ImageMagick convert can not be used. A possible way to fix it can be found here: https://alexvanderbist.com/2018/fixing-imagick-error-unauthorized")
+            message(${failure_level_} "Could not convert sample image, ImageMagick convert can not be used. A possible way to fix it can be found here: https://alexvanderbist.com/2018/fixing-imagick-error-unauthorized")
             set(value_ OFF)
         endif()
-        FILE(REMOVE_RECURSE ${TEMPDIR})
+        file(REMOVE_RECURSE ${TEMPDIR})
     endif()
-    if(NOT DEFINED ${VARIABLE})
-        set(${VARIABLE} ${value_} CACHE INTERNAL "Test if image conversion works")
-        mark_as_advanced(${VARIABLE})
-    endif()
+
+    set(${VARIABLE} ${value_} CACHE INTERNAL "Test if image conversion works")
+    mark_as_advanced(${VARIABLE})
 endfunction()

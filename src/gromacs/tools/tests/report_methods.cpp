@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2018- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \internal \file
  * \brief
@@ -42,6 +41,14 @@
 
 #include "gromacs/tools/report_methods.h"
 
+#include <filesystem>
+#include <functional>
+#include <memory>
+#include <string>
+
+#include <gtest/gtest.h>
+
+#include "gromacs/commandline/cmdlineoptionsmodule.h"
 #include "gromacs/fileio/tpxio.h"
 #include "gromacs/gmxpreprocess/grompp.h"
 #include "gromacs/mdtypes/inputrec.h"
@@ -68,9 +75,9 @@ class ReportMethodsTest : public ::testing::Test
 protected:
     // TODO this is changed in newer googletest versions
     //! Prepare shared resources.
-    static void SetUpTestCase() { s_tprFileHandle = new TprAndFileManager("lysozyme"); }
+    static void SetUpTestSuite() { s_tprFileHandle = new TprAndFileManager("lysozyme"); }
     //! Clean up shared resources.
-    static void TearDownTestCase()
+    static void TearDownTestSuite()
     {
         delete s_tprFileHandle;
         s_tprFileHandle = nullptr;
@@ -95,7 +102,7 @@ static void readTprInput(const TprAndFileManager* tprHandle, gmx_mtop_t* mtop, t
     // read tpr into variables needed for output
     {
         t_state state;
-        read_tpx_state(tprHandle->tprName().c_str(), ir, &state, mtop);
+        read_tpx_state(tprHandle->tprName(), ir, &state, mtop);
     }
 }
 
@@ -176,8 +183,7 @@ TEST_F(ReportMethodsTest, ToolEndToEndTest)
 {
     const char* const command[] = { "report-methods", "-s", s_tprFileHandle->tprName().c_str() };
     CommandLine       cmdline(command);
-    EXPECT_EQ(0, gmx::test::CommandLineTestHelper::runModuleFactory(&gmx::ReportMethodsInfo::create,
-                                                                    &cmdline));
+    EXPECT_EQ(0, gmx::test::CommandLineTestHelper::runModuleFactory(&gmx::ReportMethodsInfo::create, &cmdline));
 }
 
 } // namespace test

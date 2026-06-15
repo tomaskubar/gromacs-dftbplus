@@ -1,13 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
- * Copyright (c) 2001-2008, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2016,2017 by the GROMACS development team.
- * Copyright (c) 2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 1991- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -21,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -30,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /* This file is completely threadsafe - keep it that way! */
 #include "gmxpre.h"
@@ -43,6 +39,7 @@
 #include <cstring>
 
 #include <algorithm>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -54,18 +51,21 @@
 #include "gromacs/gmxpreprocess/pdb2top.h"
 #include "gromacs/gmxpreprocess/toppush.h"
 #include "gromacs/math/utilities.h"
-#include "gromacs/math/vec.h"
 #include "gromacs/mdtypes/md_enums.h"
+#include "gromacs/topology/atoms.h"
+#include "gromacs/utility/arrayref.h"
+#include "gromacs/utility/basedefinitions.h"
 #include "gromacs/utility/cstringutil.h"
 #include "gromacs/utility/fatalerror.h"
 #include "gromacs/utility/futil.h"
+#include "gromacs/utility/real.h"
 #include "gromacs/utility/smalloc.h"
+#include "gromacs/utility/vec.h"
 
-static void rd_nm2type_file(const std::string& filename, int* nnm, t_nm2type** nmp)
+static void rd_nm2type_file(const std::filesystem::path& filename, int* nnm, t_nm2type** nmp)
 {
     FILE*      fp;
     bool       bCont;
-    char       libfilename[128];
     char       format[128], f1[128];
     char       buf[1024], elem[16], type[16], nbbuf[16], **newbuf;
     int        i, nb, nnnm, line = 1;
@@ -75,7 +75,7 @@ static void rd_nm2type_file(const std::string& filename, int* nnm, t_nm2type** n
     fp = fflib_open(filename);
     if (nullptr == fp)
     {
-        gmx_fatal(FARGS, "Can not find %s in library directory", filename.c_str());
+        gmx_fatal(FARGS, "Can not find %s in library directory", filename.string().c_str());
     }
 
     nnnm = *nnm;
@@ -97,18 +97,18 @@ static void rd_nm2type_file(const std::string& filename, int* nnm, t_nm2type** n
                 if (nb > 0)
                 {
                     snew(newbuf, nb);
-                    strcpy(format, "%*s%*s%*s%*s%*s");
+                    std::strcpy(format, "%*s%*s%*s%*s%*s");
                     for (i = 0; (i < nb); i++)
                     {
                         /* Complicated format statement */
-                        strcpy(f1, format);
-                        strcat(f1, "%s%lf");
+                        std::strcpy(f1, format);
+                        std::strcat(f1, "%s%lf");
                         if (sscanf(buf, f1, nbbuf, &(nm2t[nnnm].blen[i])) != 2)
                         {
-                            gmx_fatal(FARGS, "Error on line %d of %s", line, libfilename);
+                            gmx_fatal(FARGS, "Error on line %d of %s", line, filename.string().c_str());
                         }
                         newbuf[i] = gmx_strdup(nbbuf);
-                        strcat(format, "%*s%*s");
+                        std::strcat(format, "%*s%*s");
                     }
                 }
                 else
@@ -132,11 +132,11 @@ static void rd_nm2type_file(const std::string& filename, int* nnm, t_nm2type** n
     *nmp = nm2t;
 }
 
-t_nm2type* rd_nm2type(const char* ffdir, int* nnm)
+t_nm2type* rd_nm2type(const std::filesystem::path& ffdir, int* nnm)
 {
-    std::vector<std::string> ff = fflib_search_file_end(ffdir, ".n2t", FALSE);
-    *nnm                        = 0;
-    t_nm2type* nm               = nullptr;
+    auto ff       = fflib_search_file_end(ffdir, ".n2t", FALSE);
+    *nnm          = 0;
+    t_nm2type* nm = nullptr;
     for (const auto& filename : ff)
     {
         rd_nm2type_file(filename, nnm, &nm);
@@ -151,8 +151,7 @@ void dump_nm2type(FILE* fp, int nnm, t_nm2type nm2t[])
     fprintf(fp, "; nm2type database\n");
     for (i = 0; (i < nnm); i++)
     {
-        fprintf(fp, "%-8s %-8s %8.4f %8.4f %-4d", nm2t[i].elem, nm2t[i].type, nm2t[i].q, nm2t[i].m,
-                nm2t[i].nbonds);
+        fprintf(fp, "%-8s %-8s %8.4f %8.4f %-4d", nm2t[i].elem, nm2t[i].type, nm2t[i].q, nm2t[i].m, nm2t[i].nbonds);
         for (j = 0; (j < nm2t[i].nbonds); j++)
         {
             fprintf(fp, " %-5s %6.4f", nm2t[i].bond[j], nm2t[i].blen[j]);
@@ -184,7 +183,7 @@ static int match_str(const char* atom, const char* template_string)
     {
         return ematchElem;
     }
-    else if (strcmp(template_string, "*") == 0)
+    else if (std::strcmp(template_string, "*") == 0)
     {
         return ematchWild;
     }
@@ -194,13 +193,7 @@ static int match_str(const char* atom, const char* template_string)
     }
 }
 
-int nm2type(int                     nnm,
-            t_nm2type               nm2t[],
-            t_symtab*               tab,
-            t_atoms*                atoms,
-            PreprocessingAtomTypes* atype,
-            int*                    nbonds,
-            InteractionsOfType*     bonds)
+int nm2type(int nnm, t_nm2type nm2t[], t_atoms* atoms, PreprocessingAtomTypes* atype, int* nbonds, InteractionsOfType* bonds)
 {
     int cur = 0;
 #define prev (1 - cur)
@@ -335,13 +328,18 @@ int nm2type(int                     nnm,
             double      mm   = nm2t[best].m;
             const char* type = nm2t[best].type;
 
-            int k;
-            if ((k = atype->atomTypeFromName(type)) == NOTSET)
+            auto atomType = atype->atomTypeFromName(type);
+            int  k;
+            if (!atomType.has_value())
             {
                 atoms->atom[i].qB = alpha;
                 atoms->atom[i].m = atoms->atom[i].mB = mm;
-                k = atype->addType(tab, atoms->atom[i], type, InteractionOfType({}, {}),
-                                   atoms->atom[i].type, atomnr);
+                k                                    = atype->addType(
+                        atoms->atom[i], type, InteractionOfType({}, {}), atoms->atom[i].type, atomnr);
+            }
+            else
+            {
+                k = *atomType;
             }
             atoms->atom[i].type  = k;
             atoms->atom[i].typeB = k;
@@ -353,8 +351,11 @@ int nm2type(int                     nnm,
         }
         else
         {
-            fprintf(stderr, "Can not find forcefield for atom %s-%d with %d bonds\n",
-                    *atoms->atomname[i], i + 1, nb);
+            fprintf(stderr,
+                    "Can not find forcefield for atom %s-%d with %d bonds\n",
+                    *atoms->atomname[i],
+                    i + 1,
+                    nb);
         }
     }
     sfree(bbb);

@@ -19,7 +19,7 @@ a restart is less continuous than a normal MD step.
 
 Such a checkpoint file is also written periodically by :ref:`gmx
 mdrun` during the run. The interval is given by the ``-cpt`` flag to
-:ref:`gmx mdrun`. When :ref:`gmx mdrun` attemps to write each
+:ref:`gmx mdrun`. When :ref:`gmx mdrun` attempts to write each
 successive checkpoint file, it first renames the old file with the
 suffix ``_prev``, so that even if something goes wrong while writing
 the new checkpoint file, only recent progress can be lost.
@@ -117,12 +117,12 @@ then call
 
 ::
 
-   gmx grompp -f possibly-changed.mdp -p possibly-changed.top -c state.cpt -o new.tpr
+   gmx grompp -f possibly-changed.mdp -p possibly-changed.top -c original.gro -t state.cpt -o new.tpr
    gmx mdrun -s new.tpr -cpi state.cpt
 
 to instruct :ref:`gmx grompp` to copy the full-precision coordinates
-in the checkpoint file into the new :ref:`tpr` file. You should
-consider your choices for :mdp:`tinit`, :mdp:`init-step`,
+and velocities in the checkpoint file into the new :ref:`tpr` file.
+You should consider your choices for :mdp:`tinit`, :mdp:`init-step`,
 :mdp:`nsteps` and :mdp:`simulation-part`. You should generally not
 regenerate velocities with :mdp:`gen-vel`, and generally select
 :mdp:`continuation` so that constraints are not re-applied before
@@ -172,7 +172,7 @@ The following factors affect the reproducibility of a simulation, and thus its o
   results may vary from run to run.
 * Random numbers used for instance as a seed for generating velocities
   (in |Gromacs| at the preprocessing stage).
-* Uninitialized variables in the code (but there shouldn't be any)
+* Uninitialized variables in the code (but there should not be any)
 * Dynamic linking to different versions of shared libraries (e.g. for FFTs)
 * Dynamic load balancing, since particles are redistributed to
   processors based on elapsed wallclock time, which will lead to
@@ -183,7 +183,7 @@ The following factors affect the reproducibility of a simulation, and thus its o
   arithmetic means the result of a reduction depends on the order
   actually chosen
 * On GPUs, the reduction of e.g. non-bonded forces has a non-deterministic
-  summation order, so any fast implementation is non-reprodudible by
+  summation order, so any fast implementation is non-reproducible by
   design.
 
 The important question is whether it is a problem if simulations are

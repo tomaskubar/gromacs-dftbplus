@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2019- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 
 /*! \internal \file
@@ -45,66 +44,26 @@
 #ifndef GMX_NBNXM_PAIRLISTPARAMS_H
 #define GMX_NBNXM_PAIRLISTPARAMS_H
 
-#include "config.h"
+#include <optional>
 
-#include "gromacs/mdtypes/locality.h"
 #include "gromacs/utility/enumerationhelpers.h"
 #include "gromacs/utility/real.h"
 
-namespace Nbnxm
+#include "nbnxm_enums.h"
+
+namespace gmx
 {
-enum class KernelType;
-}
 
-//! The i-cluster size for CPU kernels, always 4 atoms
-static constexpr int c_nbnxnCpuIClusterSize = 4;
-
-//! The i- and j-cluster size for GPU lists, 8 atoms for CUDA, set at compile time for OpenCL
-#if GMX_GPU_OPENCL
-static constexpr int c_nbnxnGpuClusterSize = GMX_OPENCL_NB_CLUSTER_SIZE;
-#else
-static constexpr int c_nbnxnGpuClusterSize = 8;
-#endif
-
-//! The number of clusters along Z in a pair-search grid cell for GPU lists
-static constexpr int c_gpuNumClusterPerCellZ = 2;
-//! The number of clusters along Y in a pair-search grid cell for GPU lists
-static constexpr int c_gpuNumClusterPerCellY = 2;
-//! The number of clusters along X in a pair-search grid cell for GPU lists
-static constexpr int c_gpuNumClusterPerCellX = 2;
-//! The number of clusters in a pair-search grid cell for GPU lists
-static constexpr int c_gpuNumClusterPerCell =
-        c_gpuNumClusterPerCellZ * c_gpuNumClusterPerCellY * c_gpuNumClusterPerCellX;
-
-
-/*! \brief The number of sub-parts used for data storage for a GPU cluster pair
- *
- * In CUDA the number of threads in a warp is 32 and we have cluster pairs
- * of 8*8=64 atoms, so it's convenient to store data for cluster pair halves.
- */
-static constexpr int c_nbnxnGpuClusterpairSplit = 2;
-
-//! The fixed size of the exclusion mask array for a half GPU cluster pair
-static constexpr int c_nbnxnGpuExclSize =
-        c_nbnxnGpuClusterSize * c_nbnxnGpuClusterSize / c_nbnxnGpuClusterpairSplit;
-
-//! The available pair list types
-enum class PairlistType : int
-{
-    Simple4x2,
-    Simple4x4,
-    Simple4x8,
-    HierarchicalNxN,
-    Count
-};
+enum class NbnxmKernelType;
 
 //! Gives the i-cluster size for each pairlist type
 static constexpr gmx::EnumerationArray<PairlistType, int> IClusterSizePerListType = {
-    { c_nbnxnCpuIClusterSize, c_nbnxnCpuIClusterSize, c_nbnxnCpuIClusterSize, c_nbnxnGpuClusterSize }
+    { 4, 4, 4, sc_gpuClusterSize(PairlistType::Hierarchical8x8x8), 1 }
 };
+
 //! Gives the j-cluster size for each pairlist type
 static constexpr gmx::EnumerationArray<PairlistType, int> JClusterSizePerListType = {
-    { 2, 4, 8, c_nbnxnGpuClusterSize }
+    { 2, 4, 8, sc_gpuClusterSize(PairlistType::Hierarchical8x8x8), 1 }
 };
 
 /*! \internal
@@ -116,18 +75,24 @@ struct PairlistParams
 {
     /*! \brief Constructor producing a struct with dynamic pruning disabled
      */
-    PairlistParams(Nbnxm::KernelType kernelType, bool haveFep, real rlist, bool haveMultipleDomains);
+    PairlistParams(NbnxmKernelType             kernelType,
+                   std::optional<PairlistType> gpuPairlistType,
+                   bool                        haveFep,
+                   real                        rlist,
+                   bool                        haveMultipleDomains);
 
     //! The type of cluster-pair list
     PairlistType pairlistType;
     //! Tells whether we have perturbed interactions
-    bool haveFep;
+    bool haveFep_;
+    //! Tells whether we have nonbonded free energy interactions on GPU
+    bool haveNonbondedFEGpu_;
     //! Cut-off of the larger, outer pair-list
     real rlistOuter;
     //! Cut-off of the smaller, inner pair-list
     real rlistInner;
     //! True when using DD with multiple domains
-    bool haveMultipleDomains;
+    bool haveMultipleDomains_;
     //! Are we using dynamic pair-list pruning
     bool useDynamicPruning;
     //! The interval in steps for computing non-bonded interactions, =1 without MTS
@@ -139,5 +104,7 @@ struct PairlistParams
     //! Lifetime in steps of the pair-list
     int lifetime;
 };
+
+} // namespace gmx
 
 #endif

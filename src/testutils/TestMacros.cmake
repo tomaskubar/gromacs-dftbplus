@@ -1,11 +1,9 @@
 #
 # This file is part of the GROMACS molecular simulation package.
 #
-# Copyright (c) 2011,2012,2013,2014,2015 by the GROMACS development team.
-# Copyright (c) 2016,2017,2018,2019,2020, by the GROMACS development team, led by
-# Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
-# and including many others, as listed in the AUTHORS file in the
-# top-level source directory and at http://www.gromacs.org.
+# Copyright 2011- The GROMACS Authors
+# and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+# Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
 #
 # GROMACS is free software; you can redistribute it and/or
 # modify it under the terms of the GNU Lesser General Public License
@@ -19,7 +17,7 @@
 #
 # You should have received a copy of the GNU Lesser General Public
 # License along with GROMACS; if not, see
-# http://www.gnu.org/licenses, or write to the Free Software Foundation,
+# https://www.gnu.org/licenses, or write to the Free Software Foundation,
 # Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
 #
 # If you want to redistribute modifications to GROMACS, please
@@ -28,13 +26,43 @@
 # consider code for inclusion in the official distribution, but
 # derived work must not be called official GROMACS. Details are found
 # in the README & COPYING files - if they are missing, get the
-# official version at http://www.gromacs.org.
+# official version at https://www.gromacs.org.
 #
 # To help us fund GROMACS development, we humbly ask that you cite
-# the research papers on the package. Check out http://www.gromacs.org.
+# the research papers on the package. Check out https://www.gromacs.org.
 
 include(CMakeParseArguments)
-include(gmxClangCudaUtils)
+
+set(GMX_TEST_TIMEOUT_FACTOR "1" CACHE STRING "Scaling factor to apply for test timeouts")
+mark_as_advanced(GMX_TEST_TIMEOUT_FACTOR)
+
+set(GMX_CAN_RUN_MPI_TESTS 1)
+if (GMX_MPI)
+    set(_an_mpi_variable_had_content 0)
+    foreach(VARNAME MPIEXEC MPIEXEC_NUMPROC_FLAG MPIEXEC_PREFLAGS MPIEXEC_POSTFLAGS)
+        # These variables need a valid value for the test to run
+        # and pass, but conceivably any of them might be valid
+        # with arbitrary (including empty) content. They can't be
+        # valid if they've been populated with the CMake
+        # find_package magic suffix/value "NOTFOUND", though.
+        if (${VARNAME} MATCHES ".*NOTFOUND")
+            gmx_add_missing_tests_notice("CMake variable ${VARNAME} was not detected to be a valid value. "
+                                         "To test GROMACS correctly, check the advice in the install guide.")
+            set(GMX_CAN_RUN_MPI_TESTS 0)
+        endif()
+        if (NOT VARNAME STREQUAL MPIEXEC AND ${VARNAME})
+            set(_an_mpi_variable_had_content 1)
+        endif()
+    endforeach()
+    if(_an_mpi_variable_had_content AND NOT MPIEXEC)
+        gmx_add_missing_tests_notice("CMake variable MPIEXEC must have a valid value if one of the other related "
+                                     "MPIEXEC variables does. To test GROMACS correctly, check the advice in the "
+                                     "install guide.")
+        set(GMX_CAN_RUN_MPI_TESTS 0)
+    endif()
+elseif (NOT GMX_THREAD_MPI)
+    set(GMX_CAN_RUN_MPI_TESTS 0)
+endif()
 
 function (gmx_add_unit_test_library NAME)
     if (GMX_BUILD_UNITTESTS AND BUILD_TESTING)
@@ -42,15 +70,37 @@ function (gmx_add_unit_test_library NAME)
         gmx_target_compile_options(${NAME})
         target_compile_definitions(${NAME} PRIVATE HAVE_CONFIG_H)
         target_include_directories(${NAME} SYSTEM BEFORE PRIVATE ${PROJECT_SOURCE_DIR}/src/external/thread_mpi/include)
+        target_compile_definitions(${NAME} PRIVATE TMPI_USE_VISIBILITY)
+        # These two include directories are supplied by the gmock target below
+        # but can be added after global include directories added e.g. for
+        # FFTW, which leads to unexpected mismatches. See #5141 and #5531.
+        target_include_directories(${NAME} SYSTEM BEFORE PRIVATE ${PROJECT_SOURCE_DIR}/src/external/googletest/googletest/include)
+        target_include_directories(${NAME} SYSTEM BEFORE PRIVATE ${PROJECT_SOURCE_DIR}/src/external/googletest/googlemock/include)
         target_link_libraries(${NAME} PRIVATE testutils gmock)
+        if (GMX_BUILD_FOR_COVERAGE)
+            target_link_libraries(${NAME} PRIVATE gcov)
+        endif()
         if(GMX_CLANG_TIDY)
             set_target_properties(${NAME} PROPERTIES CXX_CLANG_TIDY
-                "${CLANG_TIDY_EXE};-warnings-as-errors=*;-header-filter=.*")
+                "${CLANG_TIDY_EXE};-warnings-as-errors=*;-header-filter=^(?!.*src/external/colvars).*")
         endif()
-        if (CMAKE_CXX_COMPILER_ID MATCHES "Clang" AND CMAKE_CXX_COMPILER_VERSION VERSION_GREATER "7")
-            target_compile_options(${NAME} PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-Weverything ${IGNORED_CLANG_ALL_WARNINGS} -Wno-gnu-zero-variadic-macro-arguments -Wno-zero-as-null-pointer-constant -Wno-missing-variable-declarations>)
+        gmx_warn_on_everything(${NAME})
+        if (HAS_WARNING_EVERYTHING)
+            # Some false positives exist produced by GoogleTest implementation
+            gmx_target_warning_suppression(${NAME} "-Wno-zero-as-null-pointer-constant" HAS_WARNING_NO_ZERO_AS_NULL_POINTER_CONSTANT)
+            gmx_target_warning_suppression(${NAME} "-Wno-gnu-zero-variadic-macro-arguments" HAS_WARNING_NO_GNU_ZERO_VARIADIC_MACRO_ARGUMENTS)
+            # Use of GoogleMock can generate mock member functions that are unused
+            gmx_target_warning_suppression(${NAME} "-Wno-unused-member-function" HAS_WARNING_NO_UNUSED_MEMBER_FUNCTION)
+            if(GMX_GPU_CUDA)
+                # CUDA headers target C, so use old-style casts that clang
+                # warns about when it is the host compiler
+                gmx_target_warning_suppression(${NAME} "-Wno-old-style-cast" HAS_NO_OLD_STYLE_CAST)
+            endif()
         endif()
-
+        # GCC 14 has false positives with -Wmaybe-uninitialized in GoogleTest
+        if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL 14 AND CMAKE_CXX_COMPILER_VERSION VERSION_LESS 15)
+            gmx_target_warning_suppression(${NAME} "-Wno-maybe-uninitialized" HAS_WARNING_NO_MAYBE_UNINITIALIZED)
+        endif()
     endif()
 endfunction ()
 
@@ -77,12 +127,16 @@ endfunction ()
 #     All the C++ .cpp source files needed only with SYCL
 #   NON_GPU_CPP_SOURCE_FILES  file1.cpp file2.cpp ...
 #     All the other C++ .cpp source files needed only with neither OpenCL nor CUDA nor SYCL
+#
+# Note that multi-value options (like source-file lists) must follow the
+# no-option or single-value options.
 function (gmx_add_gtest_executable EXENAME)
     if (GMX_BUILD_UNITTESTS AND BUILD_TESTING)
-        set(_options MPI HARDWARE_DETECTION)
+        set(_options MPI NVSHMEM HARDWARE_DETECTION DYNAMIC_REGISTRATION)
         set(_multi_value_keywords
             CPP_SOURCE_FILES
             CUDA_CU_SOURCE_FILES
+            HIP_CPP_SOURCE_FILES
             GPU_CPP_SOURCE_FILES
             OPENCL_CPP_SOURCE_FILES
             SYCL_CPP_SOURCE_FILES
@@ -111,31 +165,46 @@ function (gmx_add_gtest_executable EXENAME)
             list(APPEND EXTRA_COMPILE_DEFINITIONS
                  TEST_USES_HARDWARE_DETECTION=true)
         endif()
+        if (ARG_DYNAMIC_REGISTRATION)
+            list(APPEND EXTRA_COMPILE_DEFINITIONS
+                 TEST_USES_DYNAMIC_REGISTRATION=true)
+        endif()
 
-        if (GMX_GPU_CUDA AND NOT GMX_CLANG_CUDA)
-            # Work around FindCUDA that prevents using target_link_libraries()
-            # with keywords otherwise...
-            set(CUDA_LIBRARIES PRIVATE ${CUDA_LIBRARIES})
-            cuda_add_executable(${EXENAME} ${UNITTEST_TARGET_OPTIONS}
+        if (GMX_GPU_CUDA)
+            add_executable(${EXENAME} ${UNITTEST_TARGET_OPTIONS}
                 ${ARG_CPP_SOURCE_FILES}
                 ${ARG_CUDA_CU_SOURCE_FILES}
                 ${ARG_GPU_CPP_SOURCE_FILES})
+            target_compile_options(${EXENAME} PRIVATE "$<$<COMPILE_LANGUAGE:CUDA>:${GMX_CUDA_FLAGS}>")
+            set_target_properties(${EXENAME} PROPERTIES CUDA_ARCHITECTURES "${GMX_CUDA_ARCHITECTURES}")
+            set_source_files_properties(${ARG_GPU_CPP_SOURCE_FILES} PROPERTIES LANGUAGE CUDA)
+        elseif (GMX_GPU_HIP)
+            set_source_files_properties(${ARG_HIP_CPP_SOURCE_FILES} PROPERTIES LANGUAGE HIP)
+            set_source_files_properties(${ARG_GPU_CPP_SOURCE_FILES} PROPERTIES LANGUAGE HIP)
+            add_executable(${EXENAME} ${UNITTEST_TARGET_OPTIONS}
+                    ${ARG_CPP_SOURCE_FILES}
+                    ${ARG_HIP_CPP_SOURCE_FILES}
+                    ${ARG_GPU_CPP_SOURCE_FILES})
+
+            set_target_properties(${EXENAME}  PROPERTIES HIP_ARCHITECTURES OFF)
+            set_property(TARGET ${EXENAME} PROPERTY HIP_STANDARD ${CMAKE_CXX_STANDARD})
+            target_compile_options(${EXENAME} PRIVATE $<$<COMPILE_LANGUAGE:HIP>:${GMX_HIP_HIPCC_FLAGS}>)
         else()
             add_executable(${EXENAME} ${UNITTEST_TARGET_OPTIONS}
                 ${ARG_CPP_SOURCE_FILES})
         endif()
 
+        if (ARG_NVSHMEM AND GMX_NVSHMEM)
+            set_target_properties(${EXENAME} PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+            set_target_properties(${EXENAME} PROPERTIES CUDA_RESOLVE_DEVICE_SYMBOLS ON)
+            target_link_libraries(${EXENAME} PRIVATE nvshmem_host_lib nvshmem_device_lib)
+        endif()
+
         if (GMX_GPU_CUDA)
-            if (GMX_CLANG_CUDA)
-                target_sources(${EXENAME} PRIVATE
-                    ${ARG_CUDA_CU_SOURCE_FILES}
-                    ${ARG_GPU_CPP_SOURCE_FILES})
-                set_source_files_properties(${ARG_GPU_CPP_SOURCE_FILES} PROPERTIES CUDA_SOURCE_PROPERTY_FORMAT OBJ)
-                gmx_compile_cuda_file_with_clang(${ARG_CUDA_CU_SOURCE_FILES})
-                gmx_compile_cuda_file_with_clang(${ARG_GPU_CPP_SOURCE_FILES})
-                if(ARG_CUDA_CU_SOURCE_FILES OR ARG_GPU_CPP_SOURCE_FILES)
-                    target_link_libraries(${EXENAME} PRIVATE ${GMX_EXTRA_LIBRARIES})
-                endif()
+            target_link_libraries(${EXENAME} PRIVATE CUDA::cudart_static)
+        elseif (GMX_GPU_HIP)
+            if(ARG_HIP_CPP_SOURCE_FILES OR ARG_GPU_CPP_SOURCE_FILES)
+                target_link_libraries(${EXENAME} PRIVATE hip::host)
             endif()
         elseif (GMX_GPU_OPENCL)
             target_sources(${EXENAME} PRIVATE ${ARG_OPENCL_CPP_SOURCE_FILES} ${ARG_GPU_CPP_SOURCE_FILES})
@@ -144,10 +213,20 @@ function (gmx_add_gtest_executable EXENAME)
             endif()
         elseif (GMX_GPU_SYCL)
             target_sources(${EXENAME} PRIVATE ${ARG_SYCL_CPP_SOURCE_FILES} ${ARG_GPU_CPP_SOURCE_FILES})
-            set_source_files_properties(${ARG_GPU_CPP_SOURCE_FILES} PROPERTIES COMPILE_FLAGS "${SYCL_CXX_FLAGS}")
-            set_source_files_properties(${ARG_SYCL_CPP_SOURCE_FILES} PROPERTIES COMPILE_FLAGS "${SYCL_CXX_FLAGS}")
-            if(ARG_SYCL_CPP_SOURCE_FILES OR ARG_GPU_CPP_SOURCE_FILES)
-                target_link_libraries(${EXENAME} PRIVATE ${SYCL_CXX_FLAGS})
+            # Ensure that libsycl is properly linked when GPU source
+            # files are compiled directly into ${EXENAME}, and when
+            # libgromacs is a static library.
+            #
+            # TODO The third predicate is used in release-2025 branch
+            # to maximize stability of the default shared-library
+            # build configuration. After merging to main branch,
+            # remove the third predicate, because it may be useful and
+            # seems unlikely to cause harm.
+            if(ARG_SYCL_CPP_SOURCE_FILES OR ARG_GPU_CPP_SOURCE_FILES OR NOT BUILD_SHARED_LIBS)
+                add_sycl_to_target(
+                    TARGET ${EXENAME}
+                    SOURCES ${ARG_SYCL_CPP_SOURCE_FILES} ${ARG_GPU_CPP_SOURCE_FILES}
+                    )
             endif()
         else()
             target_sources(${EXENAME} PRIVATE ${ARG_NON_GPU_CPP_SOURCE_FILES} ${ARG_GPU_CPP_SOURCE_FILES})
@@ -156,32 +235,50 @@ function (gmx_add_gtest_executable EXENAME)
         gmx_target_compile_options(${EXENAME})
         target_compile_definitions(${EXENAME} PRIVATE HAVE_CONFIG_H ${EXTRA_COMPILE_DEFINITIONS})
         target_include_directories(${EXENAME} SYSTEM BEFORE PRIVATE ${PROJECT_SOURCE_DIR}/src/external/thread_mpi/include)
+        target_compile_definitions(${EXENAME} PRIVATE TMPI_USE_VISIBILITY)
         # Permit GROMACS code to include externally developed headers,
         # such as the functionality from the nonstd project that we
         # use for gmx::compat::optional. These are included as system
         # headers so that no warnings are issued from them.
         target_include_directories(${EXENAME} SYSTEM PRIVATE ${PROJECT_SOURCE_DIR}/src/external)
+        target_include_directories(${EXENAME} SYSTEM PRIVATE ${PROJECT_SOURCE_DIR}/src/external/muparser)
         if(CYGWIN)
             # Ensure GoogleTest headers can find POSIX things needed
             target_compile_definitions(${EXENAME} PRIVATE _POSIX_C_SOURCE=200809L)
         endif()
 
+        # These two include directories are supplied by the gmock target below
+        # but can be added after global include directories added e.g. for
+        # FFTW, which leads to unexpected mismatches. See #5141 and #5531.
+        target_include_directories(${EXENAME} SYSTEM BEFORE PRIVATE ${PROJECT_SOURCE_DIR}/src/external/googletest/googletest/include)
+        target_include_directories(${EXENAME} SYSTEM BEFORE PRIVATE ${PROJECT_SOURCE_DIR}/src/external/googletest/googlemock/include)
         target_link_libraries(${EXENAME} PRIVATE
             testutils common libgromacs gmock
             ${GMX_COMMON_LIBRARIES} ${GMX_EXE_LINKER_FLAGS})
+        if (GMX_BUILD_FOR_COVERAGE)
+            target_link_libraries(${EXENAME} PRIVATE gcov)
+        endif()
 
         if(GMX_CLANG_TIDY)
             set_target_properties(${EXENAME} PROPERTIES CXX_CLANG_TIDY
-                "${CLANG_TIDY_EXE};-warnings-as-errors=*;-header-filter=.*")
+                "${CLANG_TIDY_EXE};-warnings-as-errors=*;-header-filter=^(?!.*src/external/colvars).*")
         endif()
-        if (CMAKE_CXX_COMPILER_ID MATCHES "Clang" AND CMAKE_CXX_COMPILER_VERSION VERSION_GREATER "7")
-            target_compile_options(${EXENAME} PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-Weverything ${IGNORED_CLANG_ALL_WARNINGS} -Wno-gnu-zero-variadic-macro-arguments -Wno-zero-as-null-pointer-constant -Wno-missing-variable-declarations>)
+        gmx_warn_on_everything(${EXENAME})
+        if (HAS_WARNING_EVERYTHING)
+            # Some false positives exist produced by GoogleTest implementation
+            gmx_target_warning_suppression(${EXENAME} "-Wno-zero-as-null-pointer-constant" HAS_WARNING_NO_ZERO_AS_NULL_POINTER_CONSTANT)
+            gmx_target_warning_suppression(${EXENAME} "-Wno-gnu-zero-variadic-macro-arguments" HAS_WARNING_NO_GNU_ZERO_VARIADIC_MACRO_ARGUMENTS)
+            # Use of GoogleMock can generate mock member functions that are unused
+            gmx_target_warning_suppression(${EXENAME} "-Wno-unused-member-function" HAS_WARNING_NO_UNUSED_MEMBER_FUNCTION)
+            if(GMX_GPU_CUDA)
+                # CUDA headers target C, so use old-style casts that clang
+                # warns about when it is the host compiler
+                gmx_target_warning_suppression(${EXENAME} "-Wno-old-style-cast" HAS_NO_OLD_STYLE_CAST)
+            endif()
         endif()
-        # clang-3.6 warns about a number of issues that are not reported by more modern compilers
-        # and we know they are not real issues. So we only check that it can compile without error
-        # but ignore all warnings.
-        if (CMAKE_CXX_COMPILER_ID MATCHES "Clang" AND CMAKE_CXX_COMPILER_VERSION MATCHES "^3\.6")
-            target_compile_options(${EXENAME} PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-w>)
+        # GCC 14 has false positives with -Wmaybe-uninitialized in GoogleTest
+        if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL 14 AND CMAKE_CXX_COMPILER_VERSION VERSION_LESS 15)
+            gmx_target_warning_suppression(${EXENAME} "-Wno-maybe-uninitialized" HAS_WARNING_NO_MAYBE_UNINITIALIZED)
         endif()
     endif()
 endfunction()
@@ -193,26 +290,37 @@ endfunction()
 #   INTEGRATION_TEST      requires the use of the IntegrationTest label in CTest
 #   SLOW_TEST             requires the use of the SlowTest label in CTest, and
 #                         increase the length of the ctest timeout.
-#   IGNORE_LEAKS          Skip some memory safety checks.
+#   IGNORE_LEAKS          Skip leak detection with LeakSanitzer (LSAN) during
+#                         AddressSanizer (ASAN) tests.
+#                         Using this allows us to implement tests that call legacy GROMACS
+#                         infrastructure that still leaks memory, but also blocks us from
+#                         catching new leaks in code called by those test. It should be used
+#                         sparingly. Typical use cases are test code calling legacy routines like
+#                         preprocessing and analysis tools, or that have been ported from regressiontests.
+#   QUICK_GPU_TEST        marks tests that use GPUs and are fast (< 10 seconds on a desktop GPU in Release build);
+#                         currently this label is used to select tests for CUDA Compute Sanitizer runs.
+#   SLOW_GPU_TEST         marks all other tests that should run on a GPU, used to make sure GPU CI only runs GPU
+#                         tests and doesn't waste time on others.
 #
 # TODO When a test case needs it, generalize the MPI_RANKS mechanism so
 # that ctest can run the test binary over a range of numbers of MPI
 # ranks.
 function (gmx_register_gtest_test NAME EXENAME)
     if (GMX_BUILD_UNITTESTS AND BUILD_TESTING)
-        set(_options INTEGRATION_TEST SLOW_TEST IGNORE_LEAKS)
+        set(_options INTEGRATION_TEST SLOW_TEST IGNORE_LEAKS QUICK_GPU_TEST SLOW_GPU_TEST)
         set(_one_value_args MPI_RANKS OPENMP_THREADS)
         cmake_parse_arguments(ARG "${_options}" "${_one_value_args}" "" ${ARGN})
         set(_xml_path ${CMAKE_BINARY_DIR}/Testing/Temporary/${NAME}.xml)
         set(_labels GTest)
         set(_timeout 30)
+        set(_nproc 1)
         if (ARG_INTEGRATION_TEST)
             list(APPEND _labels IntegrationTest)
             # Slow build configurations should have longer timeouts.
             # Both OpenCL (from JIT) and ThreadSanitizer (from how it
-            # checks) can take signficantly more time than other
+            # checks) can take significantly more time than other
             # configurations.
-            if (GMX_GPU_OPENCL)
+            if (GMX_GPU_OPENCL OR GMX_GPU_SYCL)
                 set(_timeout 240)
             elseif (${CMAKE_BUILD_TYPE} STREQUAL TSAN)
                 set(_timeout 300)
@@ -233,10 +341,12 @@ function (gmx_register_gtest_test NAME EXENAME)
         if (ARG_OPENMP_THREADS)
             if (GMX_OPENMP)
                 list(APPEND _cmd -ntomp ${ARG_OPENMP_THREADS})
+                math(EXPR _nproc "${_nproc} * ${ARG_OPENMP_THREADS}")
             endif()
         endif()
         if (ARG_MPI_RANKS)
             if (NOT GMX_CAN_RUN_MPI_TESTS)
+                gmx_add_missing_tests_notice("Skipping ${NAME} because MPI tests are not available.")
                 return()
             endif()
             list(APPEND _labels MpiTest)
@@ -247,23 +357,57 @@ function (gmx_register_gtest_test NAME EXENAME)
             elseif (GMX_THREAD_MPI)
                 list(APPEND _cmd -ntmpi ${ARG_MPI_RANKS})
             endif()
+            math(EXPR _nproc "${_nproc} * ${ARG_MPI_RANKS}")
+	elseif(GMX_MPI)
+                set(_cmd
+                    ${MPIEXEC} ${MPIEXEC_NUMPROC_FLAG} 1
+                    ${MPIEXEC_PREFLAGS} ${_cmd} ${MPIEXEC_POSTFLAGS})
+        endif()
+        if (CMAKE_CROSSCOMPILING_EMULATOR)
+            set(_cmd ${CMAKE_CROSSCOMPILING_EMULATOR} ${_cmd})
+        endif()
+        if (ARG_QUICK_GPU_TEST)
+            list(APPEND _labels QuickGpuTest)
+        endif()
+        if (ARG_SLOW_GPU_TEST)
+            list(APPEND _labels SlowGpuTest)
         endif()
         add_test(NAME ${NAME}
                  COMMAND ${_cmd} --gtest_output=xml:${_xml_path})
         set_tests_properties(${NAME} PROPERTIES LABELS "${_labels}")
+        math(EXPR _timeout "${_timeout} * ${GMX_TEST_TIMEOUT_FACTOR}")
         set_tests_properties(${NAME} PROPERTIES TIMEOUT ${_timeout})
+        set_tests_properties(${NAME} PROPERTIES PROCESSORS ${_nproc})
         add_dependencies(tests ${EXENAME})
     endif()
 endfunction ()
 
 function (gmx_add_unit_test NAME EXENAME)
+    cmake_parse_arguments(ARG "HARDWARE_DETECTION" "" "" ${ARGN})
     gmx_add_gtest_executable(${EXENAME} ${ARGN})
-    gmx_register_gtest_test(${NAME} ${EXENAME})
+    set(_test_labels "")
+    if (ARG_HARDWARE_DETECTION)
+        # All unit tests should be quick, so mark them as QUICK_GPU_TEST if they use GPU
+        set(_test_labels "QUICK_GPU_TEST")
+    endif()
+    gmx_register_gtest_test(${NAME} ${EXENAME} ${_test_labels} ${ARGN})
 endfunction()
 
 function (gmx_add_mpi_unit_test NAME EXENAME RANKS)
+    set(_options SLOW_TEST HARDWARE_DETECTION)
+    cmake_parse_arguments(ARG "${_options}" "" "" ${ARGN})
     if (GMX_MPI OR (GMX_THREAD_MPI AND GTEST_IS_THREADSAFE))
         gmx_add_gtest_executable(${EXENAME} MPI ${ARGN})
-        gmx_register_gtest_test(${NAME} ${EXENAME} MPI_RANKS ${RANKS})
+        set(_test_labels "")
+        if (ARG_HARDWARE_DETECTION)
+            if (ARG_SLOW_TEST)
+                # Some tests might be known to be slow in GPU configs, mark them as such
+                set(_test_labels SLOW_TEST QUICK_GPU_TEST)
+            else()
+                # If not explicitly marked, all unit tests should be quick, so mark them as QUICK_GPU_TEST if they use GPU
+                set(_test_labels "QUICK_GPU_TEST")
+            endif()
+        endif()
+        gmx_register_gtest_test(${NAME} ${EXENAME} ${_test_labels} MPI_RANKS ${RANKS})
     endif()
 endfunction()

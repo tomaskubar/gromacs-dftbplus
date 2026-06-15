@@ -1,13 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
- * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2016,2017 by the GROMACS development team.
- * Copyright (c) 2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 1991- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -21,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -30,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 #include "gmxpre.h"
 
@@ -44,27 +40,39 @@
 #include <cstring>
 
 #include <algorithm>
+#include <filesystem>
 #include <numeric>
 #include <string>
+#include <type_traits>
+#include <vector>
 
+#include "gromacs/commandline/filenm.h"
 #include "gromacs/commandline/pargs.h"
 #include "gromacs/commandline/viewit.h"
+#include "gromacs/fileio/filetypes.h"
 #include "gromacs/fileio/matio.h"
 #include "gromacs/fileio/readinp.h"
+#include "gromacs/fileio/rgb.h"
 #include "gromacs/fileio/trxio.h"
 #include "gromacs/fileio/warninp.h"
 #include "gromacs/fileio/writeps.h"
 #include "gromacs/gmxana/gmx_ana.h"
+#include "gromacs/math/functions.h"
 #include "gromacs/utility/arrayref.h"
 #include "gromacs/utility/arraysize.h"
+#include "gromacs/utility/basedefinitions.h"
 #include "gromacs/utility/cstringutil.h"
 #include "gromacs/utility/exceptions.h"
 #include "gromacs/utility/fatalerror.h"
 #include "gromacs/utility/filestream.h"
 #include "gromacs/utility/futil.h"
 #include "gromacs/utility/gmxassert.h"
+#include "gromacs/utility/real.h"
 #include "gromacs/utility/smalloc.h"
 #include "gromacs/utility/stringutil.h"
+#include "gromacs/utility/vectypes.h"
+
+struct gmx_output_env_t;
 
 #define FUDGE 1.2
 #define DDD 2
@@ -137,16 +145,15 @@ static void get_params(const char* mpin, const char* mpout, t_psrec* psr)
     static const char* gmx_bools[BOOL_NR + 1] = { "no", "yes", nullptr };
     /* this must correspond to t_rgb *linecolors[] below */
     static const char*     colors[] = { "none", "black", "white", nullptr };
-    warninp_t              wi;
     std::vector<t_inpfile> inp;
 
-    wi = init_warning(FALSE, 0);
+    WarningHandler wi{ false, 0 };
 
     if (mpin != nullptr)
     {
-        std::string        libmpin = gmx::findLibraryFile(mpin);
-        gmx::TextInputFile stream(libmpin);
-        inp = read_inpfile(&stream, libmpin.c_str(), wi);
+        const std::filesystem::path libmpin = gmx::findLibraryFile(mpin);
+        gmx::TextInputFile          stream(libmpin);
+        inp = read_inpfile(&stream, libmpin, &wi);
     }
     else
     {
@@ -154,45 +161,45 @@ static void get_params(const char* mpin, const char* mpout, t_psrec* psr)
     }
 
     psr->bw        = get_eenum(&inp, "black&white", gmx_bools);
-    psr->linewidth = get_ereal(&inp, "linewidth", 1.0, wi);
+    psr->linewidth = get_ereal(&inp, "linewidth", 1.0, &wi);
     setStringEntry(&inp, "titlefont", psr->titfont, "Helvetica");
-    psr->titfontsize = get_ereal(&inp, "titlefontsize", 20.0, wi);
+    psr->titfontsize = get_ereal(&inp, "titlefontsize", 20.0, &wi);
     psr->legend      = (get_eenum(&inp, "legend", gmx_bools) != 0);
     setStringEntry(&inp, "legendfont", psr->legfont, psr->titfont);
     setStringEntry(&inp, "legendlabel", psr->leglabel, "");
     setStringEntry(&inp, "legend2label", psr->leg2label, psr->leglabel);
-    psr->legfontsize    = get_ereal(&inp, "legendfontsize", 14.0, wi);
-    psr->xboxsize       = get_ereal(&inp, "xbox", 0.0, wi);
-    psr->yboxsize       = get_ereal(&inp, "ybox", 0.0, wi);
-    psr->boxspacing     = get_ereal(&inp, "matrixspacing", 20.0, wi);
-    psr->xoffs          = get_ereal(&inp, "xoffset", 0.0, wi);
-    psr->yoffs          = get_ereal(&inp, "yoffset", psr->xoffs, wi);
-    psr->boxlinewidth   = get_ereal(&inp, "boxlinewidth", psr->linewidth, wi);
-    psr->ticklinewidth  = get_ereal(&inp, "ticklinewidth", psr->linewidth, wi);
-    psr->zerolinewidth  = get_ereal(&inp, "zerolinewidth", psr->ticklinewidth, wi);
+    psr->legfontsize    = get_ereal(&inp, "legendfontsize", 14.0, &wi);
+    psr->xboxsize       = get_ereal(&inp, "xbox", 0.0, &wi);
+    psr->yboxsize       = get_ereal(&inp, "ybox", 0.0, &wi);
+    psr->boxspacing     = get_ereal(&inp, "matrixspacing", 20.0, &wi);
+    psr->xoffs          = get_ereal(&inp, "xoffset", 0.0, &wi);
+    psr->yoffs          = get_ereal(&inp, "yoffset", psr->xoffs, &wi);
+    psr->boxlinewidth   = get_ereal(&inp, "boxlinewidth", psr->linewidth, &wi);
+    psr->ticklinewidth  = get_ereal(&inp, "ticklinewidth", psr->linewidth, &wi);
+    psr->zerolinewidth  = get_ereal(&inp, "zerolinewidth", psr->ticklinewidth, &wi);
     psr->X.lineatzero   = get_eenum(&inp, "x-lineat0value", colors);
-    psr->X.major        = get_ereal(&inp, "x-major", 1, wi);
-    psr->X.minor        = get_ereal(&inp, "x-minor", 1, wi);
-    psr->X.offset       = get_ereal(&inp, "x-firstmajor", 0.0, wi);
+    psr->X.major        = get_ereal(&inp, "x-major", -1, &wi);
+    psr->X.minor        = get_ereal(&inp, "x-minor", -1, &wi);
+    psr->X.offset       = get_ereal(&inp, "x-firstmajor", 0.0, &wi);
     psr->X.first        = (get_eenum(&inp, "x-majorat0", gmx_bools) != 0);
-    psr->X.majorticklen = get_ereal(&inp, "x-majorticklen", 8.0, wi);
-    psr->X.minorticklen = get_ereal(&inp, "x-minorticklen", 4.0, wi);
+    psr->X.majorticklen = get_ereal(&inp, "x-majorticklen", 8.0, &wi);
+    psr->X.minorticklen = get_ereal(&inp, "x-minorticklen", 4.0, &wi);
     setStringEntry(&inp, "x-label", psr->X.label, "");
-    psr->X.fontsize = get_ereal(&inp, "x-fontsize", 16.0, wi);
+    psr->X.fontsize = get_ereal(&inp, "x-fontsize", 16.0, &wi);
     setStringEntry(&inp, "x-font", psr->X.font, psr->titfont);
-    psr->X.tickfontsize = get_ereal(&inp, "x-tickfontsize", 10.0, wi);
+    psr->X.tickfontsize = get_ereal(&inp, "x-tickfontsize", 10.0, &wi);
     setStringEntry(&inp, "x-tickfont", psr->X.tickfont, psr->X.font);
     psr->Y.lineatzero   = get_eenum(&inp, "y-lineat0value", colors);
-    psr->Y.major        = get_ereal(&inp, "y-major", psr->X.major, wi);
-    psr->Y.minor        = get_ereal(&inp, "y-minor", psr->X.minor, wi);
-    psr->Y.offset       = get_ereal(&inp, "y-firstmajor", psr->X.offset, wi);
+    psr->Y.major        = get_ereal(&inp, "y-major", psr->X.major, &wi);
+    psr->Y.minor        = get_ereal(&inp, "y-minor", psr->X.minor, &wi);
+    psr->Y.offset       = get_ereal(&inp, "y-firstmajor", psr->X.offset, &wi);
     psr->Y.first        = (get_eenum(&inp, "y-majorat0", gmx_bools) != 0);
-    psr->Y.majorticklen = get_ereal(&inp, "y-majorticklen", psr->X.majorticklen, wi);
-    psr->Y.minorticklen = get_ereal(&inp, "y-minorticklen", psr->X.minorticklen, wi);
+    psr->Y.majorticklen = get_ereal(&inp, "y-majorticklen", psr->X.majorticklen, &wi);
+    psr->Y.minorticklen = get_ereal(&inp, "y-minorticklen", psr->X.minorticklen, &wi);
     setStringEntry(&inp, "y-label", psr->Y.label, psr->X.label);
-    psr->Y.fontsize = get_ereal(&inp, "y-fontsize", psr->X.fontsize, wi);
+    psr->Y.fontsize = get_ereal(&inp, "y-fontsize", psr->X.fontsize, &wi);
     setStringEntry(&inp, "y-font", psr->Y.font, psr->X.font);
-    psr->Y.tickfontsize = get_ereal(&inp, "y-tickfontsize", psr->X.tickfontsize, wi);
+    psr->Y.tickfontsize = get_ereal(&inp, "y-tickfontsize", psr->X.tickfontsize, &wi);
     setStringEntry(&inp, "y-tickfont", psr->Y.tickfont, psr->Y.font);
 
     check_warning_error(wi, FARGS);
@@ -200,18 +207,18 @@ static void get_params(const char* mpin, const char* mpout, t_psrec* psr)
     if (mpout != nullptr)
     {
         gmx::TextOutputFile stream(mpout);
-        write_inpfile(&stream, mpout, &inp, TRUE, WriteMdpHeader::yes, wi);
+        write_inpfile(&stream, mpout, &inp, TRUE, WriteMdpHeader::yes, &wi);
         stream.close();
     }
 
     done_warning(wi, FARGS);
 }
 
-static t_rgb black = { 0, 0, 0 };
-static t_rgb white = { 1, 1, 1 };
+static const t_rgb black = { 0, 0, 0 };
+static const t_rgb white = { 1, 1, 1 };
 #define BLACK (&black)
 /* this must correspond to *colors[] in get_params */
-static t_rgb* linecolors[] = { nullptr, &black, &white, nullptr };
+static const t_rgb* const linecolors[] = { nullptr, &black, &white, nullptr };
 
 static void leg_discrete(t_psdata*                      ps,
                          real                           x0,
@@ -259,7 +266,7 @@ static void leg_continuous(t_psdata*                      ps,
 {
     real       xx0;
     real       yhh, boxxh, boxyh;
-    gmx::index mapIndex = gmx::ssize(map) - mapoffset;
+    gmx::Index mapIndex = gmx::ssize(map) - mapoffset;
 
     boxyh = fontsize;
     if (x < 8 * fontsize)
@@ -277,7 +284,7 @@ static void leg_continuous(t_psdata*                      ps,
     /* LANDSCAPE */
     xx0 = x0 - (mapIndex * boxxh) / 2.0;
 
-    for (gmx::index i = 0; (i < mapIndex); i++)
+    for (gmx::Index i = 0; (i < mapIndex); i++)
     {
         ps_rgb(ps, &(map[i + mapoffset].rgb));
         ps_fillbox(ps, xx0 + i * boxxh, y0, xx0 + (i + 1) * boxxh, y0 + boxyh);
@@ -422,8 +429,7 @@ static void draw_boxes(t_psdata* ps, real x0, real y0, real w, gmx::ArrayRef<t_m
                 /* Plot label on lowest graph only */
                 if (m == mat.begin())
                 {
-                    ps_ctext(ps, xx, yy00 - DDD - psr->X.majorticklen - psr->X.tickfontsize * 0.8,
-                             xtick[x], eXCenter);
+                    ps_ctext(ps, xx, yy00 - DDD - psr->X.majorticklen - psr->X.tickfontsize * 0.8, xtick[x], eXCenter);
                 }
             }
             else if (bRmod(m->axis_x[x], psr->X.offset, psr->X.minor)
@@ -454,8 +460,7 @@ static void draw_boxes(t_psdata* ps, real x0, real y0, real w, gmx::ArrayRef<t_m
                 /* Major ticks */
                 strlength = std::max(strlength, std::strlen(ytick[y]));
                 ps_line(ps, xx00, yy, xx00 - psr->Y.majorticklen, yy);
-                ps_ctext(ps, xx00 - psr->Y.majorticklen - DDD, yy - psr->Y.tickfontsize / 3.0,
-                         ytick[y], eXRight);
+                ps_ctext(ps, xx00 - psr->Y.majorticklen - DDD, yy - psr->Y.tickfontsize / 3.0, ytick[y], eXRight);
             }
             else if (bRmod(m->axis_y[y], psr->Y.offset, psr->Y.minor))
             {
@@ -470,7 +475,7 @@ static void draw_boxes(t_psdata* ps, real x0, real y0, real w, gmx::ArrayRef<t_m
         if (!psr->bYonce || m == halfway)
         {
             std::string mylab;
-            if (strlen(psr->Y.label) > 0)
+            if (std::strlen(psr->Y.label) > 0)
             {
                 mylab = psr->Y.label;
             }
@@ -492,7 +497,7 @@ static void draw_boxes(t_psdata* ps, real x0, real y0, real w, gmx::ArrayRef<t_m
     }
     /* Label on X-axis */
     std::string mylab;
-    if (strlen(psr->X.label) > 0)
+    if (std::strlen(psr->X.label) > 0)
     {
         mylab = psr->X.label;
     }
@@ -503,9 +508,11 @@ static void draw_boxes(t_psdata* ps, real x0, real y0, real w, gmx::ArrayRef<t_m
     if (!mylab.empty())
     {
         ps_strfont(ps, psr->X.font, psr->X.fontsize);
-        ps_ctext(ps, x0 + w / 2,
+        ps_ctext(ps,
+                 x0 + w / 2,
                  y0 - DDD - psr->X.majorticklen - psr->X.tickfontsize * FUDGE - psr->X.fontsize,
-                 mylab, eXCenter);
+                 mylab,
+                 eXCenter);
     }
 }
 
@@ -641,10 +648,12 @@ static std::vector<t_mapping> add_maps(gmx::ArrayRef<t_mapping> map1, gmx::Array
     {
         gmx_fatal(FARGS, "Not enough symbols to merge the two colormaps\n");
     }
-    printf("Combining colormaps of %zu and %zu elements into one of %zu elements\n", map1.size(),
-           map2.size(), map.size());
-    gmx::index k = 0;
-    for (gmx::index j = 0; j < gmx::ssize(map1) && k < gmx::ssize(map); ++j, ++k)
+    printf("Combining colormaps of %zu and %zu elements into one of %zu elements\n",
+           map1.size(),
+           map2.size(),
+           map.size());
+    gmx::Index k = 0;
+    for (gmx::Index j = 0; j < gmx::ssize(map1) && k < gmx::ssize(map); ++j, ++k)
     {
         map[k].code.c1 = mapper[k % nsymbols];
         if (map.size() > nsymbols)
@@ -656,7 +665,7 @@ static std::vector<t_mapping> add_maps(gmx::ArrayRef<t_mapping> map1, gmx::Array
         map[k].rgb.b = map1[j].rgb.b;
         map[k].desc  = map1[j].desc;
     }
-    for (gmx::index j = 0; j < gmx::ssize(map2) && k < gmx::ssize(map); ++j, ++k)
+    for (gmx::Index j = 0; j < gmx::ssize(map2) && k < gmx::ssize(map); ++j, ++k)
     {
         map[k].code.c1 = mapper[k % nsymbols];
         if (map.size() > nsymbols)
@@ -690,7 +699,7 @@ static void xpm_mat(const char*             outf,
 
     GMX_RELEASE_ASSERT(mat.size() == mat2.size(),
                        "Combined matrix write requires matrices of the same size");
-    for (gmx::index i = 0; i != gmx::ssize(mat); ++i)
+    for (gmx::Index i = 0; i != gmx::ssize(mat); ++i)
     {
         // Color maps that differ only in RGB value are considered different
         if (mat2.empty() || std::equal(mat[i].map.begin(), mat[i].map.end(), mat2[i].map.begin()))
@@ -814,7 +823,11 @@ static void ps_mat(const char*             outf,
     if (psr->X.major <= 0)
     {
         tick_spacing((mat[0].flags & MAT_SPATIAL_X) ? mat[0].nx + 1 : mat[0].nx,
-                     mat[0].axis_x.data(), psr->X.offset, 'X', &(psr->X.major), &(psr->X.minor));
+                     mat[0].axis_x.data(),
+                     psr->X.offset,
+                     'X',
+                     &(psr->X.major),
+                     &(psr->X.minor));
     }
     if (psr->X.minor <= 0)
     {
@@ -823,7 +836,11 @@ static void ps_mat(const char*             outf,
     if (psr->Y.major <= 0)
     {
         tick_spacing((mat[0].flags & MAT_SPATIAL_Y) ? mat[0].ny + 1 : mat[0].ny,
-                     mat[0].axis_y.data(), psr->Y.offset, 'Y', &(psr->Y.major), &(psr->Y.minor));
+                     mat[0].axis_y.data(),
+                     psr->Y.offset,
+                     'Y',
+                     &(psr->Y.major),
+                     &(psr->Y.minor));
     }
     if (psr->Y.minor <= 0)
     {
@@ -921,7 +938,7 @@ static void ps_mat(const char*             outf,
         draw_boxes(&out, x0, y0, w, mat, psr);
     }
 
-    for (gmx::index i = 0; i != gmx::ssize(mat); ++i)
+    for (gmx::Index i = 0; i != gmx::ssize(mat); ++i)
     {
         if (bTitle || (bTitleOnce && i == gmx::ssize(mat) - 1))
         {
@@ -929,7 +946,7 @@ static void ps_mat(const char*             outf,
             ps_rgb(&out, BLACK);
             ps_strfont(&out, psr->titfont, psr->titfontsize);
             std::string buf;
-            if (!mat2.empty() || mat[i].title == mat2[i].title)
+            if (mat2.empty() || mat[i].title == mat2[i].title)
             {
                 buf = mat[i].title;
             }
@@ -1031,14 +1048,14 @@ static void ps_mat(const char*             outf,
         {
             if (elegend != elBoth)
             {
-                leg_continuous(&out, x0 + w / 2, w / 2, DDD, legend, psr->legfontsize, psr->legfont,
-                               leg_map, mapoffset);
+                leg_continuous(
+                        &out, x0 + w / 2, w / 2, DDD, legend, psr->legfontsize, psr->legfont, leg_map, mapoffset);
             }
             else
             {
                 assert(!mat2.empty());
-                leg_bicontinuous(&out, x0 + w / 2, w, DDD, mat[0].legend, mat2[0].legend,
-                                 psr->legfontsize, psr->legfont, map1, map2);
+                leg_bicontinuous(
+                        &out, x0 + w / 2, w, DDD, mat[0].legend, mat2[0].legend, psr->legfontsize, psr->legfont, map1, map2);
             }
         }
         ps_comment(&out, "Done processing");
@@ -1070,10 +1087,14 @@ static void prune_mat(gmx::ArrayRef<t_matrix> mat, gmx::ArrayRef<t_matrix> mat2,
 {
     GMX_RELEASE_ASSERT(mat.size() == mat2.size() || mat2.empty(),
                        "Matrix pruning requires matrices of the same size");
-    for (gmx::index i = 0; i != gmx::ssize(mat); ++i)
+    for (gmx::Index i = 0; i != gmx::ssize(mat); ++i)
     {
-        fprintf(stderr, "converting %dx%d matrix to %dx%d\n", mat[i].nx, mat[i].ny,
-                (mat[i].nx + skip - 1) / skip, (mat[i].ny + skip - 1) / skip);
+        fprintf(stderr,
+                "converting %dx%d matrix to %dx%d\n",
+                mat[i].nx,
+                mat[i].ny,
+                gmx::divideRoundUp(mat[i].nx, skip),
+                gmx::divideRoundUp(mat[i].ny, skip));
         /* walk through matrix */
         int xs = 0;
         for (int x = 0; (x < mat[i].nx); x++)
@@ -1110,12 +1131,12 @@ static void prune_mat(gmx::ArrayRef<t_matrix> mat, gmx::ArrayRef<t_matrix> mat2,
             }
         }
         /* adjust parameters */
-        mat[i].nx = (mat[i].nx + skip - 1) / skip;
-        mat[i].ny = (mat[i].ny + skip - 1) / skip;
+        mat[i].nx = gmx::divideRoundUp(mat[i].nx, skip);
+        mat[i].ny = gmx::divideRoundUp(mat[i].ny, skip);
         if (!mat2.empty())
         {
-            mat2[i].nx = (mat2[i].nx + skip - 1) / skip;
-            mat2[i].ny = (mat2[i].ny + skip - 1) / skip;
+            mat2[i].nx = gmx::divideRoundUp(mat2[i].nx, skip);
+            mat2[i].ny = gmx::divideRoundUp(mat2[i].ny, skip);
         }
     }
 }
@@ -1123,7 +1144,7 @@ static void prune_mat(gmx::ArrayRef<t_matrix> mat, gmx::ArrayRef<t_matrix> mat2,
 static void zero_lines(gmx::ArrayRef<t_matrix> mat, gmx::ArrayRef<t_matrix> mat2)
 {
     GMX_RELEASE_ASSERT(mat.size() == mat2.size(), "zero_lines requires matrices of the same size");
-    for (gmx::index i = 0; i != gmx::ssize(mat); ++i)
+    for (gmx::Index i = 0; i != gmx::ssize(mat); ++i)
     {
         for (int m = 0; m < (!mat2.empty() ? 2 : 1); m++)
         {
@@ -1174,14 +1195,18 @@ static void write_combined_matrix(int                     ecombine,
     out = gmx_ffopen(fn, "w");
     GMX_RELEASE_ASSERT(mat1.size() == mat2.size(),
                        "Combined matrix write requires matrices of the same size");
-    for (gmx::index k = 0; k != gmx::ssize(mat1); k++)
+    for (gmx::Index k = 0; k != gmx::ssize(mat1); k++)
     {
         if (mat2[k].nx != mat1[k].nx || mat2[k].ny != mat1[k].ny)
         {
             gmx_fatal(FARGS,
                       "Size of frame %zd in 1st (%dx%d) and 2nd matrix (%dx%d) do"
                       " not match.\n",
-                      k, mat1[k].nx, mat1[k].ny, mat2[k].nx, mat2[k].ny);
+                      k,
+                      mat1[k].nx,
+                      mat1[k].ny,
+                      mat2[k].nx,
+                      mat2[k].ny);
         }
         printf("Combining two %dx%d matrices\n", mat1[k].nx, mat1[k].ny);
         rmat1 = matrix2real(&mat1[k], nullptr);
@@ -1190,7 +1215,7 @@ static void write_combined_matrix(int                     ecombine,
         {
             gmx_fatal(FARGS,
                       "Could not extract real data from %s xpm matrices. Note that, e.g.,\n"
-                      "g_rms and g_mdmat provide such data, but not do_dssp.\n",
+                      "gmx rms and gmx mdmat provide such data.\n",
                       (nullptr == rmat1 && nullptr == rmat2) ? "both" : "one of the");
         }
         rlo = 1e38;
@@ -1226,9 +1251,22 @@ static void write_combined_matrix(int                     ecombine,
         }
         else
         {
-            write_xpm(out, mat1[k].flags, mat1[k].title, mat1[k].legend, mat1[k].label_x,
-                      mat1[k].label_y, mat1[k].nx, mat1[k].ny, mat1[k].axis_x.data(),
-                      mat1[k].axis_y.data(), rmat1, rlo, rhi, white, black, &nlevels);
+            write_xpm(out,
+                      mat1[k].flags,
+                      mat1[k].title,
+                      mat1[k].legend,
+                      mat1[k].label_x,
+                      mat1[k].label_y,
+                      mat1[k].nx,
+                      mat1[k].ny,
+                      mat1[k].axis_x.data(),
+                      mat1[k].axis_y.data(),
+                      rmat1,
+                      rlo,
+                      rhi,
+                      white,
+                      black,
+                      &nlevels);
         }
     }
     gmx_ffclose(out);
@@ -1258,14 +1296,18 @@ static void do_mat(gmx::ArrayRef<t_matrix> mat,
                        "Combined matrix write requires matrices of the same size");
     if (!mat2.empty())
     {
-        for (gmx::index k = 0; k != gmx::ssize(mat); k++)
+        for (gmx::Index k = 0; k != gmx::ssize(mat); k++)
         {
             if ((mat2[k].nx != mat[k].nx) || (mat2[k].ny != mat[k].ny))
             {
                 gmx_fatal(FARGS,
                           "WAKE UP!! Size of frame %zd in 2nd matrix file (%dx%d) does not match "
                           "size of 1st matrix (%dx%d) or the other way around.\n",
-                          k, mat2[k].nx, mat2[k].ny, mat[k].nx, mat[k].ny);
+                          k,
+                          mat2[k].nx,
+                          mat2[k].ny,
+                          mat[k].nx,
+                          mat[k].ny);
             }
             for (int j = 0; (j < mat[k].ny); j++)
             {
@@ -1276,7 +1318,7 @@ static void do_mat(gmx::ArrayRef<t_matrix> mat,
             }
         }
     }
-    for (gmx::index i = 0; i != gmx::ssize(mat); i++)
+    for (gmx::Index i = 0; i != gmx::ssize(mat); i++)
     {
         fprintf(stderr, "Matrix %zd is %d x %d\n", i, mat[i].nx, mat[i].ny);
     }
@@ -1295,8 +1337,7 @@ static void do_mat(gmx::ArrayRef<t_matrix> mat,
 
     if (epsfile != nullptr)
     {
-        ps_mat(epsfile, mat, mat2, bFrame, bDiag, bFirstDiag, bTitle, bTitleOnce, bYonce, elegend,
-               size, boxx, boxy, m2p, m2pout, mapoffset);
+        ps_mat(epsfile, mat, mat2, bFrame, bDiag, bFirstDiag, bTitle, bTitleOnce, bYonce, elegend, size, boxx, boxy, m2p, m2pout, mapoffset);
     }
     if (xpmfile != nullptr)
     {
@@ -1384,7 +1425,7 @@ int gmx_xpm2ps(int argc, char* argv[])
         "[THISMODULE] makes a beautiful color plot of an XPixelMap file.",
         "Labels and axis can be displayed, when they are supplied",
         "in the correct matrix format.",
-        "Matrix data may be generated by programs such as [gmx-do_dssp], [gmx-rms] or",
+        "Matrix data may be generated by programs such as [gmx-rms] or",
         "[gmx-mdmat].[PAR]",
         "Parameters are set in the [TT].m2p[tt] file optionally supplied with",
         "[TT]-di[tt]. Reasonable defaults are provided. Settings for the [IT]y[it]-axis",
@@ -1424,7 +1465,8 @@ int gmx_xpm2ps(int argc, char* argv[])
     };
 
     gmx_output_env_t* oenv;
-    const char *      fn, *epsfile = nullptr, *xpmfile = nullptr;
+    const char*       fn;
+    const char*       fn2;
     int               i, etitle, elegend, ediag, erainbow, ecombine;
     gmx_bool          bTitle, bTitleOnce, bDiag, bFirstDiag, bGrad;
     static gmx_bool   bFrame = TRUE, bZeroLine = FALSE, bYonce = FALSE;
@@ -1471,28 +1513,28 @@ int gmx_xpm2ps(int argc, char* argv[])
         { "-diag", FALSE, etENUM, { diag }, "Diagonal" },
         { "-size", FALSE, etREAL, { &size }, "Horizontal size of the matrix in ps units" },
         { "-bx",
-          FALSE,
-          etREAL,
-          { &boxx },
-          "Element x-size, overrides [TT]-size[tt] (also y-size when [TT]-by[tt] is not set)" },
+              FALSE,
+              etREAL,
+              { &boxx },
+              "Element x-size, overrides [TT]-size[tt] (also y-size when [TT]-by[tt] is not set)" },
         { "-by", FALSE, etREAL, { &boxy }, "Element y-size" },
         { "-rainbow", FALSE, etENUM, { rainbow }, "Rainbow colors, convert white to" },
         { "-gradient",
-          FALSE,
-          etRVEC,
-          { grad },
-          "Re-scale colormap to a smooth gradient from white {1,1,1} to {r,g,b}" },
+              FALSE,
+              etRVEC,
+              { grad },
+              "Re-scale colormap to a smooth gradient from white {1,1,1} to {r,g,b}" },
         { "-skip", FALSE, etINT, { &skip }, "only write out every nr-th row and column" },
         { "-zeroline",
-          FALSE,
-          etBOOL,
-          { &bZeroLine },
-          "insert line in [REF].xpm[ref] matrix where axis label is zero" },
+              FALSE,
+              etBOOL,
+              { &bZeroLine },
+              "insert line in [REF].xpm[ref] matrix where axis label is zero" },
         { "-legoffset",
-          FALSE,
-          etINT,
-          { &mapoffset },
-          "Skip first N colors from [REF].xpm[ref] file for the legend" },
+              FALSE,
+              etINT,
+              { &mapoffset },
+              "Skip first N colors from [REF].xpm[ref] file for the legend" },
         { "-combine", FALSE, etENUM, { combine }, "Combine two matrices" },
         { "-cmin", FALSE, etREAL, { &cmin }, "Minimum for combination output" },
         { "-cmax", FALSE, etREAL, { &cmax }, "Maximum for combination output" }
@@ -1503,8 +1545,8 @@ int gmx_xpm2ps(int argc, char* argv[])
                        { efEPS, "-o", nullptr, ffOPTWR },     { efXPM, "-xpm", nullptr, ffOPTWR } };
 #define NFILE asize(fnm)
 
-    if (!parse_common_args(&argc, argv, PCA_CAN_VIEW, NFILE, fnm, NPA, pa, asize(desc), desc, 0,
-                           nullptr, &oenv))
+    if (!parse_common_args(
+                &argc, argv, PCA_CAN_VIEW, NFILE, fnm, NPA, pa, asize(desc), desc, 0, nullptr, &oenv))
     {
         return 0;
     }
@@ -1528,43 +1570,28 @@ int gmx_xpm2ps(int argc, char* argv[])
         elegend = elNone;
     }
 
-    epsfile = ftp2fn_null(efEPS, NFILE, fnm);
-    xpmfile = opt2fn_null("-xpm", NFILE, fnm);
-    if (epsfile == nullptr && xpmfile == nullptr)
-    {
-        if (ecombine != ecHalves)
-        {
-            xpmfile = opt2fn("-xpm", NFILE, fnm);
-        }
-        else
-        {
-            epsfile = ftp2fn(efEPS, NFILE, fnm);
-        }
-    }
-    if (ecombine != ecHalves && epsfile)
-    {
-        fprintf(stderr,
-                "WARNING: can only write result of arithmetic combination "
-                "of two matrices to .xpm file\n"
-                "         file %s will not be written\n",
-                epsfile);
-        epsfile = nullptr;
-    }
-
     bDiag      = ediag != edNone;
     bFirstDiag = ediag != edSecond;
 
     fn = opt2fn("-f", NFILE, fnm);
     std::vector<t_matrix> mat, mat2;
     mat = read_xpm_matrix(fn);
-    fprintf(stderr, "There %s %zu matri%s in %s\n", (mat.size() > 1) ? "are" : "is", mat.size(),
-            (mat.size() > 1) ? "ces" : "x", fn);
-    fn = opt2fn_null("-f2", NFILE, fnm);
-    if (fn)
+    fprintf(stderr,
+            "There %s %zu matri%s in %s\n",
+            (mat.size() > 1) ? "are" : "is",
+            mat.size(),
+            (mat.size() > 1) ? "ces" : "x",
+            fn);
+    fn2 = opt2fn_null("-f2", NFILE, fnm);
+    if (fn2)
     {
-        mat2 = read_xpm_matrix(fn);
-        fprintf(stderr, "There %s %zu matri%s in %s\n", (mat2.size() > 1) ? "are" : "is",
-                mat2.size(), (mat2.size() > 1) ? "ces" : "x", fn);
+        mat2 = read_xpm_matrix(fn2);
+        fprintf(stderr,
+                "There %s %zu matri%s in %s\n",
+                (mat2.size() > 1) ? "are" : "is",
+                mat2.size(),
+                (mat2.size() > 1) ? "ces" : "x",
+                fn2);
         if (mat.size() != mat2.size())
         {
             fprintf(stderr, "Different number of matrices, using the smallest number.\n");
@@ -1626,14 +1653,44 @@ int gmx_xpm2ps(int argc, char* argv[])
 
     if (ecombine && ecombine != ecHalves)
     {
-        write_combined_matrix(ecombine, xpmfile, mat, mat2, opt2parg_bSet("-cmin", NPA, pa) ? &cmin : nullptr,
+        const char* epsfile;
+        epsfile = ftp2fn_null(efEPS, NFILE, fnm);
+        if (epsfile)
+        {
+            fprintf(stderr,
+                    "WARNING: can only write result of arithmetic combination "
+                    "of two matrices to .xpm file\n"
+                    "         file %s will not be written\n",
+                    epsfile);
+        }
+        write_combined_matrix(ecombine,
+                              opt2fn("-xpm", NFILE, fnm),
+                              mat,
+                              mat2,
+                              opt2parg_bSet("-cmin", NPA, pa) ? &cmin : nullptr,
                               opt2parg_bSet("-cmax", NPA, pa) ? &cmax : nullptr);
     }
     else
     {
-        do_mat(mat, mat2, bFrame, bZeroLine, bDiag, bFirstDiag, bTitle, bTitleOnce, bYonce, elegend,
-               size, boxx, boxy, epsfile, xpmfile, opt2fn_null("-di", NFILE, fnm),
-               opt2fn_null("-do", NFILE, fnm), skip, mapoffset);
+        do_mat(mat,
+               mat2,
+               bFrame,
+               bZeroLine,
+               bDiag,
+               bFirstDiag,
+               bTitle,
+               bTitleOnce,
+               bYonce,
+               elegend,
+               size,
+               boxx,
+               boxy,
+               ftp2fn(efEPS, NFILE, fnm),
+               opt2fn_null("-xpm", NFILE, fnm),
+               opt2fn_null("-di", NFILE, fnm),
+               opt2fn_null("-do", NFILE, fnm),
+               skip,
+               mapoffset);
     }
 
     view_all(oenv, NFILE, fnm);

@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2018- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 #ifndef GMXAPI_SYSTEM_H
 #define GMXAPI_SYSTEM_H
@@ -96,7 +95,7 @@ public:
      * Some sort of prototype or clone idiom could be useful, but
      * needs to explicitly identify any expensive operations.
      */
-    System(const System&) = delete;
+    System(const System&)            = delete;
     System& operator=(const System&) = delete;
     /*! \} */
 
@@ -152,7 +151,7 @@ public:
      * 2. A new Session is created using the ContextImpl and the runner
      *
      * Then, for each module available through getSpec()->getModules(),
-     * the session and module are passed to gmxapi::setSessionRestraint().
+     * the session and module are passed to gmxapi::addSessionRestraint().
      * 1. A gmx::IRestraintPotential is retrieved from the module.
      * 2. A unique, named SessionResources is created for the module and attached to the SessionImpl.
      *     1. The module is added as a signaller to the session SignalManager
@@ -170,6 +169,8 @@ public:
      */
     std::shared_ptr<Session> launch(const std::shared_ptr<Context>& context);
 
+    [[nodiscard]] Impl* get() const;
+
 private:
     /*!
      * \brief Opaque pointer to implementation.
@@ -183,13 +184,16 @@ private:
  * The TPR file has sufficient information to fully specify an MD run, though
  * various parameters are implicit until the work is launched. The TPR filename
  * provided must refer to identical TPR files at the API client and at the
- * master rank of the execution host.
+ * main rank of the execution host.
  *
  * \param filename Filesystem path of TPR file.
  * \returns gmxapi::System object with the specified workflow.
  * \ingroup gmxapi
  */
 System fromTprFile(const std::string& filename);
+
+class Workflow;
+std::shared_ptr<Workflow> getWork(const System::Impl& system);
 
 } // end namespace gmxapi
 

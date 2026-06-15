@@ -1,11 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2014,2015,2016,2017,2018 by the GROMACS development team.
- * Copyright (c) 2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2014- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -19,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -28,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \internal
  * \file
@@ -47,16 +45,28 @@
 
 #include "gromacs/topology/ifunc.h"
 
+/*! \brief Return whether this is a listed interaction that actually
+ * calculates a potential (not e.g. a connection).
+ *
+ * \todo This function could go away when idef is not a big bucket of
+ * everything. */
+static inline bool ftypeIsListedPotential(InteractionFunction ftype)
+{
+    return ((interaction_function[ftype].flags & IF_BOND) != 0U)
+           && ftype != InteractionFunction::ConnectBonds;
+}
+
 /*! \brief Return whether this is an interaction that actually
  * calculates a potential and works on multiple atoms (not e.g. a
  * connection or a position restraint).
  *
  * \todo This function could go away when idef is not a big bucket of
  * everything. */
-static bool ftype_is_bonded_potential(int ftype)
+static inline bool ftype_is_bonded_potential(InteractionFunction ftype)
 {
     return ((interaction_function[ftype].flags & IF_BOND) != 0U)
-           && !(ftype == F_CONNBONDS || ftype == F_POSRES || ftype == F_FBPOSRES);
+           && !(ftype == InteractionFunction::ConnectBonds || ftype == InteractionFunction::PositionRestraints
+                || ftype == InteractionFunction::FlatBottomedPositionRestraints);
 }
 
 #endif

@@ -1,12 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2009,2010,2011,2012,2013 by the GROMACS development team.
- * Copyright (c) 2014,2015,2016,2017,2018 by the GROMACS development team.
- * Copyright (c) 2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2009- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -20,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -29,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \internal \file
  * \brief
@@ -56,17 +53,26 @@
 
 #include "evaluate.h"
 
+#include <cmath>
+#include <cstdio>
 #include <cstring>
 
 #include <algorithm>
+#include <memory>
 
 #include "gromacs/math/utilities.h"
-#include "gromacs/math/vec.h"
 #include "gromacs/selection/indexutil.h"
+#include "gromacs/selection/position.h"
 #include "gromacs/selection/selection.h"
+#include "gromacs/selection/selectioncollection.h"
+#include "gromacs/selection/selparam.h"
+#include "gromacs/selection/selvalue.h"
+#include "gromacs/topology/block.h"
 #include "gromacs/utility/exceptions.h"
 #include "gromacs/utility/gmxassert.h"
+#include "gromacs/utility/real.h"
 #include "gromacs/utility/smalloc.h"
+#include "gromacs/utility/vec.h"
 
 #include "mempool.h"
 #include "poscalc.h"
@@ -409,7 +415,6 @@ SelectionEvaluator::SelectionEvaluator() {}
  * \param[in,out] coll  The selection collection to evaluate.
  * \param[in] fr  Frame for which the evaluation should be carried out.
  * \param[in] pbc PBC data, or NULL if no PBC should be used.
- * \returns   0 on successful evaluation, a non-zero error code on error.
  *
  * This functions sets the global variables for topology, frame and PBC,
  * clears some information in the selection to initialize the evaluation
@@ -455,9 +460,9 @@ void SelectionEvaluator::evaluate(SelectionCollection* coll, t_trxframe* fr, t_p
     SelectionDataList::const_iterator isel;
     for (isel = sc->sel.begin(); isel != sc->sel.end(); ++isel)
     {
-        internal::SelectionData& sel = **isel;
-        sel.refreshMassesAndCharges(sc->top);
-        sel.updateCoveredFractionForFrame();
+        internal::SelectionData& selData = **isel;
+        selData.refreshMassesAndCharges(sc->top);
+        selData.updateCoveredFractionForFrame();
     }
 }
 
@@ -485,7 +490,6 @@ void SelectionEvaluator::evaluateFinal(SelectionCollection* coll, int nframes)
  * \param[in] data Data for the current frame.
  * \param[in] sel  Selection element being evaluated.
  * \param[in] g    Group for which \p sel should be evaluated.
- * \returns   0 on success, a non-zero error code on error.
  *
  * Evaluates each child of \p sel in \p g.
  */
@@ -522,6 +526,7 @@ void _gmx_sel_evaluate_static(gmx_sel_evaluate_t* /* data */,
 {
     if (sel->flags & SEL_UNSORTED)
     {
+        gmx_ana_index_reserve(sel->v.u.g, sel->u.cgrp.isize);
         // This only works if g contains all the atoms, but that is currently
         // the only supported case.
         gmx_ana_index_copy(sel->v.u.g, &sel->u.cgrp, false);
@@ -541,7 +546,6 @@ void _gmx_sel_evaluate_static(gmx_sel_evaluate_t* /* data */,
  * \param[in] data Data for the current frame.
  * \param[in] sel  Selection element being evaluated.
  * \param[in] g    Group for which \p sel should be evaluated.
- * \returns   0 on success, a non-zero error code on error.
  *
  * Evaluates the child element (there should be exactly one) in \p g.
  * The compiler has taken care that the child actually stores the evaluated
@@ -566,7 +570,6 @@ void _gmx_sel_evaluate_subexpr_simple(gmx_sel_evaluate_t*                     da
  * \param[in] data Data for the current frame.
  * \param[in] sel  Selection element being evaluated.
  * \param[in] g    Group for which \p sel should be evaluated.
- * \returns   0 on success, a non-zero error code on error.
  *
  * If this is the first call for this frame, evaluates the child element
  * there should be exactly one in \p g.
@@ -601,7 +604,6 @@ void _gmx_sel_evaluate_subexpr_staticeval(gmx_sel_evaluate_t*                   
  * \param[in]  data  Data for the current frame.
  * \param[in]  sel   Selection element being evaluated.
  * \param[in]  g     Group for which \p sel should be evaluated.
- * \returns    0 on success, a non-zero error code on error.
  *
  * Finds the part of \p g for which the subexpression
  * has not yet been evaluated by comparing \p g to \p sel->u.cgrp.
@@ -719,7 +721,6 @@ void _gmx_sel_evaluate_subexpr(gmx_sel_evaluate_t*                     data,
  * \param[in] data Data for the current frame.
  * \param[in] sel Selection element being evaluated.
  * \param[in] g   Group for which \p sel should be evaluated.
- * \returns   0 for success.
  *
  * Sets the value pointers of the child and its child to point to the same
  * memory as the value pointer of this element to avoid copying, and then
@@ -739,6 +740,16 @@ void _gmx_sel_evaluate_subexprref_simple(gmx_sel_evaluate_t*                    
         _gmx_selvalue_setstore_alloc(&sel->child->child->v, sel->v.u.ptr, sel->child->child->v.nalloc);
         sel->child->evaluate(data, sel->child, g);
     }
+    else
+    {
+        /* For g == nullptr, recompute the inner numeric expression */
+        if (sel->child->child != nullptr && (sel->v.type == INT_VALUE || sel->v.type == REAL_VALUE)
+            && (sel->child->child->type == SEL_EXPRESSION) && sel->child->child->evaluate != nullptr)
+        {
+            sel->child->child->evaluate(data, sel->child->child, g);
+        }
+    }
+
     sel->v.nr = sel->child->v.nr;
     if (sel->u.param)
     {
@@ -754,7 +765,6 @@ void _gmx_sel_evaluate_subexprref_simple(gmx_sel_evaluate_t*                    
  * \param[in] data Data for the current frame.
  * \param[in] sel Selection element being evaluated.
  * \param[in] g   Group for which \p sel should be evaluated.
- * \returns   0 on success, a non-zero error code on error.
  *
  * If the value type is \ref POS_VALUE, the value of the child is simply
  * copied to set the value of \p sel (the child subexpression should
@@ -783,7 +793,7 @@ void _gmx_sel_evaluate_subexprref(gmx_sel_evaluate_t*                     data,
             if (!g)
             {
                 sel->v.nr = expr->v.nr;
-                memcpy(sel->v.u.i, expr->v.u.i, sel->v.nr * sizeof(*sel->v.u.i));
+                std::memcpy(sel->v.u.i, expr->v.u.i, sel->v.nr * sizeof(*sel->v.u.i));
             }
             else
             {
@@ -804,7 +814,7 @@ void _gmx_sel_evaluate_subexprref(gmx_sel_evaluate_t*                     data,
             if (!g)
             {
                 sel->v.nr = expr->v.nr;
-                memcpy(sel->v.u.r, expr->v.u.r, sel->v.nr * sizeof(*sel->v.u.r));
+                std::memcpy(sel->v.u.r, expr->v.u.r, sel->v.nr * sizeof(*sel->v.u.r));
             }
             else
             {
@@ -825,7 +835,7 @@ void _gmx_sel_evaluate_subexprref(gmx_sel_evaluate_t*                     data,
             if (!g)
             {
                 sel->v.nr = expr->v.nr;
-                memcpy(sel->v.u.s, expr->v.u.s, sel->v.nr * sizeof(*sel->v.u.s));
+                std::memcpy(sel->v.u.s, expr->v.u.s, sel->v.nr * sizeof(*sel->v.u.s));
             }
             else
             {
@@ -882,7 +892,6 @@ void _gmx_sel_evaluate_subexprref(gmx_sel_evaluate_t*                     data,
  * \param[in] data Data for the current frame.
  * \param[in] sel Selection element being evaluated.
  * \param[in] g   Group for which \p sel should be evaluated.
- * \returns   0 on success, a non-zero error code on error.
  *
  * Evaluates each child of a \ref SEL_EXPRESSION element.
  * The value of \p sel is not touched.
@@ -917,7 +926,6 @@ void _gmx_sel_evaluate_method_params(gmx_sel_evaluate_t*                     dat
  * \param[in] data Data for the current frame.
  * \param[in] sel Selection element being evaluated.
  * \param[in] g   Group for which \p sel should be evaluated.
- * \returns   0 on success, a non-zero error code on error.
  *
  * Evaluates all child selections (using _gmx_sel_evaluate_method_params())
  * to evaluate any parameter values.
@@ -953,8 +961,7 @@ void _gmx_sel_evaluate_method(gmx_sel_evaluate_t*                     data,
                     expandValueForPositions(sel->v.u.r, &sel->v.nr, sel->u.expr.pos);
                     break;
                 default:
-                    GMX_RELEASE_ASSERT(false,
-                                       "Unimplemented value type for position update method");
+                    GMX_RELEASE_ASSERT(false, "Unimplemented value type for position update method");
             }
         }
     }
@@ -968,7 +975,6 @@ void _gmx_sel_evaluate_method(gmx_sel_evaluate_t*                     data,
  * \param[in] data Data for the current frame.
  * \param[in] sel Selection element being evaluated.
  * \param[in] g   Group for which \p sel should be evaluated.
- * \returns   0 on success, a non-zero error code on error.
  *
  * Evaluates all child selections (using _gmx_sel_evaluate_method_params())
  * to evaluate any parameter values.
@@ -1006,7 +1012,6 @@ void _gmx_sel_evaluate_modifier(gmx_sel_evaluate_t*                     data,
  * \param[in] data Data for the current frame.
  * \param[in] sel Selection element being evaluated.
  * \param[in] g   Group for which \p sel should be evaluated.
- * \returns   0 on success, a non-zero error code on error.
  *
  * Evaluates the child element (there should be only one) in the group
  * \p g, and then sets the value of \p sel to the complement of the
@@ -1028,7 +1033,6 @@ void _gmx_sel_evaluate_not(gmx_sel_evaluate_t*                     data,
  * \param[in] data Data for the current frame.
  * \param[in] sel Selection element being evaluated.
  * \param[in] g   Group for which \p sel should be evaluated.
- * \returns   0 on success, a non-zero error code on error.
  *
  * Short-circuiting evaluation of logical AND expressions.
  *
@@ -1079,7 +1083,6 @@ void _gmx_sel_evaluate_and(gmx_sel_evaluate_t*                     data,
  * \param[in] data Data for the current frame.
  * \param[in] sel Selection element being evaluated.
  * \param[in] g   Group for which \p sel should be evaluated.
- * \returns   0 on success, a non-zero error code on error.
  *
  * Short-circuiting evaluation of logical OR expressions.
  *
@@ -1143,7 +1146,6 @@ void _gmx_sel_evaluate_or(gmx_sel_evaluate_t*                     data,
  * \param[in] data Data for the current frame.
  * \param[in] sel  Selection element being evaluated.
  * \param[in] g    Group for which \p sel should be evaluated.
- * \returns   0 on success, a non-zero error code on error.
  */
 void _gmx_sel_evaluate_arithmetic(gmx_sel_evaluate_t*                     data,
                                   const gmx::SelectionTreeElementPointer& sel,
@@ -1174,7 +1176,7 @@ void _gmx_sel_evaluate_arithmetic(gmx_sel_evaluate_t*                     data,
     n         = (sel->flags & SEL_SINGLEVAL) ? 1 : g->isize;
     sel->v.nr = n;
 
-    bool bArithNeg = (sel->u.arith.type == ARITH_NEG);
+    bool bArithNeg = (sel->u.type == ARITH_NEG);
     GMX_ASSERT(right || bArithNeg, "Right operand cannot be null except for negations");
     for (i = i1 = i2 = 0; i < n; ++i)
     {
@@ -1183,14 +1185,14 @@ void _gmx_sel_evaluate_arithmetic(gmx_sel_evaluate_t*                     data,
         {
             rval = right->v.u.r[i2];
         }
-        switch (sel->u.arith.type)
+        switch (sel->u.type)
         {
             case ARITH_PLUS: val = lval + rval; break;
             case ARITH_MINUS: val = lval - rval; break;
             case ARITH_NEG: val = -lval; break;
             case ARITH_MULT: val = lval * rval; break;
             case ARITH_DIV: val = lval / rval; break;
-            case ARITH_EXP: val = pow(lval, rval); break;
+            case ARITH_EXP: val = std::pow(lval, rval); break;
         }
         sel->v.u.r[i] = val;
         if (!(left->flags & SEL_SINGLEVAL))

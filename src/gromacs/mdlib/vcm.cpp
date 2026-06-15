@@ -1,13 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
- * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2016,2017 by the GROMACS development team.
- * Copyright (c) 2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 1991- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -21,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -30,45 +26,59 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /* This file is completely threadsafe - keep it that way! */
 #include "gmxpre.h"
 
 #include "vcm.h"
 
+#include <filesystem>
+#include <string>
+
 #include "gromacs/math/functions.h"
 #include "gromacs/math/invertmatrix.h"
-#include "gromacs/math/vec.h"
-#include "gromacs/math/vecdump.h"
 #include "gromacs/mdlib/gmx_omp_nthreads.h"
 #include "gromacs/mdtypes/inputrec.h"
 #include "gromacs/mdtypes/md_enums.h"
 #include "gromacs/mdtypes/mdatom.h"
 #include "gromacs/pbcutil/pbc.h"
 #include "gromacs/topology/topology.h"
+#include "gromacs/topology/topology_enums.h"
+#include "gromacs/utility/arrayref.h"
+#include "gromacs/utility/basedefinitions.h"
+#include "gromacs/utility/enumerationhelpers.h"
 #include "gromacs/utility/fatalerror.h"
 #include "gromacs/utility/gmxassert.h"
 #include "gromacs/utility/gmxomp.h"
 #include "gromacs/utility/smalloc.h"
+#include "gromacs/utility/vec.h"
+#include "gromacs/utility/vecdump.h"
 
-t_vcm::t_vcm(const SimulationGroups& groups, const t_inputrec& ir) :
+const char* enumValueToString(ComRemovalAlgorithm enumValue)
+{
+    static constexpr gmx::EnumerationArray<ComRemovalAlgorithm, const char*> comRemovalAlgorithmNames = {
+        "Linear", "Angular", "None", "Linear-acceleration-correction"
+    };
+    return comRemovalAlgorithmNames[enumValue];
+}
+
+t_vcm::t_vcm(const SimulationGroups& groups, const t_inputrec& ir, const int numAtoms) :
     integratorConservesMomentum(!EI_RANDOM(ir.eI))
 {
-    mode     = (ir.nstcomm > 0) ? ir.comm_mode : ecmNO;
+    mode     = (ir.nstcomm > 0) ? ir.comm_mode : ComRemovalAlgorithm::No;
     ndim     = ndof_com(&ir);
     timeStep = ir.nstcomm * ir.delta_t;
 
-    if (mode == ecmANGULAR && ndim < 3)
+    if (mode == ComRemovalAlgorithm::Angular && ndim < 3)
     {
-        gmx_fatal(FARGS, "Can not have angular comm removal with pbc=%s",
-                  c_pbcTypeNames[ir.pbcType].c_str());
+        gmx_fatal(FARGS, "Can not have angular comm removal with pbc=%s", c_pbcTypeNames[ir.pbcType].c_str());
     }
 
-    if (mode != ecmNO)
+    if (mode != ComRemovalAlgorithm::No)
     {
         nr = groups.groups[SimulationAtomGroupType::MassCenterVelocityRemoval].size();
         /* Allocate one extra for a possible rest group */
@@ -77,7 +87,7 @@ t_vcm::t_vcm(const SimulationGroups& groups, const t_inputrec& ir) :
          * invalidation we add 2 elements to get a 152 byte separation.
          */
         stride = nr + 3;
-        if (mode == ecmANGULAR)
+        if (mode == ComRemovalAlgorithm::Angular)
         {
             snew(group_i, size);
 
@@ -86,19 +96,25 @@ t_vcm::t_vcm(const SimulationGroups& groups, const t_inputrec& ir) :
             group_w.resize(size);
         }
 
+        const gmx::RVec zero = { 0.0_real, 0.0_real, 0.0_real };
+
         group_name.resize(size);
-        group_p.resize(size);
-        group_v.resize(size);
+        group_p.resize(size, zero);
+        group_v.resize(size, zero);
         group_mass.resize(size);
         group_ndf.resize(size);
         for (int g = 0; (g < nr); g++)
         {
-            group_ndf[g] = ir.opts.nrdf[g];
             group_name[g] =
                     *groups.groupNames[groups.groups[SimulationAtomGroupType::MassCenterVelocityRemoval][g]];
         }
 
-        thread_vcm.resize(gmx_omp_nthreads_get(emntDefault) * stride);
+        for (int i = 0; i < numAtoms; i++)
+        {
+            group_ndf[getGroupType(groups, SimulationAtomGroupType::MassCenterVelocityRemoval, i)] += 3;
+        }
+
+        thread_vcm.resize(gmx_omp_nthreads_get(ModuleMultiThread::Default) * stride);
     }
 
     nFreeze = ir.opts.nFreeze;
@@ -106,7 +122,7 @@ t_vcm::t_vcm(const SimulationGroups& groups, const t_inputrec& ir) :
 
 t_vcm::~t_vcm()
 {
-    if (mode == ecmANGULAR)
+    if (mode == ComRemovalAlgorithm::Angular)
     {
         sfree(group_i);
     }
@@ -116,9 +132,9 @@ void reportComRemovalInfo(FILE* fp, const t_vcm& vcm)
 {
 
     /* Copy pointer to group names and print it. */
-    if (fp && vcm.mode != ecmNO)
+    if (fp && vcm.mode != ComRemovalAlgorithm::No)
     {
-        fprintf(fp, "Center of mass motion removal mode is %s\n", ECOM(vcm.mode));
+        fprintf(fp, "Center of mass motion removal mode is %s\n", enumValueToString(vcm.mode));
         fprintf(fp,
                 "We have the following groups for center of"
                 " mass motion removal:\n");
@@ -157,11 +173,11 @@ void calc_vcm_grp(const t_mdatoms&               md,
                   gmx::ArrayRef<const gmx::RVec> v,
                   t_vcm*                         vcm)
 {
-    if (vcm->mode == ecmNO)
+    if (vcm->mode == ComRemovalAlgorithm::No)
     {
         return;
     }
-    int nthreads = gmx_omp_nthreads_get(emntDefault);
+    int nthreads = gmx_omp_nthreads_get(ModuleMultiThread::Default);
 
     {
 #pragma omp parallel num_threads(nthreads) default(none) shared(x, v, vcm, md)
@@ -173,7 +189,7 @@ void calc_vcm_grp(const t_mdatoms&               md,
                 t_vcm_thread* vcm_t = &vcm->thread_vcm[t * vcm->stride + g];
                 vcm_t->mass         = 0;
                 clear_rvec(vcm_t->p);
-                if (vcm->mode == ecmANGULAR)
+                if (vcm->mode == ComRemovalAlgorithm::Angular)
                 {
                     /* Reset angular momentum */
                     clear_rvec(vcm_t->j);
@@ -187,7 +203,7 @@ void calc_vcm_grp(const t_mdatoms&               md,
             {
                 int  g  = 0;
                 real m0 = md.massT[i];
-                if (md.cVCM)
+                if (!md.cVCM.empty())
                 {
                     g = md.cVCM[i];
                 }
@@ -200,7 +216,7 @@ void calc_vcm_grp(const t_mdatoms&               md,
                     vcm_t->p[m] += m0 * v[i][m];
                 }
 
-                if (vcm->mode == ecmANGULAR)
+                if (vcm->mode == ComRemovalAlgorithm::Angular)
                 {
                     /* Calculate angular momentum */
                     rvec j0;
@@ -221,7 +237,7 @@ void calc_vcm_grp(const t_mdatoms&               md,
             /* Reset linear momentum */
             vcm->group_mass[g] = 0;
             clear_rvec(vcm->group_p[g]);
-            if (vcm->mode == ecmANGULAR)
+            if (vcm->mode == ComRemovalAlgorithm::Angular)
             {
                 /* Reset angular momentum */
                 clear_rvec(vcm->group_j[g]);
@@ -235,7 +251,7 @@ void calc_vcm_grp(const t_mdatoms&               md,
                 t_vcm_thread* vcm_t = &vcm->thread_vcm[t * vcm->stride + g];
                 vcm->group_mass[g] += vcm_t->mass;
                 rvec_inc(vcm->group_p[g], vcm_t->p);
-                if (vcm->mode == ecmANGULAR)
+                if (vcm->mode == ComRemovalAlgorithm::Angular)
                 {
                     rvec_inc(vcm->group_j[g], vcm_t->j);
                     rvec_inc(vcm->group_x[g], vcm_t->x);
@@ -258,17 +274,17 @@ void calc_vcm_grp(const t_mdatoms&               md,
 template<int numDimensions>
 static void doStopComMotionLinear(const t_mdatoms& mdatoms, gmx::ArrayRef<gmx::RVec> v, const t_vcm& vcm)
 {
-    const int             homenr   = mdatoms.homenr;
-    const unsigned short* group_id = mdatoms.cVCM;
+    const int                                 homenr   = mdatoms.homenr;
+    const gmx::ArrayRef<const unsigned short> group_id = mdatoms.cVCM;
 
-    if (mdatoms.cFREEZE != nullptr)
+    if (!mdatoms.cFREEZE.empty())
     {
         GMX_RELEASE_ASSERT(vcm.nFreeze != nullptr, "Need freeze dimension info with freeze groups");
 
 #pragma omp for schedule(static)
         for (int i = 0; i < homenr; i++)
         {
-            unsigned short vcmGroup    = (group_id == nullptr ? 0 : group_id[i]);
+            unsigned short vcmGroup    = group_id.empty() ? 0 : group_id[i];
             unsigned short freezeGroup = mdatoms.cFREEZE[i];
             for (int d = 0; d < numDimensions; d++)
             {
@@ -279,7 +295,7 @@ static void doStopComMotionLinear(const t_mdatoms& mdatoms, gmx::ArrayRef<gmx::R
             }
         }
     }
-    else if (group_id == nullptr)
+    else if (group_id.empty())
     { // NOLINT bugprone-branch-clone This is actually a clang-tidy bug
 #pragma omp for schedule(static)
         for (int i = 0; i < homenr; i++)
@@ -316,16 +332,16 @@ static void doStopComMotionLinear(const t_mdatoms& mdatoms, gmx::ArrayRef<gmx::R
  * \param[in]     vcm       VCM data
  */
 template<int numDimensions>
-static void doStopComMotionAccelerationCorrection(int                      homenr,
-                                                  const unsigned short*    group_id,
-                                                  gmx::ArrayRef<gmx::RVec> x,
-                                                  gmx::ArrayRef<gmx::RVec> v,
-                                                  const t_vcm&             vcm)
+static void doStopComMotionAccelerationCorrection(int                                 homenr,
+                                                  gmx::ArrayRef<const unsigned short> group_id,
+                                                  gmx::ArrayRef<gmx::RVec>            x,
+                                                  gmx::ArrayRef<gmx::RVec>            v,
+                                                  const t_vcm&                        vcm)
 {
     const real xCorrectionFactor = 0.5 * vcm.timeStep;
 
     // NOLINTNEXTLINE bugprone-branch-clone This is actually a clang-tidy bug
-    if (group_id == nullptr)
+    if (group_id.empty())
     {
 #pragma omp for schedule(static)
         for (int i = 0; i < homenr; i++)
@@ -357,22 +373,19 @@ static void do_stopcm_grp(const t_mdatoms&         mdatoms,
                           gmx::ArrayRef<gmx::RVec> v,
                           const t_vcm&             vcm)
 {
-    if (vcm.mode == ecmNO)
+    if (vcm.mode == ComRemovalAlgorithm::No)
     {
         return;
     }
     {
-        const int             homenr   = mdatoms.homenr;
-        const unsigned short* group_id = mdatoms.cVCM;
+        const int                                 homenr   = mdatoms.homenr;
+        const gmx::ArrayRef<const unsigned short> group_id = mdatoms.cVCM;
 
-        int gmx_unused nth = gmx_omp_nthreads_get(emntDefault);
-        // homenr could be shared, but gcc-8 & gcc-9 don't agree how to write that...
-        // https://www.gnu.org/software/gcc/gcc-9/porting_to.html -> OpenMP data sharing
-#pragma omp parallel num_threads(nth) default(none) shared(x, v, vcm, group_id, mdatoms) \
-        firstprivate(homenr)
+        int gmx_unused nth = gmx_omp_nthreads_get(ModuleMultiThread::Default);
+#pragma omp parallel num_threads(nth) default(none) shared(x, v, vcm, group_id, mdatoms) shared(homenr)
         {
-            if (vcm.mode == ecmLINEAR || vcm.mode == ecmANGULAR
-                || (vcm.mode == ecmLINEAR_ACCELERATION_CORRECTION && x.empty()))
+            if (vcm.mode == ComRemovalAlgorithm::Linear || vcm.mode == ComRemovalAlgorithm::Angular
+                || (vcm.mode == ComRemovalAlgorithm::LinearAccelerationCorrection && x.empty()))
             {
                 /* Subtract linear momentum for v */
                 switch (vcm.ndim)
@@ -384,7 +397,7 @@ static void do_stopcm_grp(const t_mdatoms&         mdatoms,
             }
             else
             {
-                GMX_ASSERT(vcm.mode == ecmLINEAR_ACCELERATION_CORRECTION,
+                GMX_ASSERT(vcm.mode == ComRemovalAlgorithm::LinearAccelerationCorrection,
                            "When the mode is not linear or angular, it should be acceleration "
                            "correction");
                 /* Subtract linear momentum for v and x*/
@@ -401,7 +414,7 @@ static void do_stopcm_grp(const t_mdatoms&         mdatoms,
                         break;
                 }
             }
-            if (vcm.mode == ecmANGULAR)
+            if (vcm.mode == ComRemovalAlgorithm::Angular)
             {
                 /* Subtract angular momentum */
                 GMX_ASSERT(!x.empty(), "Need x to compute angular momentum correction");
@@ -410,7 +423,7 @@ static void do_stopcm_grp(const t_mdatoms&         mdatoms,
 #pragma omp for schedule(static)
                 for (int i = 0; i < homenr; i++)
                 {
-                    if (group_id)
+                    if (!group_id.empty())
                     {
                         g = group_id[i];
                     }
@@ -474,7 +487,7 @@ static void process_and_check_cm_grp(FILE* fp, t_vcm* vcm, real Temp_Max)
     tensor Icm;
 
     /* First analyse the total results */
-    if (vcm->mode != ecmNO)
+    if (vcm->mode != ComRemovalAlgorithm::No)
     {
         for (g = 0; (g < vcm->nr); g++)
         {
@@ -486,7 +499,7 @@ static void process_and_check_cm_grp(FILE* fp, t_vcm* vcm, real Temp_Max)
             }
             /* Else it's zero anyway! */
         }
-        if (vcm->mode == ecmANGULAR)
+        if (vcm->mode == ComRemovalAlgorithm::Angular)
         {
             for (g = 0; (g < vcm->nr); g++)
             {
@@ -544,12 +557,16 @@ static void process_and_check_cm_grp(FILE* fp, t_vcm* vcm, real Temp_Max)
 
             if ((Temp_cm > Temp_Max) && fp)
             {
-                fprintf(fp, "Large VCM(group %s): %12.5f, %12.5f, %12.5f, Temp-cm: %12.5e\n",
-                        vcm->group_name[g], vcm->group_v[g][XX], vcm->group_v[g][YY],
-                        vcm->group_v[g][ZZ], Temp_cm);
+                fprintf(fp,
+                        "Large VCM(group %s): %12.5f, %12.5f, %12.5f, Temp-cm: %12.5e\n",
+                        vcm->group_name[g],
+                        vcm->group_v[g][XX],
+                        vcm->group_v[g][YY],
+                        vcm->group_v[g][ZZ],
+                        Temp_cm);
             }
 
-            if (vcm->mode == ecmANGULAR)
+            if (vcm->mode == ComRemovalAlgorithm::Angular)
             {
                 ekrot = 0.5 * iprod(vcm->group_j[g], vcm->group_w[g]);
                 // TODO: Change absolute energy comparison to relative
@@ -557,18 +574,37 @@ static void process_and_check_cm_grp(FILE* fp, t_vcm* vcm, real Temp_Max)
                 {
                     /* if we have an integrator that may not conserve momenta, skip */
                     tm = vcm->group_mass[g];
-                    fprintf(fp, "Group %s with mass %12.5e, Ekrot %12.5e Det(I) = %12.5e\n",
-                            vcm->group_name[g], tm, ekrot, det(vcm->group_i[g]));
-                    fprintf(fp, "  COM: %12.5f  %12.5f  %12.5f\n", vcm->group_x[g][XX],
-                            vcm->group_x[g][YY], vcm->group_x[g][ZZ]);
-                    fprintf(fp, "  P:   %12.5f  %12.5f  %12.5f\n", vcm->group_p[g][XX],
-                            vcm->group_p[g][YY], vcm->group_p[g][ZZ]);
-                    fprintf(fp, "  V:   %12.5f  %12.5f  %12.5f\n", vcm->group_v[g][XX],
-                            vcm->group_v[g][YY], vcm->group_v[g][ZZ]);
-                    fprintf(fp, "  J:   %12.5f  %12.5f  %12.5f\n", vcm->group_j[g][XX],
-                            vcm->group_j[g][YY], vcm->group_j[g][ZZ]);
-                    fprintf(fp, "  w:   %12.5f  %12.5f  %12.5f\n", vcm->group_w[g][XX],
-                            vcm->group_w[g][YY], vcm->group_w[g][ZZ]);
+                    fprintf(fp,
+                            "Group %s with mass %12.5e, Ekrot %12.5e Det(I) = %12.5e\n",
+                            vcm->group_name[g],
+                            tm,
+                            ekrot,
+                            det(vcm->group_i[g]));
+                    fprintf(fp,
+                            "  COM: %12.5f  %12.5f  %12.5f\n",
+                            vcm->group_x[g][XX],
+                            vcm->group_x[g][YY],
+                            vcm->group_x[g][ZZ]);
+                    fprintf(fp,
+                            "  P:   %12.5f  %12.5f  %12.5f\n",
+                            vcm->group_p[g][XX],
+                            vcm->group_p[g][YY],
+                            vcm->group_p[g][ZZ]);
+                    fprintf(fp,
+                            "  V:   %12.5f  %12.5f  %12.5f\n",
+                            vcm->group_v[g][XX],
+                            vcm->group_v[g][YY],
+                            vcm->group_v[g][ZZ]);
+                    fprintf(fp,
+                            "  J:   %12.5f  %12.5f  %12.5f\n",
+                            vcm->group_j[g][XX],
+                            vcm->group_j[g][YY],
+                            vcm->group_j[g][ZZ]);
+                    fprintf(fp,
+                            "  w:   %12.5f  %12.5f  %12.5f\n",
+                            vcm->group_w[g][XX],
+                            vcm->group_w[g][YY],
+                            vcm->group_w[g][ZZ]);
                     pr_rvecs(fp, 0, "Inertia tensor", vcm->group_i[g], DIM);
                 }
             }
@@ -582,7 +618,7 @@ void process_and_stopcm_grp(FILE*                    fplog,
                             gmx::ArrayRef<gmx::RVec> x,
                             gmx::ArrayRef<gmx::RVec> v)
 {
-    if (vcm->mode != ecmNO)
+    if (vcm->mode != ComRemovalAlgorithm::No)
     {
         // TODO: Replace fixed temperature of 1 by a system value
         process_and_check_cm_grp(fplog, vcm, 1);

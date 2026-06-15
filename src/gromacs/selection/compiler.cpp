@@ -1,12 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2009,2010,2011,2012,2013 by the GROMACS development team.
- * Copyright (c) 2014,2015,2016,2017,2018 by the GROMACS development team.
- * Copyright (c) 2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2009- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -20,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -29,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \internal \file
  * \brief Selection compilation and optimization.
@@ -277,16 +274,26 @@
 
 #include <cmath>
 #include <cstdarg>
+#include <cstdio>
 
 #include <algorithm>
+#include <memory>
+#include <string>
 
-#include "gromacs/math/vec.h"
 #include "gromacs/selection/indexutil.h"
+#include "gromacs/selection/position.h"
 #include "gromacs/selection/selection.h"
+#include "gromacs/selection/selectioncollection.h"
+#include "gromacs/selection/selectionenums.h"
+#include "gromacs/selection/selparam.h"
+#include "gromacs/selection/selvalue.h"
+#include "gromacs/topology/block.h"
 #include "gromacs/utility/exceptions.h"
 #include "gromacs/utility/gmxassert.h"
+#include "gromacs/utility/real.h"
 #include "gromacs/utility/smalloc.h"
 #include "gromacs/utility/stringutil.h"
+#include "gromacs/utility/vec.h"
 
 #include "evaluate.h"
 #include "keywords.h"
@@ -295,6 +302,8 @@
 #include "selectioncollection_impl.h"
 #include "selelem.h"
 #include "selmethod.h"
+
+struct gmx_mtop_t;
 
 using gmx::SelectionLocation;
 using gmx::SelectionTreeElement;
@@ -692,7 +701,7 @@ static SelectionTreeElementPointer remove_unused_subexpressions(SelectionTreeEle
         return SelectionTreeElementPointer();
     }
     root = reverse_selelem_chain(root);
-    while (root->child->type == SEL_SUBEXPR && root->child.unique())
+    while (root->child->type == SEL_SUBEXPR && root->child.use_count() == 1)
     {
         // Frees the root element.
         root = root->next;
@@ -702,7 +711,7 @@ static SelectionTreeElementPointer remove_unused_subexpressions(SelectionTreeEle
     while (item)
     {
         SelectionTreeElementPointer next = item->next;
-        if (item->child->type == SEL_SUBEXPR && item->child.unique())
+        if (item->child->type == SEL_SUBEXPR && item->child.use_count() == 1)
         {
             // Frees the current item when it goes out of scope.
             prev->next = next;
@@ -1704,7 +1713,6 @@ static void make_static(const SelectionTreeElementPointer& sel)
  * \param[in]     data Evaluation data.
  * \param[in,out] sel Selection to process.
  * \param[in]     g   The evaluation group.
- * \returns       0 on success, a non-zero error code on error.
  */
 static void process_const(gmx_sel_evaluate_t* data, const SelectionTreeElementPointer& sel, gmx_ana_index_t* g)
 {
@@ -1757,7 +1765,6 @@ static void store_param_val(const SelectionTreeElementPointer& sel)
  * \param[in,out] sel Selection element to process.
  * \param[in]     top Topology structure.
  * \param[in]     isize Size of the evaluation group for the element.
- * \returns       0 on success, a non-zero error code on return.
  *
  * Calls sel_initfunc() (and possibly sel_outinitfunc()) to initialize the
  * method.
@@ -1782,8 +1789,8 @@ static void init_method(const SelectionTreeElementPointer& sel, const gmx_mtop_t
     if (sel->u.expr.method->init && (bAtomVal || !(sel->flags & SEL_METHODINIT)))
     {
         sel->flags |= SEL_METHODINIT;
-        sel->u.expr.method->init(top, sel->u.expr.method->nparams, sel->u.expr.method->param,
-                                 sel->u.expr.mdata);
+        sel->u.expr.method->init(
+                top, sel->u.expr.method->nparams, sel->u.expr.method->param, sel->u.expr.mdata);
     }
     if (bAtomVal || !(sel->flags & SEL_OUTINIT))
     {
@@ -1836,7 +1843,6 @@ static void init_method(const SelectionTreeElementPointer& sel, const gmx_mtop_t
  * \param[in,out] sel Boolean selection element whose children should be
  *   processed.
  * \param[in]     g   The evaluation group.
- * \returns       0 on success, a non-zero error code on error.
  *
  * reorder_item_static_children() should have been called.
  */
@@ -2020,7 +2026,6 @@ static void evaluate_boolean_minmax_grps(const SelectionTreeElementPointer& sel,
  * \param[in]     data Evaluation data.
  * \param[in,out] sel  Selection currently being evaluated.
  * \param[in]     g    Group for which \p sel should be evaluated.
- * \returns       0 on success, a non-zero error code on error.
  *
  * This function is used as the replacement for the
  * gmx::SelectionTreeElement::evaluate function pointer.
@@ -2141,7 +2146,7 @@ static void analyze_static(gmx_sel_evaluate_t* data, const SelectionTreeElementP
                     make_static(sel);
                 }
             }
-            else if (bDoMinMax)
+            else if (bDoMinMax && g)
             {
                 gmx_ana_index_copy(sel->cdata->gmax, g, true);
             }
@@ -2595,7 +2600,7 @@ void compileSelection(SelectionCollection* coll)
     size_t                      i;
     int                         flags;
     bool bDebug = (coll->impl_->debugLevel_ == SelectionCollection::Impl::DebugLevel::Compiled
-                   && coll->impl_->debugLevel_ == SelectionCollection::Impl::DebugLevel::Full);
+                   || coll->impl_->debugLevel_ == SelectionCollection::Impl::DebugLevel::Full);
 
     /* FIXME: Clean up the collection on exceptions */
 
@@ -2614,8 +2619,8 @@ void compileSelection(SelectionCollection* coll)
     for (i = 0; i < sc->sel.size(); ++i)
     {
         gmx::internal::SelectionData& sel = *sc->sel[i];
-        init_pos_keyword_defaults(&sel.rootElement(), coll->impl_->spost_.c_str(),
-                                  coll->impl_->rpost_.c_str(), &sel);
+        init_pos_keyword_defaults(
+                &sel.rootElement(), coll->impl_->spost_.c_str(), coll->impl_->rpost_.c_str(), &sel);
     }
 
     /* Remove any unused variables. */

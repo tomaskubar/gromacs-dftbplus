@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2015,2016,2017,2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2015- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \internal \file
  * \brief
@@ -44,32 +43,43 @@
 #include "electricfield.h"
 
 #include <cmath>
+#include <cstdio>
 
+#include <filesystem>
+#include <functional>
 #include <memory>
 #include <string>
+#include <vector>
 
 #include "gromacs/commandline/filenm.h"
 #include "gromacs/fileio/gmxfio.h"
 #include "gromacs/fileio/xvgr.h"
+#include "gromacs/math/functions.h"
 #include "gromacs/math/units.h"
-#include "gromacs/mdtypes/commrec.h"
 #include "gromacs/mdtypes/forceoutput.h"
 #include "gromacs/mdtypes/iforceprovider.h"
 #include "gromacs/mdtypes/imdmodule.h"
 #include "gromacs/mdtypes/imdoutputprovider.h"
 #include "gromacs/mdtypes/imdpoptionprovider.h"
-#include "gromacs/mdtypes/mdatom.h"
 #include "gromacs/options/basicoptions.h"
 #include "gromacs/options/ioptionscontainerwithsections.h"
 #include "gromacs/options/optionsection.h"
+#include "gromacs/utility/arrayref.h"
 #include "gromacs/utility/exceptions.h"
 #include "gromacs/utility/keyvaluetreebuilder.h"
 #include "gromacs/utility/keyvaluetreetransform.h"
+#include "gromacs/utility/mpicomm.h"
 #include "gromacs/utility/pleasecite.h"
+#include "gromacs/utility/real.h"
 #include "gromacs/utility/strconvert.h"
+#include "gromacs/utility/stringutil.h"
+#include "gromacs/utility/vectypes.h"
+
+struct gmx_output_env_t;
 
 namespace gmx
 {
+struct MDModulesNotifiers;
 
 namespace
 {
@@ -94,6 +104,12 @@ public:
         section.addOption(RealOption("omega").store(&omega_));
         section.addOption(RealOption("t0").store(&t0_));
         section.addOption(RealOption("sigma").store(&sigma_));
+        if (sigma_ <= 0 && t0_ != 0.0)
+        {
+            GMX_THROW(
+                    InvalidInputError("Non-pulsed field (sigma = 0) ignores the value of t0. "
+                                      "Please, set t0 to 0 to avoid this error."));
+        }
     }
     /*! \brief
      * Creates mdp parameters for this field component.
@@ -105,7 +121,7 @@ public:
 
     /*! \brief Evaluates this field component at given time.
      *
-     * \param[in] t The time to evualate at
+     * \param[in] t The time to evaluate at
      * \return The electric field
      */
     real evaluate(real t) const
@@ -124,7 +140,7 @@ public:
     real a() const { return a_; }
 
 private:
-    //! Coeffient (V / nm)
+    //! Coefficient (V / nm)
     real a_ = 0;
     //! Frequency (1/ps)
     real omega_ = 0;
@@ -171,8 +187,9 @@ public:
     void calculateForces(const ForceProviderInput& forceProviderInput,
                          ForceProviderOutput*      forceProviderOutput) override;
 
-    void subscribeToSimulationSetupNotifications(MdModulesNotifier* /* notifier */) override {}
-    void subscribeToPreProcessingNotifications(MdModulesNotifier* /* notifier */) override {}
+    void subscribeToSimulationSetupNotifications(MDModulesNotifiers* /* notifiers */) override {}
+    void subscribeToSimulationRunNotifications(MDModulesNotifiers* /* notifiers */) override {}
+    void subscribeToPreProcessingNotifications(MDModulesNotifiers* /* notifiers */) override {}
 
 private:
     //! Return whether or not to apply a field
@@ -261,8 +278,11 @@ void ElectricField::initOutput(FILE* fplog, int nfile, const t_filenm fnm[], boo
             }
             else
             {
-                fpField_ = xvgropen(opt2fn("-field", nfile, fnm), "Applied electric field",
-                                    "Time (ps)", "E (V/nm)", oenv);
+                fpField_ = xvgropen(opt2fn("-field", nfile, fnm),
+                                    "Applied electric field",
+                                    "Time (ps)",
+                                    "E (V/nm)",
+                                    oenv);
             }
         }
     }
@@ -299,28 +319,28 @@ void ElectricField::calculateForces(const ForceProviderInput& forceProviderInput
 {
     if (isActive())
     {
-        const t_mdatoms& mdatoms = forceProviderInput.mdatoms_;
-        const double     t       = forceProviderInput.t_;
-        const t_commrec& cr      = forceProviderInput.cr_;
+        const double   t       = forceProviderInput.t_;
+        const MpiComm& mpiComm = forceProviderInput.mpiComm_;
 
         // NOTE: The non-conservative electric field does not have a virial
         ArrayRef<RVec> f = forceProviderOutput->forceWithVirial_.force_;
 
+        auto chargeA = forceProviderInput.chargeA_;
         for (int m = 0; (m < DIM); m++)
         {
-            const real fieldStrength = FIELDFAC * field(m, t);
+            const real fieldStrength = gmx::c_fieldfac * field(m, t);
 
             if (fieldStrength != 0)
             {
                 // TODO: Check parallellism
-                for (index i = 0; i != ssize(f); ++i)
+                for (int i = 0; i < forceProviderInput.homenr_; ++i)
                 {
                     // NOTE: Not correct with perturbed charges
-                    f[i][m] += mdatoms.chargeA[i] * fieldStrength;
+                    f[i][m] += chargeA[i] * fieldStrength;
                 }
             }
         }
-        if (MASTER(&cr) && fpField_ != nullptr)
+        if (mpiComm.isMainRank() && fpField_ != nullptr)
         {
             printComponents(t);
         }
@@ -329,7 +349,7 @@ void ElectricField::calculateForces(const ForceProviderInput& forceProviderInput
 
 } // namespace
 
-std::unique_ptr<IMDModule> createElectricFieldModule()
+std::unique_ptr<IMDModule> ElectricFieldModuleInfo::create()
 {
     return std::make_unique<ElectricField>();
 }

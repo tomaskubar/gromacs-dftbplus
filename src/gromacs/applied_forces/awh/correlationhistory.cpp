@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2015,2016,2017,2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2015- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 
 /*! \internal \file
@@ -48,11 +47,15 @@
 #include "correlationhistory.h"
 
 #include <cassert>
+#include <cstddef>
 
+#include <vector>
+
+#include "gromacs/applied_forces/awh/correlationtensor.h"
 #include "gromacs/gmxlib/network.h"
 #include "gromacs/mdtypes/awh_correlation_history.h"
-#include "gromacs/mdtypes/commrec.h"
 #include "gromacs/utility/arrayref.h"
+#include "gromacs/utility/basedefinitions.h"
 #include "gromacs/utility/exceptions.h"
 #include "gromacs/utility/gmxassert.h"
 
@@ -77,8 +80,10 @@ CorrelationGridHistory initCorrelationGridHistoryFromState(const CorrelationGrid
 {
     CorrelationGridHistory correlationGridHistory;
 
-    initCorrelationGridHistory(&correlationGridHistory, correlationGrid.tensors().size(),
-                               correlationGrid.tensorSize(), correlationGrid.blockDataListSize());
+    initCorrelationGridHistory(&correlationGridHistory,
+                               correlationGrid.tensors().size(),
+                               correlationGrid.tensorSize(),
+                               correlationGrid.blockDataListSize());
 
     return correlationGridHistory;
 }
@@ -92,45 +97,50 @@ void updateCorrelationGridHistory(CorrelationGridHistory* correlationGridHistory
     gmx::ArrayRef<CorrelationBlockDataHistory> blockDataBuffer = correlationGridHistory->blockDataBuffer;
 
     /* Store the grid in a linear array */
-    gmx::index bufferIndex = 0;
+    gmx::Index bufferIndex = 0;
+    const int tensorSize = correlationGrid.tensors()[0].blockDataList()[0].correlationIntegral().size();
     for (const CorrelationTensor& tensor : correlationGrid.tensors())
     {
-        const int numDims    = tensor.blockDataList()[0].coordData().size();
-        const int tensorSize = tensor.blockDataList()[0].correlationIntegral().size();
-
-        /* Loop of the tensor elements, ignore the symmetric data */
-        int d1 = 0;
-        int d2 = 0;
-        for (int k = 0; k < tensorSize; k++)
+        /* BlockData for each correlation element */
+        for (const CorrelationBlockData& blockData : tensor.blockDataList())
         {
-            /* BlockData for each correlation element */
-            for (const CorrelationBlockData& blockData : tensor.blockDataList())
+            /* Loop of the tensor elements, ignore the symmetric data */
+            int d1 = 0;
+            int d2 = 0;
+            for (int k = 0; k < tensorSize; k++)
             {
                 const CorrelationBlockData::CoordData& cx = blockData.coordData()[d1];
                 const CorrelationBlockData::CoordData& cy = blockData.coordData()[d2];
 
                 CorrelationBlockDataHistory& bdh = blockDataBuffer[bufferIndex];
 
-                bdh.blockSumWeight                 = blockData.blockSumWeight();
-                bdh.blockSumSquareWeight           = blockData.blockSumSquareWeight();
-                bdh.blockSumWeightX                = cx.blockSumWeightX;
-                bdh.blockSumWeightY                = cy.blockSumWeightX;
-                bdh.sumOverBlocksSquareBlockWeight = blockData.sumOverBlocksSquareBlockWeight();
-                bdh.sumOverBlocksBlockSquareWeight = blockData.sumOverBlocksBlockSquareWeight();
+                bdh.blockSumWeightX                      = cx.blockSumWeightX;
+                bdh.blockSumWeightY                      = cy.blockSumWeightX;
                 bdh.sumOverBlocksBlockWeightBlockWeightX = cx.sumOverBlocksBlockWeightBlockWeightX;
                 bdh.sumOverBlocksBlockWeightBlockWeightY = cy.sumOverBlocksBlockWeightBlockWeightX;
-                bdh.previousBlockIndex                   = blockData.previousBlockIndex();
-                bdh.blockLength                          = blockData.blockLength();
-                bdh.correlationIntegral                  = blockData.correlationIntegral()[k];
+
+                bdh.correlationIntegral = blockData.correlationIntegral()[k];
+
+                /* For the last blockDataBuffer element of blockData also update data independent
+                 * of k, d1 and d2. */
+                if (k == tensorSize - 1)
+                {
+                    bdh.blockSumWeight                 = blockData.blockSumWeight();
+                    bdh.blockSumSquareWeight           = blockData.blockSumSquareWeight();
+                    bdh.sumOverBlocksSquareBlockWeight = blockData.sumOverBlocksSquareBlockWeight();
+                    bdh.sumOverBlocksBlockSquareWeight = blockData.sumOverBlocksBlockSquareWeight();
+                    bdh.previousBlockIndex             = blockData.previousBlockIndex();
+                    bdh.blockLength                    = blockData.blockLength();
+                }
 
                 bufferIndex++;
-            }
 
-            d1++;
-            if (d1 == numDims)
-            {
-                d1 = 0;
                 d2++;
+                if (d2 > d1)
+                {
+                    d2 = 0;
+                    d1++;
+                }
             }
         }
     }
@@ -194,7 +204,8 @@ void CorrelationTensor::restoreFromHistory(const std::vector<CorrelationBlockDat
 
             correlationIntegral[k] = blockHistory.correlationIntegral;
 
-            /* Check if we collected all data needed for blockData */
+            /* For the last blockDataBuffer element of blockData also restore data independent
+             * of k, d1 and d2. */
             if (k == tensorSize - 1)
             {
                 blockData.restoreFromHistory(blockHistory, coordData, correlationIntegral);
@@ -202,11 +213,11 @@ void CorrelationTensor::restoreFromHistory(const std::vector<CorrelationBlockDat
 
             (*bufferIndex)++;
 
-            d1++;
-            if (d1 == numDims)
+            d2++;
+            if (d2 > d1)
             {
-                d1 = 0;
-                d2++;
+                d2 = 0;
+                d1++;
             }
         }
     }

@@ -386,12 +386,12 @@ int QMMM_QMrec::multiplicity_get()const
     return multiplicity;
 }
 
-int QMMM_QMrec::QMmethod_get()const
+QMmethodType QMMM_QMrec::QMmethod_get()const
 {
     return QMmethod;
 }
 
-int QMMM_QMrec::QMbasis_get()const
+QMbasisType QMMM_QMrec::QMbasis_get()const
 {
     return QMbasis;
 }
@@ -534,7 +534,8 @@ QMMM_rec::QMMM_rec(const t_commrec*                 cr,
     // print the current layer to allow users to check their input
     fprintf(stderr, "Layer %d\nnr of QM atoms %d\n", 0, qm[0].nrQMatoms);
     fprintf(stderr, "QMlevel: %s/%s\n\n",
-            eQMmethod_names[qm[0].QMmethod], eQMbasis_names[qm[0].QMbasis]);
+            enumValueToString(qm[0].QMmethod),
+            enumValueToString(qm[0].QMbasis));
 
     // MM rec creation
     int nrMMatoms_full_in = (mtop->natoms)-(qm[0].nrQMatoms); // rest of the atoms

@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2019- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \internal
  * \brief Declares the general simulator interface
@@ -44,9 +43,10 @@
 #include "gromacs/mdlib/stophandler.h"
 
 class energyhistory_t;
-struct gmx_ekindata_t;
+class gmx_ekindata_t;
 struct gmx_enerdata_t;
 struct gmx_enfrot;
+struct gmx_localtop_t;
 struct gmx_mtop_t;
 struct gmx_membed_t;
 struct gmx_multisim_t;
@@ -56,12 +56,12 @@ struct gmx_walltime_accounting;
 struct ObservablesHistory;
 struct pull_t;
 struct ReplicaExchangeParameters;
+class SwapCoords;
 struct t_commrec;
 struct t_forcerec;
 struct t_filenm;
 struct t_inputrec;
 struct t_nrnb;
-struct t_swap;
 class t_state;
 
 namespace gmx
@@ -71,10 +71,11 @@ class BoxDeformation;
 class Constraints;
 class MdrunScheduleWorkload;
 class IMDOutputProvider;
-struct MdModulesNotifier;
+struct MDModulesNotifiers;
 class ImdSession;
 class MDLogger;
 class MDAtoms;
+class ObservablesReducerBuilder;
 class StopHandlerBuilder;
 struct MdrunOptions;
 class VirtualSitesHandler;
@@ -123,19 +124,22 @@ public:
                         gmx_enfrot*                         enforcedRotation,
                         BoxDeformation*                     deform,
                         IMDOutputProvider*                  outputProvider,
-                        const MdModulesNotifier&            mdModulesNotifier,
+                        const MDModulesNotifiers&           mdModulesNotifiers,
                         t_inputrec*                         inputrec,
                         ImdSession*                         imdSession,
                         pull_t*                             pull_work,
-                        t_swap*                             swap,
-                        gmx_mtop_t*                         top_global,
+                        SwapCoords*                         swap,
+                        const gmx_mtop_t&                   top_global,
+                        gmx_localtop_t*                     top,
                         t_state*                            state_global,
+                        t_state*                            state,
                         ObservablesHistory*                 observablesHistory,
                         MDAtoms*                            mdAtoms,
                         t_nrnb*                             nrnb,
                         gmx_wallcycle*                      wcycle,
                         t_forcerec*                         fr,
                         gmx_enerdata_t*                     enerd,
+                        ObservablesReducerBuilder*          observablesReducerBuilder,
                         gmx_ekindata_t*                     ekind,
                         MdrunScheduleWorkload*              runScheduleWork,
                         const ReplicaExchangeParameters&    replExParams,
@@ -143,111 +147,120 @@ public:
                         gmx_walltime_accounting*            walltime_accounting,
                         std::unique_ptr<StopHandlerBuilder> stopHandlerBuilder,
                         bool                                doRerun) :
-        fplog(fplog),
-        cr(cr),
-        ms(ms),
-        mdlog(mdlog),
-        nfile(nfile),
-        fnm(fnm),
-        oenv(oenv),
-        mdrunOptions(mdrunOptions),
-        startingBehavior(startingBehavior),
-        vsite(vsite),
-        constr(constr),
-        enforcedRotation(enforcedRotation),
-        deform(deform),
-        outputProvider(outputProvider),
-        mdModulesNotifier(mdModulesNotifier),
-        inputrec(inputrec),
-        imdSession(imdSession),
-        pull_work(pull_work),
-        swap(swap),
-        top_global(top_global),
-        state_global(state_global),
-        observablesHistory(observablesHistory),
-        mdAtoms(mdAtoms),
-        nrnb(nrnb),
-        wcycle(wcycle),
-        fr(fr),
-        enerd(enerd),
-        ekind(ekind),
-        runScheduleWork(runScheduleWork),
-        replExParams(replExParams),
-        membed(membed),
-        walltime_accounting(walltime_accounting),
-        stopHandlerBuilder(std::move(stopHandlerBuilder)),
-        doRerun(doRerun)
+        fpLog_(fplog),
+        cr_(cr),
+        ms_(ms),
+        mdLog_(mdlog),
+        nFile_(nfile),
+        fnm_(fnm),
+        oenv_(oenv),
+        mdrunOptions_(mdrunOptions),
+        startingBehavior_(startingBehavior),
+        virtualSites_(vsite),
+        constr_(constr),
+        enforcedRotation_(enforcedRotation),
+        deform_(deform),
+        outputProvider_(outputProvider),
+        mdModulesNotifiers_(mdModulesNotifiers),
+        inputRec_(inputrec),
+        imdSession_(imdSession),
+        pullWork_(pull_work),
+        swap_(swap),
+        topGlobal_(top_global),
+        top_(top),
+        stateGlobal_(state_global),
+        state_(state),
+        observablesHistory_(observablesHistory),
+        mdAtoms_(mdAtoms),
+        nrnb_(nrnb),
+        wallCycleCounters_(wcycle),
+        fr_(fr),
+        enerd_(enerd),
+        observablesReducerBuilder_(observablesReducerBuilder),
+        ekind_(ekind),
+        runScheduleWork_(runScheduleWork),
+        replExParams_(replExParams),
+        membed_(membed),
+        wallTimeAccounting_(walltime_accounting),
+        stopHandlerBuilder_(std::move(stopHandlerBuilder)),
+        doRerun_(doRerun)
     {
     }
 
     //! Handles logging.
-    FILE* fplog;
+    FILE* fpLog_;
     //! Handles communication.
-    t_commrec* cr;
+    t_commrec* cr_;
     //! Coordinates multi-simulations.
-    const gmx_multisim_t* ms;
+    const gmx_multisim_t* ms_;
     //! Handles logging.
-    const MDLogger& mdlog;
+    const MDLogger& mdLog_;
     //! Count of input file options.
-    int nfile;
+    int nFile_;
     //! Content of input file options.
-    const t_filenm* fnm;
+    const t_filenm* fnm_;
     //! Handles writing text output.
-    const gmx_output_env_t* oenv;
+    const gmx_output_env_t* oenv_;
     //! Contains command-line options to mdrun.
-    const MdrunOptions& mdrunOptions;
+    const MdrunOptions& mdrunOptions_;
     //! Whether the simulation will start afresh, or restart with/without appending.
-    const StartingBehavior startingBehavior;
+    const StartingBehavior startingBehavior_;
     //! Handles virtual sites.
-    VirtualSitesHandler* vsite;
+    VirtualSitesHandler* virtualSites_;
     //! Handles constraints.
-    Constraints* constr;
+    Constraints* constr_;
     //! Handles enforced rotation.
-    gmx_enfrot* enforcedRotation;
+    gmx_enfrot* enforcedRotation_;
     //! Handles box deformation.
-    BoxDeformation* deform;
+    BoxDeformation* deform_;
     //! Handles writing output files.
-    IMDOutputProvider* outputProvider;
-    //! Handles notifications to MdModules for checkpoint writing
-    const MdModulesNotifier& mdModulesNotifier;
-    //! Contains user input mdp options.
-    t_inputrec* inputrec;
+    IMDOutputProvider* outputProvider_;
+    //! Handles notifications to MDModules for checkpoint writing
+    const MDModulesNotifiers& mdModulesNotifiers_;
+    //! Contains user input mdp options. Note: The const-ness is casted away in a few instances, see #3854.
+    const t_inputrec* inputRec_;
     //! The Interactive Molecular Dynamics session.
-    ImdSession* imdSession;
+    ImdSession* imdSession_;
     //! The pull work object.
-    pull_t* pull_work;
+    pull_t* pullWork_;
     //! The coordinate-swapping session.
-    t_swap* swap;
+    SwapCoords* swap_;
     //! Full system topology.
-    const gmx_mtop_t* top_global;
-    //! Full simulation state (only non-nullptr on master rank).
-    t_state* state_global;
+    const gmx_mtop_t& topGlobal_;
+    //! Handle to local simulation topology.
+    gmx_localtop_t* top_;
+    //! Full simulation state (only non-nullptr on main rank).
+    t_state* stateGlobal_;
+    //! Handle to local state of the simulation.
+    t_state* state_;
     //! History of simulation observables.
-    ObservablesHistory* observablesHistory;
+    ObservablesHistory* observablesHistory_;
     //! Atom parameters for this domain.
-    MDAtoms* mdAtoms;
+    MDAtoms* mdAtoms_;
     //! Manages flop accounting.
-    t_nrnb* nrnb;
+    t_nrnb* nrnb_;
     //! Manages wall cycle accounting.
-    gmx_wallcycle* wcycle;
+    gmx_wallcycle* wallCycleCounters_;
     //! Parameters for force calculations.
-    t_forcerec* fr;
+    t_forcerec* fr_;
     //! Data for energy output.
-    gmx_enerdata_t* enerd;
+    gmx_enerdata_t* enerd_;
+    //! Builder for coordinator of reduction for observables
+    ObservablesReducerBuilder* observablesReducerBuilder_;
     //! Kinetic energy data.
-    gmx_ekindata_t* ekind;
+    gmx_ekindata_t* ekind_;
     //! Schedule of work for each MD step for this task.
-    MdrunScheduleWorkload* runScheduleWork;
+    MdrunScheduleWorkload* runScheduleWork_;
     //! Parameters for replica exchange algorihtms.
-    const ReplicaExchangeParameters& replExParams;
+    const ReplicaExchangeParameters& replExParams_;
     //! Parameters for membrane embedding.
-    gmx_membed_t* membed;
+    gmx_membed_t* membed_;
     //! Manages wall time accounting.
-    gmx_walltime_accounting* walltime_accounting;
+    gmx_walltime_accounting* wallTimeAccounting_;
     //! Registers stop conditions
-    std::unique_ptr<StopHandlerBuilder> stopHandlerBuilder;
+    std::unique_ptr<StopHandlerBuilder> stopHandlerBuilder_;
     //! Whether we're doing a rerun.
-    bool doRerun;
+    bool doRerun_;
 };
 
 } // namespace gmx

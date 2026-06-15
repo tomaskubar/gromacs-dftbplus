@@ -1,10 +1,9 @@
 #
 # This file is part of the GROMACS molecular simulation package.
 #
-# Copyright (c) 2020, by the GROMACS development team, led by
-# Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
-# and including many others, as listed in the AUTHORS file in the
-# top-level source directory and at http://www.gromacs.org.
+# Copyright 2020- The GROMACS Authors
+# and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+# Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
 #
 # GROMACS is free software; you can redistribute it and/or
 # modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
 #
 # You should have received a copy of the GNU Lesser General Public
 # License along with GROMACS; if not, see
-# http://www.gnu.org/licenses, or write to the Free Software Foundation,
+# https://www.gnu.org/licenses, or write to the Free Software Foundation,
 # Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
 #
 # If you want to redistribute modifications to GROMACS, please
@@ -27,44 +26,40 @@
 # consider code for inclusion in the official distribution, but
 # derived work must not be called official GROMACS. Details are found
 # in the README & COPYING files - if they are missing, get the
-# official version at http://www.gromacs.org.
+# official version at https://www.gromacs.org.
 #
 # To help us fund GROMACS development, we humbly ask that you cite
-# the research papers on the package. Check out http://www.gromacs.org.
-#
+# the research papers on the package. Check out https://www.gromacs.org.
+
 # \author Victor Holanda <victor.holanda@cscs.ch>
 # \author Joe Jordan <ejjordan@kth.se>
 # \author Prashanth Kanduri <kanduri@cscs.ch>
 # \author Sebastian Keller <keller@cscs.ch>
-#
 
-add_executable(argon-forces-integration "")
+set(argon "argon-forces-integration")
+add_executable(${argon} argon-forces-integration.cpp)
 
-target_sources(argon-forces-integration
-        PRIVATE
-        argon-forces-integration.cpp
-        )
+target_link_libraries(${argon} PRIVATE nblib)
 
-target_link_libraries(argon-forces-integration PRIVATE nblib)
-install(
-        TARGETS
-        argon-forces-integration
-        DESTINATION
-        ${CMAKE_INSTALL_BINDIR}
-)
+set(methane "methane-water-integration")
+add_executable(${methane} methane-water-integration.cpp)
+
+target_link_libraries(${methane} PRIVATE nblib)
 
 if(BUILD_TESTING)
-    add_subdirectory(tests)
+    add_test(NAME NbLibSamplesTestArgon COMMAND ${argon})
+    add_test(NAME NbLibSamplesTestMethaneWater COMMAND ${methane})
+    add_dependencies(nblib-tests ${argon} ${methane})
 endif()
 
 if (GMX_QMMM_DFTBPLUS)
     LINK_DIRECTORIES(GMX_QMMM_DFTBPLUS_LIB)
     add_library(libdftbplus STATIC IMPORTED)
     set_target_properties(libdftbplus PROPERTIES IMPORTED_LOCATION ${GMX_QMMM_DFTBPLUS_LIB}/libdftbplus.a)
-    add_library(libdftd3 STATIC IMPORTED)
-    set_target_properties(libdftd3 PROPERTIES IMPORTED_LOCATION ${GMX_QMMM_DFTBPLUS_LIB}/libdftd3.a)
-    add_library(libmudpack STATIC IMPORTED)
-    set_target_properties(libmudpack PROPERTIES IMPORTED_LOCATION ${GMX_QMMM_DFTBPLUS_LIB}/libmudpack.a)
+#   add_library(libdftd3 STATIC IMPORTED)
+#   set_target_properties(libdftd3 PROPERTIES IMPORTED_LOCATION ${GMX_QMMM_DFTBPLUS_LIB}/libdftd3.a)
+#   add_library(libmudpack STATIC IMPORTED)
+#   set_target_properties(libmudpack PROPERTIES IMPORTED_LOCATION ${GMX_QMMM_DFTBPLUS_LIB}/libmudpack.a)
 
     # search for the gfortran and gomp libraries in the system
     # first look for possible library locations
@@ -87,5 +82,6 @@ if (GMX_QMMM_DFTBPLUS)
     add_library(gomp SHARED IMPORTED)
     set_target_properties(gomp PROPERTIES IMPORTED_LOCATION ${GOMP})
 
-    target_link_libraries(argon-forces-integration PRIVATE libdftbplus libdftd3 libmudpack gfortran gomp)
+    target_link_libraries(argon-forces-integration PRIVATE libdftbplus gfortran gomp)
+   #target_link_libraries(argon-forces-integration PRIVATE libdftbplus libdftd3 libmudpack gfortran gomp)
 endif()

@@ -1,13 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
- * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2016,2017 by the GROMACS development team.
- * Copyright (c) 2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 1991- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -21,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -30,30 +26,106 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 #include "gmxpre.h"
 
 #include "enerdata_utils.h"
 
+#include <cmath>
+#include <cstdio>
+
+#include <algorithm>
+#include <array>
+#include <utility>
+#include <vector>
+
 #include "gromacs/gmxlib/network.h"
-#include "gromacs/mdtypes/commrec.h"
 #include "gromacs/mdtypes/enerdata.h"
 #include "gromacs/mdtypes/inputrec.h"
+#include "gromacs/mdtypes/md_enums.h"
+#include "gromacs/topology/ifunc.h"
+#include "gromacs/utility/basedefinitions.h"
+#include "gromacs/utility/enumerationhelpers.h"
 #include "gromacs/utility/fatalerror.h"
-#include "gromacs/utility/smalloc.h"
+#include "gromacs/utility/gmxassert.h"
+#include "gromacs/utility/mpicomm.h"
 
-ForeignLambdaTerms::ForeignLambdaTerms(int numLambdas) :
-    numLambdas_(numLambdas),
-    energies_(1 + numLambdas),
-    dhdl_(1 + numLambdas)
+ForeignLambdaTerms::ForeignLambdaTerms(
+        const gmx::EnumerationArray<FreeEnergyPerturbationCouplingType, std::vector<double>>* allLambdas) :
+    numLambdas_(allLambdas ? gmx::ssize((*allLambdas)[FreeEnergyPerturbationCouplingType::Fep]) : 0),
+    allLambdas_(allLambdas),
+    energies_(1 + numLambdas_),
+    dhdl_(1 + numLambdas_)
 {
+    if (allLambdas_)
+    {
+        for (const auto& foreignLambdas : *allLambdas_)
+        {
+            GMX_RELEASE_ASSERT(gmx::ssize(foreignLambdas) == numLambdas_,
+                               "All coupling types should have the same lambda count");
+        }
+    }
 }
 
-std::pair<std::vector<double>, std::vector<double>> ForeignLambdaTerms::getTerms(const t_commrec* cr) const
+/*! \brief Composes dH/dlambda for the given lambda point \p lambdaIndex
+ *
+ * Different lambda components can be changed during different legs
+ * of the complete lambda path. Thus dH/dlambda should only contain
+ * contributions from components that are actually changed. Also when
+ * a component in opposite direction, the sign of the contribution changes.
+ *
+ * \param[in] lambdaIndex  The lambda point index
+ * \param[in] allLambdas   The lambda values for all points for all components
+ * \param[in] dhdl         The current dH/dlambda values for \p lambdaIndex
+ * \returns the composed dH/dlambda value
+ */
+static double
+composeDhdl(const int lambdaIndex,
+            const gmx::EnumerationArray<FreeEnergyPerturbationCouplingType, std::vector<double>>& allLambdas,
+            const gmx::EnumerationArray<FreeEnergyPerturbationCouplingType, double>& dhdl)
+{
+    const int numLambdaPoints = gmx::ssize(allLambdas[FreeEnergyPerturbationCouplingType::Fep]);
+
+    const bool isFirstLambdaIndex = (lambdaIndex == 0);
+    const bool isLastLambdaIndex  = (lambdaIndex == numLambdaPoints - 1);
+
+    // Loop over all lambda components and conditionally add their dhdl contributions
+    double dhdlSum = 0;
+    for (auto component : gmx::EnumerationWrapper<FreeEnergyPerturbationCouplingType>())
+    {
+        gmx::ArrayRef<const double> compLambdas = allLambdas[component];
+
+        // When this lambda changes from the previous and/or next point,
+        // we add dH/dlambda multiplied by a half for each side.
+        // We also change sign when lambda decreases with increasing index.
+        double fac = 0;
+        if (!isFirstLambdaIndex)
+        {
+            double diff = compLambdas[lambdaIndex] - compLambdas[lambdaIndex - 1];
+            if (diff != 0)
+            {
+                fac += std::copysign(isLastLambdaIndex ? 1.0 : 0.5, diff);
+            }
+        }
+        if (!isLastLambdaIndex)
+        {
+            double diff = compLambdas[lambdaIndex + 1] - compLambdas[lambdaIndex];
+            if (diff != 0)
+            {
+                fac += std::copysign(isFirstLambdaIndex ? 1.0 : 0.5, diff);
+            }
+        }
+        dhdlSum += fac * dhdl[component];
+    }
+
+    return dhdlSum;
+}
+
+std::pair<std::vector<double>, std::vector<double>> ForeignLambdaTerms::getTerms(const gmx::MpiComm& mpiComm) const
 {
     GMX_RELEASE_ASSERT(finalizedPotentialContributions_,
                        "The object needs to be finalized before calling getTerms");
@@ -62,11 +134,11 @@ std::pair<std::vector<double>, std::vector<double>> ForeignLambdaTerms::getTerms
     for (int i = 0; i < numLambdas_; i++)
     {
         data[i]               = energies_[1 + i] - energies_[0];
-        data[numLambdas_ + i] = dhdl_[1 + i];
+        data[numLambdas_ + i] = composeDhdl(i, *allLambdas_, dhdl_[1 + i]);
     }
-    if (cr && cr->nnodes > 1)
+    if (mpiComm.isParallel())
     {
-        gmx_sumd(data.size(), data.data(), cr);
+        mpiComm.sumReduce(data);
     }
     auto dataMid = data.begin() + numLambdas_;
 
@@ -76,14 +148,17 @@ std::pair<std::vector<double>, std::vector<double>> ForeignLambdaTerms::getTerms
 void ForeignLambdaTerms::zeroAllTerms()
 {
     std::fill(energies_.begin(), energies_.end(), 0.0);
-    std::fill(dhdl_.begin(), dhdl_.end(), 0.0);
+    for (auto& dhdl : dhdl_)
+    {
+        std::fill(dhdl.begin(), dhdl.end(), 0.0);
+    }
     finalizedPotentialContributions_ = false;
 }
 
-gmx_enerdata_t::gmx_enerdata_t(int numEnergyGroups, int numFepLambdas) :
-    grpp(numEnergyGroups),
-    foreignLambdaTerms(numFepLambdas),
-    foreign_grpp(numEnergyGroups)
+gmx_enerdata_t::gmx_enerdata_t(
+        int numEnergyGroups,
+        const gmx::EnumerationArray<FreeEnergyPerturbationCouplingType, std::vector<double>>* allLambdas) :
+    grpp(numEnergyGroups), foreignLambdaTerms(allLambdas)
 {
 }
 
@@ -101,94 +176,118 @@ static real sum_v(int n, gmx::ArrayRef<const real> v)
     return t;
 }
 
-void sum_epot(const gmx_grppairener_t& grpp, real* epot)
+void sum_epot(const gmx_grppairener_t& grpp, gmx::EnumerationArray<InteractionFunction, real>& epot)
 {
     int i;
 
     /* Accumulate energies */
-    epot[F_COUL_SR] = sum_v(grpp.nener, grpp.ener[egCOULSR]);
-    epot[F_LJ]      = sum_v(grpp.nener, grpp.ener[egLJSR]);
-    epot[F_LJ14]    = sum_v(grpp.nener, grpp.ener[egLJ14]);
-    epot[F_COUL14]  = sum_v(grpp.nener, grpp.ener[egCOUL14]);
+    epot[InteractionFunction::CoulombShortRange] =
+            sum_v(grpp.nener, grpp.energyGroupPairTerms[NonBondedEnergyTerms::CoulombSR]);
+    epot[InteractionFunction::LennardJonesShortRange] =
+            sum_v(grpp.nener, grpp.energyGroupPairTerms[NonBondedEnergyTerms::LJSR]);
+    epot[InteractionFunction::LennardJones14] =
+            sum_v(grpp.nener, grpp.energyGroupPairTerms[NonBondedEnergyTerms::LJ14]);
+    epot[InteractionFunction::Coulomb14] =
+            sum_v(grpp.nener, grpp.energyGroupPairTerms[NonBondedEnergyTerms::Coulomb14]);
 
     /* lattice part of LR doesnt belong to any group
      * and has been added earlier
      */
-    epot[F_BHAM] = sum_v(grpp.nener, grpp.ener[egBHAMSR]);
+    epot[InteractionFunction::BuckinghamShortRange] =
+            sum_v(grpp.nener, grpp.energyGroupPairTerms[NonBondedEnergyTerms::BuckinghamSR]);
 
-    epot[F_EPOT] = 0;
-    for (i = 0; (i < F_EPOT); i++)
+    epot[InteractionFunction::PotentialEnergy] = 0;
+    for (i = static_cast<int>(InteractionFunction::Bonds);
+         (i < static_cast<int>(InteractionFunction::PotentialEnergy));
+         i++)
     {
-        if (i != F_DISRESVIOL && i != F_ORIRESDEV)
+        if (i != static_cast<int>(InteractionFunction::DistanceRestraintViolations)
+            && i != static_cast<int>(InteractionFunction::OrientationRestraintDeviations))
         {
-            epot[F_EPOT] += epot[i];
+            epot[InteractionFunction::PotentialEnergy] += epot[i];
         }
     }
 }
 
-// Adds computed dV/dlambda contributions to the requested outputs
-static void set_dvdl_output(gmx_enerdata_t* enerd, const t_lambda& fepvals)
+// Adds computed dH/dlambda contribution i to the requested output
+static void set_dhdl_output(gmx_enerdata_t* enerd, FreeEnergyPerturbationCouplingType i, const t_lambda& fepvals)
 {
-    enerd->term[F_DVDL] = 0.0;
-    for (int i = 0; i < efptNR; i++)
+    if (fepvals.separate_dvdl[i])
     {
-        if (fepvals.separate_dvdl[i])
+        /* Translate free-energy term indices to idef term indices.
+         * Could this be done more readably/compactly?
+         */
+        InteractionFunction index;
+        switch (i)
         {
-            /* Translate free-energy term indices to idef term indices.
-             * Could this be done more readably/compactly?
-             */
-            int index;
-            switch (i)
-            {
-                case (efptMASS): index = F_DKDL; break;
-                case (efptCOUL): index = F_DVDL_COUL; break;
-                case (efptVDW): index = F_DVDL_VDW; break;
-                case (efptBONDED): index = F_DVDL_BONDED; break;
-                case (efptRESTRAINT): index = F_DVDL_RESTRAINT; break;
-                default: index = F_DVDL; break;
-            }
-            enerd->term[index] = enerd->dvdl_lin[i] + enerd->dvdl_nonlin[i];
-            if (debug)
-            {
-                fprintf(debug, "dvdl-%s[%2d]: %f: non-linear %f + linear %f\n", efpt_names[i], i,
-                        enerd->term[index], enerd->dvdl_nonlin[i], enerd->dvdl_lin[i]);
-            }
+            case (FreeEnergyPerturbationCouplingType::Mass):
+                index = InteractionFunction::dEkineticdLambda;
+                break;
+            case (FreeEnergyPerturbationCouplingType::Coul):
+                index = InteractionFunction::dVCoulombdLambda;
+                break;
+            case (FreeEnergyPerturbationCouplingType::Vdw):
+                index = InteractionFunction::dVvanderWaalsdLambda;
+                break;
+            case (FreeEnergyPerturbationCouplingType::Bonded):
+                index = InteractionFunction::dVbondeddLambda;
+                break;
+            case (FreeEnergyPerturbationCouplingType::Restraint):
+                index = InteractionFunction::dVrestraintdLambda;
+                break;
+            default: index = InteractionFunction::dVremainingdLambda; break;
         }
-        else
+        enerd->term[static_cast<int>(index)] = enerd->dvdl_lin[i] + enerd->dvdl_nonlin[i];
+        if (debug)
         {
-            enerd->term[F_DVDL] += enerd->dvdl_lin[i] + enerd->dvdl_nonlin[i];
-            if (debug)
-            {
-                fprintf(debug, "dvd-%sl[%2d]: %f: non-linear %f + linear %f\n", efpt_names[0], i,
-                        enerd->term[F_DVDL], enerd->dvdl_nonlin[i], enerd->dvdl_lin[i]);
-            }
+            fprintf(debug,
+                    "dvdl-%s[%2d]: %f: non-linear %f + linear %f\n",
+                    enumValueToString(i),
+                    static_cast<int>(i),
+                    enerd->term[static_cast<int>(index)],
+                    enerd->dvdl_nonlin[i],
+                    enerd->dvdl_lin[i]);
+        }
+    }
+    else
+    {
+        enerd->term[InteractionFunction::dVremainingdLambda] +=
+                enerd->dvdl_lin[i] + enerd->dvdl_nonlin[i];
+        if (debug)
+        {
+            fprintf(debug,
+                    "dvd-%sl[%2d]: %f: non-linear %f + linear %f\n",
+                    enumValueToString(FreeEnergyPerturbationCouplingType::Fep),
+                    static_cast<int>(i),
+                    enerd->term[InteractionFunction::dVremainingdLambda],
+                    enerd->dvdl_nonlin[i],
+                    enerd->dvdl_lin[i]);
         }
     }
 }
 
-void ForeignLambdaTerms::addConstantDhdl(const double dhdl)
+void ForeignLambdaTerms::addConstantDhdl(FreeEnergyPerturbationCouplingType couplingType, double dhdl)
 {
-    for (double& foreignDhdl : dhdl_)
+    for (auto& foreignDhdl : dhdl_)
     {
-        foreignDhdl += dhdl;
+        foreignDhdl[couplingType] += dhdl;
     }
 }
 
-void ForeignLambdaTerms::finalizePotentialContributions(gmx::ArrayRef<const double> dvdlLinear,
-                                                        gmx::ArrayRef<const real>   lambda,
-                                                        const t_lambda&             fepvals)
+void ForeignLambdaTerms::finalizePotentialContributions(
+        const gmx::EnumerationArray<FreeEnergyPerturbationCouplingType, double>& dvdlLinear,
+        gmx::ArrayRef<const real>                                                lambda,
+        const t_lambda&                                                          fepvals)
 {
     if (finalizedPotentialContributions_)
     {
         return;
     }
 
-    double dvdl_lin = 0;
-    for (int i = 0; i < efptNR; i++)
+    for (auto i : gmx::EnumerationWrapper<FreeEnergyPerturbationCouplingType>{})
     {
-        dvdl_lin += dvdlLinear[i];
+        addConstantDhdl(i, dvdlLinear[i]);
     }
-    addConstantDhdl(dvdl_lin);
 
     /* Sum the foreign lambda energy difference contributions.
      * Note that here we only add the potential energy components.
@@ -207,14 +306,14 @@ void ForeignLambdaTerms::finalizePotentialContributions(gmx::ArrayRef<const doub
            lambda are automatically zeroed */
 
         double enerpart_lambda = 0;
-        for (gmx::index j = 0; j < lambda.ssize(); j++)
+        for (gmx::Index j = 0; j < lambda.ssize(); j++)
         {
             /* Note that this loop is over all dhdl components, not just the separated ones */
             const double dlam = fepvals.all_lambda[j][i] - lambda[j];
 
             enerpart_lambda += dlam * dvdlLinear[j];
         }
-        accumulate(1 + i, enerpart_lambda, 0);
+        accumulate(1 + i, enerpart_lambda, gmx::EnumerationArray<FreeEnergyPerturbationCouplingType, real>());
     }
 
     finalizedPotentialContributions_ = true;
@@ -226,7 +325,15 @@ void accumulatePotentialEnergies(gmx_enerdata_t* enerd, gmx::ArrayRef<const real
 
     if (fepvals)
     {
-        set_dvdl_output(enerd, *fepvals);
+        enerd->term[InteractionFunction::dVremainingdLambda] = 0.0;
+        for (auto i : gmx::EnumerationWrapper<FreeEnergyPerturbationCouplingType>{})
+        {
+            // Skip kinetic terms here, as those are not available here yet
+            if (i != FreeEnergyPerturbationCouplingType::Mass)
+            {
+                set_dhdl_output(enerd, i, *fepvals);
+            }
+        }
 
         enerd->foreignLambdaTerms.finalizePotentialContributions(enerd->dvdl_lin, lambda, *fepvals);
     }
@@ -235,23 +342,20 @@ void accumulatePotentialEnergies(gmx_enerdata_t* enerd, gmx::ArrayRef<const real
 void ForeignLambdaTerms::accumulateKinetic(int listIndex, double energy, double dhdl)
 {
     energies_[listIndex] += energy;
-    dhdl_[listIndex] += dhdl;
+    dhdl_[listIndex][FreeEnergyPerturbationCouplingType::Mass] += dhdl;
 }
 
-void ForeignLambdaTerms::finalizeKineticContributions(gmx::ArrayRef<const real> energyTerms,
+void ForeignLambdaTerms::finalizeKineticContributions(const gmx::EnumerationArray<InteractionFunction, real>& energyTerms,
                                                       const double              dhdlMass,
                                                       gmx::ArrayRef<const real> lambda,
                                                       const t_lambda&           fepvals)
 {
     // Add perturbed mass contributions
-    addConstantDhdl(dhdlMass);
+    addConstantDhdl(FreeEnergyPerturbationCouplingType::Mass, dhdlMass);
 
     // Treat current lambda, the deltaH contribution is 0 as delta-lambda=0 for the current lambda
-    accumulateKinetic(0, 0.0, energyTerms[F_DVDL_CONSTR]);
-    if (!fepvals.separate_dvdl[efptMASS])
-    {
-        accumulateKinetic(0, 0.0, energyTerms[F_DKDL]);
-    }
+    accumulateKinetic(0, 0.0, energyTerms[InteractionFunction::dHdLambdaConstraint]);
+    accumulateKinetic(0, 0.0, dhdlMass);
 
     for (int i = 0; i < fepvals.n_lambda; i++)
     {
@@ -261,14 +365,20 @@ void ForeignLambdaTerms::finalizeKineticContributions(gmx::ArrayRef<const real> 
          * a linear extrapolation. This is an approximation, but usually
          * quite accurate since constraints change little between lambdas.
          */
-        const int    lambdaIndex = (fepvals.separate_dvdl[efptBONDED] ? efptBONDED : efptFEP);
-        const double dlam        = fepvals.all_lambda[lambdaIndex][i] - lambda[lambdaIndex];
-        accumulateKinetic(1 + i, dlam * energyTerms[F_DVDL_CONSTR], energyTerms[F_DVDL_CONSTR]);
+        const FreeEnergyPerturbationCouplingType lambdaIndex =
+                (fepvals.separate_dvdl[FreeEnergyPerturbationCouplingType::Bonded]
+                         ? FreeEnergyPerturbationCouplingType::Bonded
+                         : FreeEnergyPerturbationCouplingType::Fep);
+        const double dlam = fepvals.all_lambda[lambdaIndex][i] - lambda[static_cast<int>(lambdaIndex)];
+        accumulateKinetic(1 + i,
+                          dlam * energyTerms[InteractionFunction::dHdLambdaConstraint],
+                          energyTerms[InteractionFunction::dHdLambdaConstraint]);
 
-        if (!fepvals.separate_dvdl[efptMASS])
         {
-            const double dlam = fepvals.all_lambda[efptMASS][i] - lambda[efptMASS];
-            accumulateKinetic(1 + i, dlam * energyTerms[F_DKDL], energyTerms[F_DKDL]);
+            const double dLambdaMass =
+                    fepvals.all_lambda[FreeEnergyPerturbationCouplingType::Mass][i]
+                    - lambda[static_cast<int>(FreeEnergyPerturbationCouplingType::Mass)];
+            accumulateKinetic(1 + i, dLambdaMass * dhdlMass, dhdlMass);
         }
     }
 }
@@ -277,46 +387,41 @@ void accumulateKineticLambdaComponents(gmx_enerdata_t*           enerd,
                                        gmx::ArrayRef<const real> lambda,
                                        const t_lambda&           fepvals)
 {
-    if (fepvals.separate_dvdl[efptBONDED])
+    if (fepvals.separate_dvdl[FreeEnergyPerturbationCouplingType::Bonded])
     {
-        enerd->term[F_DVDL_BONDED] += enerd->term[F_DVDL_CONSTR];
+        enerd->term[InteractionFunction::dVbondeddLambda] +=
+                enerd->term[InteractionFunction::dHdLambdaConstraint];
     }
     else
     {
-        enerd->term[F_DVDL] += enerd->term[F_DVDL_CONSTR];
+        enerd->term[InteractionFunction::dVremainingdLambda] +=
+                enerd->term[InteractionFunction::dHdLambdaConstraint];
     }
 
-    enerd->foreignLambdaTerms.finalizeKineticContributions(enerd->term, enerd->dvdl_lin[efptMASS],
-                                                           lambda, fepvals);
+    // Add computed mass dH/dlambda contribution to the requested output
+    set_dhdl_output(enerd, FreeEnergyPerturbationCouplingType::Mass, fepvals);
+
+    enerd->foreignLambdaTerms.finalizeKineticContributions(
+            enerd->term, enerd->dvdl_lin[FreeEnergyPerturbationCouplingType::Mass], lambda, fepvals);
 
     /* The constrain contribution is now included in other terms, so clear it */
-    enerd->term[F_DVDL_CONSTR] = 0;
+    enerd->term[InteractionFunction::dHdLambdaConstraint] = 0;
 }
 
-void reset_foreign_enerdata(gmx_enerdata_t* enerd)
+void gmx_grppairener_t::clear()
 {
-    int i, j;
-
-    /* First reset all foreign energy components.  Foreign energies always called on
-       neighbor search steps */
-    for (i = 0; (i < egNR); i++)
+    for (int i = 0; (i < static_cast<int>(NonBondedEnergyTerms::Count)); i++)
     {
-        for (j = 0; (j < enerd->grpp.nener); j++)
+        for (int j = 0; (j < nener); j++)
         {
-            enerd->foreign_grpp.ener[i][j] = 0.0;
+            energyGroupPairTerms[i][j] = 0.0;
         }
-    }
-
-    /* potential energy components */
-    for (i = 0; (i <= F_EPOT); i++)
-    {
-        enerd->foreign_term[i] = 0.0;
     }
 }
 
 void reset_dvdl_enerdata(gmx_enerdata_t* enerd)
 {
-    for (int i = 0; i < efptNR; i++)
+    for (auto i : keysOf(enerd->dvdl_lin))
     {
         enerd->dvdl_lin[i]    = 0.0;
         enerd->dvdl_nonlin[i] = 0.0;
@@ -328,28 +433,29 @@ void reset_enerdata(gmx_enerdata_t* enerd)
     int i, j;
 
     /* First reset all energy components. */
-    for (i = 0; (i < egNR); i++)
+    for (i = 0; (i < static_cast<int>(NonBondedEnergyTerms::Count)); i++)
     {
         for (j = 0; (j < enerd->grpp.nener); j++)
         {
-            enerd->grpp.ener[i][j] = 0.0_real;
+            enerd->grpp.energyGroupPairTerms[i][j] = 0.0_real;
         }
     }
 
     /* Normal potential energy components */
-    for (i = 0; (i <= F_EPOT); i++)
+    for (i = static_cast<int>(InteractionFunction::Bonds);
+         (i <= static_cast<int>(InteractionFunction::PotentialEnergy));
+         i++)
     {
         enerd->term[i] = 0.0_real;
     }
-    enerd->term[F_PDISPCORR]      = 0.0_real;
-    enerd->term[F_DVDL]           = 0.0_real;
-    enerd->term[F_DVDL_COUL]      = 0.0_real;
-    enerd->term[F_DVDL_VDW]       = 0.0_real;
-    enerd->term[F_DVDL_BONDED]    = 0.0_real;
-    enerd->term[F_DVDL_RESTRAINT] = 0.0_real;
-    enerd->term[F_DKDL]           = 0.0_real;
+    enerd->term[InteractionFunction::PressureDispersionCorrection] = 0.0_real;
+    enerd->term[InteractionFunction::dVremainingdLambda]           = 0.0_real;
+    enerd->term[InteractionFunction::dVCoulombdLambda]             = 0.0_real;
+    enerd->term[InteractionFunction::dVvanderWaalsdLambda]         = 0.0_real;
+    enerd->term[InteractionFunction::dVbondeddLambda]              = 0.0_real;
+    enerd->term[InteractionFunction::dVrestraintdLambda]           = 0.0_real;
+    enerd->term[InteractionFunction::dEkineticdLambda]             = 0.0_real;
     enerd->foreignLambdaTerms.zeroAllTerms();
-    /* reset foreign energy data and dvdl - separate functions since they are also called elsewhere */
-    reset_foreign_enerdata(enerd);
+    /* reset dvdl - separate function since it is also called elsewhere */
     reset_dvdl_enerdata(enerd);
 }

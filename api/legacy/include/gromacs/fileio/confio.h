@@ -1,13 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
- * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2016,2017 by the GROMACS development team.
- * Copyright (c) 2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 1991- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -21,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -30,16 +26,18 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 #ifndef GMX_FILEIO_CONFIO_H
 #define GMX_FILEIO_CONFIO_H
 
-#include "gromacs/math/vectypes.h"
+#include <filesystem>
+
 #include "gromacs/utility/basedefinitions.h"
+#include "gromacs/utility/vectypes.h"
 
 /* For reading coordinate files it is assumed that enough memory
  * has been allocated beforehand.
@@ -50,34 +48,34 @@ struct t_symtab;
 struct t_topology;
 enum class PbcType : int;
 
-void write_sto_conf_indexed(const char*    outfile,
-                            const char*    title,
-                            const t_atoms* atoms,
-                            const rvec     x[],
-                            const rvec*    v,
-                            PbcType        pbcType,
-                            const matrix   box,
-                            int            nindex,
-                            int            index[]);
+void write_sto_conf_indexed(const std::filesystem::path& outfile,
+                            const char*                  title,
+                            const t_atoms*               atoms,
+                            const rvec                   x[],
+                            const rvec*                  v,
+                            PbcType                      pbcType,
+                            const matrix                 box,
+                            int                          nindex,
+                            int                          index[]);
 /* like write_sto_conf, but indexed */
 
-void write_sto_conf(const char*    outfile,
-                    const char*    title,
-                    const t_atoms* atoms,
-                    const rvec     x[],
-                    const rvec*    v,
-                    PbcType        pbcType,
-                    const matrix   box);
+void write_sto_conf(const std::filesystem::path& outfile,
+                    const char*                  title,
+                    const t_atoms*               atoms,
+                    const rvec                   x[],
+                    const rvec*                  v,
+                    PbcType                      pbcType,
+                    const matrix                 box);
 /* write atoms, x, v (if .gro and not NULL) and box (if not NULL)
  * to an STO (.gro or .pdb) file */
 
-void write_sto_conf_mtop(const char*       outfile,
-                         const char*       title,
-                         const gmx_mtop_t* mtop,
-                         const rvec        x[],
-                         const rvec*       v,
-                         PbcType           pbcType,
-                         const matrix      box);
+void write_sto_conf_mtop(const std::filesystem::path& outfile,
+                         const char*                  title,
+                         const gmx_mtop_t&            mtop,
+                         const rvec                   x[],
+                         const rvec*                  v,
+                         PbcType                      pbcType,
+                         const matrix                 box);
 /* As write_sto_conf, but uses a gmx_mtop_t struct */
 
 /*! \brief Read a configuration and, when available, a topology from a tpr or structure file.
@@ -93,13 +91,13 @@ void write_sto_conf_mtop(const char*       outfile,
  * \param[in,out] v             Velocities will be stored when *v!=NULL
  * \param[out]    box           Box dimensions
  */
-void readConfAndTopology(const char* infile,
-                         bool*       haveTopology,
-                         gmx_mtop_t* mtop,
-                         PbcType*    pbcType,
-                         rvec**      x,
-                         rvec**      v,
-                         matrix      box);
+void readConfAndTopology(const std::filesystem::path& infile,
+                         bool*                        haveTopology,
+                         gmx_mtop_t*                  mtop,
+                         PbcType*                     pbcType,
+                         rvec**                       x,
+                         rvec**                       v,
+                         matrix                       box);
 
 /*! \brief Read a configuration from a structure file.
  *
@@ -114,14 +112,14 @@ void readConfAndTopology(const char* infile,
  * \param[in,out] v             Velocities will be stored when *v!=NULL
  * \param[out]    box           Box dimensions
  */
-void readConfAndAtoms(const char* infile,
-                      t_symtab*   symtab,
-                      char**      name,
-                      t_atoms*    atoms,
-                      PbcType*    pbcType,
-                      rvec**      x,
-                      rvec**      v,
-                      matrix      box);
+void readConfAndAtoms(const std::filesystem::path& infile,
+                      t_symtab*                    symtab,
+                      char**                       name,
+                      t_atoms*                     atoms,
+                      PbcType*                     pbcType,
+                      rvec**                       x,
+                      rvec**                       v,
+                      matrix                       box);
 
 /*! \brief Read a configuration and, when available, a topology from a tpr or structure file.
  *
@@ -141,14 +139,15 @@ void readConfAndAtoms(const char* infile,
  * \param[in,out] v             Velocities will be stored when *v!=NULL
  * \param[out]    box           Box dimensions
  * \param[in]     requireMasses Require masses to be present, either from tpr or from the mass
- * database \returns if a topology is available
+ *                              database
+ * \returns if a topology is available
  */
-gmx_bool read_tps_conf(const char*        infile,
-                       struct t_topology* top,
-                       PbcType*           pbcType,
-                       rvec**             x,
-                       rvec**             v,
-                       matrix             box,
-                       gmx_bool           requireMasses);
+gmx_bool read_tps_conf(const std::filesystem::path& infile,
+                       struct t_topology*           top,
+                       PbcType*                     pbcType,
+                       rvec**                       x,
+                       rvec**                       v,
+                       matrix                       box,
+                       gmx_bool                     requireMasses);
 
 #endif

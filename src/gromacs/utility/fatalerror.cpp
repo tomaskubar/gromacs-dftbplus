@@ -1,13 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
- * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2016,2017, The GROMACS development team.
- * Copyright (c) 2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 1991- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -21,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -30,29 +26,33 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 #include "gmxpre.h"
 
-#include "fatalerror.h"
+#include "gromacs/utility/fatalerror.h"
 
 #include "config.h"
 
 #include <cerrno>
+#include <cstdarg>
 #include <cstddef>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 
 #include <exception>
+#include <filesystem>
+#include <mutex>
+#include <string>
 
 #include "gromacs/utility/basedefinitions.h"
 #include "gromacs/utility/baseversion.h"
 #include "gromacs/utility/cstringutil.h"
 #include "gromacs/utility/futil.h"
-#include "gromacs/utility/mutex.h"
 #include "gromacs/utility/programcontext.h"
 #include "gromacs/utility/stringutil.h"
 
@@ -65,17 +65,17 @@
 
 #include "errorformat.h"
 
-static bool bDebug = false;
+static bool bDebug = false; // NOLINT(cppcoreguidelines-avoid-non-const-global-variables)
 
-FILE*    debug        = nullptr;
-gmx_bool gmx_debug_at = FALSE;
+FILE* debug        = nullptr; // NOLINT(cppcoreguidelines-avoid-non-const-global-variables)
+bool  gmx_debug_at = false;   // NOLINT(cppcoreguidelines-avoid-non-const-global-variables)
 
-static FILE*      log_file = nullptr;
-static gmx::Mutex error_mutex;
+static FILE*      log_file = nullptr; // NOLINT(cppcoreguidelines-avoid-non-const-global-variables)
+static std::mutex error_mutex;        // NOLINT(cppcoreguidelines-avoid-non-const-global-variables)
 
-using Lock = gmx::lock_guard<gmx::Mutex>;
+using Lock = std::lock_guard<std::mutex>;
 
-void gmx_init_debug(const int dbglevel, const char* dbgfile)
+void gmx_init_debug(const int dbglevel, const std::filesystem::path& dbgfile)
 {
     if (!bDebug)
     {
@@ -99,19 +99,23 @@ void gmx_fatal_set_log_file(FILE* fp)
     log_file = fp;
 }
 
-static void default_error_handler(const char* title, const std::string& msg, const char* file, int line)
+static void default_error_handler(const char*                  title,
+                                  const std::string&           msg,
+                                  const std::filesystem::path& file,
+                                  int                          line)
 {
     if (log_file)
     {
-        gmx::internal::printFatalErrorHeader(log_file, title, nullptr, file, line);
+        gmx::internal::printFatalErrorHeader(log_file, title, nullptr, file.string().c_str(), line);
         gmx::internal::printFatalErrorMessageLine(log_file, msg.c_str(), 0);
         gmx::internal::printFatalErrorFooter(log_file);
     }
-    gmx::internal::printFatalErrorHeader(stderr, title, nullptr, file, line);
+    gmx::internal::printFatalErrorHeader(stderr, title, nullptr, file.string().c_str(), line);
     gmx::internal::printFatalErrorMessageLine(stderr, msg.c_str(), 0);
     gmx::internal::printFatalErrorFooter(stderr);
 }
 
+// NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)
 static gmx_error_handler_t gmx_error_handler = default_error_handler;
 
 void gmx_set_error_handler(gmx_error_handler_t func)
@@ -152,7 +156,7 @@ static const char* gmx_strerror(const char* key)
     return gmx::getErrorCodeString(gmx::eeUnknownError);
 }
 
-static void call_error_handler(const char* key, const char* file, int line, const std::string& msg)
+static void call_error_handler(const char* key, const std::filesystem::path& file, int line, const std::string& msg)
 {
     Lock lock(error_mutex);
     gmx_error_handler(gmx_strerror(key), msg.empty() ? "Empty gmx_fatal message (bug)." : msg, file, line);
@@ -183,8 +187,8 @@ void gmx_exit_on_fatal_error(ExitType exitType, int returnValue)
 #    else
                 break;
 #    endif
-            case ExitType_NonMasterAbort:
-                // Let all other processes wait till the master has printed
+            case ExitType_NonMainAbort:
+                // Let all other processes wait till the main has printed
                 // the error message and issued MPI_Abort.
                 MPI_Barrier(MPI_COMM_WORLD);
                 break;
@@ -205,14 +209,14 @@ void gmx_exit_on_fatal_error(ExitType exitType, int returnValue)
 }
 
 void gmx_fatal_mpi_va(int /*f_errno*/,
-                      const char* file,
-                      int         line,
-                      gmx_bool    bMaster,
-                      gmx_bool    bFinalize,
-                      const char* fmt,
-                      va_list     ap)
+                      const std::filesystem::path& file,
+                      int                          line,
+                      gmx_bool                     bMain,
+                      gmx_bool                     bFinalize,
+                      const char*                  fmt,
+                      std::va_list                 ap)
 {
-    if (bMaster)
+    if (bMain)
     {
         std::string msg = gmx::formatStringV(fmt, ap);
         call_error_handler("fatal", file, line, msg);
@@ -221,26 +225,32 @@ void gmx_fatal_mpi_va(int /*f_errno*/,
     ExitType exitType = ExitType_CleanExit;
     if (!bFinalize)
     {
-        exitType = bMaster ? ExitType_Abort : ExitType_NonMasterAbort;
+        exitType = bMain ? ExitType_Abort : ExitType_NonMainAbort;
     }
     gmx_exit_on_fatal_error(exitType, 1);
 }
 
-void gmx_fatal(int f_errno, const char* file, int line, gmx_fmtstr const char* fmt, ...)
+void gmx_fatal(int f_errno, const std::filesystem::path& file, int line, gmx_fmtstr const char* fmt, ...)
 {
-    va_list ap;
+    std::va_list ap;
     va_start(ap, fmt);
     gmx_fatal_mpi_va(f_errno, file, line, TRUE, FALSE, fmt, ap);
     va_end(ap);
 }
 
-void _gmx_error(const char* key, const std::string& msg, const char* file, int line)
+void gmx_error_function(const char* key, const std::string& msg, const std::filesystem::path& file, int line)
 {
     call_error_handler(key, file, line, msg);
     gmx_exit_on_fatal_error(ExitType_Abort, 1);
 }
 
-void _range_check(int n, int n_min, int n_max, const char* warn_str, const char* var, const char* file, int line)
+void range_check_function(int                          n,
+                          int                          n_min,
+                          int                          n_max,
+                          const char*                  warn_str,
+                          const char*                  var,
+                          const std::filesystem::path& file,
+                          int                          line)
 {
     if ((n < n_min) || (n >= n_max))
     {
@@ -254,16 +264,19 @@ void _range_check(int n, int n_min, int n_max, const char* warn_str, const char*
         buf += gmx::formatString(
                 "Variable %s has value %d. It should have been "
                 "within [ %d .. %d ]\n",
-                var, n, n_min, n_max);
+                var,
+                n,
+                n_min,
+                n_max);
 
-        _gmx_error("range", buf, file, line);
+        gmx_error_function("range", buf, file, line);
     }
 }
 
 void gmx_warning(gmx_fmtstr const char* fmt, ...)
 {
-    va_list ap;
-    char    msg[STRLEN];
+    std::va_list ap;
+    char         msg[STRLEN];
 
     va_start(ap, fmt);
     vsprintf(msg, fmt, ap);

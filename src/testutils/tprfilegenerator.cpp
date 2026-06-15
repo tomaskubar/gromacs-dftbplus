@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2019- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \internal \file
  * \brief
@@ -44,27 +43,33 @@
 
 #include "testutils/tprfilegenerator.h"
 
+#include <filesystem>
+#include <string>
+
+#include <gtest/gtest.h>
+
 #include "gromacs/gmxpreprocess/grompp.h"
 #include "gromacs/utility/textwriter.h"
 
 #include "testutils/cmdlinetest.h"
+#include "testutils/testfilemanager.h"
 
 namespace gmx
 {
 namespace test
 {
 
-TprAndFileManager::TprAndFileManager(const std::string& name)
+TprAndFileManager::TprAndFileManager(const std::string& name, const std::string& mdpContent)
 {
-    const std::string mdpInputFileName = fileManager_.getTemporaryFilePath(name + ".mdp");
-    gmx::TextWriter::writeFileFromString(mdpInputFileName, "");
-    tprFileName_ = fileManager_.getTemporaryFilePath(name + ".tpr");
+    const std::string mdpInputFileName = fileManager_.getTemporaryFilePath(name + ".mdp").string();
+    gmx::TextWriter::writeFileFromString(mdpInputFileName, mdpContent);
+    tprFileName_ = fileManager_.getTemporaryFilePath(name + ".tpr").string();
     {
         CommandLine caller;
         caller.append("grompp");
         caller.addOption("-f", mdpInputFileName);
-        caller.addOption("-p", TestFileManager::getInputFilePath(name + ".top"));
-        caller.addOption("-c", TestFileManager::getInputFilePath(name + ".pdb"));
+        caller.addOption("-p", TestFileManager::getInputFilePath(name + ".top").string());
+        caller.addOption("-c", TestFileManager::getInputFilePath(name + ".pdb").string());
         caller.addOption("-o", tprFileName_);
         EXPECT_EQ(0, gmx_grompp(caller.argc(), caller.argv()));
     }

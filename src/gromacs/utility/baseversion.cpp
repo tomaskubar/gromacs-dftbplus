@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2014,2015,2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2014- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,49 +26,40 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 #include "gmxpre.h"
 
-#include "baseversion.h"
+#include "gromacs/utility/baseversion.h"
 
 #include "config.h"
 
+#include "gromacs/utility/basedefinitions.h"
 #include "gromacs/utility/gmxassert.h"
 
 #include "baseversion_gen.h"
 
 const char* gmx_version()
 {
-    return _gmx_ver_string;
+    return gmx_ver_string;
 }
 
 const char* gmx_version_git_full_hash()
 {
-    return _gmx_full_git_hash;
+    return gmx_full_git_hash;
 }
 
 const char* gmx_version_git_central_base_hash()
 {
-    return _gmx_central_base_hash;
+    return gmx_central_base_hash;
 }
 
 const char* gmxDOI()
 {
     return gmxSourceDoiString;
-}
-
-const char* gmxReleaseSourceChecksum()
-{
-    return gmxReleaseSourceFileChecksum;
-}
-
-const char* gmxCurrentSourceChecksum()
-{
-    return gmxCurrentSourceFileChecksum;
 }
 
 #if GMX_DOUBLE
@@ -78,29 +68,26 @@ void gmx_is_double_precision() {}
 void gmx_is_single_precision() {}
 #endif
 
-const char* getGpuImplementationString()
+namespace gmx
 {
-    if (GMX_GPU)
+
+std::unordered_map<std::string, std::string> versionDescriptions()
+{
+    std::unordered_map<std::string, std::string> descriptions;
+    // Note that these string keys must be kept in sync with
+    // those in mdrun/binary_information.cpp
+    descriptions["GROMACS version"] = gmx_version();
+    const char* const git_hash      = gmx_version_git_full_hash();
+    if (git_hash[0] != '\0')
     {
-        if (GMX_GPU_CUDA)
-        {
-            return "CUDA";
-        }
-        else if (GMX_GPU_OPENCL)
-        {
-            return "OpenCL";
-        }
-        else if (GMX_GPU_SYCL)
-        {
-            return "SYCL";
-        }
-        else
-        {
-            GMX_RELEASE_ASSERT(false, "Unknown GPU configuration");
-        }
+        descriptions["GIT SHA1 hash"] = git_hash;
     }
-    else
+    const char* const base_hash = gmx_version_git_central_base_hash();
+    if (base_hash[0] != '\0')
     {
-        return "disabled";
+        descriptions["Branched from"] = base_hash;
     }
+    return descriptions;
 }
+
+} // namespace gmx

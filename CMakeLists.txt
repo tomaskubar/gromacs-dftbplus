@@ -1,12 +1,9 @@
 #
 # This file is part of the GROMACS molecular simulation package.
 #
-# Copyright (c) 2009,2010,2011,2012,2013 by the GROMACS development team.
-# Copyright (c) 2014,2015,2016,2017,2018 by the GROMACS development team.
-# Copyright (c) 2019,2020, by the GROMACS development team, led by
-# Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
-# and including many others, as listed in the AUTHORS file in the
-# top-level source directory and at http://www.gromacs.org.
+# Copyright 2009- The GROMACS Authors
+# and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+# Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
 #
 # GROMACS is free software; you can redistribute it and/or
 # modify it under the terms of the GNU Lesser General Public License
@@ -20,7 +17,7 @@
 #
 # You should have received a copy of the GNU Lesser General Public
 # License along with GROMACS; if not, see
-# http://www.gnu.org/licenses, or write to the Free Software Foundation,
+# https://www.gnu.org/licenses, or write to the Free Software Foundation,
 # Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
 #
 # If you want to redistribute modifications to GROMACS, please
@@ -29,35 +26,71 @@
 # consider code for inclusion in the official distribution, but
 # derived work must not be called official GROMACS. Details are found
 # in the README & COPYING files - if they are missing, get the
-# official version at http://www.gromacs.org.
+# official version at https://www.gromacs.org.
 #
 # To help us fund GROMACS development, we humbly ask that you cite
-# the research papers on the package. Check out http://www.gromacs.org.
+# the research papers on the package. Check out https://www.gromacs.org.
 
-cmake_minimum_required(VERSION 3.13)
-cmake_policy(SET CMP0074 NEW) # From CMake 3.12
-cmake_policy(SET CMP0068 NEW) # From CMake-3.9
+cmake_minimum_required(VERSION 3.28)
+cmake_policy(VERSION 3.28)
 
 # CMake modules/macros are in a subdirectory to keep this file cleaner
 # This needs to be set before project() in order to pick up toolchain files
-list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake ${CMAKE_CURRENT_SOURCE_DIR}/cmake/Platform)
+list(APPEND CMAKE_MODULE_PATH
+    ${CMAKE_CURRENT_SOURCE_DIR}/cmake
+    ${CMAKE_CURRENT_SOURCE_DIR}/cmake/Platform
+    )
 
-if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
-    # Providing a default value >=10.14 helps to find modern C++ compatibility,
-    # such as by defaulting to the Clang libc++ instead of libstdc++.
-    set(CMAKE_OSX_DEPLOYMENT_TARGET 10.14 CACHE STRING
-        "OS X deployment target affects default SDK version and compiler flags.")
-    # By default, limit the binary architecture to a single 64-bit build.
-    set(CMAKE_OSX_ARCHITECTURES x86_64 CACHE STRING
-        "OS X architecture affects the compatibility of the (potentially fat) binaries produced."
-        FORCE)
+if(APPLE)
+    if(CMAKE_OSX_DEPLOYMENT_TARGET)
+        # Providing a default value >=10.14 helps to find modern C++ compatibility,
+        # such as by defaulting to the Clang libc++ instead of libstdc++.
+        if(CMAKE_OSX_DEPLOYMENT_TARGET VERSION_LESS "10.14")
+            if((NOT DEFINED _gmx_osx_deployment_target_checked)
+                    OR NOT (_gmx_osx_deployment_target_checked VERSION_EQUAL CMAKE_OSX_DEPLOYMENT_TARGET))
+                message(WARNING "CMAKE_OSX_DEPLOYMENT_TARGET less than 10.14 may have compatibility problems.")
+            endif()
+        endif()
+        set(_gmx_osx_deployment_target_checked ${CMAKE_OSX_DEPLOYMENT_TARGET} CACHE STRING
+                "Last seen CMAKE_OSX_DEPLOYMENT_TARGET, if previously set." FORCE)
+    endif()
+    if(CMAKE_OSX_ARCHITECTURES)
+        string(FIND ${CMAKE_OSX_ARCHITECTURES} i386 _substring_index)
+        if(_substring_index GREATER_EQUAL 0)
+            message(FATAL_ERROR "CMAKE_OSX_ARCHITECTURES includes i386, but GROMACS requires 64-bit architecture.")
+        endif()
+    endif()
 endif()
 
-project(Gromacs)
+# The GROMACS convention is that these are the version number of the next
+# release that is going to be made from this branch.
+project(Gromacs VERSION 2026.3)
 
-set(CMAKE_CXX_STANDARD 17)
+if(NOT CMAKE_CXX_STANDARD)
+    set(CMAKE_CXX_STANDARD 17)
+endif()
+if(CMAKE_CXX_STANDARD LESS 17)
+    message(FATAL_ERROR "C++17 or newer is required")
+endif()
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
+
+# Do not scan for C++ modules in C++20 mode (at least until we start using them).
+# This simplifies configuration and reduces build time.
+if(CMAKE_CXX_STANDARD GREATER_EQUAL 20)
+    if(NOT DEFINED CMAKE_CXX_SCAN_FOR_MODULES)
+        set(CMAKE_CXX_SCAN_FOR_MODULES OFF)
+    endif()
+endif()
+
+set(GMX_CLANG_MINIMUM_REQUIRED_VERSION 14)
+set(GMX_GCC_MINIMUM_REQUIRED_VERSION 11)
+set(GMX_CUDA_MINIMUM_REQUIRED_VERSION 12.1)
+set(GMX_CUDA_MINIMUM_REQUIRED_COMPUTE_CAPABILITY 5.0)
+
+# We start supporting HIP from version 5.2
+set(REQUIRED_HIP_VERSION 5.2)
+
 
 include(gmxManageCcache)
 
@@ -65,6 +98,10 @@ set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 
+include(gmxTestIntelLLVM)
+# Run through a number of tests for buggy compilers and other issues
+include(gmxTestCompilerProblems)
+gmx_test_compiler_problems()
 find_package(LibStdCpp)
 
 # Python is first referenced in gmxVersionInfo, so we perform the search early
@@ -92,11 +129,15 @@ include(gmxBuildTypeMSAN)
 include(gmxBuildTypeUBSAN)
 include(gmxBuildTypeReleaseWithAssert)
 
+set(valid_build_types "Debug" "Release" "MinSizeRel" "RelWithDebInfo" "Reference" "RelWithAssert" "Profile" "TSAN" "ASAN" "MSAN" "UBSAN")
 if(NOT CMAKE_BUILD_TYPE)
-    set(CMAKE_BUILD_TYPE "Release" CACHE STRING "Choose the type of build, options are: Debug Release RelWithDebInfo MinSizeRel Reference RelWithAssert Profile TSAN ASAN MSAN UBSAN." FORCE)
+    set(CMAKE_BUILD_TYPE "Release" CACHE STRING "Choose the type of build, options are: ${valid_build_types}." FORCE)
     # Set the possible values of build type for cmake-gui
-    set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS "Debug" "Release"
-        "MinSizeRel" "RelWithDebInfo" "Reference" "RelWithAssert" "Profile" "TSAN" "ASAN" "MSAN" "UBSAN")
+    set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS ${valid_build_types})
+endif()
+if(NOT "${CMAKE_BUILD_TYPE}" IN_LIST valid_build_types)
+    message(FATAL_ERROR "Unsupported value of -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}. "
+        "Only ${valid_build_types} are allowed (case-sensitive)")
 endif()
 if(CMAKE_CONFIGURATION_TYPES)
     # Add appropriate GROMACS-specific build types for the Visual
@@ -172,24 +213,21 @@ gmx_detect_target_architecture()
 ########################################################################
 include(gmxOptionUtilities)
 
-set(CMAKE_PREFIX_PATH "" CACHE STRING "Extra locations to search for external libraries and tools (give directory without lib, bin, or include)")
+set(CMAKE_PREFIX_PATH "${CMAKE_PREFIX_PATH}" CACHE STRING "Extra locations to search for external libraries and tools (give directory without lib, bin, or include)")
 
-# Fujitsu only has SIMD in double precision, so this will be faster
-gmx_set_boolean(GMX_DOUBLE_DEFAULT GMX_TARGET_FUJITSU_SPARC64)
-option(GMX_DOUBLE "Use double precision (much slower, use only if you really need it)" ${GMX_DOUBLE_DEFAULT})
-option(GMX_RELAXED_DOUBLE_PRECISION "Accept single precision 1/sqrt(x) when using Fujitsu HPC-ACE SIMD" OFF)
-mark_as_advanced(GMX_RELAXED_DOUBLE_PRECISION)
+option(GMX_DOUBLE "Use double precision (much slower, use only if you really need it)" OFF)
 
 option(GMX_MPI    "Build a parallel (message-passing) version of GROMACS" OFF)
 option(GMX_THREAD_MPI  "Build a thread-MPI-based multithreaded version of GROMACS (not compatible with MPI)" ON)
-gmx_dependent_option(
-    GMX_MPI_IN_PLACE
-    "Enable MPI_IN_PLACE for MPIs that have it defined"
-    ON
-    GMX_MPI)
-mark_as_advanced(GMX_MPI_IN_PLACE)
 
 option(GMX_MIMIC "Enable MiMiC QM/MM interface (CPMD is required)" OFF)
+
+option(GMX_CP2K "Enable CP2K QM/MM interface (CP2K 8.1 or later is required)" OFF)
+
+# We need to enable Fortran, because CP2K will be linked
+if(GMX_CP2K)
+    enable_language(Fortran)
+endif()
 
 option(GMX_FAHCORE "Build a library with mdrun functionality" OFF)
 mark_as_advanced(GMX_FAHCORE)
@@ -204,15 +242,44 @@ gmx_option_multichoice(
     GMX_GPU
     "Framework for GPU acceleration"
     OFF
-    OFF CUDA OpenCL SYCL)
+    OFF CUDA OpenCL SYCL HIP)
+if(GMX_GPU STREQUAL SYCL)
+    gmx_option_multichoice(
+        GMX_SYCL
+        "SYCL implementation to use for GPU acceleration"
+        AUTO
+        DPCPP ACPP AUTO)
+    if (GMX_SYCL STREQUAL "AUTO")
+        if(GMX_SYCL_HIPSYCL) # Check legacy flag
+            message(WARNING "GMX_SYCL_HIPSYCL option is deprecated; please use -DGMX_SYCL=ACPP")
+            set(GMX_SYCL "ACPP")
+        else()
+            # Check direct compiler support (DPC++)
+            include(CheckCXXCompilerFlag)
+            check_cxx_compiler_flag("-fsycl" HAVE_SYCL_DPCPP)
+            if(HAVE_SYCL_DPCPP)
+                set(GMX_SYCL "DPCPP")
+                if (NOT "${GMX_REPORTED_SYCL_BACKEND}" STREQUAL ${GMX_SYCL})
+                    message(STATUS "GROMACS SYCL backend: Setting GMX_SYCL=DPCPP (Intel oneAPI DPC++)")
+                endif()
+            else()
+                set(GMX_SYCL "ACPP")
+                if (NOT "${GMX_REPORTED_SYCL_BACKEND}" STREQUAL ${GMX_SYCL})
+                    message(STATUS "GROMACS SYCL backend: Setting GMX_SYCL=ACPP (AdaptiveCpp)")
+                endif()
+            endif()
+            set(GMX_REPORTED_SYCL_BACKEND ${GMX_SYCL} CACHE INTERNAL "The most recent SYCL backend reported via CMake status message")
+        endif ()
+    endif ()
+endif()
 
 gmx_option_multichoice(
     GMX_SIMD
     "SIMD instruction set for CPU kernels and compiler optimization"
     "AUTO"
-    AUTO None SSE2 SSE4.1 AVX_128_FMA AVX_256 AVX2_256 AVX2_128 AVX_512 AVX_512_KNL MIC ARM_NEON ARM_NEON_ASIMD ARM_SVE IBM_VMX IBM_VSX Sparc64_HPC_ACE Reference)
+    AUTO None SSE2 SSE4.1 AVX_128_FMA AVX_256 AVX2_256 AVX2_128 AVX_512 ARM_NEON_ASIMD ARM_SVE IBM_VSX Reference)
 
-if(GMX_TARGET_MIC)
+if (GMX_INTEL_LLVM)
     set(GMX_FFT_LIBRARY_DEFAULT "mkl")
 else()
     set(GMX_FFT_LIBRARY_DEFAULT "fftw3")
@@ -236,16 +303,84 @@ gmx_dependent_option(
 mark_as_advanced(GMX_BUILD_OWN_FFTW)
 mark_as_advanced(GMX_DISABLE_FFTW_MEASURE)
 
+option(GMX_USE_HEFFTE "Use HeFFTe for distributed GPU FFT support with an MPI library." OFF)
+
+option(GMX_USE_CUFFTMP "Use cuFFTMp for distributed FFT support. Used with CUDA backend." OFF)
+
+# Here the default GPU FFT library is set up depending
+# on the build configuration. Other choices are
+# available, these are just the defaults.
+#
+# =================+======================================
+# Configuration    |  Default GPU FFT library
+# =================+======================================
+# CUDA             | cuFFT
+# OpenCL           | VkFFT or clFFT according to toolchain
+# SYCL via ACpp    | VkFFT
+# SYCL via DPCPP   | MKL
+# HIP              | VkFFT or rocFFT
+# =================+======================================
+if (GMX_GPU)
+    if (GMX_GPU STREQUAL CUDA)
+        set(GMX_GPU_FFT_LIBRARY_DEFAULT "cuFFT")
+    elseif(GMX_GPU STREQUAL HIP)
+        set(GMX_GPU_FFT_LIBRARY_DEFAULT "VkFFT")
+    elseif(GMX_GPU STREQUAL OPENCL)
+        if (APPLE OR MSVC)
+            set(GMX_GPU_FFT_LIBRARY_DEFAULT "VkFFT")
+        else()
+            set(GMX_GPU_FFT_LIBRARY_DEFAULT "clFFT")
+        endif()
+    elseif(GMX_GPU STREQUAL SYCL)
+        if(GMX_SYCL STREQUAL ACPP)
+            set(GMX_GPU_FFT_LIBRARY_DEFAULT "VkFFT")
+        else()
+            set(GMX_GPU_FFT_LIBRARY_DEFAULT "MKL")
+        endif()
+    endif()
+
+    gmx_option_multichoice(
+        GMX_GPU_FFT_LIBRARY
+        "GPU FFT library"
+        "${GMX_GPU_FFT_LIBRARY_DEFAULT}"
+        cuFFT clFFT VkFFT MKL oneMath rocFFT BBFFT none)
+    # The validity of chosen option is later verified by the selected backend
+
+    foreach (_gpu_fft_library cuFFT clFFT VkFFT MKL oneMath rocFFT BBFFT)
+        string(TOUPPER "${_gpu_fft_library}" _gpu_fft_library_upper)
+        if (GMX_GPU_FFT_LIBRARY STREQUAL ${_gpu_fft_library_upper})
+            if (NOT GMX_GPU_FFT_QUIET_AFTER_FIRST_RUN)
+                message(STATUS "Selected GPU FFT library - ${_gpu_fft_library}")
+            endif()
+            set(GMX_GPU_FFT_QUIET_AFTER_FIRST_RUN TRUE CACHE INTERNAL "Be quiet during future runs of cmake")
+            set(_value TRUE)
+        else()
+            set(_value FALSE)
+        endif()
+        set("GMX_GPU_FFT_${_gpu_fft_library_upper}" "${_value}" CACHE INTERNAL "Use ${_gpu_fft_library} library for FFTs on GPUs")
+    endforeach()
+endif()
+
+option(GMX_NVSHMEM "Build a parallel NVSHMEM multi-GPU code of GROMACS" OFF)
+
+if (GMX_NVSHMEM)
+    if (NVSHMEM_ROOT)
+        set(GMX_NVSHMEM_HOME ${NVSHMEM_ROOT} CACHE PATH "path to NVSHMEM")
+    elseif (DEFINED ENV{NVHPC_ROOT})
+        set(GMX_NVSHMEM_HOME "$ENV{NVHPC_ROOT}/comm_libs/nvshmem" CACHE PATH "path to NVSHMEM")
+    else()
+        message(FATAL_ERROR "NVSHMEM_ROOT path must be defined if GMX_NVSHMEM is set")
+    endif()
+endif()
+
 gmx_option_multichoice(
     GMX_QMMM_PROGRAM
     "QM package for QM/MM"
     None
     none gaussian mopac gamess orca dftbplus)
 
-option(GMX_PLUMED "Link with Plumed (requires 3 symlinks in Gromacs directory)" OFF)
-
 gmx_dependent_cache_variable(GMX_SIMD_REF_FLOAT_WIDTH  "Reference SIMD single precision width" STRING "4" "GMX_SIMD STREQUAL REFERENCE")
-gmx_dependent_cache_variable(GMX_SIMD_REF_DOUBLE_WIDTH "Reference SIMD double precision width" STRING "2" "GMX_SIMD STREQUAL REFERENCE")
+gmx_dependent_cache_variable(GMX_SIMD_REF_DOUBLE_WIDTH "Reference SIMD double precision width" STRING "4" "GMX_SIMD STREQUAL REFERENCE")
 
 # This should be moved to a separate NBNXN cmake module when that code is cleaned up and modularized
 
@@ -255,8 +390,6 @@ mark_as_advanced(GMX_BROKEN_CALLOC)
 option(GMX_OPENMP "Enable OpenMP-based multithreading" ON)
 
 option(GMX_USE_TNG "Use the TNG library for trajectory I/O" ON)
-
-option(GMX_BUILD_MDRUN_ONLY "Build and install only the mdrun binary" OFF)
 
 option(GMX_CYCLE_SUBCOUNTERS "Enable cycle subcounters to get a more detailed cycle timings" OFF)
 mark_as_advanced(GMX_CYCLE_SUBCOUNTERS)
@@ -270,9 +403,14 @@ option(GMX_BUILD_FOR_COVERAGE
 mark_as_advanced(GMX_BUILD_FOR_COVERAGE)
 
 option(GMX_DEVELOPER_BUILD
-    "Enable Developer convenience features: always build unit-tests"
+    "Enable Developer convenience features: always build unit-tests, manual also in PDF, enable warnings, and export compile commands"
     OFF)
 mark_as_advanced(GMX_DEVELOPER_BUILD)
+
+if(GMX_DEVELOPER_BUILD)
+    set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+    mark_as_advanced(CMAKE_EXPORT_COMPILE_COMMANDS)
+endif()
 
 gmx_set_boolean(GMX_COMPILER_WARNINGS_DEFAULT "NOT SOURCE_IS_SOURCE_DISTRIBUTION")
 option(GMX_COMPILER_WARNINGS
@@ -283,7 +421,7 @@ mark_as_advanced(GMX_COMPILER_WARNINGS)
 gmx_add_cache_dependency(GMX_COMPILER_WARNINGS BOOL "NOT GMX_DEVELOPER_BUILD" ON)
 
 option(GMX_BUILD_SHARED_EXE
-    "Build exectuables as shared binaries. If not set, this disables rpath and dynamic linker flags in an attempt to build a static binary, but this may require setting up the toolchain properly and making appropriate libraries available."
+    "Build executables as shared binaries. If not set, this disables rpath and dynamic linker flags in an attempt to build a static binary, but this may require setting up the toolchain properly and making appropriate libraries available."
     ON)
 mark_as_advanced(GMX_BUILD_SHARED_EXE)
 
@@ -320,19 +458,12 @@ gmx_c_flags()
 set(EXTRA_C_FLAGS "")
 set(EXTRA_CXX_FLAGS "")
 
-# Run through a number of tests for buggy compilers and other issues
-include(gmxTestCompilerProblems)
-gmx_test_compiler_problems()
-
 # Implement double-precision option. This is complicated because we
 # need installed headers to use the precision mode of the build that
 # produced the library, but cannot use config.h in that case. We also
 # want such variables to always have a definition, because #if is more
 # robust than #ifdef. So, we put this value on the compiler command
 # line in all cases.
-#
-# GMX_RELAXED_DOUBLE_PRECISION does not need to be handled here,
-# because no installed header needs it
 if(GMX_DOUBLE)
     set(GMX_DOUBLE_VALUE 1)
 else()
@@ -347,6 +478,25 @@ if(GMX_IMD AND WIN32)
 endif()
 
 
+########################################################################
+# Parse present/past contributors and project leaders from AUTHORS     #
+########################################################################
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS AUTHORS)
+file(READ "${CMAKE_SOURCE_DIR}/AUTHORS" AUTHORS)
+string(REGEX REPLACE " <[^<]+>" "" AUTHORS_NO_EMAIL "${AUTHORS}")
+string(REGEX MATCH "CURRENT CONTRIBUTORS\n=+\n(.*)\n\n+PREVIOUS CONTRIBUTORS\n=+\n(.*)\n\n+CURRENT PROJECT LEADERS\n=+\n(.*)\n\n+" MATCH "${AUTHORS_NO_EMAIL}")
+
+set(GMX_CURRENT_CONTRIBUTORS ${CMAKE_MATCH_1})
+set(GMX_PREVIOUS_CONTRIBUTORS ${CMAKE_MATCH_2})
+set(GMX_CURRENT_PROJECT_LEADERS ${CMAKE_MATCH_3})
+
+string(REGEX REPLACE "\n" ", " GMX_CURRENT_CONTRIBUTORS_STRING "${GMX_CURRENT_CONTRIBUTORS}")
+string(REGEX REPLACE "\n" ", " GMX_PREVIOUS_CONTRIBUTORS_STRING "${GMX_PREVIOUS_CONTRIBUTORS}")
+string(REGEX REPLACE "\n" ", " GMX_CURRENT_PROJECT_LEADERS_STRING "${GMX_CURRENT_PROJECT_LEADERS}")
+
+string(REGEX REPLACE "([^\n]+)" "    \"\\1\"," GMX_CURRENT_CONTRIBUTORS "${GMX_CURRENT_CONTRIBUTORS}")
+string(REGEX REPLACE "([^\n]+)" "    \"\\1\"," GMX_PREVIOUS_CONTRIBUTORS "${GMX_PREVIOUS_CONTRIBUTORS}")
+string(REGEX REPLACE "([^\n]+)" "    \"\\1\"," GMX_CURRENT_PROJECT_LEADERS "${GMX_CURRENT_PROJECT_LEADERS}")
 
 ########################################################################
 # Basic system tests (standard libraries, headers, functions, types)   #
@@ -384,8 +534,8 @@ elseif(CMAKE_CXX_COMPILER_ID MATCHES "XL")
 endif()
 
 include(CheckLibraryExists)
-find_library(HAVE_LIBM m)
-mark_as_advanced(HAVE_LIBM)
+find_library(LIBM_LIBRARY m)
+mark_as_advanced(LIBM_LIBRARY)
 check_library_exists(rt clock_gettime "" HAVE_CLOCK_GETTIME)
 check_library_exists(m feenableexcept "" HAVE_FEENABLEEXCEPT)
 check_library_exists(m fedisableexcept "" HAVE_FEDISABLEEXCEPT)
@@ -409,16 +559,20 @@ test_big_endian(GMX_INTEGER_BIG_ENDIAN)
 
 gmx_set_boolean(GMX_USE_NICE "HAVE_UNISTD_H AND HAVE_NICE")
 
-# Management of GROMACS options for specific toolchains should go
-# here. Because the initial settings for some of the main options have
-# already happened, but things like library detection and MPI compiler
-# feature detection have not, the docstrings for any over-rides of
-# GROMACS defaults or user settings will make sense. Also, any
-# toolchain-related reasons for choosing whether to detect various
-# things can be sorted out now, before the detection takes place.
-if(GMX_TARGET_FUJITSU_SPARC64)
-    include(gmxManageFujitsuSparc64)
+########################################################################
+#Process shared/static library settings
+########################################################################
+include(gmxManageSharedLibraries)
+
+# Define option for gmxapi components and docs.
+if(GMX_NATIVE_WINDOWS)
+    # GMXAPI has not been tested in Microsoft environments.
+    # GMXAPI requires position-independent code
+    set(_GMXAPI_DEFAULT OFF)
+else()
+    set(_GMXAPI_DEFAULT ${BUILD_SHARED_LIBS})
 endif()
+option(GMXAPI "Install GROMACS API." ${_GMXAPI_DEFAULT})
 
 ########################################################################
 #Process MPI settings
@@ -431,10 +585,9 @@ include(gmxManageMPI)
 include(gmxManageMimic)
 
 ########################################################################
-#Process shared/static library settings
+#Process CP2K settings
 ########################################################################
-include(gmxManageSharedLibraries)
-
+include(gmxManageCP2K)
 
 ########################################################################
 # Specify install locations
@@ -464,29 +617,6 @@ include(gmxManageSuffixes)
 ########################################################################
 # Find external packages                                               #
 ########################################################################
-
-# Unconditionally find the package, as it is also required for unit
-# tests. This exports LIBXML2_FOUND, which we should not use because
-# it does not tell us that linking will succeed. Instead, we test that
-# next.
-#if(DEFINED LIBXML2_LIBRARIES)
-#  set(LibXml2_FIND_QUIETLY TRUE)
-#endif()
-#find_package(LibXml2)
-#include(gmxTestLibXml2)
-#gmx_test_libxml2(HAVE_LIBXML2)
-#option(GMX_XML "Use libxml2 to parse xml files (currently has no effect)" ${HAVE_LIBXML2})
-#set(PKG_XML "")
-#mark_as_advanced(GMX_XML)
-# Don't actually do anything, since libxml2 is currently not used by libgromacs
-#if(GMX_XML AND NOT HAVE_LIBXML2)
-#    message(FATAL_ERROR "libxml2 not found. Set GMX_XML=OFF to compile without XML support")
-#endif()
-#if(GMX_XML)
-#    include_directories(${LIBXML2_INCLUDE_DIR})
-#    set(PKG_XML libxml-2.0)
-#    set(XML_LIBRARIES ${LIBXML2_LIBRARIES})
-#endif()
 
 option(GMX_HWLOC "Use hwloc portable hardware locality library" OFF)
 
@@ -518,6 +648,10 @@ if (GMX_HWLOC)
         message(FATAL_ERROR "HWLOC package support required, but not found.")
     endif()
 
+    if (HWLOC_FOUND AND HWLOC_VERSION VERSION_LESS "2")
+        message(STATUS "Support for hwloc versions 1.x is deprecated")
+    endif()
+
     set(HWLOC_FIND_QUIETLY_AFTER_FIRST_RUN TRUE CACHE INTERNAL "Be quiet during future attempts to find HWLOC")
 endif()
 
@@ -525,37 +659,11 @@ option(GMX_EXTERNAL_TINYXML2 "Use external TinyXML-2 instead of compiling the ve
 mark_as_advanced(GMX_EXTERNAL_TINYXML2)
 if(GMX_EXTERNAL_TINYXML2)
     # Find an external TinyXML-2 library.
-    find_package(TinyXML-2 3.0.0)
+    find_package(TinyXML2 6.0.0)
     set(HAVE_TINYXML2 ${TinyXML2_FOUND})
     if(NOT HAVE_TINYXML2)
         message(FATAL_ERROR "External TinyXML-2 could not be found, please adjust your search paths")
     endif()
-endif()
-
-option(GMX_EXTRAE "Add support for tracing using EXTRAE" OFF)
-mark_as_advanced(GMX_EXTRAE)
-
-if (GMX_EXTRAE)
-  find_package(EXTRAE)
-  if(EXTRAE_FOUND)
-    include_directories(SYSTEM ${EXTRAE_INCLUDE_DIR})
-    set(HAVE_EXTRAE 1)
-  else()
-    message(FATAL_ERROR "EXTRAE library was not found. Please add the correct path to CMAKE_PREFIX_PATH")
-  endif()
-endif()
-
-option(GMX_X11 "Use X window system" OFF)
-if (GMX_X11)
-    find_package(X11)
-    # X11 includes/libraries are only set in the ngmx subdirectory!
-    if(NOT X11_FOUND)
-        message(FATAL_ERROR
-                "X11 include files and/or libraries were not found. "
-                "Set GMX_X11=OFF to compile without X11 support. "
-                "gmx view will not be available.")
-    endif()
-    include_directories(SYSTEM ${X11_INCLUDE_DIR})
 endif()
 
 include(ThreadMPI)
@@ -564,7 +672,6 @@ tmpi_enable_core("${CMAKE_SOURCE_DIR}/src/external/thread_mpi/include")
 if(GMX_THREAD_MPI)
     # enable MPI functions
     tmpi_enable()
-    set(MPI_IN_PLACE_EXISTS 1)
 endif()
 # If atomics are manually disabled a define is needed because atomics.h doesn't depend on config.h
 if (TMPI_ATOMICS_DISABLED)
@@ -573,27 +680,167 @@ endif()
 
 include(gmxManageTNG)
 
+include(gmxManageHDF5)
+
 include(gmxManageLmfit)
 
-if(GMX_GPU)
+include(gmxManageMuparser)
 
+include(gmxManageColvars)
+
+include(gmxManagePlumed)
+
+include(gmxManageFMM)
+
+##################################################
+# Process SIMD instruction settings
+##################################################
+# This checks what flags to add in order to
+# support the SIMD instructions we need, it sets
+# correct defines for the SIMD instructions supported,
+# and adds advanced options to control accuracy
+# for SIMD math operations.
+include(gmxManageSimd)
+gmx_manage_simd()
+
+if(GMX_GPU)
     string(TOUPPER "${GMX_GPU}" _gmx_gpu_uppercase)
     if(${_gmx_gpu_uppercase} STREQUAL "CUDA")
         include(gmxManageCuda)
+    elseif(${_gmx_gpu_uppercase} STREQUAL "HIP")
+        include(gmxManageHip)
     elseif(${_gmx_gpu_uppercase} STREQUAL "OPENCL")
+        if(NOT OpenCL_DONT_WARN_AFTER_FIRST_RUN)
+            message(STATUS "GPU support with OpenCL is deprecated. It is still fully supported (and "
+                   "recommended for Apple GPUs). Please use CUDA for running on NVIDIA GPUs and "
+                   "SYCL for running on Intel GPUs, and HIP or SYCL on AMD GPUs.")
+        endif()
+        set(OpenCL_DONT_WARN_AFTER_FIRST_RUN TRUE CACHE INTERNAL "Be quiet during future attempts to configure with OpenCL support")
         include(gmxManageOpenCL)
     elseif(${_gmx_gpu_uppercase} STREQUAL "SYCL")
-        include(gmxManageSYCL)
+        include(gmxManageSycl)
     endif()
     if(NOT GMX_OPENMP)
         message(WARNING "To use GPU acceleration efficiently, mdrun requires OpenMP multi-threading, which is currently not enabled.")
     endif()
 
+    if (GMX_OPENCL_NB_CLUSTER_SIZE)
+        message(WARNING "GMX_OPENCL_NB_CLUSTER_SIZE is deprecated, use GMX_GPU_NB_CLUSTER_SIZE instead")
+    endif()
+    if (GMX_OPENCL_NB_CLUSTER_SIZE AND GMX_GPU_NB_CLUSTER_SIZE)
+        if (NOT ${GMX_OPENCL_NB_CLUSTER_SIZE} EQUAL ${GMX_GPU_NB_CLUSTER_SIZE})
+            message(FATAL_ERROR "Mismatching values passed to GMX_OPENCL_NB_CLUSTER_SIZE and GMX_GPU_NB_CLUSTER_SIZE; the former is deprecated, use only the latter!")
+        endif()
+    endif()
+    # Only OpenCL and SYCL support changing the default cluster size
+    if (${_gmx_gpu_uppercase} STREQUAL "CUDA" OR ${_gmx_gpu_uppercase} STREQUAL "HIP")
+        if (GMX_GPU_NB_CLUSTER_SIZE AND NOT "${GMX_GPU_NB_CLUSTER_SIZE}" EQUAL 8)
+            message(FATAL_ERROR "Changing GMX_GPU_NB_CLUSTER_SIZE is not supported in CUDA (the default GMX_GPU_NB_CLUSTER_SIZE=8 is used)")
+        endif()
+        set(GMX_GPU_NB_CLUSTER_SIZE 8 CACHE STRING "Cluster size used by the nonbonded kernel.")
+    else()
+        # use the legacy GMX_OPENCL_NB_CLUSTER_SIZE variable if set, otherwise set the defaults
+        if (GMX_OPENCL_NB_CLUSTER_SIZE)
+            set(_gmx_gpu_nb_cluster_size_value ${GMX_OPENCL_NB_CLUSTER_SIZE})
+        else()
+            # default cluster size is 8 with OpenCL and 4 with SYCL for now
+            if(${_gmx_gpu_uppercase} STREQUAL "OPENCL")
+                set(_gmx_gpu_nb_cluster_size_value 8)
+            elseif(GMX_GPU_SYCL)
+                if (GMX_SYCL_ACPP AND NOT GMX_ACPP_HAVE_LEVELZERO_TARGET)
+                    set(_gmx_gpu_nb_cluster_size_value 8)
+                else()
+                    # Either DPC++ or AdaptiveCpp targeting Intel Level0
+                    set(_gmx_gpu_nb_cluster_size_value 4)
+                endif()
+            endif()
+        endif()
+        set(GMX_GPU_NB_CLUSTER_SIZE ${_gmx_gpu_nb_cluster_size_value} CACHE STRING "Cluster size used by the nonbonded kernel. Set to 4 for Intel GPUs.")
+        mark_as_advanced(GMX_GPU_NB_CLUSTER_SIZE)
+    endif()
+
+    if (NOT (${_gmx_gpu_uppercase} STREQUAL "SYCL" OR ${_gmx_gpu_uppercase} STREQUAL "HIP"))
+        if (GMX_GPU_NB_DISABLE_CLUSTER_PAIR_SPLIT)
+            message(FATAL_ERROR "Disabling cluster pair splitting is only supported with SYCL or HIP, set GMX_GPU_NB_DISABLE_CLUSTER_PAIR_SPLIT=off otherwise")
+        endif()
+    endif()
+endif()
+set(GMX_GPU_NB_NUM_CLUSTER_PER_CELL_X 2 CACHE STRING "Number of clusters along X in a pair-search grid cell for GPU lists")
+set(GMX_GPU_NB_NUM_CLUSTER_PER_CELL_Y 2 CACHE STRING "Number of clusters along Y in a pair-search grid cell for GPU lists")
+set(GMX_GPU_NB_NUM_CLUSTER_PER_CELL_Z 2 CACHE STRING "Number of clusters along Z in a pair-search grid cell for GPU lists")
+mark_as_advanced(GMX_GPU_NB_NUM_CLUSTER_PER_CELL_X)
+mark_as_advanced(GMX_GPU_NB_NUM_CLUSTER_PER_CELL_Y)
+mark_as_advanced(GMX_GPU_NB_NUM_CLUSTER_PER_CELL_Z)
+
+# For build with CUDA/SYCL and Lib-MPI, check if underlying MPI implementation is GPU-aware
+# GPU-aware MPI allows direct GPU communication without staging data through host
+if((GMX_GPU_CUDA OR GMX_GPU_HIP OR GMX_GPU_SYCL) AND GMX_LIB_MPI)
+    include(gmxManageGpuAwareMpi)
+else()
+    set(HAVE_MPI_EXT 0)
+    set(MPI_SUPPORTS_CUDA_AWARE_DETECTION 0)
+    set(MPI_SUPPORTS_HIP_AWARE_DETECTION 0)
+    set(MPI_SUPPORTS_ZE_AWARE_DETECTION 0)
 endif()
 
 if(CYGWIN)
     set(GMX_CYGWIN 1)
 endif()
+
+if(GMX_GPU_CUDA AND NOT GMX_GPU_FFT_CUFFT)
+    message(FATAL_ERROR "The CUDA build only supports cuFFT GPU FFT library")
+endif()
+
+if(GMX_USE_HEFFTE)
+    if(NOT GMX_GPU_CUDA AND NOT GMX_GPU_HIP AND NOT GMX_GPU_SYCL)
+        message(FATAL_ERROR "HeFFTe support requires a CUDA, HIP or SYCL build")
+    endif()
+    if(NOT GMX_LIB_MPI)
+        message(FATAL_ERROR "HeFFTe support requires a library MPI build")
+    endif()
+    if(GMX_GPU_CUDA)
+        find_package(Heffte 2.2.0 REQUIRED CUDA)
+    elseif(GMX_GPU_HIP)
+        find_package(Heffte 2.2.0 REQUIRED ROCM)
+    elseif(GMX_GPU_SYCL)
+        if(GMX_GPU_FFT_ROCFFT)
+            find_package(Heffte 2.2.0 REQUIRED ROCM)
+        elseif(GMX_GPU_FFT_CUFFT)
+            find_package(Heffte 2.2.0 REQUIRED CUDA)
+            if (NOT DEFINED ENV{GITLAB_CI}) # Don't warn in CI builds
+                message(WARNING "HeFFTe with cuFFT backend should be used in a CUDA build")
+            endif()
+        elseif(GMX_GPU_FFT_MKL)
+            find_package(Heffte 2.2.0 REQUIRED ONEAPI)
+        else()
+            message(FATAL_ERROR "Your GPU FFT library is incompatible for use in a GROMACS SYCL build with heFFTe. "
+                    "Use -DGMX_GPU_FFT_LIBRARY=rocFFT or -DGMX_GPU_FFT_LIBRARY=MKL or -DGMX_GPU_FFT_LIBRARY=CUFFT")
+        endif()
+    endif()
+    set(GMX_USE_Heffte ${Heffte_FOUND})
+    # Find quietly in subsequent passes
+    set(Heffte_FIND_QUIETLY TRUE CACHE INTERNAL "Find HeFFTe quietly in future CMake passes")
+endif()
+
+if(GMX_USE_CUFFTMP)
+    if(NOT GMX_GPU_CUDA)
+        message(FATAL_ERROR "cuFFTMp support requires a CUDA build")
+    endif()
+    if(NOT GMX_LIB_MPI)
+        message(FATAL_ERROR "cuFFTMp support requires a library MPI build")
+    endif()
+    find_package(cuFFTMp REQUIRED CUDA)
+    set(GMX_USE_cuFFTMp ${cuFFTMp_FOUND})
+endif()
+
+# Set NVSHMEM host and device libs
+include(gmxManageNvshmem)
+
+
+########################################################################
+#Process NNPot settings (do it after our GPU detection)
+########################################################################
+include(gmxManageNNPot)
 
 if(WIN32)
     set(GMX_NATIVE_WINDOWS 1)
@@ -609,8 +856,6 @@ gmx_add_cache_dependency(GMX_BUILD_UNITTESTS BOOL BUILD_TESTING OFF)
 ########################################################################
 # Our own GROMACS tests
 ########################################################################
-
-include_directories(SYSTEM ${CMAKE_SOURCE_DIR}/src/external)
 
 include(gmxTestInlineASM)
 gmx_test_inline_asm_gcc_x86(GMX_X86_GCC_INLINE_ASM)
@@ -647,17 +892,6 @@ if(NOT GMX_SYSTEM_XDR OR CMAKE_SYSTEM_NAME STREQUAL "Darwin")
 endif()
 
 
-##################################################
-# Process SIMD instruction settings
-##################################################
-# This checks what flags to add in order to
-# support the SIMD instructions we need, it sets
-# correct defines for the SIMD instructions supported,
-# and adds advanced options to control accuracy
-# for SIMD math operations.
-include(gmxManageSimd)
-gmx_manage_simd()
-
 # Process QM/MM Settings
 if(${GMX_QMMM_PROGRAM} STREQUAL "GAUSSIAN")
     set(GMX_QMMM_GAUSSIAN 1)
@@ -675,14 +909,6 @@ else()
     gmx_invalid_option_value(GMX_QMMM_PROGRAM)
 endif()
 
-# Process the Plumed option
-if(${GMX_PLUMED})
-    set(GMX_PLUMED_VALUE 1)
-else()
-    set(GMX_PLUMED_VALUE 0)
-endif()
-add_definitions(-DGMX_PLUMED=${GMX_PLUMED_VALUE})
-list(APPEND INSTALLED_HEADER_DEFINITIONS "-DGMX_PLUMED=${GMX_PLUMED_VALUE}")
 
 ##################################################
 # Process FFT library settings
@@ -701,12 +927,6 @@ if(GMX_USE_PLUGINS)
     endif()
 endif()
 
-# People might want to customize the default location for the DSSP binary
-set(GMX_DSSP_PROGRAM_PATH "/usr/local/bin/dssp"
-    CACHE PATH
-    "The default location to use for the DSSP binary")
-mark_as_advanced(GMX_DSSP_PROGRAM_PATH)
-
 # Link real-time library for POSIX timers. The check for clock_gettime
 # confirms the linkability of rt.
 if(HAVE_TIME_H AND HAVE_UNISTD_H AND HAVE_CLOCK_GETTIME)
@@ -714,8 +934,8 @@ if(HAVE_TIME_H AND HAVE_UNISTD_H AND HAVE_CLOCK_GETTIME)
 endif()
 
 # Math and thread libraries must often come after all others when linking...
-if (HAVE_LIBM)
-    list(APPEND GMX_PUBLIC_LIBRARIES m)
+if (LIBM_LIBRARY)
+    list(APPEND GMX_PUBLIC_LIBRARIES ${LIBM_LIBRARY})
 endif()
 
 option(GMX_NACL "Configure for Native Client builds" OFF)
@@ -725,6 +945,7 @@ if (GMX_NACL)
   # TODO: Is this still necessary with the check for its presence?
   set(GMX_USE_NICE 0)
   set(GMX_NO_RENAME 1)
+  message(WARNING "Native Client builds deprecated since GROMACS 2026")
 endif()
 mark_as_advanced(GMX_NACL)
 
@@ -743,23 +964,30 @@ if (GMX_BUILD_HELP AND SOURCE_IS_SOURCE_DISTRIBUTION AND BUILD_IS_INSOURCE)
         "Set GMX_BUILD_HELP=OFF or do an out-of-source build to proceed.")
 endif()
 
+if (GMX_BUILD_FOR_COVERAGE)
+    # Set flags for coverage build here instead having to do so manually
+    set(CMAKE_C_FLAGS "-g -fprofile-arcs -ftest-coverage")
+    set(CMAKE_CXX_FLAGS "-g -fprofile-arcs -ftest-coverage")
+    set(CMAKE_EXE_LINKER_FLAGS "-fprofile-arcs -ftest-coverage")
+endif()
+
 # # # # # # # # # # NO MORE TESTS AFTER THIS LINE! # # # # # # # # # # #
 # these are set after everything else
 if (NOT GMX_SKIP_DEFAULT_CFLAGS)
-    set(CMAKE_EXE_LINKER_FLAGS "${FFT_LINKER_FLAGS} ${MPI_LINKER_FLAGS} ${CMAKE_EXE_LINKER_FLAGS} ${DISABLE_SYCL_CXX_FLAGS}")
-    set(CMAKE_SHARED_LINKER_FLAGS "${FFT_LINKER_FLAGS} ${MPI_LINKER_FLAGS} ${CMAKE_SHARED_LINKER_FLAGS} ${DISABLE_SYCL_CXX_FLAGS}")
+    set(CMAKE_EXE_LINKER_FLAGS "${FFT_LINKER_FLAGS} ${CMAKE_EXE_LINKER_FLAGS}")
+    set(CMAKE_SHARED_LINKER_FLAGS "${FFT_LINKER_FLAGS} ${CMAKE_SHARED_LINKER_FLAGS}")
 else()
     message("Recommended flags which are not added because GMX_SKIP_DEFAULT_CFLAGS=yes:")
-    message("CMAKE_C_FLAGS: ${SIMD_C_FLAGS};${MPI_COMPILE_FLAGS};${EXTRA_C_FLAGS};${GMXC_CFLAGS}")
+    message("CMAKE_C_FLAGS: ${SIMD_C_FLAGS};${EXTRA_C_FLAGS};${GMXC_CFLAGS}")
     foreach(build_type ${build_types_with_explicit_flags})
         message("CMAKE_C_FLAGS_${build_type}: ${GMXC_CFLAGS_${build_type}}")
     endforeach()
-    message("CMAKE_CXX_FLAGS: ${SIMD_CXX_FLAGS};${MPI_COMPILE_FLAGS};${EXTRA_CXX_FLAGS};${GMXC_CXXFLAGS}")
+    message("CMAKE_CXX_FLAGS: ${SIMD_CXX_FLAGS};${EXTRA_CXX_FLAGS};${GMXC_CXXFLAGS}")
     foreach(build_type ${build_types_with_explicit_flags})
         message("CMAKE_CXX_FLAGS_${build_type}: ${GMXC_CXXFLAGS_${build_type}}")
     endforeach()
-    message("CMAKE_EXE_LINKER_FLAGS: ${FFT_LINKER_FLAGS} ${MPI_LINKER_FLAGS}")
-    message("CMAKE_SHARED_LINKER_FLAGS: ${FFT_LINKER_FLAGS} ${MPI_LINKER_FLAGS}")
+    message("CMAKE_EXE_LINKER_FLAGS: ${FFT_LINKER_FLAGS}")
+    message("CMAKE_SHARED_LINKER_FLAGS: ${FFT_LINKER_FLAGS}")
 endif()
 # Allow `admin` directory to be easily conveyed to nested CMake commands.
 set(GMX_ADMIN_DIR ${CMAKE_SOURCE_DIR}/admin)
@@ -784,10 +1012,9 @@ else()
     # Set the RPATH as relative to the executable location to make the
     # binaries relocatable.
     if(CMAKE_SYSTEM_NAME STREQUAL "Darwin") #Assume OS X >=10.5
-        set(CMAKE_INSTALL_RPATH "@loader_path/../${CMAKE_INSTALL_LIBDIR}")
-        set(CMAKE_INSTALL_NAME_DIR ${CMAKE_INSTALL_RPATH})
+        list(APPEND CMAKE_INSTALL_RPATH "@loader_path/../${CMAKE_INSTALL_LIBDIR}")
     else()
-        set(CMAKE_INSTALL_RPATH "\$ORIGIN/../${CMAKE_INSTALL_LIBDIR}")
+        list(APPEND CMAKE_INSTALL_RPATH "\$ORIGIN/../${CMAKE_INSTALL_LIBDIR}")
     endif()
     set(CMAKE_INSTALL_RPATH_USE_LINK_PATH TRUE)
     set(CMAKE_MACOSX_RPATH 1)
@@ -797,33 +1024,21 @@ endif()
 #Simpler to always install.
 install(FILES COPYING DESTINATION ${GMX_INSTALL_GMXDATADIR} COMPONENT data)
 
-if (GMX_BUILD_FOR_COVERAGE)
-    # Code heavy with asserts makes conditional coverage close to useless metric,
-    # as by design most of the false branches are impossible to trigger in
-    # correctly functioning code.  And the benefit of testing those that could
-    # be triggered by using an API against its specification isn't usually
-    # worth the effort.
-    add_definitions(-DNDEBUG -DGMX_DISABLE_ASSERTS)
-endif()
-
 if (BUILD_TESTING)
     include(tests/CheckTarget.cmake)
 endif()
 
-# TODO: Determine control flow and defaults for package installation and testing use cases.
-# Ref: https://gitlab.com/gromacs/gromacs/-/issues/2896
-option(GMX_PYTHON_PACKAGE "Configure gmxapi Python package" OFF)
+option(GMX_PYTHON_PACKAGE
+       "Configure gmxapi Python package for use in build tree. Requires pybind11 installed for project Python interpreter."
+       OFF)
 mark_as_advanced(GMX_PYTHON_PACKAGE)
 
-if (NOT GMX_BUILD_MDRUN_ONLY)
-    find_package(ImageMagick QUIET COMPONENTS convert)
-    include(gmxTestImageMagick)
-    GMX_TEST_IMAGEMAGICK(IMAGE_CONVERT_POSSIBLE)
-    # TODO: Resolve circular dependency between docs, gromacs, and python_packaging
-    add_subdirectory(docs)
-    add_subdirectory(share)
-    add_subdirectory(scripts)
-endif()
+find_package(ImageMagick QUIET COMPONENTS convert)
+mark_as_advanced(ImageMagick_EXECUTABLE_DIR)
+include(gmxTestImageMagick)
+GMX_TEST_IMAGEMAGICK(IMAGE_CONVERT_POSSIBLE)
+add_subdirectory(share)
+add_subdirectory(scripts)
 add_subdirectory(api)
 add_subdirectory(src)
 
@@ -831,20 +1046,22 @@ if (BUILD_TESTING)
     add_subdirectory(tests)
 endif()
 
-if(GMX_PYTHON_PACKAGE AND NOT GMX_BUILD_MDRUN_ONLY)
+if(GMX_PYTHON_PACKAGE)
     add_subdirectory(python_packaging)
 endif()
+
+add_subdirectory(docs)
 
 gmx_cpack_write_config()
 
 #######################
 ## uninstall target
 #######################
-CONFIGURE_FILE(   "${CMAKE_CURRENT_SOURCE_DIR}/cmake/cmake_uninstall.cmake.in"
+configure_file(   "${CMAKE_CURRENT_SOURCE_DIR}/cmake/cmake_uninstall.cmake.in"
                   "${CMAKE_CURRENT_BINARY_DIR}/cmake/cmake_uninstall.cmake"
                   IMMEDIATE @ONLY)
 ###########################
-ADD_CUSTOM_TARGET(uninstall
+add_custom_target(uninstall
                   "${CMAKE_COMMAND}" -P
                   "${CMAKE_CURRENT_BINARY_DIR}/cmake/cmake_uninstall.cmake")
 ###########################

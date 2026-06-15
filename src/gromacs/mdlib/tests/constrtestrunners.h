@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2018- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \internal \file
  * \brief SHAKE and LINCS tests runners.
@@ -47,7 +46,12 @@
 #ifndef GMX_MDLIB_TESTS_CONSTRTESTRUNNERS_H
 #define GMX_MDLIB_TESTS_CONSTRTESTRUNNERS_H
 
+#include <string>
+
 #include <gtest/gtest.h>
+
+#include "gromacs/mdtypes/md_enums.h"
+#include "gromacs/pbcutil/pbc.h"
 
 #include "testutils/test_device.h"
 
@@ -76,6 +80,9 @@ public:
      */
     virtual void applyConstraints(ConstraintsTestData* testData, t_pbc pbc) = 0;
 
+    //! Return the algorithm called by this runner
+    virtual ConstraintAlgorithm algorithm() const = 0;
+
     /*! \brief Get the name of the implementation.
      *
      * \return "<algorithm> on <device>", depending on the actual implementation used. E.g., "LINCS on #0: NVIDIA GeForce GTX 1660 SUPER".
@@ -95,6 +102,8 @@ public:
      * \param[in] pbc                  Periodic boundary data.
      */
     void applyConstraints(ConstraintsTestData* testData, t_pbc pbc) override;
+    //! Return the algorithm called by this runner
+    ConstraintAlgorithm algorithm() const override { return ConstraintAlgorithm::Shake; }
     /*! \brief Get the name of the implementation.
      *
      * \return "SHAKE" string;
@@ -114,6 +123,8 @@ public:
      * \param[in] pbc                  Periodic boundary data.
      */
     void applyConstraints(ConstraintsTestData* testData, t_pbc pbc) override;
+    //! Return the algorithm called by this runner
+    ConstraintAlgorithm algorithm() const override { return ConstraintAlgorithm::Lincs; }
     /*! \brief Get the name of the implementation.
      *
      * \return "LINCS" string;
@@ -136,6 +147,8 @@ public:
      * \param[in] pbc                  Periodic boundary data.
      */
     void applyConstraints(ConstraintsTestData* testData, t_pbc pbc) override;
+    //! Return the algorithm called by this runner
+    ConstraintAlgorithm algorithm() const override { return ConstraintAlgorithm::Lincs; }
     /*! \brief Get the name of the implementation.
      *
      * \return "LINCS_GPU" string;

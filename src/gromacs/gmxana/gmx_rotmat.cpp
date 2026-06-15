@@ -1,11 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2009-2017, The GROMACS development team.
- * Copyright (c) 2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2009- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -19,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -28,33 +26,47 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 #include "gmxpre.h"
 
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 
+#include <array>
+#include <filesystem>
+#include <string>
+
+#include "gromacs/commandline/filenm.h"
 #include "gromacs/commandline/pargs.h"
 #include "gromacs/commandline/viewit.h"
 #include "gromacs/fileio/confio.h"
+#include "gromacs/fileio/filetypes.h"
 #include "gromacs/fileio/trxio.h"
 #include "gromacs/fileio/xvgr.h"
 #include "gromacs/gmxana/gmx_ana.h"
 #include "gromacs/math/do_fit.h"
 #include "gromacs/math/functions.h"
-#include "gromacs/math/vec.h"
 #include "gromacs/pbcutil/rmpbc.h"
 #include "gromacs/topology/index.h"
 #include "gromacs/topology/topology.h"
+#include "gromacs/utility/arrayref.h"
 #include "gromacs/utility/arraysize.h"
+#include "gromacs/utility/basedefinitions.h"
 #include "gromacs/utility/fatalerror.h"
 #include "gromacs/utility/futil.h"
 #include "gromacs/utility/gmxassert.h"
+#include "gromacs/utility/real.h"
 #include "gromacs/utility/smalloc.h"
+#include "gromacs/utility/vec.h"
+#include "gromacs/utility/vectypes.h"
+
+enum class PbcType : int;
+struct gmx_output_env_t;
 
 static void get_refx(gmx_output_env_t* oenv,
                      const char*       trxfn,
@@ -92,7 +104,8 @@ static void get_refx(gmx_output_env_t* oenv,
         {
             gmx_fatal(FARGS,
                       "Atom index (%d) is larger than the number of atoms in the trajecory (%d)",
-                      index[a] + 1, natoms);
+                      index[a] + 1,
+                      natoms);
         }
         w_rls[a] = (bMW ? top->atoms.atom[index[a]].m : 1.0);
         tot_mass += w_rls[a];
@@ -103,7 +116,7 @@ static void get_refx(gmx_output_env_t* oenv,
     {
         if (nfr_all % skip == 0)
         {
-            gmx_rmpbc(gpbc, natoms, box, x);
+            gmx_rmpbc_apply(gpbc, natoms, box, x);
             snew(xi[nfr], gnx);
             for (i = 0; i < gnx; i++)
             {
@@ -128,7 +141,7 @@ static void get_refx(gmx_output_env_t* oenv,
     for (i = 0; i < nfr; i++)
     {
         fprintf(stdout, "\rProcessing frame %d of %d", i, nfr);
-        fflush(stdout);
+        std::fflush(stdout);
         for (j = i + 1; j < nfr; j++)
         {
             calc_fit_R(nfitdim, gnx, w_rls, xi[i], xi[j], R);
@@ -218,27 +231,27 @@ int gmx_rotmat(int argc, char* argv[])
         { "-ref", FALSE, etENUM, { reffit }, "Determine the optimal reference structure" },
         { "-skip", FALSE, etINT, { &skip }, "Use every nr-th frame for [TT]-ref[tt]" },
         { "-fitxy",
-          FALSE,
-          etBOOL,
-          { &bFitXY },
-          "Fit the x/y rotation before determining the rotation" },
+                  FALSE,
+                  etBOOL,
+                  { &bFitXY },
+                  "Fit the x/y rotation before determining the rotation" },
         { "-mw", FALSE, etBOOL, { &bMW }, "Use mass weighted fitting" }
     };
-    FILE*             out;
-    t_trxstatus*      status;
-    t_topology        top;
-    PbcType           pbcType;
-    rvec *            x_ref, *x;
-    matrix            box, R;
-    real              t;
-    int               natoms, i;
-    char*             grpname;
-    int               gnx;
-    gmx_rmpbc_t       gpbc = nullptr;
-    int*              index;
-    gmx_output_env_t* oenv;
-    real*             w_rls;
-    const char*       leg[] = { "xx", "xy", "xz", "yx", "yy", "yz", "zx", "zy", "zz" };
+    FILE*                      out;
+    t_trxstatus*               status;
+    t_topology                 top;
+    PbcType                    pbcType;
+    rvec *                     x_ref, *x;
+    matrix                     box, R;
+    real                       t;
+    int                        natoms, i;
+    char*                      grpname;
+    int                        gnx;
+    gmx_rmpbc_t                gpbc = nullptr;
+    int*                       index;
+    gmx_output_env_t*          oenv;
+    real*                      w_rls;
+    std::array<std::string, 9> leg = { "xx", "xy", "xz", "yx", "yy", "yz", "zx", "zy", "zz" };
 #define NLEG asize(leg)
     t_filenm fnm[] = { { efTRX, "-f", nullptr, ffREAD },
                        { efTPS, nullptr, nullptr, ffREAD },
@@ -246,8 +259,8 @@ int gmx_rotmat(int argc, char* argv[])
                        { efXVG, nullptr, "rotmat", ffWRITE } };
 #define NFILE asize(fnm)
 
-    if (!parse_common_args(&argc, argv, PCA_CAN_TIME | PCA_CAN_VIEW, NFILE, fnm, asize(pa), pa,
-                           asize(desc), desc, 0, nullptr, &oenv))
+    if (!parse_common_args(
+                &argc, argv, PCA_CAN_TIME | PCA_CAN_VIEW, NFILE, fnm, asize(pa), pa, asize(desc), desc, 0, nullptr, &oenv))
     {
         return 0;
     }
@@ -256,15 +269,14 @@ int gmx_rotmat(int argc, char* argv[])
 
     gpbc = gmx_rmpbc_init(&top.idef, pbcType, top.atoms.nr);
 
-    gmx_rmpbc(gpbc, top.atoms.nr, box, x_ref);
+    gmx_rmpbc_apply(gpbc, top.atoms.nr, box, x_ref);
 
     get_index(&top.atoms, ftp2fn_null(efNDX, NFILE, fnm), 1, &gnx, &index, &grpname);
 
     GMX_RELEASE_ASSERT(reffit[0] != nullptr, "Options inconsistency; reffit[0] is NULL");
     if (reffit[0][0] != 'n')
     {
-        get_refx(oenv, ftp2fn(efTRX, NFILE, fnm), reffit[0][2] == 'z' ? 3 : 2, skip, gnx, index,
-                 bMW, &top, pbcType, x_ref);
+        get_refx(oenv, ftp2fn(efTRX, NFILE, fnm), reffit[0][2] == 'z' ? 3 : 2, skip, gnx, index, bMW, &top, pbcType, x_ref);
     }
 
     natoms = read_first_x(oenv, &status, ftp2fn(efTRX, NFILE, fnm), &t, &x, box);
@@ -276,7 +288,8 @@ int gmx_rotmat(int argc, char* argv[])
         {
             gmx_fatal(FARGS,
                       "Atom index (%d) is larger than the number of atoms in the trajecory (%d)",
-                      index[i] + 1, natoms);
+                      index[i] + 1,
+                      natoms);
         }
         w_rls[index[i]] = (bMW ? top.atoms.atom[index[i]].m : 1.0);
     }
@@ -287,11 +300,11 @@ int gmx_rotmat(int argc, char* argv[])
     }
 
     out = xvgropen(ftp2fn(efXVG, NFILE, fnm), "Fit matrix", "Time (ps)", "", oenv);
-    xvgr_legend(out, NLEG, leg, oenv);
+    xvgrLegend(out, leg, oenv);
 
     do
     {
-        gmx_rmpbc(gpbc, natoms, box, x);
+        gmx_rmpbc_apply(gpbc, natoms, box, x);
 
         reset_x(gnx, index, natoms, nullptr, x, w_rls);
 
@@ -302,8 +315,18 @@ int gmx_rotmat(int argc, char* argv[])
 
         calc_fit_R(DIM, natoms, w_rls, x_ref, x, R);
 
-        fprintf(out, "%7g %7.4f %7.4f %7.4f %7.4f %7.4f %7.4f %7.4f %7.4f %7.4f\n", t, R[XX][XX],
-                R[XX][YY], R[XX][ZZ], R[YY][XX], R[YY][YY], R[YY][ZZ], R[ZZ][XX], R[ZZ][YY], R[ZZ][ZZ]);
+        fprintf(out,
+                "%7g %7.4f %7.4f %7.4f %7.4f %7.4f %7.4f %7.4f %7.4f %7.4f\n",
+                t,
+                R[XX][XX],
+                R[XX][YY],
+                R[XX][ZZ],
+                R[YY][XX],
+                R[YY][YY],
+                R[YY][ZZ],
+                R[ZZ][XX],
+                R[ZZ][YY],
+                R[ZZ][ZZ]);
     } while (read_next_x(oenv, status, &t, x, box));
 
     gmx_rmpbc_done(gpbc);

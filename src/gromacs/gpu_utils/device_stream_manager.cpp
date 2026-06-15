@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2019- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \internal \file
  *
@@ -45,6 +44,8 @@
 
 #include "device_stream_manager.h"
 
+#include <cstdio>
+
 #include "gromacs/gpu_utils/device_context.h"
 #include "gromacs/gpu_utils/device_stream.h"
 #include "gromacs/mdtypes/simulation_workload.h"
@@ -57,7 +58,8 @@ namespace gmx
 {
 
 /*! \libinternal
- * \brief Impl class to manages the lifetime of the GPU streams.
+ * \brief Impl class to manages the lifetime of the GPU context
+ * and streams.
  *
  * If supported by the GPU API, the available runtime and the
  * indicated device, some streams will be configured at high
@@ -71,25 +73,24 @@ public:
      *
      * \throws InternalError  If any of the required resources could not be initialized.
      */
-    Impl(const DeviceInformation& deviceInfo,
-         bool                     havePpDomainDecomposition,
-         SimulationWorkload       simulationWork,
-         bool                     useTiming);
+    Impl(const DeviceInformation& deviceInfo, SimulationWorkload simulationWork, bool useTiming);
     ~Impl();
 
     //! Device context.
     DeviceContext context_;
     //! GPU command streams.
     EnumerationArray<DeviceStreamType, std::unique_ptr<DeviceStream>> streams_;
+    //! Whether PP domain decomposition is active
+    const bool havePpDomainDecomposition_ = false;
 };
 
 // DeviceStreamManager::Impl
 DeviceStreamManager::Impl::Impl(const DeviceInformation& deviceInfo,
-                                const bool               havePpDomainDecomposition,
                                 const SimulationWorkload simulationWork,
                                 const bool               useTiming) :
-    context_(deviceInfo)
+    context_(deviceInfo), havePpDomainDecomposition_(simulationWork.havePpDomainDecomposition)
 {
+    context_.activate();
     try
     {
         streams_[DeviceStreamType::NonBondedLocal] =
@@ -105,16 +106,16 @@ DeviceStreamManager::Impl::Impl(const DeviceInformation& deviceInfo,
                     std::make_unique<DeviceStream>(context_, DeviceStreamPriority::High, useTiming);
         }
 
-        if (havePpDomainDecomposition)
+        if (simulationWork.havePpDomainDecomposition)
         {
             streams_[DeviceStreamType::NonBondedNonLocal] =
                     std::make_unique<DeviceStream>(context_, DeviceStreamPriority::High, useTiming);
         }
         // Update stream is used both for coordinates transfers and for GPU update/constraints
-        if (simulationWork.useGpuPme || simulationWork.useGpuUpdate || simulationWork.useGpuBufferOps)
+        if (simulationWork.useGpuPme || simulationWork.useGpuUpdate || simulationWork.useGpuXBufferOpsWhenAllowed)
         {
             streams_[DeviceStreamType::UpdateAndConstraints] =
-                    std::make_unique<DeviceStream>(context_, DeviceStreamPriority::Normal, useTiming);
+                    std::make_unique<DeviceStream>(context_, DeviceStreamPriority::High, useTiming);
         }
         if (simulationWork.useGpuPmePpCommunication)
         {
@@ -125,14 +126,30 @@ DeviceStreamManager::Impl::Impl(const DeviceInformation& deviceInfo,
     GMX_CATCH_ALL_AND_EXIT_WITH_FATAL_ERROR
 }
 
-DeviceStreamManager::Impl::~Impl() = default;
+DeviceStreamManager::Impl::~Impl()
+{
+    // Wait for all the tasks to complete before destroying the streams. See #4519.
+    for (const auto& stream : streams_)
+    {
+        if (stream)
+        {
+            try
+            {
+                stream->synchronize();
+            }
+            catch (std::exception& e)
+            {
+                std::fprintf(stderr, "Error detected when destroying DeviceStreamManager: %s\n", e.what());
+            }
+        }
+    }
+}
 
 // DeviceStreamManager
 DeviceStreamManager::DeviceStreamManager(const DeviceInformation& deviceInfo,
-                                         const bool               havePpDomainDecomposition,
                                          const SimulationWorkload simulationWork,
                                          const bool               useTiming) :
-    impl_(new Impl(deviceInfo, havePpDomainDecomposition, simulationWork, useTiming))
+    impl_(new Impl(deviceInfo, simulationWork, useTiming))
 {
 }
 
@@ -153,9 +170,9 @@ const DeviceStream& DeviceStreamManager::stream(DeviceStreamType streamToGet) co
     return *impl_->streams_[streamToGet];
 }
 
-const DeviceStream& DeviceStreamManager::bondedStream(bool hasPPDomainDecomposition) const
+const DeviceStream& DeviceStreamManager::bondedStream() const
 {
-    if (hasPPDomainDecomposition)
+    if (impl_->havePpDomainDecomposition_)
     {
         GMX_RELEASE_ASSERT(stream(DeviceStreamType::NonBondedNonLocal).isValid(),
                            "GPU non-bonded non-local stream should be valid in order to use GPU "

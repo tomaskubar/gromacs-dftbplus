@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2015,2017,2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2015- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \libinternal \file
  *
@@ -46,20 +45,23 @@
 
 #include <array>
 #include <memory>
+#include <string>
 
 #include "gromacs/commandline/filenm.h"
 #include "gromacs/compat/pointers.h"
 #include "gromacs/domdec/options.h"
 #include "gromacs/hardware/hw_info.h"
-#include "gromacs/math/vec.h"
 #include "gromacs/mdrun/mdmodules.h"
 #include "gromacs/mdrun/simulationinputhandle.h"
 #include "gromacs/mdrunutility/handlerestart.h"
+#include "gromacs/mdrunutility/logging.h"
 #include "gromacs/mdtypes/mdrunoptions.h"
 #include "gromacs/utility/arrayref.h"
 #include "gromacs/utility/basedefinitions.h"
 #include "gromacs/utility/gmxmpi.h"
 #include "gromacs/utility/real.h"
+#include "gromacs/utility/unique_cptr.h"
+#include "gromacs/utility/vec.h"
 
 #include "replicaexchange.h"
 
@@ -100,7 +102,7 @@ class StopHandlerBuilder;
  * \todo Preparing logging and MPI contexts could probably be a
  * higher-level responsibility, so that an Mdrunner would get made
  * without needing to re-initialize these components (as currently
- * happens always for the master rank, and differently for the spawned
+ * happens always for the main rank, and differently for the spawned
  * ranks with thread-MPI).
  *
  * \ingroup module_mdrun
@@ -132,7 +134,7 @@ public:
      *
      * \{
      */
-    Mdrunner(const Mdrunner&) = delete;
+    Mdrunner(const Mdrunner&)            = delete;
     Mdrunner& operator=(const Mdrunner&) = delete;
     /* \} */
 
@@ -175,9 +177,9 @@ public:
      * in turn calls mdrunner() for each thread. */
     void spawnThreads(int numThreadsToLaunch);
 
-    /*! \brief Initializes a new Mdrunner from the master.
+    /*! \brief Initializes a new Mdrunner from the main.
      *
-     * Run this method in a new thread from a master runner to get additional
+     * Run this method in a new thread from a main runner to get additional
      * workers on spawned threads.
      *
      * \returns New Mdrunner instance suitable for thread-MPI work on new ranks.
@@ -214,12 +216,19 @@ private:
     //! Options for the domain decomposition.
     DomdecOptions domdecOptions;
 
-    /*! \brief Target short-range interations for "cpu", "gpu", or "auto". Default is "auto".
+    /*! \brief Target short-range interactions for "cpu", "gpu", or "auto". Default is "auto".
      *
      * \internal
      * \todo replace with string or enum class and initialize with sensible value.
      */
     const char* nbpu_opt = nullptr;
+
+    /*! \brief Target nonbonded fe interactions for "cpu", "gpu", or "auto". Default is "auto".
+     *
+     * \internal
+     * \todo replace with string or enum class and initialize with sensible value.
+     */
+    const char* nbfe_opt = nullptr;
 
     /*! \brief Target long-range interactions for "cpu", "gpu", or "auto". Default is "auto".
      *
@@ -235,7 +244,7 @@ private:
      */
     const char* pme_fft_opt = nullptr;
 
-    /*! \brief Target bonded interations for "cpu", "gpu", or "auto". Default is "auto".
+    /*! \brief Target bonded interactions for "cpu", "gpu", or "auto". Default is "auto".
      *
      * \internal
      * \todo replace with string or enum class and initialize with sensible value.
@@ -377,8 +386,8 @@ public:
                              compat::not_null<SimulationContext*> context);
 
     //! \cond
-    MdrunnerBuilder()                       = delete;
-    MdrunnerBuilder(const MdrunnerBuilder&) = delete;
+    MdrunnerBuilder()                                  = delete;
+    MdrunnerBuilder(const MdrunnerBuilder&)            = delete;
     MdrunnerBuilder& operator=(const MdrunnerBuilder&) = delete;
     //! \endcond
 
@@ -432,6 +441,23 @@ public:
      * \todo Either the Builder or modular Director code should provide sensible defaults.
      */
     MdrunnerBuilder& addNonBonded(const char* nbpu_opt);
+
+    /*!
+     * \brief Set up nonbonded fe force calculations.
+     *
+     * Required. Director code must provide valid options for the non-bonded fe
+     * interaction code. The builder does not apply any defaults.
+     *
+     * \param nbfe_opt Target nonbonded fe interactions for "cpu", "gpu", or "auto".
+     *
+     * Calling must guarantee that the pointed-to C string is valid through
+     * simulation launch.
+     *
+     * \internal
+     * \todo Replace with string or enum that we can have sensible defaults for.
+     * \todo Either the Builder or modular Director code should provide sensible defaults.
+     */
+    MdrunnerBuilder& addNonBondedFETaskAssignment(const char* nbfe_opt);
 
     /*!
      * \brief Set up long-range electrostatics calculations.

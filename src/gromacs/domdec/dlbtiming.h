@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2017,2018,2019, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2017- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 
 /*! \libinternal \file
@@ -45,9 +44,10 @@
 #ifndef GMX_DOMDEC_DLBTIMING_H
 #define GMX_DOMDEC_DLBTIMING_H
 
-#include "gromacs/mdtypes/commrec.h"
+#include <memory>
 
-struct BalanceRegion;
+#include "gromacs/domdec/domdec_struct.h"
+
 struct gmx_domdec_t;
 struct t_nrnb;
 
@@ -84,10 +84,9 @@ void ddReopenBalanceRegionCpu(const gmx_domdec_t* dd);
 class DDBalanceRegionHandler
 {
 public:
-    //! Constructor, pass a pointer to t_commrec or nullptr when not using domain decomposition
-    DDBalanceRegionHandler(const t_commrec* cr) :
-        useBalancingRegion_(cr != nullptr ? havePPDomainDecomposition(cr) : false),
-        dd_(cr != nullptr ? cr->dd : nullptr)
+    //! Constructor, pass a pointer to gmx_domdec_t or nullptr when not using domain decomposition
+    DDBalanceRegionHandler(gmx_domdec_t* dd) :
+        useBalancingRegion_(dd != nullptr ? havePPDomainDecomposition(dd) : false), dd_(dd)
     {
     }
 
@@ -203,12 +202,17 @@ private:
     gmx_domdec_t* dd_;
 };
 
-/*! \brief Returns a pointer to a constructed \p BalanceRegion struct
- *
- * Should be replaced by a proper constructor once BalanceRegion is a proper
- * class (requires restructering in domdec.cpp).
- */
-BalanceRegion* ddBalanceRegionAllocate();
+//! Object that describes a DLB balancing region
+class BalanceRegion
+{
+public:
+    BalanceRegion();
+    ~BalanceRegion();
+    // Not private because used by DDBalanceRegionHandler
+    // private:
+    class Impl;
+    std::unique_ptr<Impl> impl_;
+};
 
 /*! \brief Start the force flop count */
 void dd_force_flop_start(struct gmx_domdec_t* dd, t_nrnb* nrnb);

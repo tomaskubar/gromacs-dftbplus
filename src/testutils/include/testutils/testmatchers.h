@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2018- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 
 /*! \libinternal \file
@@ -67,7 +66,7 @@ namespace test
 class FloatingPointTolerance;
 
 /*! \brief Make matcher for floats for use with GoogleMock that compare
- * equal when \c tolerance is satisifed.
+ * equal when \c tolerance is satisfied.
  *
  * Used like
  *
@@ -76,7 +75,7 @@ class FloatingPointTolerance;
 testing::Matcher<std::tuple<float, float>> FloatEq(const FloatingPointTolerance& tolerance);
 
 /*! \brief Make matcher for doubles for use with GoogleMock that compare
- * equal when \c tolerance is satisifed.
+ * equal when \c tolerance is satisfied.
  *
  * Used like
  *
@@ -85,7 +84,7 @@ testing::Matcher<std::tuple<float, float>> FloatEq(const FloatingPointTolerance&
 testing::Matcher<std::tuple<double, double>> DoubleEq(const FloatingPointTolerance& tolerance);
 
 /*! \brief Make matcher for reals for use with GoogleMock that compare
- * equal when \c tolerance is satisifed.
+ * equal when \c tolerance is satisfied.
  *
  * Used like
  *
@@ -94,7 +93,7 @@ testing::Matcher<std::tuple<double, double>> DoubleEq(const FloatingPointToleran
 testing::Matcher<std::tuple<real, real>> RealEq(const FloatingPointTolerance& tolerance);
 
 /*! \brief Make matcher for RVecs for use with GoogleMock that compare
- * equal when \c tolerance is satisifed.
+ * equal when \c tolerance is satisfied.
  *
  * Used like
  *

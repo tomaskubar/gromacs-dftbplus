@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2015,2016,2019, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2015- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \internal \file
  * \brief
@@ -45,18 +44,24 @@
 
 #include "gromacs/math/invertmatrix.h"
 
+#include <string>
 #include <vector>
 
 #include <gtest/gtest.h>
 
-#include "gromacs/math/vec.h"
+#include "gromacs/utility/real.h"
+#include "gromacs/utility/vec.h"
+#include "gromacs/utility/vectypes.h"
 
 #include "testutils/testasserts.h"
 
+namespace gmx
+{
+namespace test
+{
 namespace
 {
 
-using gmx::invertBoxMatrix;
 using gmx::invertMatrix;
 using gmx::test::defaultRealTolerance;
 
@@ -101,41 +106,6 @@ TEST(InvertMatrixTest, ComputesInverse)
     EXPECT_REAL_EQ_TOL(out[ZZ][ZZ], expected[ZZ][ZZ], defaultRealTolerance());
 }
 
-TEST(InvertBoxMatrixTest, IdentityIsImpotent)
-{
-    matrix in = { { 1, 0, 0 }, { 0, 1, 0 }, { 0, 0, 1 } };
-
-    invertBoxMatrix(in, in);
-
-    EXPECT_REAL_EQ_TOL(in[XX][XX], in[XX][XX], defaultRealTolerance());
-    EXPECT_REAL_EQ_TOL(in[XX][YY], in[XX][YY], defaultRealTolerance());
-    EXPECT_REAL_EQ_TOL(in[XX][ZZ], in[XX][ZZ], defaultRealTolerance());
-    EXPECT_REAL_EQ_TOL(in[YY][XX], in[YY][XX], defaultRealTolerance());
-    EXPECT_REAL_EQ_TOL(in[YY][YY], in[YY][YY], defaultRealTolerance());
-    EXPECT_REAL_EQ_TOL(in[YY][ZZ], in[YY][ZZ], defaultRealTolerance());
-    EXPECT_REAL_EQ_TOL(in[ZZ][XX], in[ZZ][XX], defaultRealTolerance());
-    EXPECT_REAL_EQ_TOL(in[ZZ][YY], in[ZZ][YY], defaultRealTolerance());
-    EXPECT_REAL_EQ_TOL(in[ZZ][ZZ], in[ZZ][ZZ], defaultRealTolerance());
-}
-
-TEST(InvertBoxMatrixTest, ComputesInverseInPlace)
-{
-    matrix in       = { { 1, 0, 0 }, { -1, real(2.5), 0 }, { 10, -2, real(1.2) } };
-    matrix expected = { { 1, 0, 0 },
-                        { real(0.4), real(0.4), 0 },
-                        { real(-23.0 / 3.0), real(2.0 / 3.0), real(5.0 / 6.0) } };
-
-    invertBoxMatrix(in, in);
-
-    EXPECT_REAL_EQ_TOL(expected[XX][XX], in[XX][XX], defaultRealTolerance());
-    EXPECT_REAL_EQ_TOL(expected[XX][YY], in[XX][YY], defaultRealTolerance());
-    EXPECT_REAL_EQ_TOL(expected[XX][ZZ], in[XX][ZZ], defaultRealTolerance());
-    EXPECT_REAL_EQ_TOL(expected[YY][XX], in[YY][XX], defaultRealTolerance());
-    EXPECT_REAL_EQ_TOL(expected[YY][YY], in[YY][YY], defaultRealTolerance());
-    EXPECT_REAL_EQ_TOL(expected[YY][ZZ], in[YY][ZZ], defaultRealTolerance());
-    EXPECT_REAL_EQ_TOL(expected[ZZ][XX], in[ZZ][XX], defaultRealTolerance());
-    EXPECT_REAL_EQ_TOL(expected[ZZ][YY], in[ZZ][YY], defaultRealTolerance());
-    EXPECT_REAL_EQ_TOL(expected[ZZ][ZZ], in[ZZ][ZZ], defaultRealTolerance());
-}
-
 } // namespace
+} // namespace test
+} // namespace gmx

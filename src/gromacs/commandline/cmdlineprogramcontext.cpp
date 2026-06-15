@@ -1,11 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2012,2013,2014,2015,2016 by the GROMACS development team.
- * Copyright (c) 2017,2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2012- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -19,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -28,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \internal \file
  * \brief
@@ -52,15 +50,18 @@
 #include <cstdlib>
 #include <cstring>
 
+#include <filesystem>
+#include <mutex>
 #include <string>
+#include <utility>
 #include <vector>
 
-#include "buildinfo.h"
 #include "gromacs/utility/exceptions.h"
 #include "gromacs/utility/gmxassert.h"
-#include "gromacs/utility/mutex.h"
 #include "gromacs/utility/path.h"
 #include "gromacs/utility/stringutil.h"
+
+#include "buildinfo.h"
 
 namespace gmx
 {
@@ -99,17 +100,42 @@ public:
         return ExecutableEnvironmentPointer(new DefaultExecutableEnvironment());
     }
 
-    DefaultExecutableEnvironment() : initialWorkingDirectory_(Path::getWorkingDirectory()) {}
+    DefaultExecutableEnvironment() : initialWorkingDirectory_(std::filesystem::current_path()) {}
 
-    std::string getWorkingDirectory() const override { return initialWorkingDirectory_; }
-    std::vector<std::string> getExecutablePaths() const override
+    std::filesystem::path getWorkingDirectory() const override { return initialWorkingDirectory_; }
+    std::vector<std::filesystem::path> getExecutablePaths() const override
     {
-        return Path::getExecutablePaths();
+        return getSystemExecutablePaths();
     }
 
 private:
-    std::string initialWorkingDirectory_;
+    std::filesystem::path initialWorkingDirectory_;
 };
+
+/*! \brief
+ * Return the possibly corrected path to the binary
+ *
+ * \param[in] invokedName \c argv[0] the binary was invoked with.
+ * \returns   The possible corrected binary path.
+ *
+ * On Windows, this can require changing to or appending the ".exe"
+ * extension so that we can find the right binary file.
+ */
+std::filesystem::path fixBinaryNameIfOnWindows(const std::filesystem::path& invokedName)
+{
+    // On Windows & Cygwin we may need to add the .exe extension, or
+    // we won't be able to detect that the file exists.
+    if (GMX_NATIVE_WINDOWS || GMX_CYGWIN)
+    {
+        if (!invokedName.has_extension() || invokedName.extension() != ".exe")
+        {
+            std::filesystem::path searchName{ invokedName };
+            searchName.replace_extension(".exe");
+            return searchName;
+        }
+    }
+    return invokedName;
+}
 
 /*! \brief
  * Finds the absolute path of the binary from \c argv[0].
@@ -121,41 +147,30 @@ private:
  * If a binary with the given name cannot be located, \p invokedName is
  * returned.
  */
-std::string findFullBinaryPath(const std::string& invokedName, const IExecutableEnvironment& env)
+std::filesystem::path findFullBinaryPath(const std::filesystem::path&  invokedName,
+                                         const IExecutableEnvironment& env)
 {
-    std::string searchName = invokedName;
-    // On Windows & Cygwin we need to add the .exe extension,
-    // or we wont be able to detect that the file exists.
-#if GMX_NATIVE_WINDOWS || GMX_CYGWIN
-    if (!endsWith(searchName, ".exe"))
-    {
-        searchName.append(".exe");
-    }
-#endif
-    if (!Path::containsDirectory(searchName))
+    if (!invokedName.has_parent_path())
     {
         // No directory in name means it must be in the path - search it!
-        std::vector<std::string>                 pathEntries = env.getExecutablePaths();
-        std::vector<std::string>::const_iterator i;
-        for (i = pathEntries.begin(); i != pathEntries.end(); ++i)
+        std::vector<std::filesystem::path> pathEntries = env.getExecutablePaths();
+        for (const auto& path : pathEntries)
         {
-            const std::string& dir      = i->empty() ? env.getWorkingDirectory() : *i;
-            std::string        testPath = Path::join(dir, searchName);
-            if (File::exists(testPath, File::returnFalseOnError))
+            auto dir = path.empty() ? env.getWorkingDirectory() : path;
+            dir.append(invokedName.string());
+            if (File::exists(dir, File::returnFalseOnError))
             {
-                return testPath;
+                return dir;
             }
         }
     }
-    else if (!Path::isAbsolute(searchName))
+    else if (!invokedName.is_absolute())
     {
         // Name contains directories, but is not absolute, i.e.,
         // it is relative to the current directory.
-        std::string cwd      = env.getWorkingDirectory();
-        std::string testPath = Path::join(cwd, searchName);
-        return testPath;
+        return env.getWorkingDirectory().append(invokedName.string());
     }
-    return searchName;
+    return invokedName;
 }
 
 /*! \brief
@@ -163,9 +178,9 @@ std::string findFullBinaryPath(const std::string& invokedName, const IExecutable
  *
  * Only checks for a single file that has an uncommon enough name.
  */
-bool isAcceptableLibraryPath(const std::string& path)
+bool isAcceptableLibraryPath(const std::filesystem::path& path)
 {
-    return Path::exists(Path::join(path, "residuetypes.dat"));
+    return std::filesystem::exists(std::filesystem::path(path).append("residuetypes.dat"));
 }
 
 /*! \brief
@@ -178,10 +193,10 @@ bool isAcceptableLibraryPath(const std::string& path)
  * files have been installed:  appends the relative installation path of the
  * data files and calls isAcceptableLibraryPath().
  */
-bool isAcceptableLibraryPathPrefix(const std::string& path)
+bool isAcceptableLibraryPathPrefix(const std::filesystem::path& path)
 {
-    std::string testPath = Path::join(path, GMX_INSTALL_GMXDATADIR, "top");
-    return isAcceptableLibraryPath(testPath);
+    return isAcceptableLibraryPath(
+            std::filesystem::path(path).append(GMX_INSTALL_GMXDATADIR).append("top"));
 }
 
 /*! \brief
@@ -191,7 +206,7 @@ bool isAcceptableLibraryPathPrefix(const std::string& path)
  * configure-time hard-coded path.  The hard-coded path is preferred if it
  * actually contains the data files, though.
  */
-std::string findFallbackInstallationPrefixPath()
+std::filesystem::path findFallbackInstallationPrefixPath()
 {
 #if !GMX_NATIVE_WINDOWS
     if (!isAcceptableLibraryPathPrefix(CMAKE_INSTALL_PREFIX))
@@ -229,27 +244,31 @@ std::string findFallbackInstallationPrefixPath()
  * Extra logic is present to allow running binaries from the build tree such
  * that they use up-to-date data files from the source tree.
  */
-std::string findInstallationPrefixPath(const std::string& binaryPath, bool* bSourceLayout)
+std::filesystem::path findInstallationPrefixPath(const std::filesystem::path& binaryPath, bool* bSourceLayout)
 {
     *bSourceLayout = false;
     // Don't search anything if binary cannot be found.
-    if (Path::exists(binaryPath))
+    if (std::filesystem::exists(binaryPath))
     {
         // Remove the executable name.
-        std::string searchPath = Path::getParentPath(binaryPath);
+        auto searchPath = binaryPath.parent_path();
         // If running directly from the build tree, try to use the source
         // directory.
 #if (defined CMAKE_SOURCE_DIR && defined CMAKE_BINARY_DIR)
-        std::string buildBinPath;
+        std::filesystem::path buildBinPath;
 #    ifdef CMAKE_INTDIR /*In multi-configuration build systems the output subdirectory*/
-        buildBinPath = Path::join(CMAKE_BINARY_DIR, "bin", CMAKE_INTDIR);
+        buildBinPath = std::filesystem::path(CMAKE_BINARY_DIR).append("bin").append(CMAKE_INTDIR);
 #    else
-        buildBinPath = Path::join(CMAKE_BINARY_DIR, "bin");
+        buildBinPath = std::filesystem::path(CMAKE_BINARY_DIR).append("bin");
 #    endif
-        if (Path::isEquivalent(searchPath, buildBinPath))
+        // If either path does not exist than an error is produced by
+        // equivalent(). When an error is produced, the non-throwing
+        // call to equivalent() returns false, which is what we want.
+        // We don't care what the error was when we are merely finding
+        // a valid GROMACS installation prefix.
+        if (std::error_code c; std::filesystem::equivalent(searchPath, buildBinPath, c))
         {
-            std::string testPath = Path::join(CMAKE_SOURCE_DIR, "share/top");
-            if (isAcceptableLibraryPath(testPath))
+            if (isAcceptableLibraryPath(std::filesystem::path(CMAKE_SOURCE_DIR).append("share/top")))
             {
                 *bSourceLayout = true;
                 return CMAKE_SOURCE_DIR;
@@ -259,13 +278,18 @@ std::string findInstallationPrefixPath(const std::string& binaryPath, bool* bSou
 
         // Use the executable path to (try to) find the library dir.
         // TODO: Consider only going up exactly the required number of levels.
-        while (!searchPath.empty())
+        while (searchPath != searchPath.root_path()) // While we can go one level up
         {
             if (isAcceptableLibraryPathPrefix(searchPath))
             {
+                // The structure of this function makes it hard for the
+                // compiler to elide the copy of a named return value,
+                // but that's OK.
+                CLANG_DIAGNOSTIC_IGNORE_WNRVO
                 return searchPath;
+                CLANG_DIAGNOSTIC_RESET_WNRVO;
             }
-            searchPath = Path::getParentPath(searchPath);
+            searchPath = searchPath.parent_path();
         }
     }
 
@@ -298,25 +322,23 @@ public:
      */
     void findBinaryPath() const;
 
-    ExecutableEnvironmentPointer executableEnv_;
-    std::string                  invokedName_;
-    std::string                  programName_;
-    std::string                  displayName_;
-    std::string                  commandLine_;
-    mutable std::string          fullBinaryPath_;
-    mutable std::string          installationPrefix_;
-    mutable bool                 bSourceLayout_;
-    mutable Mutex                binaryPathMutex_;
+    ExecutableEnvironmentPointer  executableEnv_;
+    std::filesystem::path         invokedName_;
+    std::string                   programName_;
+    std::string                   displayName_;
+    std::string                   commandLine_;
+    mutable std::filesystem::path fullBinaryPath_;
+    mutable std::filesystem::path installationPrefix_;
+    mutable bool                  bSourceLayout_;
+    mutable std::mutex            binaryPathMutex_;
 };
 
 CommandLineProgramContext::Impl::Impl() : programName_("GROMACS"), bSourceLayout_(false) {}
 
 CommandLineProgramContext::Impl::Impl(int argc, const char* const argv[], ExecutableEnvironmentPointer env) :
-    executableEnv_(std::move(env)),
-    invokedName_(argc != 0 ? argv[0] : ""),
-    bSourceLayout_(false)
+    executableEnv_(std::move(env)), invokedName_(argc != 0 ? argv[0] : ""), bSourceLayout_(false)
 {
-    programName_ = Path::getFilename(invokedName_);
+    programName_ = invokedName_.filename().string();
     programName_ = stripSuffixIfPresent(programName_, ".exe");
 
     commandLine_ = quoteIfNecessary(programName_.c_str());
@@ -331,8 +353,23 @@ void CommandLineProgramContext::Impl::findBinaryPath() const
 {
     if (fullBinaryPath_.empty())
     {
-        fullBinaryPath_ = findFullBinaryPath(invokedName_, *executableEnv_);
-        fullBinaryPath_ = Path::normalize(Path::resolveSymlinks(fullBinaryPath_));
+        fullBinaryPath_ = findFullBinaryPath(fixBinaryNameIfOnWindows(invokedName_), *executableEnv_);
+        if (std::filesystem::is_symlink(fullBinaryPath_))
+        {
+            auto tempPath = std::filesystem::read_symlink(fullBinaryPath_);
+            // if the path from the symlink is not an absolute path, we need
+            // to later combine the path information again from the binaryPath
+            // and the relative position of the resolved symlink
+            if (!tempPath.is_absolute())
+            {
+                fullBinaryPath_ = fullBinaryPath_.parent_path().append(tempPath.string());
+            }
+            else
+            {
+                fullBinaryPath_ = tempPath;
+            }
+        }
+        fullBinaryPath_ = fullBinaryPath_.make_preferred();
         // TODO: Investigate/Consider using a dladdr()-based solution.
         // Potentially less portable, but significantly simpler, and also works
         // with user binaries even if they are located in some arbitrary location,
@@ -359,7 +396,7 @@ CommandLineProgramContext::CommandLineProgramContext(int argc, const char* const
 CommandLineProgramContext::CommandLineProgramContext(int                          argc,
                                                      const char* const            argv[],
                                                      ExecutableEnvironmentPointer env) :
-    impl_(new Impl(argc, argv, move(env)))
+    impl_(new Impl(argc, argv, std::move(env)))
 {
 }
 
@@ -386,21 +423,21 @@ const char* CommandLineProgramContext::commandLine() const
     return impl_->commandLine_.c_str();
 }
 
-const char* CommandLineProgramContext::fullBinaryPath() const
+std::filesystem::path CommandLineProgramContext::fullBinaryPath() const
 {
-    lock_guard<Mutex> lock(impl_->binaryPathMutex_);
+    std::lock_guard<std::mutex> lock(impl_->binaryPathMutex_);
     impl_->findBinaryPath();
     return impl_->fullBinaryPath_.c_str();
 }
 
 InstallationPrefixInfo CommandLineProgramContext::installationPrefix() const
 {
-    lock_guard<Mutex> lock(impl_->binaryPathMutex_);
+    std::lock_guard<std::mutex> lock(impl_->binaryPathMutex_);
     if (impl_->installationPrefix_.empty())
     {
         impl_->findBinaryPath();
-        impl_->installationPrefix_ = Path::normalize(
-                findInstallationPrefixPath(impl_->fullBinaryPath_, &impl_->bSourceLayout_));
+        impl_->installationPrefix_ =
+                findInstallationPrefixPath(impl_->fullBinaryPath_, &impl_->bSourceLayout_).make_preferred();
     }
     return InstallationPrefixInfo(impl_->installationPrefix_.c_str(), impl_->bSourceLayout_);
 }

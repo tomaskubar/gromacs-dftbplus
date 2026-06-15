@@ -1,61 +1,52 @@
 This directory contains source code for Google C++ Testing and Mocking
 Frameworks.
 
-The code has been copied nearly verbatim from the GoogleTest 1.8.1
-git tag by copying the following files/directories recursively:
+GoogleTest promotes "live-at-head" approach, recommending regularly
+updating to the latest commit instead of using tagged releases.
+However, to reduce maintenance burden, we are updating bundled
+GoogleTest copy only occasionally, and prefer to use the latest
+release unless it is severely outdated or does not contain
+required features/bugfixes.
 
-README.md
-googletest
-googlemock
+The code has been copied verbatim from the GoogleTest repository
+(https://github.com/google/googletest). The currently bundled code
+is from releave 1.17.0 which needs to be manually 
+synchronized with the reference in python_packaging/sample_restraint/CMakeLists.txt
 
-However, the following files/subdirectories were excluded because they
-are unneeded for GROMACS:
-
-*.pump
-googletest/configure.ac
-googletest/Makefile.am
-googletest/codegear
-googletest/msvc
-googletest/m4
-googletest/xcode
-googletest/test
-googletest/scripts
-googletest/samples
+No files were omitted or changed, with a few exceptions listed below.
 
 This README.Gromacs file is new, of course.
 
-The top-level CMakeLists.txt has enable_testing() commented out, as we
-do not intend to test GoogleTest as part of a GROMACS build.
+Made cmake_minimum_required set to same version as toplevel and inherited from it.
 
-The CMakeLists.txt files in googletest and googlemock have declared
-their include directories as SYSTEM INTERFACE (not just INTERFACE) so
-that compilers will include such headers with e.g. -isystem, so that
-they will not generate warnings from such headers included in GROMACS
-test code.
+Conditional compilation based on __clang_analyzer__ is used to work
+around reports from the clang static analyzer in
+googletest/include/gtest/gtest.h,
+googletest/include/gtest/gtest-matchers.h,
+googlemock/include/gmock/gmock-matchers.h, and
+googlemock/include/gmock/gmock-spec-builders.h.
 
-As gtest is not building libraries inside googletest/googletest/src,
-the link_directories command for that is removed.
+A clang-tidy suppression has been added to
+googletest/include/gtest/internal/gtest-internal.h.
 
-The googlemock/CMakeLists.txt no longer builds
-googletest/src/gtest-all.cc as part of the gmock target, because it is
-already built as part of the gtest target, and this leads to duplicate
-definitions of extern symbols declared in gtest headers. Added the
-link-time dependency of gmock upon gtest that is now required.
+A warning suppression was added to 
+googletest/include/gtest/gtest-matchers.h
+to silence the warning from GCC 12 arising from the use of 
+the `_` wildcard matcher.
 
-The gmock_main executables and library are not created,
-because GROMACS does not use them.
+Include order was changed in
+googletest/googlemock/CMakeLists.txt
+to always prefer bundled headers over anything available
+in system-wide direcories.
 
-googletest-1.8.0 also assumes that streaming results to a socket is
-something you can always do on Linux, but the implementation uses
-getaddrinfo(), about which the Cray linker warns because its use would
-require shared libraries at run time. Since GROMACS testing doesn't
-use this feature, we'd just want to turn it off, but there's no
-interface for that. So, GTEST_CAN_STREAM_RESULTS is added in
-googletest/include/gtest/internal/gtest-port.h to allow the default
-behaviour to be applied only if the user hasn't gotten involved.
+TYPED_TEST_SUITE_WITH_NAME was added in order to work around a
+limitation of clang-19, since GROMACS so far does not use the
+three-argument variant of TYPED_TEST_SUITE. Likewise
+INSTANTIATE_TYPED_TEST_SUITE_P. See comments inline for details.
 
-Some compiler warnings cannot be suppressed through CMake machinery,
-such as for the clang static analyzer, and some lines are removed
-from consideration by wrapping with `#ifndef __clang_analyzer__`
-or marking them with `/*NOLINT*/` comment.
-... `#endif`.
+Some custom GoogleTest object-hierarchy casts were used in
+gtest-printers.h for casts of plain values. Replaced these with
+explicit casts to avoid warnings.
+
+The implicit-float-size-conversion warning changed name and
+implementation before oneAPI 2025.3, so that is now omitted.

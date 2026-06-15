@@ -1,11 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2013,2014,2015,2016,2018 by the GROMACS development team.
- * Copyright (c) 2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2013- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -19,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -28,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 
 /*! \internal \file
@@ -43,6 +41,20 @@
  */
 #include "gmxpre.h"
 
+#include <filesystem>
+#include <string>
+
+#include <gtest/gtest.h>
+
+#include "gromacs/utility/filestream.h"
+#include "gromacs/utility/path.h"
+
+#include "testutils/cmdlinetest.h"
+#include "testutils/refdata.h"
+#include "testutils/testasserts.h"
+#include "testutils/testfilemanager.h"
+#include "testutils/xvgtest.h"
+
 #include "moduletest.h"
 
 namespace gmx
@@ -50,33 +62,33 @@ namespace gmx
 namespace test
 {
 
-class SwapTestFixture : public MdrunTestFixture
+class CompelTest : public MdrunTestFixture
 {
-protected:
-    SwapTestFixture();
-    ~SwapTestFixture() override;
 };
 
-
-SwapTestFixture::SwapTestFixture() {}
-
-SwapTestFixture::~SwapTestFixture() {}
-
-
-//! Test fixture for mdrun with "Computational Electrophysiology" settings,
-// i.e. double membrane sandwich with ion/water exchange protocol
-typedef gmx::test::SwapTestFixture CompelTest;
-
 /* This test ensures that the compel protocol can be run, that all of
- * the swapcoords parameters from the .mdp file are understood, and that
- * the swap state variables can be written to and read from checkpoint. */
+ * the swapcoords parameters from the .mdp file are understood, that
+ * the output .xvg file is correct, and that the swap state variables
+ * can be written to and read from checkpoint.
+ *
+ * The setup checks whether the swap-coordinates protocol performs
+ * ion/water exchanges in the z direction.  The system is a typical
+ * computational electrophysiology setup with two octanol membranes in
+ * the x-y plane with water and ions inbetween. At the start, there
+ * are 9 anions and 9 cations in one compartment (A) and 10 anions and
+ * 10 cations in the other (B). The swap parameters are set such that
+ * all ions should end up in compartment A in the swap attempted
+ * during the first step, and remain there.
+ *
+ * The former swap_z regressiontest did the first 2 steps of this test,
+ * ie. without the checkpoint restart. */
 TEST_F(CompelTest, SwapCanRun)
 {
-    runner_.useTopGroAndNdxFromDatabase("OctaneSandwich");
+    runner_.useTopGroAndNdxFromDatabase("OctaneSandwich-z");
     const std::string mdpContents = R"(
-        dt                       = 0.005
+        dt                       = 0.004
         nsteps                   = 2
-        tcoupl                   = Berendsen
+        tcoupl                   = V-rescale
         tc-grps                  = System
         tau-t                    = 0.5
         ref-t                    = 300
@@ -89,20 +101,20 @@ TEST_F(CompelTest, SwapCanRun)
         massw_split0             = yes
         massw_split1             = no
         solvent_group            = SOL
-        cyl0_r                   = 1
-        cyl0_up                  = 0.5
-        cyl0_down                = 0.5
-        cyl1_r                   = 1
-        cyl1_up                  = 0.5
-        cyl1_down                = 0.5
-        coupl_steps              = 5
+        cyl0_r                   = 0.9
+        cyl0_up                  = 0.75
+        cyl0_down                = 0.75
+        cyl1_r                   = 0.9
+        cyl1_up                  = 0.75
+        cyl1_down                = 0.75
+        coupl_steps              = 1
         iontypes                 = 2
         iontype0-name            = NA+
-        iontype0-in-A            = 8
-        iontype0-in-B            = 11
+        iontype0-in-A            = 19
+        iontype0-in-B            = 0
         iontype1-name            = CL-
-        iontype1-in-A            = -1
-        iontype1-in-B            = -1
+        iontype1-in-A            = 19
+        iontype1-in-B            = 0
         threshold                = 1
      )";
 
@@ -110,23 +122,43 @@ TEST_F(CompelTest, SwapCanRun)
 
     EXPECT_EQ(0, runner_.callGrompp());
 
-    runner_.cptFileName_       = fileManager_.getTemporaryFilePath(".cpt");
-    runner_.groOutputFileName_ = fileManager_.getTemporaryFilePath(".gro");
-    runner_.swapFileName_      = fileManager_.getTemporaryFilePath("swap.xvg");
+    runner_.swapFileName_ = fileManager_.getTemporaryFilePath("swap.xvg").string();
 
     ::gmx::test::CommandLine swapCaller;
-    swapCaller.addOption("-c", runner_.groOutputFileName_);
     swapCaller.addOption("-swap", runner_.swapFileName_);
 
     // Do an initial mdrun that writes a checkpoint file
     ::gmx::test::CommandLine firstCaller(swapCaller);
-    firstCaller.addOption("-cpo", runner_.cptFileName_);
     ASSERT_EQ(0, runner_.callMdrun(firstCaller));
+
+    // Test the swap output xvg file
+    const auto           xvgTolerance = relativeToleranceAsFloatingPoint(5.0, 1e-4);
+    TestReferenceData    data;
+    TestReferenceChecker checker = data.rootChecker();
+    if (File::exists(runner_.swapFileName_, File::returnFalseOnError))
+    {
+        TestReferenceChecker fileChecker(checker.checkCompound("File", "swap output after 2 steps"));
+        TextInputFile    swapXvgFileStream(runner_.swapFileName_);
+        XvgMatchSettings matchSettings;
+        matchSettings.tolerance = xvgTolerance;
+        checkXvgFile(&swapXvgFileStream, &fileChecker, matchSettings);
+    }
+
     // Continue mdrun from that checkpoint file
     ::gmx::test::CommandLine secondCaller(swapCaller);
-    secondCaller.addOption("-cpi", runner_.cptFileName_);
+    secondCaller.addOption("-cpi", runner_.cptOutputFileName_);
     runner_.nsteps_ = 2;
     ASSERT_EQ(0, runner_.callMdrun(secondCaller));
+
+    // Test the updated swap output file
+    if (File::exists(runner_.swapFileName_, File::returnFalseOnError))
+    {
+        TestReferenceChecker fileChecker(checker.checkCompound("File", "swap output after 4 steps"));
+        TextInputFile    swapXvgFileStream(runner_.swapFileName_);
+        XvgMatchSettings matchSettings;
+        matchSettings.tolerance = xvgTolerance;
+        checkXvgFile(&swapXvgFileStream, &fileChecker, matchSettings);
+    }
 }
 
 

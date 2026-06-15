@@ -1,13 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
- * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2016,2017 by the GROMACS development team.
- * Copyright (c) 2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 1991- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -21,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -30,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \internal \file
  * \brief
@@ -45,18 +41,24 @@
  */
 #include "gmxpre.h"
 
-#include "symtab.h"
+#include "gromacs/topology/symtab.h"
 
 #include <cstdio>
 #include <cstring>
 
 #include <algorithm>
+#include <filesystem>
+#include <string>
+#include <unordered_map>
+#include <utility>
+#include <vector>
 
+#include "gromacs/serialization/iserializer.h"
 #include "gromacs/utility/basedefinitions.h"
 #include "gromacs/utility/cstringutil.h"
 #include "gromacs/utility/exceptions.h"
 #include "gromacs/utility/fatalerror.h"
-#include "gromacs/utility/iserializer.h"
+#include "gromacs/utility/gmxassert.h"
 #include "gromacs/utility/smalloc.h"
 #include "gromacs/utility/stringutil.h"
 #include "gromacs/utility/txtdump.h"
@@ -108,8 +110,7 @@ void StringTable::printStringTableStorageToFile(FILE* fp, int indent, const char
 
 StringTable::StringTable(gmx::ISerializer* serializer)
 {
-    GMX_RELEASE_ASSERT(serializer->reading(),
-                       "Can not use writing serializer to read string table");
+    GMX_RELEASE_ASSERT(serializer->reading(), "Can not use writing serializer to read string table");
     int nr = 0;
     serializer->doInt(&nr);
     table_.resize(nr);
@@ -131,7 +132,7 @@ void StringTable::serializeStringTable(gmx::ISerializer* serializer)
     }
 }
 
-StringTableEntry StringTable::at(gmx::index index) const
+StringTableEntry StringTable::at(gmx::Index index) const
 {
     if (index >= gmx::ssize(table_))
     {
@@ -140,7 +141,7 @@ StringTableEntry StringTable::at(gmx::index index) const
     return StringTableEntry(table_[index], index);
 }
 
-StringTableEntry StringTable::operator[](gmx::index index) const
+StringTableEntry StringTable::operator[](gmx::Index index) const
 {
     GMX_ASSERT(index < gmx::ssize(table_), "Can't read beyond last entry");
     return StringTableEntry(table_[index], index);
@@ -156,8 +157,7 @@ void StringTableEntry::serialize(gmx::ISerializer* serializer) const
 
 StringTableEntry readStringTableEntry(gmx::ISerializer* serializer, const StringTable& table)
 {
-    GMX_RELEASE_ASSERT(serializer->reading(),
-                       "Can not use writing serializer to read string index");
+    GMX_RELEASE_ASSERT(serializer->reading(), "Can not use writing serializer to read string index");
     int entry = 0;
     serializer->doInt(&entry);
     return table.at(entry);
@@ -187,15 +187,15 @@ constexpr int c_maxBufSize = 5;
  */
 static char* trim_string(const char* s, char* out, int maxlen)
 {
-    int len, i;
+    int len = 0, i = 0;
 
-    if (strlen(s) > static_cast<size_t>(maxlen - 1))
+    if (std::strlen(s) > static_cast<size_t>(maxlen - 1))
     {
-        gmx_fatal(FARGS, "String '%s' (%zu) is longer than buffer (%d).\n", s, strlen(s), maxlen - 1);
+        gmx_fatal(FARGS, "String '%s' (%zu) is longer than buffer (%d).\n", s, std::strlen(s), maxlen - 1);
     }
 
     for (; (*s) == ' '; s++) {}
-    for (len = strlen(s); (len > 0); len--)
+    for (len = std::strlen(s); (len > 0); len--)
     {
         if (s[len - 1] != ' ')
         {
@@ -216,11 +216,8 @@ static char* trim_string(const char* s, char* out, int maxlen)
 
 int lookup_symtab(t_symtab* symtab, char** name)
 {
-    int       base;
-    t_symbuf* symbuf;
-
-    base   = 0;
-    symbuf = symtab->symbuf;
+    int       base   = 0;
+    t_symbuf* symbuf = symtab->symbuf;
     while (symbuf != nullptr)
     {
         const int index = name - symbuf->buf;
@@ -239,9 +236,7 @@ int lookup_symtab(t_symtab* symtab, char** name)
 
 char** get_symtab_handle(t_symtab* symtab, int name)
 {
-    t_symbuf* symbuf;
-
-    symbuf = symtab->symbuf;
+    t_symbuf* symbuf = symtab->symbuf;
     while (symbuf != nullptr)
     {
         if (name < symbuf->bufsize)
@@ -260,7 +255,7 @@ char** get_symtab_handle(t_symtab* symtab, int name)
 //! Returns a new initialized entry into the symtab linked list.
 static t_symbuf* new_symbuf()
 {
-    t_symbuf* symbuf;
+    t_symbuf* symbuf = nullptr;
 
     snew(symbuf, 1);
     symbuf->bufsize = c_maxBufSize;
@@ -279,19 +274,17 @@ static t_symbuf* new_symbuf()
  */
 static char** enter_buf(t_symtab* symtab, char* name)
 {
-    int       i;
-    t_symbuf* symbuf;
-    gmx_bool  bCont;
+    bool bCont = false;
 
     if (symtab->symbuf == nullptr)
     {
         symtab->symbuf = new_symbuf();
     }
 
-    symbuf = symtab->symbuf;
+    t_symbuf* symbuf = symtab->symbuf;
     do
     {
-        for (i = 0; (i < symbuf->bufsize); i++)
+        for (int i = 0; (i < symbuf->bufsize); i++)
         {
             if (symbuf->buf[i] == nullptr)
             {
@@ -299,7 +292,7 @@ static char** enter_buf(t_symtab* symtab, char* name)
                 symbuf->buf[i] = gmx_strdup(name);
                 return &(symbuf->buf[i]);
             }
-            else if (strcmp(symbuf->buf[i], name) == 0)
+            else if (std::strcmp(symbuf->buf[i], name) == 0)
             {
                 return &(symbuf->buf[i]);
             }
@@ -342,7 +335,7 @@ void close_symtab(t_symtab gmx_unused* symtab) {}
 // std::list<std::vector<std::string>>> for t_symtab.
 t_symtab* duplicateSymtab(const t_symtab* symtab)
 {
-    t_symtab* copySymtab;
+    t_symtab* copySymtab = nullptr;
     snew(copySymtab, 1);
     open_symtab(copySymtab);
     t_symbuf* symbuf = symtab->symbuf;
@@ -375,21 +368,19 @@ t_symtab* duplicateSymtab(const t_symtab* symtab)
 
 void done_symtab(t_symtab* symtab)
 {
-    int       i;
-    t_symbuf *symbuf, *freeptr;
-
     close_symtab(symtab);
-    symbuf = symtab->symbuf;
+    t_symbuf* symbuf = symtab->symbuf;
     while (symbuf != nullptr)
     {
-        for (i = 0; (i < symbuf->bufsize) && (i < symtab->nr); i++)
+        int i = 0;
+        for (; (i < symbuf->bufsize) && (i < symtab->nr); i++)
         {
             sfree(symbuf->buf[i]);
         }
         symtab->nr -= i;
         sfree(symbuf->buf);
-        freeptr = symbuf;
-        symbuf  = symbuf->next;
+        t_symbuf* freeptr = symbuf;
+        symbuf            = symbuf->next;
         sfree(freeptr);
     }
     symtab->symbuf = nullptr;
@@ -401,15 +392,13 @@ void done_symtab(t_symtab* symtab)
 
 void free_symtab(t_symtab* symtab)
 {
-    t_symbuf *symbuf, *freeptr;
-
     close_symtab(symtab);
-    symbuf = symtab->symbuf;
+    t_symbuf* symbuf = symtab->symbuf;
     while (symbuf != nullptr)
     {
         symtab->nr -= std::min(symbuf->bufsize, symtab->nr);
-        freeptr = symbuf;
-        symbuf  = symbuf->next;
+        t_symbuf* freeptr = symbuf;
+        symbuf            = symbuf->next;
         sfree(freeptr);
     }
     symtab->symbuf = nullptr;
@@ -421,18 +410,16 @@ void free_symtab(t_symtab* symtab)
 
 void pr_symtab(FILE* fp, int indent, const char* title, t_symtab* symtab)
 {
-    int       i, j, nr;
-    t_symbuf* symbuf;
-
     if (available(fp, symtab, indent, title))
     {
-        indent = pr_title_n(fp, indent, title, symtab->nr);
-        i      = 0;
-        nr     = symtab->nr;
-        symbuf = symtab->symbuf;
+        indent           = pr_title_n(fp, indent, title, symtab->nr);
+        int       i      = 0;
+        int       nr     = symtab->nr;
+        t_symbuf* symbuf = symtab->symbuf;
         while (symbuf != nullptr)
         {
-            for (j = 0; (j < symbuf->bufsize) && (j < nr); j++)
+            int j = 0;
+            for (; (j < symbuf->bufsize) && (j < nr); j++)
             {
                 pr_indent(fp, indent);
                 (void)fprintf(fp, "%s[%d]=\"%s\"\n", title, i++, symbuf->buf[j]);

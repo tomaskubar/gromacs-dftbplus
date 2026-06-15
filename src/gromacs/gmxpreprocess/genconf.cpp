@@ -1,13 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
- * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2016,2017 by the GROMACS development team.
- * Copyright (c) 2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 1991- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -21,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -30,31 +26,50 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 #include "gmxpre.h"
 
 #include "genconf.h"
 
+#include <cmath>
+#include <cstdio>
+
+#include <filesystem>
+#include <string>
+
+#include "gromacs/commandline/filenm.h"
 #include "gromacs/commandline/pargs.h"
 #include "gromacs/fileio/confio.h"
+#include "gromacs/fileio/filetypes.h"
+#include "gromacs/fileio/oenv.h"
 #include "gromacs/fileio/trxio.h"
 #include "gromacs/math/3dtransforms.h"
+#include "gromacs/math/functions.h"
+#include "gromacs/math/units.h"
 #include "gromacs/math/utilities.h"
-#include "gromacs/math/vec.h"
 #include "gromacs/mdtypes/md_enums.h"
 #include "gromacs/pbcutil/pbc.h"
+#include "gromacs/random/seed.h"
 #include "gromacs/random/threefry.h"
 #include "gromacs/random/uniformrealdistribution.h"
+#include "gromacs/topology/atoms.h"
 #include "gromacs/topology/mtop_util.h"
 #include "gromacs/topology/topology.h"
+#include "gromacs/trajectory/trajectoryframe.h"
 #include "gromacs/utility/arraysize.h"
+#include "gromacs/utility/basedefinitions.h"
 #include "gromacs/utility/cstringutil.h"
 #include "gromacs/utility/fatalerror.h"
+#include "gromacs/utility/real.h"
 #include "gromacs/utility/smalloc.h"
+#include "gromacs/utility/vec.h"
+#include "gromacs/utility/vectypes.h"
+
+struct gmx_output_env_t;
 
 static void
 rand_rot(int natoms, rvec x[], rvec v[], vec4 xrot[], vec4 vrot[], gmx::DefaultRandomEngine* rng, const rvec max_rot)
@@ -120,16 +135,14 @@ int gmx_genconf(int argc, char* argv[])
     const char* bugs[] = { "The program should allow for random displacement of lattice points." };
 
     int               vol;
-    rvec *            x, *xx, *v; /* coordinates? */
-    real              t;
+    rvec *            x, *v; /* coordinates? */
     vec4 *            xrot, *vrot;
     PbcType           pbcType;
-    matrix            box, boxx; /* box length matrix */
+    matrix            box; /* box length matrix */
     rvec              shift;
     int               natoms; /* number of atoms in one molecule  */
     int               nres;   /* number of molecules? */
     int               i, j, k, l, m, ndx, nrdx, nx, ny, nz;
-    t_trxstatus*      status;
     bool              bTRX;
     gmx_output_env_t* oenv;
 
@@ -152,8 +165,8 @@ int gmx_genconf(int argc, char* argv[])
         { "-renumber", FALSE, etBOOL, { &bRenum }, "Renumber residues" }
     };
 
-    if (!parse_common_args(&argc, argv, 0, NFILE, fnm, asize(pa), pa, asize(desc), desc,
-                           asize(bugs), bugs, &oenv))
+    if (!parse_common_args(
+                &argc, argv, 0, NFILE, fnm, asize(pa), pa, asize(desc), desc, asize(bugs), bugs, &oenv))
     {
         return 0;
     }
@@ -179,7 +192,7 @@ int gmx_genconf(int argc, char* argv[])
     gmx_mtop_t mtop;
     bool       haveTop = false;
     readConfAndTopology(opt2fn("-f", NFILE, fnm), &haveTop, &mtop, &pbcType, &x, &v, box);
-    t_atoms atoms = gmx_mtop_global_atoms(&mtop);
+    t_atoms atoms = gmx_mtop_global_atoms(mtop);
     natoms        = atoms.nr;
     nres          = atoms.nres; /* nr of residues in one element? */
     /* make space for all the atoms */
@@ -189,12 +202,17 @@ int gmx_genconf(int argc, char* argv[])
     snew(xrot, natoms);      /* get space for rotation matrix? */
     snew(vrot, natoms);
 
+    t_trxstatus* status;
+    t_trxframe   frame;
+    rvec*        xx;
+
     if (bTRX)
     {
-        if (!read_first_x(oenv, &status, ftp2fn(efTRX, NFILE, fnm), &t, &xx, boxx))
+        if (!read_first_frame(oenv, &status, ftp2fn(efTRX, NFILE, fnm), &frame, TRX_NEED_X))
         {
-            gmx_fatal(FARGS, "No atoms in trajectory %s", ftp2fn(efTRX, NFILE, fnm));
+            gmx_fatal(FARGS, "Could not read trajectory %s", ftp2fn(efTRX, NFILE, fnm));
         }
+        xx = frame.x;
     }
     else
     {
@@ -204,7 +222,6 @@ int gmx_genconf(int argc, char* argv[])
             copy_rvec(x[i], xx[i]);
         }
     }
-
 
     for (k = 0; (k < nz); k++) /* loop over all gridpositions    */
     {
@@ -269,7 +286,7 @@ int gmx_genconf(int argc, char* argv[])
                 }
                 if (bTRX)
                 {
-                    if (!read_next_x(oenv, status, &t, xx, boxx) && ((i + 1) * (j + 1) * (k + 1) < vol))
+                    if (!read_next_frame(oenv, status, &frame) && ((i + 1) * (j + 1) * (k + 1) < vol))
                     {
                         gmx_fatal(FARGS, "Not enough frames in trajectory");
                     }
@@ -279,7 +296,12 @@ int gmx_genconf(int argc, char* argv[])
     }
     if (bTRX)
     {
+        done_frame(&frame);
         close_trx(status);
+    }
+    else
+    {
+        sfree(xx);
     }
 
     /* make box bigger */
@@ -311,7 +333,6 @@ int gmx_genconf(int argc, char* argv[])
     sfree(v);
     sfree(xrot);
     sfree(vrot);
-    sfree(xx);
     done_atom(&atoms);
     output_env_done(oenv);
 

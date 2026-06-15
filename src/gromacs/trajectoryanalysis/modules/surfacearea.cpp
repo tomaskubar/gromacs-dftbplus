@@ -1,13 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
- * Copyright (c) 2001-2007, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2017,2018 by the GROMACS development team.
- * Copyright (c) 2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 1991- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -21,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -30,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 #include "gmxpre.h"
 
@@ -41,20 +37,19 @@
 
 #include <cmath>
 #include <cstdio>
-#include <cstdlib>
-#include <cstring>
 
 #include <algorithm>
 #include <vector>
 
 #include "gromacs/math/functions.h"
-#include "gromacs/math/utilities.h"
-#include "gromacs/math/vec.h"
+#include "gromacs/math/units.h"
 #include "gromacs/pbcutil/pbc.h"
 #include "gromacs/selection/nbsearch.h"
+#include "gromacs/utility/basedefinitions.h"
 #include "gromacs/utility/fatalerror.h"
 #include "gromacs/utility/gmxassert.h"
 #include "gromacs/utility/smalloc.h"
+#include "gromacs/utility/vec.h"
 
 using namespace gmx;
 
@@ -62,57 +57,57 @@ using namespace gmx;
 #define UNSP_ICO_ARC 10
 
 #define FOURPI (4. * M_PI)
-#define TORAD(A) ((A)*0.017453293)
+#define TORAD(A) ((A) * 0.017453293)
 #define DP_TOL 0.001
 
 static real safe_asin(real f)
 {
-    if ((fabs(f) < 1.00))
+    if ((std::fabs(f) < 1.00))
     {
-        return (asin(f));
+        return (std::asin(f));
     }
-    GMX_ASSERT(fabs(f) - 1.0 > DP_TOL, "Invalid argument");
+    GMX_ASSERT(std::fabs(f) - 1.0 > DP_TOL, "Invalid argument");
     return (M_PI_2);
 }
 
 /* routines for dot distributions on the surface of the unit sphere */
 static real icosaeder_vertices(real* xus)
 {
-    const real rh = std::sqrt(1. - 2. * cos(TORAD(72.))) / (1. - cos(TORAD(72.)));
-    const real rg = cos(TORAD(72.)) / (1. - cos(TORAD(72.)));
+    const real rh = std::sqrt(1. - 2. * std::cos(TORAD(72.))) / (1. - std::cos(TORAD(72.)));
+    const real rg = std::cos(TORAD(72.)) / (1. - std::cos(TORAD(72.)));
     /* icosaeder vertices */
     xus[0]  = 0.;
     xus[1]  = 0.;
     xus[2]  = 1.;
-    xus[3]  = rh * cos(TORAD(72.));
-    xus[4]  = rh * sin(TORAD(72.));
+    xus[3]  = rh * std::cos(TORAD(72.));
+    xus[4]  = rh * std::sin(TORAD(72.));
     xus[5]  = rg;
-    xus[6]  = rh * cos(TORAD(144.));
-    xus[7]  = rh * sin(TORAD(144.));
+    xus[6]  = rh * std::cos(TORAD(144.));
+    xus[7]  = rh * std::sin(TORAD(144.));
     xus[8]  = rg;
-    xus[9]  = rh * cos(TORAD(216.));
-    xus[10] = rh * sin(TORAD(216.));
+    xus[9]  = rh * std::cos(TORAD(216.));
+    xus[10] = rh * std::sin(TORAD(216.));
     xus[11] = rg;
-    xus[12] = rh * cos(TORAD(288.));
-    xus[13] = rh * sin(TORAD(288.));
+    xus[12] = rh * std::cos(TORAD(288.));
+    xus[13] = rh * std::sin(TORAD(288.));
     xus[14] = rg;
     xus[15] = rh;
     xus[16] = 0;
     xus[17] = rg;
-    xus[18] = rh * cos(TORAD(36.));
-    xus[19] = rh * sin(TORAD(36.));
+    xus[18] = rh * std::cos(TORAD(36.));
+    xus[19] = rh * std::sin(TORAD(36.));
     xus[20] = -rg;
-    xus[21] = rh * cos(TORAD(108.));
-    xus[22] = rh * sin(TORAD(108.));
+    xus[21] = rh * std::cos(TORAD(108.));
+    xus[22] = rh * std::sin(TORAD(108.));
     xus[23] = -rg;
     xus[24] = -rh;
     xus[25] = 0;
     xus[26] = -rg;
-    xus[27] = rh * cos(TORAD(252.));
-    xus[28] = rh * sin(TORAD(252.));
+    xus[27] = rh * std::cos(TORAD(252.));
+    xus[28] = rh * std::sin(TORAD(252.));
     xus[29] = -rg;
-    xus[30] = rh * cos(TORAD(324.));
-    xus[31] = rh * sin(TORAD(324.));
+    xus[30] = rh * std::cos(TORAD(324.));
+    xus[31] = rh * std::sin(TORAD(324.));
     xus[32] = -rg;
     xus[33] = 0.;
     xus[34] = 0.;
@@ -125,33 +120,30 @@ static void
 divarc(real x1, real y1, real z1, real x2, real y2, real z2, int div1, int div2, real* xr, real* yr, real* zr)
 {
 
-    real xd, yd, zd, dd, d1, d2, s, x, y, z;
-    real phi, sphi, cphi;
-
-    xd = y1 * z2 - y2 * z1;
-    yd = z1 * x2 - z2 * x1;
-    zd = x1 * y2 - x2 * y1;
-    dd = std::sqrt(xd * xd + yd * yd + zd * zd);
+    const real xd = y1 * z2 - y2 * z1;
+    const real yd = z1 * x2 - z2 * x1;
+    const real zd = x1 * y2 - x2 * y1;
+    const real dd = std::sqrt(xd * xd + yd * yd + zd * zd);
     GMX_ASSERT(dd >= DP_TOL, "Rotation axis vector too short");
 
-    d1 = x1 * x1 + y1 * y1 + z1 * z1;
-    d2 = x2 * x2 + y2 * y2 + z2 * z2;
+    const real d1 = x1 * x1 + y1 * y1 + z1 * z1;
+    const real d2 = x2 * x2 + y2 * y2 + z2 * z2;
     GMX_ASSERT(d1 >= 0.5, "Vector 1 too short");
     GMX_ASSERT(d2 >= 0.5, "Vector 2 too short");
 
-    phi  = safe_asin(dd / std::sqrt(d1 * d2));
-    phi  = phi * (static_cast<real>(div1)) / (static_cast<real>(div2));
-    sphi = sin(phi);
-    cphi = cos(phi);
-    s    = (x1 * xd + y1 * yd + z1 * zd) / dd;
+    real phi        = safe_asin(dd / std::sqrt(d1 * d2));
+    phi             = phi * (static_cast<real>(div1)) / (static_cast<real>(div2));
+    const real sphi = std::sin(phi);
+    const real cphi = std::cos(phi);
+    const real s    = (x1 * xd + y1 * yd + z1 * zd) / dd;
 
-    x   = xd * s * (1. - cphi) / dd + x1 * cphi + (yd * z1 - y1 * zd) * sphi / dd;
-    y   = yd * s * (1. - cphi) / dd + y1 * cphi + (zd * x1 - z1 * xd) * sphi / dd;
-    z   = zd * s * (1. - cphi) / dd + z1 * cphi + (xd * y1 - x1 * yd) * sphi / dd;
-    dd  = std::sqrt(x * x + y * y + z * z);
-    *xr = x / dd;
-    *yr = y / dd;
-    *zr = z / dd;
+    const real x   = xd * s * (1. - cphi) / dd + x1 * cphi + (yd * z1 - y1 * zd) * sphi / dd;
+    const real y   = yd * s * (1. - cphi) / dd + y1 * cphi + (zd * x1 - z1 * xd) * sphi / dd;
+    const real z   = zd * s * (1. - cphi) / dd + z1 * cphi + (xd * y1 - x1 * yd) * sphi / dd;
+    const real dd2 = std::sqrt(x * x + y * y + z * z);
+    *xr            = x / dd2;
+    *yr            = y / dd2;
+    *zr            = z / dd2;
 }
 
 /* densit...required dots per unit sphere */
@@ -160,14 +152,15 @@ static std::vector<real> ico_dot_arc(int densit)
     /* dot distribution on a unit sphere based on an icosaeder *
      * great circle average refining of icosahedral face       */
 
-    int  i, j, k, tl, tl2, tn;
-    real a, d, x, y, z, x2, y2, z2, x3, y3, z3;
-    real xij, yij, zij, xji, yji, zji, xik, yik, zik, xki, yki, zki, xjk, yjk, zjk, xkj, ykj, zkj;
+    real x2 = NAN, y2 = NAN, z2 = NAN, x3 = NAN, y3 = NAN, z3 = NAN;
+    real xij = NAN, yij = NAN, zij = NAN, xji = NAN, yji = NAN, zji = NAN, xik = NAN, yik = NAN,
+         zik = NAN, xki = NAN, yki = NAN, zki = NAN, xjk = NAN, yjk = NAN, zjk = NAN, xkj = NAN,
+         ykj = NAN, zkj = NAN;
 
     /* calculate tessalation level */
-    a              = std::sqrt(((static_cast<real>(densit)) - 2.) / 10.);
-    const int tess = static_cast<int>(ceil(a));
-    const int ndot = 10 * tess * tess + 2;
+    const real a    = std::sqrt(((static_cast<real>(densit)) - 2.) / 10.);
+    const int  tess = static_cast<int>(std::ceil(a));
+    const int  ndot = 10 * tess * tess + 2;
     GMX_RELEASE_ASSERT(ndot >= densit, "Inconsistent surface dot formula");
 
     std::vector<real> xus(3 * ndot);
@@ -175,51 +168,60 @@ static std::vector<real> ico_dot_arc(int densit)
 
     if (tess > 1)
     {
-        tn = 12;
-        a  = rh * rh * 2. * (1. - cos(TORAD(72.)));
+        int        tn    = 12;
+        const real aTess = rh * rh * 2. * (1. - std::cos(TORAD(72.)));
         /* calculate tessalation of icosaeder edges */
-        for (i = 0; i < 11; i++)
+        for (int i = 0; i < 11; i++)
         {
-            for (j = i + 1; j < 12; j++)
+            for (int j = i + 1; j < 12; j++)
             {
-                x = xus[3 * i] - xus[3 * j];
-                y = xus[1 + 3 * i] - xus[1 + 3 * j];
-                z = xus[2 + 3 * i] - xus[2 + 3 * j];
-                d = x * x + y * y + z * z;
-                if (std::fabs(a - d) > DP_TOL)
+                const real x = xus[3 * i] - xus[3 * j];
+                const real y = xus[1 + 3 * i] - xus[1 + 3 * j];
+                const real z = xus[2 + 3 * i] - xus[2 + 3 * j];
+                const real d = x * x + y * y + z * z;
+                if (std::fabs(aTess - d) > DP_TOL)
                 {
                     continue;
                 }
-                for (tl = 1; tl < tess; tl++)
+                for (int tl = 1; tl < tess; tl++)
                 {
                     GMX_ASSERT(tn < ndot, "Inconsistent precomputed surface dot count");
-                    divarc(xus[3 * i], xus[1 + 3 * i], xus[2 + 3 * i], xus[3 * j], xus[1 + 3 * j],
-                           xus[2 + 3 * j], tl, tess, &xus[3 * tn], &xus[1 + 3 * tn], &xus[2 + 3 * tn]);
+                    divarc(xus[3 * i],
+                           xus[1 + 3 * i],
+                           xus[2 + 3 * i],
+                           xus[3 * j],
+                           xus[1 + 3 * j],
+                           xus[2 + 3 * j],
+                           tl,
+                           tess,
+                           &xus[3 * tn],
+                           &xus[1 + 3 * tn],
+                           &xus[2 + 3 * tn]);
                     tn++;
                 }
             }
         }
         /* calculate tessalation of icosaeder faces */
-        for (i = 0; i < 10; i++)
+        for (int i = 0; i < 10; i++)
         {
-            for (j = i + 1; j < 11; j++)
+            for (int j = i + 1; j < 11; j++)
             {
-                x = xus[3 * i] - xus[3 * j];
-                y = xus[1 + 3 * i] - xus[1 + 3 * j];
-                z = xus[2 + 3 * i] - xus[2 + 3 * j];
-                d = x * x + y * y + z * z;
-                if (std::fabs(a - d) > DP_TOL)
+                real x = xus[3 * i] - xus[3 * j];
+                real y = xus[1 + 3 * i] - xus[1 + 3 * j];
+                real z = xus[2 + 3 * i] - xus[2 + 3 * j];
+                real d = x * x + y * y + z * z;
+                if (std::fabs(aTess - d) > DP_TOL)
                 {
                     continue;
                 }
 
-                for (k = j + 1; k < 12; k++)
+                for (int k = j + 1; k < 12; k++)
                 {
                     x = xus[3 * i] - xus[3 * k];
                     y = xus[1 + 3 * i] - xus[1 + 3 * k];
                     z = xus[2 + 3 * i] - xus[2 + 3 * k];
                     d = x * x + y * y + z * z;
-                    if (std::fabs(a - d) > DP_TOL)
+                    if (std::fabs(aTess - d) > DP_TOL)
                     {
                         continue;
                     }
@@ -227,27 +229,81 @@ static std::vector<real> ico_dot_arc(int densit)
                     y = xus[1 + 3 * j] - xus[1 + 3 * k];
                     z = xus[2 + 3 * j] - xus[2 + 3 * k];
                     d = x * x + y * y + z * z;
-                    if (std::fabs(a - d) > DP_TOL)
+                    if (std::fabs(aTess - d) > DP_TOL)
                     {
                         continue;
                     }
-                    for (tl = 1; tl < tess - 1; tl++)
+                    for (int tl = 1; tl < tess - 1; tl++)
                     {
-                        divarc(xus[3 * j], xus[1 + 3 * j], xus[2 + 3 * j], xus[3 * i],
-                               xus[1 + 3 * i], xus[2 + 3 * i], tl, tess, &xji, &yji, &zji);
-                        divarc(xus[3 * k], xus[1 + 3 * k], xus[2 + 3 * k], xus[3 * i],
-                               xus[1 + 3 * i], xus[2 + 3 * i], tl, tess, &xki, &yki, &zki);
+                        divarc(xus[3 * j],
+                               xus[1 + 3 * j],
+                               xus[2 + 3 * j],
+                               xus[3 * i],
+                               xus[1 + 3 * i],
+                               xus[2 + 3 * i],
+                               tl,
+                               tess,
+                               &xji,
+                               &yji,
+                               &zji);
+                        divarc(xus[3 * k],
+                               xus[1 + 3 * k],
+                               xus[2 + 3 * k],
+                               xus[3 * i],
+                               xus[1 + 3 * i],
+                               xus[2 + 3 * i],
+                               tl,
+                               tess,
+                               &xki,
+                               &yki,
+                               &zki);
 
-                        for (tl2 = 1; tl2 < tess - tl; tl2++)
+                        for (int tl2 = 1; tl2 < tess - tl; tl2++)
                         {
-                            divarc(xus[3 * i], xus[1 + 3 * i], xus[2 + 3 * i], xus[3 * j],
-                                   xus[1 + 3 * j], xus[2 + 3 * j], tl2, tess, &xij, &yij, &zij);
-                            divarc(xus[3 * k], xus[1 + 3 * k], xus[2 + 3 * k], xus[3 * j],
-                                   xus[1 + 3 * j], xus[2 + 3 * j], tl2, tess, &xkj, &ykj, &zkj);
-                            divarc(xus[3 * i], xus[1 + 3 * i], xus[2 + 3 * i], xus[3 * k], xus[1 + 3 * k],
-                                   xus[2 + 3 * k], tess - tl - tl2, tess, &xik, &yik, &zik);
-                            divarc(xus[3 * j], xus[1 + 3 * j], xus[2 + 3 * j], xus[3 * k], xus[1 + 3 * k],
-                                   xus[2 + 3 * k], tess - tl - tl2, tess, &xjk, &yjk, &zjk);
+                            divarc(xus[3 * i],
+                                   xus[1 + 3 * i],
+                                   xus[2 + 3 * i],
+                                   xus[3 * j],
+                                   xus[1 + 3 * j],
+                                   xus[2 + 3 * j],
+                                   tl2,
+                                   tess,
+                                   &xij,
+                                   &yij,
+                                   &zij);
+                            divarc(xus[3 * k],
+                                   xus[1 + 3 * k],
+                                   xus[2 + 3 * k],
+                                   xus[3 * j],
+                                   xus[1 + 3 * j],
+                                   xus[2 + 3 * j],
+                                   tl2,
+                                   tess,
+                                   &xkj,
+                                   &ykj,
+                                   &zkj);
+                            divarc(xus[3 * i],
+                                   xus[1 + 3 * i],
+                                   xus[2 + 3 * i],
+                                   xus[3 * k],
+                                   xus[1 + 3 * k],
+                                   xus[2 + 3 * k],
+                                   tess - tl - tl2,
+                                   tess,
+                                   &xik,
+                                   &yik,
+                                   &zik);
+                            divarc(xus[3 * j],
+                                   xus[1 + 3 * j],
+                                   xus[2 + 3 * j],
+                                   xus[3 * k],
+                                   xus[1 + 3 * k],
+                                   xus[2 + 3 * k],
+                                   tess - tl - tl2,
+                                   tess,
+                                   &xjk,
+                                   &yjk,
+                                   &zjk);
                             divarc(xki, yki, zki, xji, yji, zji, tl2, tess - tl, &x, &y, &z);
                             divarc(xkj, ykj, zkj, xij, yij, zij, tl, tess - tl2, &x2, &y2, &z2);
                             divarc(xjk, yjk, zjk, xik, yik, zik, tl, tl + tl2, &x3, &y3, &z3);
@@ -261,10 +317,10 @@ static std::vector<real> ico_dot_arc(int densit)
                             xus[2 + 3 * tn] = z / d;
                             tn++;
                         } /* cycle tl2 */
-                    }     /* cycle tl */
-                }         /* cycle k */
-            }             /* cycle j */
-        }                 /* cycle i */
+                    } /* cycle tl */
+                } /* cycle k */
+            } /* cycle j */
+        } /* cycle i */
         GMX_ASSERT(tn == ndot, "Inconsistent precomputed surface dot count");
     } /* end of if (tess > 1) */
 
@@ -277,123 +333,138 @@ static std::vector<real> ico_dot_dod(int densit)
     /* dot distribution on a unit sphere based on an icosaeder *
      * great circle average refining of icosahedral face       */
 
-    int  i, j, k, tl, tl2, tn, tess, j1, j2;
-    real a, d, x, y, z, x2, y2, z2, x3, y3, z3, ai_d, adod;
-    real xij, yij, zij, xji, yji, zji, xik, yik, zik, xki, yki, zki, xjk, yjk, zjk, xkj, ykj, zkj;
+    real x2 = NAN, y2 = NAN, z2 = NAN, x3 = NAN, y3 = NAN, z3 = NAN;
+    real xij = NAN, yij = NAN, zij = NAN, xji = NAN, yji = NAN, zji = NAN, xik = NAN, yik = NAN,
+         zik = NAN, xki = NAN, yki = NAN, zki = NAN, xjk = NAN, yjk = NAN, zjk = NAN, xkj = NAN,
+         ykj = NAN, zkj = NAN;
 
     /* calculate tesselation level */
-    a              = std::sqrt(((static_cast<real>(densit)) - 2.) / 30.);
-    tess           = std::max(static_cast<int>(ceil(a)), 1);
+    real      a    = std::sqrt(((static_cast<real>(densit)) - 2.) / 30.);
+    const int tess = std::max(static_cast<int>(std::ceil(a)), 1);
     const int ndot = 30 * tess * tess + 2;
     GMX_RELEASE_ASSERT(ndot >= densit, "Inconsistent surface dot formula");
 
     std::vector<real> xus(3 * ndot);
     const real        rh = icosaeder_vertices(xus.data());
 
-    tn = 12;
+    int tnIcosaeder = 12;
     /* square of the edge of an icosaeder */
-    a = rh * rh * 2. * (1. - cos(TORAD(72.)));
+    a = rh * rh * 2. * (1. - std::cos(TORAD(72.)));
     /* dodecaeder vertices */
-    for (i = 0; i < 10; i++)
+    for (int i = 0; i < 10; i++)
     {
-        for (j = i + 1; j < 11; j++)
+        for (int j = i + 1; j < 11; j++)
         {
-            x = xus[3 * i] - xus[3 * j];
-            y = xus[1 + 3 * i] - xus[1 + 3 * j];
-            z = xus[2 + 3 * i] - xus[2 + 3 * j];
-            d = x * x + y * y + z * z;
-            if (std::fabs(a - d) > DP_TOL)
+            const real xj = xus[3 * i] - xus[3 * j];
+            const real yj = xus[1 + 3 * i] - xus[1 + 3 * j];
+            const real zj = xus[2 + 3 * i] - xus[2 + 3 * j];
+            const real dj = xj * xj + yj * yj + zj * zj;
+            if (std::fabs(a - dj) > DP_TOL)
             {
                 continue;
             }
-            for (k = j + 1; k < 12; k++)
+            for (int k = j + 1; k < 12; k++)
             {
-                x = xus[3 * i] - xus[3 * k];
-                y = xus[1 + 3 * i] - xus[1 + 3 * k];
-                z = xus[2 + 3 * i] - xus[2 + 3 * k];
-                d = x * x + y * y + z * z;
-                if (std::fabs(a - d) > DP_TOL)
                 {
-                    continue;
+                    const real x = xus[3 * i] - xus[3 * k];
+                    const real y = xus[1 + 3 * i] - xus[1 + 3 * k];
+                    const real z = xus[2 + 3 * i] - xus[2 + 3 * k];
+                    const real d = x * x + y * y + z * z;
+                    if (std::fabs(a - d) > DP_TOL)
+                    {
+                        continue;
+                    }
                 }
-                x = xus[3 * j] - xus[3 * k];
-                y = xus[1 + 3 * j] - xus[1 + 3 * k];
-                z = xus[2 + 3 * j] - xus[2 + 3 * k];
-                d = x * x + y * y + z * z;
-                if (std::fabs(a - d) > DP_TOL)
                 {
-                    continue;
+                    const real x = xus[3 * j] - xus[3 * k];
+                    const real y = xus[1 + 3 * j] - xus[1 + 3 * k];
+                    const real z = xus[2 + 3 * j] - xus[2 + 3 * k];
+                    const real d = x * x + y * y + z * z;
+                    if (std::fabs(a - d) > DP_TOL)
+                    {
+                        continue;
+                    }
                 }
-                x               = xus[3 * i] + xus[3 * j] + xus[3 * k];
-                y               = xus[1 + 3 * i] + xus[1 + 3 * j] + xus[1 + 3 * k];
-                z               = xus[2 + 3 * i] + xus[2 + 3 * j] + xus[2 + 3 * k];
-                d               = std::sqrt(x * x + y * y + z * z);
-                xus[3 * tn]     = x / d;
-                xus[1 + 3 * tn] = y / d;
-                xus[2 + 3 * tn] = z / d;
-                tn++;
+                const real x             = xus[3 * i] + xus[3 * j] + xus[3 * k];
+                const real y             = xus[1 + 3 * i] + xus[1 + 3 * j] + xus[1 + 3 * k];
+                const real z             = xus[2 + 3 * i] + xus[2 + 3 * j] + xus[2 + 3 * k];
+                const real d             = std::sqrt(x * x + y * y + z * z);
+                xus[3 * tnIcosaeder]     = x / d;
+                xus[1 + 3 * tnIcosaeder] = y / d;
+                xus[2 + 3 * tnIcosaeder] = z / d;
+                tnIcosaeder++;
             }
         }
     }
 
     if (tess > 1)
     {
-        tn = 32;
+        int tnDodecaeder = 32;
         /* square of the edge of an dodecaeder */
-        adod = 4. * (cos(TORAD(108.)) - cos(TORAD(120.))) / (1. - cos(TORAD(120.)));
+        const real adod =
+                4. * (std::cos(TORAD(108.)) - std::cos(TORAD(120.))) / (1. - std::cos(TORAD(120.)));
         /* square of the distance of two adjacent vertices of ico- and dodecaeder */
-        ai_d = 2. * (1. - std::sqrt(1. - a / 3.));
+        const real ai_d = 2. * (1. - std::sqrt(1. - a / 3.));
 
         /* calculate tessalation of mixed edges */
-        for (i = 0; i < 31; i++)
+        for (int i = 0; i < 31; i++)
         {
-            j1 = 12;
-            j2 = 32;
-            a  = ai_d;
+            int j1 = 12;
+            int j2 = 32;
+            a      = ai_d;
             if (i >= 12)
             {
                 j1 = i + 1;
                 a  = adod;
             }
-            for (j = j1; j < j2; j++)
+            for (int j = j1; j < j2; j++)
             {
-                x = xus[3 * i] - xus[3 * j];
-                y = xus[1 + 3 * i] - xus[1 + 3 * j];
-                z = xus[2 + 3 * i] - xus[2 + 3 * j];
-                d = x * x + y * y + z * z;
+                const real x = xus[3 * i] - xus[3 * j];
+                const real y = xus[1 + 3 * i] - xus[1 + 3 * j];
+                const real z = xus[2 + 3 * i] - xus[2 + 3 * j];
+                const real d = x * x + y * y + z * z;
                 if (std::fabs(a - d) > DP_TOL)
                 {
                     continue;
                 }
-                for (tl = 1; tl < tess; tl++)
+                for (int tl = 1; tl < tess; tl++)
                 {
-                    GMX_ASSERT(tn < ndot, "Inconsistent precomputed surface dot count");
-                    divarc(xus[3 * i], xus[1 + 3 * i], xus[2 + 3 * i], xus[3 * j], xus[1 + 3 * j],
-                           xus[2 + 3 * j], tl, tess, &xus[3 * tn], &xus[1 + 3 * tn], &xus[2 + 3 * tn]);
-                    tn++;
+                    GMX_ASSERT(tnDodecaeder < ndot, "Inconsistent precomputed surface dot count");
+                    divarc(xus[3 * i],
+                           xus[1 + 3 * i],
+                           xus[2 + 3 * i],
+                           xus[3 * j],
+                           xus[1 + 3 * j],
+                           xus[2 + 3 * j],
+                           tl,
+                           tess,
+                           &xus[3 * tnDodecaeder],
+                           &xus[1 + 3 * tnDodecaeder],
+                           &xus[2 + 3 * tnDodecaeder]);
+                    tnDodecaeder++;
                 }
             }
         }
         /* calculate tessalation of pentakisdodecahedron faces */
-        for (i = 0; i < 12; i++)
+        for (int i = 0; i < 12; i++)
         {
-            for (j = 12; j < 31; j++)
+            for (int j = 12; j < 31; j++)
             {
-                x = xus[3 * i] - xus[3 * j];
-                y = xus[1 + 3 * i] - xus[1 + 3 * j];
-                z = xus[2 + 3 * i] - xus[2 + 3 * j];
-                d = x * x + y * y + z * z;
-                if (std::fabs(ai_d - d) > DP_TOL)
+                const real xj = xus[3 * i] - xus[3 * j];
+                const real yj = xus[1 + 3 * i] - xus[1 + 3 * j];
+                const real zj = xus[2 + 3 * i] - xus[2 + 3 * j];
+                const real dj = xj * xj + yj * yj + zj * zj;
+                if (std::fabs(ai_d - dj) > DP_TOL)
                 {
                     continue;
                 }
 
-                for (k = j + 1; k < 32; k++)
+                for (int k = j + 1; k < 32; k++)
                 {
-                    x = xus[3 * i] - xus[3 * k];
-                    y = xus[1 + 3 * i] - xus[1 + 3 * k];
-                    z = xus[2 + 3 * i] - xus[2 + 3 * k];
-                    d = x * x + y * y + z * z;
+                    real x = xus[3 * i] - xus[3 * k];
+                    real y = xus[1 + 3 * i] - xus[1 + 3 * k];
+                    real z = xus[2 + 3 * i] - xus[2 + 3 * k];
+                    real d = x * x + y * y + z * z;
                     if (std::fabs(ai_d - d) > DP_TOL)
                     {
                         continue;
@@ -406,41 +477,96 @@ static std::vector<real> ico_dot_dod(int densit)
                     {
                         continue;
                     }
-                    for (tl = 1; tl < tess - 1; tl++)
+                    for (int tl = 1; tl < tess - 1; tl++)
                     {
-                        divarc(xus[3 * j], xus[1 + 3 * j], xus[2 + 3 * j], xus[3 * i],
-                               xus[1 + 3 * i], xus[2 + 3 * i], tl, tess, &xji, &yji, &zji);
-                        divarc(xus[3 * k], xus[1 + 3 * k], xus[2 + 3 * k], xus[3 * i],
-                               xus[1 + 3 * i], xus[2 + 3 * i], tl, tess, &xki, &yki, &zki);
+                        divarc(xus[3 * j],
+                               xus[1 + 3 * j],
+                               xus[2 + 3 * j],
+                               xus[3 * i],
+                               xus[1 + 3 * i],
+                               xus[2 + 3 * i],
+                               tl,
+                               tess,
+                               &xji,
+                               &yji,
+                               &zji);
+                        divarc(xus[3 * k],
+                               xus[1 + 3 * k],
+                               xus[2 + 3 * k],
+                               xus[3 * i],
+                               xus[1 + 3 * i],
+                               xus[2 + 3 * i],
+                               tl,
+                               tess,
+                               &xki,
+                               &yki,
+                               &zki);
 
-                        for (tl2 = 1; tl2 < tess - tl; tl2++)
+                        for (int tl2 = 1; tl2 < tess - tl; tl2++)
                         {
-                            divarc(xus[3 * i], xus[1 + 3 * i], xus[2 + 3 * i], xus[3 * j],
-                                   xus[1 + 3 * j], xus[2 + 3 * j], tl2, tess, &xij, &yij, &zij);
-                            divarc(xus[3 * k], xus[1 + 3 * k], xus[2 + 3 * k], xus[3 * j],
-                                   xus[1 + 3 * j], xus[2 + 3 * j], tl2, tess, &xkj, &ykj, &zkj);
-                            divarc(xus[3 * i], xus[1 + 3 * i], xus[2 + 3 * i], xus[3 * k], xus[1 + 3 * k],
-                                   xus[2 + 3 * k], tess - tl - tl2, tess, &xik, &yik, &zik);
-                            divarc(xus[3 * j], xus[1 + 3 * j], xus[2 + 3 * j], xus[3 * k], xus[1 + 3 * k],
-                                   xus[2 + 3 * k], tess - tl - tl2, tess, &xjk, &yjk, &zjk);
+                            divarc(xus[3 * i],
+                                   xus[1 + 3 * i],
+                                   xus[2 + 3 * i],
+                                   xus[3 * j],
+                                   xus[1 + 3 * j],
+                                   xus[2 + 3 * j],
+                                   tl2,
+                                   tess,
+                                   &xij,
+                                   &yij,
+                                   &zij);
+                            divarc(xus[3 * k],
+                                   xus[1 + 3 * k],
+                                   xus[2 + 3 * k],
+                                   xus[3 * j],
+                                   xus[1 + 3 * j],
+                                   xus[2 + 3 * j],
+                                   tl2,
+                                   tess,
+                                   &xkj,
+                                   &ykj,
+                                   &zkj);
+                            divarc(xus[3 * i],
+                                   xus[1 + 3 * i],
+                                   xus[2 + 3 * i],
+                                   xus[3 * k],
+                                   xus[1 + 3 * k],
+                                   xus[2 + 3 * k],
+                                   tess - tl - tl2,
+                                   tess,
+                                   &xik,
+                                   &yik,
+                                   &zik);
+                            divarc(xus[3 * j],
+                                   xus[1 + 3 * j],
+                                   xus[2 + 3 * j],
+                                   xus[3 * k],
+                                   xus[1 + 3 * k],
+                                   xus[2 + 3 * k],
+                                   tess - tl - tl2,
+                                   tess,
+                                   &xjk,
+                                   &yjk,
+                                   &zjk);
                             divarc(xki, yki, zki, xji, yji, zji, tl2, tess - tl, &x, &y, &z);
                             divarc(xkj, ykj, zkj, xij, yij, zij, tl, tess - tl2, &x2, &y2, &z2);
                             divarc(xjk, yjk, zjk, xik, yik, zik, tl, tl + tl2, &x3, &y3, &z3);
-                            GMX_ASSERT(tn < ndot, "Inconsistent precomputed surface dot count");
-                            x               = x + x2 + x3;
-                            y               = y + y2 + y3;
-                            z               = z + z2 + z3;
-                            d               = std::sqrt(x * x + y * y + z * z);
-                            xus[3 * tn]     = x / d;
-                            xus[1 + 3 * tn] = y / d;
-                            xus[2 + 3 * tn] = z / d;
-                            tn++;
+                            GMX_ASSERT(tnDodecaeder < ndot,
+                                       "Inconsistent precomputed surface dot count");
+                            x                         = x + x2 + x3;
+                            y                         = y + y2 + y3;
+                            z                         = z + z2 + z3;
+                            d                         = std::sqrt(x * x + y * y + z * z);
+                            xus[3 * tnDodecaeder]     = x / d;
+                            xus[1 + 3 * tnDodecaeder] = y / d;
+                            xus[2 + 3 * tnDodecaeder] = z / d;
+                            tnDodecaeder++;
                         } /* cycle tl2 */
-                    }     /* cycle tl */
-                }         /* cycle k */
-            }             /* cycle j */
-        }                 /* cycle i */
-        GMX_ASSERT(tn == ndot, "Inconsistent precomputed surface dot count");
+                    } /* cycle tl */
+                } /* cycle k */
+            } /* cycle j */
+        } /* cycle i */
+        GMX_ASSERT(tnDodecaeder == ndot, "Inconsistent precomputed surface dot count");
     } /* end of if (tess > 1) */
 
     return xus;
@@ -448,13 +574,12 @@ static std::vector<real> ico_dot_dod(int densit)
 
 static int unsp_type(int densit)
 {
-    int i1, i2;
-    i1 = 1;
+    int i1 = 1;
     while (10 * i1 * i1 + 2 < densit)
     {
         i1++;
     }
-    i2 = 1;
+    int i2 = 1;
     while (30 * i2 * i2 + 2 < densit)
     {
         i2++;
@@ -471,10 +596,7 @@ static int unsp_type(int densit)
 
 static std::vector<real> make_unsp(int densit, int cubus)
 {
-    int *ico_wk, *ico_pt;
-    int  ico_cube, ico_cube_cb, i, j, k, l, ijk, tn, tl, tl2;
-    int* work;
-    real x, y, z;
+    int ico_cube = 0;
 
     int               mode = unsp_type(densit);
     std::vector<real> xus;
@@ -491,7 +613,7 @@ static std::vector<real> make_unsp(int densit, int cubus)
         GMX_RELEASE_ASSERT(false, "Invalid unit sphere mode");
     }
 
-    const int ndot = ssize(xus) / 3;
+    const int ndot = gmx::ssize(xus) / 3;
 
     /* determine distribution of points in elementary cubes */
     if (cubus)
@@ -500,64 +622,64 @@ static std::vector<real> make_unsp(int densit, int cubus)
     }
     else
     {
-        i = 1;
+        int i = 1;
         while (i * i * i * 2 < ndot)
         {
             i++;
         }
         ico_cube = std::max(i - 1, 0);
     }
-    ico_cube_cb         = ico_cube * ico_cube * ico_cube;
-    const real del_cube = 2. / (static_cast<real>(ico_cube));
-    snew(work, ndot);
-    for (l = 0; l < ndot; l++)
+    int              ico_cube_cb = ico_cube * ico_cube * ico_cube;
+    const real       del_cube    = 2. / (static_cast<real>(ico_cube));
+    std::vector<int> work;
+    for (int l = 0; l < ndot; l++)
     {
-        i = std::max(static_cast<int>(floor((1. + xus[3 * l]) / del_cube)), 0);
+        int i = std::max(static_cast<int>(std::floor((1. + xus[3 * l]) / del_cube)), 0);
         if (i >= ico_cube)
         {
             i = ico_cube - 1;
         }
-        j = std::max(static_cast<int>(floor((1. + xus[1 + 3 * l]) / del_cube)), 0);
+        int j = std::max(static_cast<int>(std::floor((1. + xus[1 + 3 * l]) / del_cube)), 0);
         if (j >= ico_cube)
         {
             j = ico_cube - 1;
         }
-        k = std::max(static_cast<int>(floor((1. + xus[2 + 3 * l]) / del_cube)), 0);
+        int k = std::max(static_cast<int>(std::floor((1. + xus[2 + 3 * l]) / del_cube)), 0);
         if (k >= ico_cube)
         {
             k = ico_cube - 1;
         }
-        ijk     = i + j * ico_cube + k * ico_cube * ico_cube;
-        work[l] = ijk;
+        int ijk = i + j * ico_cube + k * ico_cube * ico_cube;
+        work.emplace_back(ijk);
     }
 
-    snew(ico_wk, 2 * ico_cube_cb + 1);
+    std::vector<int> ico_wk(2 * ico_cube_cb + 1);
 
-    ico_pt = ico_wk + ico_cube_cb;
-    for (l = 0; l < ndot; l++)
+    int* ico_pt = ico_wk.data() + ico_cube_cb;
+    for (int l = 0; l < ndot; l++)
     {
         ico_wk[work[l]]++; /* dots per elementary cube */
     }
 
     /* reordering of the coordinate array in accordance with box number */
-    tn = 0;
-    for (i = 0; i < ico_cube; i++)
+    int tn = 0;
+    for (int i = 0; i < ico_cube; i++)
     {
-        for (j = 0; j < ico_cube; j++)
+        for (int j = 0; j < ico_cube; j++)
         {
-            for (k = 0; k < ico_cube; k++)
+            for (int k = 0; k < ico_cube; k++)
             {
-                tl              = 0;
-                tl2             = tn;
-                ijk             = i + ico_cube * j + ico_cube * ico_cube * k;
+                int tl          = 0;
+                int tl2         = tn;
+                int ijk         = i + ico_cube * j + ico_cube * ico_cube * k;
                 *(ico_pt + ijk) = tn;
-                for (l = tl2; l < ndot; l++)
+                for (int l = tl2; l < ndot; l++)
                 {
                     if (ijk == work[l])
                     {
-                        x               = xus[3 * l];
-                        y               = xus[1 + 3 * l];
-                        z               = xus[2 + 3 * l];
+                        const real x    = xus[3 * l];
+                        const real y    = xus[1 + 3 * l];
+                        const real z    = xus[2 + 3 * l];
                         xus[3 * l]      = xus[3 * tn];
                         xus[1 + 3 * l]  = xus[1 + 3 * tn];
                         xus[2 + 3 * l]  = xus[2 + 3 * tn];
@@ -571,12 +693,10 @@ static std::vector<real> make_unsp(int densit, int cubus)
                         tl++;
                     }
                 }
-                *(ico_wk + ijk) = tl;
+                *(ico_wk.data() + ijk) = tl;
             } /* cycle k */
-        }     /* cycle j */
-    }         /* cycle i */
-    sfree(ico_wk);
-    sfree(work);
+        } /* cycle j */
+    } /* cycle i */
 
     return xus;
 }
@@ -875,8 +995,20 @@ void SurfaceAreaCalculator::calculate(const rvec*  x,
     {
         *n_dots = 0;
     }
-    nsc_dclm_pbc(x, impl_->radius_, nat, &impl_->unitSphereDots_[0], impl_->unitSphereDots_.size() / 3,
-                 flags, area, at_area, volume, lidots, n_dots, index, &impl_->nb_, pbc);
+    nsc_dclm_pbc(x,
+                 impl_->radius_,
+                 nat,
+                 &impl_->unitSphereDots_[0],
+                 impl_->unitSphereDots_.size() / 3,
+                 flags,
+                 area,
+                 at_area,
+                 volume,
+                 lidots,
+                 n_dots,
+                 index,
+                 &impl_->nb_,
+                 pbc);
 }
 
 } // namespace gmx

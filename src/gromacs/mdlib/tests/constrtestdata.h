@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2018- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \internal \file
  * \brief SHAKE and LINCS tests header.
@@ -47,13 +46,12 @@
 #define GMX_MDLIB_TESTS_CONSTRTESTDATA_H
 
 #include <memory>
+#include <string>
 #include <vector>
 
 #include "gromacs/gmxlib/nrnb.h"
 #include "gromacs/hardware/device_management.h"
 #include "gromacs/math/paddedvector.h"
-#include "gromacs/math/vec.h"
-#include "gromacs/math/vectypes.h"
 #include "gromacs/mdlib/gmx_omp_nthreads.h"
 #include "gromacs/mdlib/lincs.h"
 #include "gromacs/mdlib/shake.h"
@@ -62,6 +60,10 @@
 #include "gromacs/topology/idef.h"
 #include "gromacs/topology/ifunc.h"
 #include "gromacs/topology/topology.h"
+#include "gromacs/utility/basedefinitions.h"
+#include "gromacs/utility/real.h"
+#include "gromacs/utility/vec.h"
+#include "gromacs/utility/vectypes.h"
 
 namespace gmx
 {
@@ -102,8 +104,6 @@ public:
     bool computeVirial_;
     //! Scaled virial
     tensor virialScaled_;
-    //! Scaled virial (reference values)
-    tensor virialScaledRef_;
     //! If the free energy is computed
     bool compute_dHdLambda_;
     //! If there are atoms with perturbed mass
@@ -112,8 +112,6 @@ public:
     real lambda_ = 0.0;
     //! For free energy computation
     real dHdLambda_;
-    //! For free energy computation (reference value)
-    real dHdLambdaRef_;
 
     //! Coordinates before the timestep
     PaddedVector<RVec> x_;
@@ -154,9 +152,7 @@ public:
      *                                  size of this vector should be equal to the total number of
      *                                  unique types in constraints vector.
      * \param[in]  computeVirial        Whether the virial should be computed.
-     * \param[in]  virialScaledRef      Reference values for scaled virial tensor.
      * \param[in]  compute_dHdLambda    Whether free energy should be computed.
-     * \param[in]  dHdLambdaRef         Reference value for dHdLambda.
      * \param[in]  initialTime          Initial time.
      * \param[in]  timestep             Timestep.
      * \param[in]  x                    Coordinates before integration step.
@@ -180,9 +176,7 @@ public:
                         std::vector<int>         constraints,
                         std::vector<real>        constraintsR0,
                         bool                     computeVirial,
-                        tensor                   virialScaledRef,
                         bool                     compute_dHdLambda,
-                        float                    dHdLambdaRef,
                         real                     initialTime,
                         real                     timestep,
                         const std::vector<RVec>& x,

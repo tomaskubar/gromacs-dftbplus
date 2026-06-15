@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2019- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \libinternal \file
  * \brief Declaration of class which receives coordinates to GPU memory on PME task
@@ -42,12 +41,16 @@
 #ifndef GMX_PMECOORDINATERECEIVERGPU_H
 #define GMX_PMECOORDINATERECEIVERGPU_H
 
+#include <memory>
+
 #include "gromacs/gpu_utils/devicebuffer_datatype.h"
-#include "gromacs/math/vectypes.h"
-#include "gromacs/utility/classhelpers.h"
 #include "gromacs/utility/gmxmpi.h"
+#include "gromacs/utility/vectypes.h"
 
 class DeviceStream;
+class DeviceContext;
+class GpuEventSynchronizer;
+
 struct PpRanks;
 
 namespace gmx
@@ -56,39 +59,104 @@ namespace gmx
 template<typename>
 class ArrayRef;
 
+/*! \libinternal
+ * \brief Manages receiving coordinates on PME-only ranks from their PP ranks.
+ *
+ * For multi-GPU runs, the PME GPU can receive coordinates from
+ * multiple PP GPUs. Data from these distinct communications can
+ * be handled separately in the PME spline/spread kernel, allowing
+ * pipelining which overlaps computation and communication.
+ *
+ * Note that the PME rank always transfers coordinates from each PP
+ * rank each step, even from empty domains. */
 class PmeCoordinateReceiverGpu
 {
 
 public:
     /*! \brief Creates PME GPU coordinate receiver object
-     * \param[in] pmeStream       CUDA stream used for PME computations
+     *
+     *
      * \param[in] comm            Communicator used for simulation
+     * \param[in] deviceContext   GPU context
      * \param[in] ppRanks         List of PP ranks
      */
-    PmeCoordinateReceiverGpu(const DeviceStream& pmeStream, MPI_Comm comm, gmx::ArrayRef<PpRanks> ppRanks);
+    PmeCoordinateReceiverGpu(MPI_Comm comm, const DeviceContext& deviceContext, gmx::ArrayRef<PpRanks> ppRanks);
     ~PmeCoordinateReceiverGpu();
 
     /*! \brief
+     * Re-initialize: set atom ranges and, for thread-MPI case,
      * send coordinates buffer address to PP rank
+     * This is required after repartitioning since atom ranges and
+     * buffer allocations may have changed.
      * \param[in] d_x   coordinates buffer in GPU memory
      */
-    void sendCoordinateBufferAddressToPpRanks(DeviceBuffer<RVec> d_x);
+    void reinitCoordinateReceiver(DeviceBuffer<RVec> d_x);
 
 
     /*! \brief
-     * launch receive of coordinate data from PP rank
-     * \param[in] ppRank  PP rank to send data
+     * Receive coordinate synchronizer pointer from the PP ranks.
+     * \param[in] ppRank  PP rank to receive the synchronizer from.
      */
-    void launchReceiveCoordinatesFromPpCudaDirect(int ppRank);
+    void receiveCoordinatesSynchronizerFromPpPeerToPeer(int ppRank);
 
     /*! \brief
-     * enqueue wait for coordinate data from PP ranks
+     * Used for lib MPI, receives co-ordinates from PP ranks
+     * \param[in] recvbuf      coordinates buffer in GPU memory
+     * \param[in] numAtoms     starting element in buffer
+     * \param[in] numBytes     number of bytes to transfer
+     * \param[in] ppRank       PP rank to send data
+     * \param[in] senderIndex  Index of PP rank within those involved in communication with this PME rank
      */
-    void enqueueWaitReceiveCoordinatesFromPpCudaDirect();
+    void launchReceiveCoordinatesFromPpGpuAwareMpi(DeviceBuffer<RVec> recvbuf,
+                                                   int                numAtoms,
+                                                   int                numBytes,
+                                                   int                ppRank,
+                                                   int                senderIndex);
+
+    /*! \brief
+     * Return PP co-ordinate transfer event received from PP
+     * rank determined from \c senderIndex, for consumer to enqueue
+     *
+     * The returned sender index corresponds to a PP rank that
+     * transferred particles this step.
+     *
+     * \param[in]  senderIndex   Index of the sender within the set of PP ranks
+     * \returns                  tuple with index of sending PP rank
+     *                           and corresponding event.
+     */
+    std::tuple<int, GpuEventSynchronizer*> receivePpCoordinateSendEvent(int senderIndex);
+
+    /*! \brief
+     * Wait for coordinates from any PP rank
+     * \returns                  rank of sending PP task
+     */
+    int waitForCoordinatesFromAnyPpRank();
+
+    /*! \brief
+     * Return pointer to stream associated with specific PP rank sender index
+     * \param[in] senderIndex    Index of sender PP rank.
+     */
+    DeviceStream* ppCommStream(int senderIndex);
+
+    /*! \brief
+     * Returns range of atoms involved in communication associated with specific PP rank sender
+     * index \param[in] senderIndex    Index of sender PP rank.
+     */
+    std::tuple<int, int> ppCommAtomRange(int senderIndex);
+
+    /*! \brief
+     * Return number of PP ranks contributing particles to PME-PP communication
+     */
+    int ppCommNumRanksSendingParticles();
+
+    /*! \brief Mark an event in the sender stream \p senderIndex
+     * (which must be valid) and enqueue it into \p stream.
+     */
+    void insertAsDependencyIntoStream(int senderIndex, const DeviceStream& stream);
 
 private:
     class Impl;
-    gmx::PrivateImplPointer<Impl> impl_;
+    std::unique_ptr<Impl> impl_;
 };
 
 } // namespace gmx

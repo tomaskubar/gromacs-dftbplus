@@ -1,11 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2014,2015,2016,2017,2018 by the GROMACS development team.
- * Copyright (c) 2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2014- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -19,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -28,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \internal \file
  *  \brief Defines functions that support JIT compilation (e.g. for OpenCL)
@@ -42,9 +40,8 @@
  */
 #include "gmxpre.h"
 
-#include <stdlib.h>
-
 #include <cassert>
+#include <cstdlib>
 
 #include <string>
 
@@ -62,13 +59,8 @@
 
 #include "nbnxm_ocl_types.h"
 
-/*! \brief Stringifies the input argument
- */
-#define STRINGIFY_PARAM(c) #c
-
-/*! \brief Stringifies the result of expansion of a macro argument
- */
-#define STRINGIFY_MACRO(c) STRINGIFY_PARAM(c)
+namespace gmx
+{
 
 /*! \brief Array of the defines needed to generate a specific eel flavour
  *
@@ -128,11 +120,8 @@ static const char* kernel_VdW_family_definitions[] = {
  *
  * \throws std::bad_alloc if out of memory
  */
-static std::string makeDefinesForKernelTypes(bool                 bFastGen,
-                                             enum Nbnxm::ElecType elecType,
-                                             enum Nbnxm::VdwType  vdwType)
+static std::string makeDefinesForKernelTypes(bool bFastGen, enum ElecType elecType, enum VdwType vdwType)
 {
-    using Nbnxm::ElecType;
     std::string defines_for_kernel_types;
 
     if (bFastGen)
@@ -172,10 +161,10 @@ static std::string makeDefinesForKernelTypes(bool                 bFastGen,
  */
 void nbnxn_gpu_compile_kernels(NbnxmGpu* nb)
 {
-    gmx_bool   bFastGen = TRUE;
+    bool       bFastGen = TRUE;
     cl_program program  = nullptr;
 
-    if (getenv("GMX_OCL_NOFASTGEN") != nullptr)
+    if (std::getenv("GMX_OCL_NOFASTGEN") != nullptr)
     {
         bFastGen = FALSE;
     }
@@ -199,23 +188,32 @@ void nbnxn_gpu_compile_kernels(NbnxmGpu* nb)
                 " -DNBNXM_MIN_DISTANCE_SQUARED_VALUE_FLOAT=%g"
                 " -Dc_nbnxnGpuNumClusterPerSupercluster=%d"
                 " -Dc_nbnxnGpuJgroupSize=%d"
+                " -Dc_centralShiftIndex=%d"
                 "%s",
-                c_nbnxnGpuClusterSize, c_nbnxnMinDistanceSquared, c_nbnxnGpuNumClusterPerSupercluster,
-                c_nbnxnGpuJgroupSize, (nb->bPrefetchLjParam) ? " -DIATYPE_SHMEM" : "");
+                sc_gpuClusterSize(sc_layoutType),
+                c_nbnxnMinDistanceSquared,
+                sc_gpuClusterPerSuperCluster(sc_layoutType),
+                sc_gpuJgroupSize(sc_layoutType),
+                gmx::c_centralShiftIndex,
+                (nb->bPrefetchLjParam) ? " -DIATYPE_SHMEM" : "");
         try
         {
             /* TODO when we have a proper MPI-aware logging module,
                the log output here should be written there */
-            program = gmx::ocl::compileProgram(
-                    stderr, "gromacs/nbnxm/opencl", "nbnxm_ocl_kernels.cl", extraDefines,
-                    nb->deviceContext_->context(), nb->deviceContext_->deviceInfo().oclDeviceId,
-                    nb->deviceContext_->deviceInfo().deviceVendor);
+            program = gmx::ocl::compileProgram(stderr,
+                                               "gromacs/nbnxm/opencl",
+                                               "nbnxm_ocl_kernels.cl",
+                                               extraDefines,
+                                               nb->deviceContext_->context(),
+                                               nb->deviceContext_->deviceInfo().oclDeviceId,
+                                               nb->deviceContext_->deviceInfo().deviceVendor);
         }
         catch (gmx::GromacsException& e)
         {
-            e.prependContext(gmx::formatString(
-                    "Failed to compile/load nbnxm kernels for GPU #%d %s\n",
-                    nb->deviceContext_->deviceInfo().id, nb->deviceContext_->deviceInfo().device_name));
+            e.prependContext(
+                    gmx::formatString("Failed to compile/load nbnxm kernels for GPU #%d %s\n",
+                                      nb->deviceContext_->deviceInfo().id,
+                                      nb->deviceContext_->deviceInfo().device_name));
             throw;
         }
     }
@@ -223,3 +221,5 @@ void nbnxn_gpu_compile_kernels(NbnxmGpu* nb)
 
     nb->dev_rundata->program = program;
 }
+
+} // namespace gmx

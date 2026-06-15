@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2020- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,25 +26,37 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 #include "gmxpre.h"
 
 #include "gromacs/mdtypes/checkpointdata.h"
 
+#include <climits>
+#include <cstdint>
+
 #include <algorithm>
+#include <array>
+#include <filesystem>
+#include <functional>
+#include <iterator>
 #include <random>
+#include <string>
+#include <type_traits>
+#include <vector>
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
-#include "gromacs/fileio/gmxfio.h"
-#include "gromacs/fileio/gmxfio_xdr.h"
+#include "gromacs/fileio/xdr_serializer.h"
+#include "gromacs/serialization/inmemoryserializer.h"
+#include "gromacs/utility/arrayref.h"
 #include "gromacs/utility/fatalerror.h"
-#include "gromacs/utility/inmemoryserializer.h"
+#include "gromacs/utility/real.h"
+#include "gromacs/utility/vectypes.h"
 
 #include "testutils/testfilemanager.h"
 
@@ -124,46 +135,44 @@ private:
     static const std::vector<T>& getTestVector();
 
     template<typename T>
-    static std::enable_if_t<IsSerializableType<T>::value && !std::is_same<T, bool>::value, const T*>
-    getBeginPointer();
+    static std::enable_if_t<IsSerializableType<T>::value && !std::is_same_v<T, bool>, const T*> getBeginPointer();
     template<typename T>
     static std::enable_if_t<IsVectorOfSerializableType<T>::value, const T*> getBeginPointer();
     template<typename T>
-    static std::enable_if_t<std::is_same<T, bool>::value, const T*> getBeginPointer();
+    static std::enable_if_t<std::is_same_v<T, bool>, const T*> getBeginPointer();
     template<typename T>
-    static std::enable_if_t<std::is_same<T, tensor>::value, const T*> getBeginPointer();
+    static std::enable_if_t<std::is_same_v<T, tensor>, const T*> getBeginPointer();
 
     template<typename T>
-    static std::enable_if_t<IsSerializableType<T>::value && !std::is_same<T, bool>::value, const T*>
-    getEndPointer();
+    static std::enable_if_t<IsSerializableType<T>::value && !std::is_same_v<T, bool>, const T*> getEndPointer();
     template<typename T>
     static std::enable_if_t<IsVectorOfSerializableType<T>::value, const T*> getEndPointer();
     template<typename T>
-    static std::enable_if_t<std::is_same<T, bool>::value, const T*> getEndPointer();
+    static std::enable_if_t<std::is_same_v<T, bool>, const T*> getEndPointer();
     template<typename T>
-    static std::enable_if_t<std::is_same<T, tensor>::value, const T*> getEndPointer();
+    static std::enable_if_t<std::is_same_v<T, tensor>, const T*> getEndPointer();
 
     template<typename T>
-    static std::enable_if_t<IsSerializableType<T>::value && !std::is_same<T, bool>::value, void>
+    static std::enable_if_t<IsSerializableType<T>::value && !std::is_same_v<T, bool>, void>
     increment(const T** ptr);
     template<typename T>
     static std::enable_if_t<IsVectorOfSerializableType<T>::value, void> increment(const T** ptr);
     template<typename T>
-    static std::enable_if_t<std::is_same<T, bool>::value, void> increment(const T** ptr);
+    static std::enable_if_t<std::is_same_v<T, bool>, void> increment(const T** ptr);
     template<typename T>
-    static std::enable_if_t<std::is_same<T, tensor>::value, void> increment(const T** ptr);
+    static std::enable_if_t<std::is_same_v<T, tensor>, void> increment(const T** ptr);
 
-    constexpr static bool   testTrue    = true;
-    constexpr static bool   testFalse   = false;
-    constexpr static tensor testTensor1 = { { 1.6234, 2.4632, 3.1112 },
+    static constexpr bool   testTrue    = true;
+    static constexpr bool   testFalse   = false;
+    static constexpr tensor testTensor1 = { { 1.6234, 2.4632, 3.1112 },
                                             { 4.66234, 5.9678, 6.088 },
                                             { 7.00001, 8.43535, 9.11233 } };
 #if GMX_DOUBLE
-    constexpr static tensor testTensor2 = { { 1, GMX_DOUBLE_EPS, 3 },
+    static constexpr tensor testTensor2 = { { 1, GMX_DOUBLE_EPS, 3 },
                                             { GMX_DOUBLE_MIN, 5, 6 },
                                             { 7, 8, GMX_DOUBLE_MAX } };
 #else
-    constexpr static tensor testTensor2 = { { 1, GMX_FLOAT_EPS, 3 },
+    static constexpr tensor testTensor2 = { { 1, GMX_FLOAT_EPS, 3 },
                                             { GMX_FLOAT_MIN, 5, 6 },
                                             { 7, 8, GMX_FLOAT_MAX } };
 #endif
@@ -173,36 +182,36 @@ private:
 template<>
 const std::vector<std::string>& TestValues::getTestVector()
 {
-    static const std::vector<std::string> testStrings({ "Test string\nwith newlines\n", "" });
+    static const std::vector<std::string> testStrings{ "Test string\nwith newlines\n", "" };
     return testStrings;
 }
 template<>
 const std::vector<int>& TestValues::getTestVector()
 {
-    static const std::vector<int> testInts({ { 3, INT_MAX, INT_MIN } });
+    static const std::vector<int> testInts{ 3, INT_MAX, INT_MIN };
     return testInts;
 }
 template<>
 const std::vector<int64_t>& TestValues::getTestVector()
 {
-    static const std::vector<int64_t> testInt64s({ -7, LLONG_MAX, LLONG_MIN });
+    static const std::vector<int64_t> testInt64s{ -7, LLONG_MAX, LLONG_MIN };
     return testInt64s;
 }
 template<>
 const std::vector<float>& TestValues::getTestVector()
 {
-    static const std::vector<float> testFloats({ 33.9, GMX_FLOAT_MAX, GMX_FLOAT_MIN, GMX_FLOAT_EPS });
+    static const std::vector<float> testFloats{ 33.9, GMX_FLOAT_MAX, GMX_FLOAT_MIN, GMX_FLOAT_EPS };
     return testFloats;
 }
 template<>
 const std::vector<double>& TestValues::getTestVector()
 {
-    static const std::vector<double> testDoubles({ -123.45, GMX_DOUBLE_MAX, GMX_DOUBLE_MIN, GMX_DOUBLE_EPS });
+    static const std::vector<double> testDoubles{ -123.45, GMX_DOUBLE_MAX, GMX_DOUBLE_MIN, GMX_DOUBLE_EPS };
     return testDoubles;
 }
 
 template<typename T>
-std::enable_if_t<IsSerializableType<T>::value && !std::is_same<T, bool>::value, const T*> TestValues::getBeginPointer()
+std::enable_if_t<IsSerializableType<T>::value && !std::is_same_v<T, bool>, const T*> TestValues::getBeginPointer()
 {
     return getTestVector<T>().data();
 }
@@ -212,18 +221,18 @@ std::enable_if_t<IsVectorOfSerializableType<T>::value, const T*> TestValues::get
     return &getTestVector<typename T::value_type>();
 }
 template<typename T>
-std::enable_if_t<std::is_same<T, bool>::value, const T*> TestValues::getBeginPointer()
+std::enable_if_t<std::is_same_v<T, bool>, const T*> TestValues::getBeginPointer()
 {
     return &testTrue;
 }
 template<typename T>
-std::enable_if_t<std::is_same<T, tensor>::value, const T*> TestValues::getBeginPointer()
+std::enable_if_t<std::is_same_v<T, tensor>, const T*> TestValues::getBeginPointer()
 {
     return &testTensor1;
 }
 
 template<typename T>
-std::enable_if_t<IsSerializableType<T>::value && !std::is_same<T, bool>::value, const T*> TestValues::getEndPointer()
+std::enable_if_t<IsSerializableType<T>::value && !std::is_same_v<T, bool>, const T*> TestValues::getEndPointer()
 {
     return getTestVector<T>().data() + getTestVector<T>().size();
 }
@@ -233,18 +242,18 @@ std::enable_if_t<IsVectorOfSerializableType<T>::value, const T*> TestValues::get
     return &getTestVector<typename T::value_type>() + 1;
 }
 template<typename T>
-std::enable_if_t<std::is_same<T, bool>::value, const T*> TestValues::getEndPointer()
+std::enable_if_t<std::is_same_v<T, bool>, const T*> TestValues::getEndPointer()
 {
     return nullptr;
 }
 template<typename T>
-std::enable_if_t<std::is_same<T, tensor>::value, const T*> TestValues::getEndPointer()
+std::enable_if_t<std::is_same_v<T, tensor>, const T*> TestValues::getEndPointer()
 {
     return nullptr;
 }
 
 template<typename T>
-std::enable_if_t<IsSerializableType<T>::value && !std::is_same<T, bool>::value, void>
+std::enable_if_t<IsSerializableType<T>::value && !std::is_same_v<T, bool>, void>
 TestValues::increment(const T** ptr)
 {
     ++(*ptr);
@@ -255,12 +264,12 @@ std::enable_if_t<IsVectorOfSerializableType<T>::value, void> TestValues::increme
     ++(*ptr);
 }
 template<typename T>
-std::enable_if_t<std::is_same<T, bool>::value, void> TestValues::increment(const T** ptr)
+std::enable_if_t<std::is_same_v<T, bool>, void> TestValues::increment(const T** ptr)
 {
     *ptr = (*ptr == &testTrue) ? &testFalse : nullptr;
 }
 template<typename T>
-std::enable_if_t<std::is_same<T, tensor>::value, void> TestValues::increment(const T** ptr)
+std::enable_if_t<std::is_same_v<T, tensor>, void> TestValues::increment(const T** ptr)
 {
     *ptr = (*ptr == &testTensor1) ? &testTensor2 : nullptr;
 }
@@ -363,12 +372,10 @@ public:
         for (const auto& inputValue : TestValues::testValueGenerator<T>())
         {
             std::string key = "value" + std::to_string(writeFunctions_.size());
-            writeFunctions_.emplace_back([key, inputValue](WriteCheckpointData* checkpointData) {
-                writeInput(key, inputValue, checkpointData);
-            });
-            testFunctions_.emplace_back([key, inputValue](ReadCheckpointData* checkpointData) {
-                testOutput(key, inputValue, checkpointData);
-            });
+            writeFunctions_.emplace_back([key, inputValue](WriteCheckpointData* checkpointData)
+                                         { writeInput(key, inputValue, checkpointData); });
+            testFunctions_.emplace_back([key, inputValue](ReadCheckpointData* checkpointData)
+                                        { testOutput(key, inputValue, checkpointData); });
         }
     }
 
@@ -398,20 +405,16 @@ public:
                 writeFunction(&writeCheckpointData);
             }
 
-            auto*               file = gmx_fio_open(filename_.c_str(), "w");
-            FileIOXdrSerializer serializer(file);
+            XdrSerializer serializer(filename_, "w");
             writeCheckpointDataHolder.serialize(&serializer);
-            gmx_fio_close(file);
         }
 
         // Deserialize values and test against reference
         {
-            auto*               file = gmx_fio_open(filename_.c_str(), "r");
-            FileIOXdrSerializer deserializer(file);
+            XdrSerializer deserializer(filename_, "r");
 
             ReadCheckpointDataHolder readCheckpointDataHolder;
             readCheckpointDataHolder.deserialize(&deserializer);
-            gmx_fio_close(file);
 
             auto readCheckpointData = readCheckpointDataHolder.checkpointData("test");
             for (const auto& testFunction : testFunctions_)
@@ -456,8 +459,8 @@ public:
                                                "tensor" };
 
     // We'll need a temporary file to write / read our dummy checkpoint to
-    TestFileManager fileManager_;
-    std::string     filename_ = fileManager_.getTemporaryFilePath("test.cpt");
+    TestFileManager       fileManager_;
+    std::filesystem::path filename_ = fileManager_.getTemporaryFilePath("test.cpt");
 };
 
 TEST_F(CheckpointDataTest, SingleDataTest)
@@ -486,6 +489,30 @@ TEST_F(CheckpointDataTest, MultiDataTest)
             addTestValueFunctions_[type2]();
             test();
         }
+    }
+}
+
+TEST_F(CheckpointDataTest, EmptyVectorTest)
+{
+    const std::vector<int> testInts{};
+    {
+        WriteCheckpointDataHolder writeCheckpointDataHolder;
+        WriteCheckpointData writeCheckpointData = writeCheckpointDataHolder.checkpointData("test");
+        writeCheckpointData.arrayRef("empty vector of int", makeConstArrayRef(testInts));
+        XdrSerializer serializer(filename_, "w");
+        writeCheckpointDataHolder.serialize(&serializer);
+    }
+    // Deserialize values and test against reference
+    {
+        XdrSerializer deserializer(filename_, "r");
+
+        ReadCheckpointDataHolder readCheckpointDataHolder;
+        readCheckpointDataHolder.deserialize(&deserializer);
+
+        ReadCheckpointData readCheckpointData = readCheckpointDataHolder.checkpointData("test");
+        std::vector<int>   readInts;
+        readCheckpointData.arrayRef("empty vector of int", makeArrayRef(readInts));
+        EXPECT_THAT(readInts, ::testing::ContainerEq(testInts));
     }
 }
 

@@ -1,10 +1,9 @@
 #
 # This file is part of the GROMACS molecular simulation package.
 #
-# Copyright (c) 2010,2011,2012,2013,2014,2020, by the GROMACS development team, led by
-# Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
-# and including many others, as listed in the AUTHORS file in the
-# top-level source directory and at http://www.gromacs.org.
+# Copyright 2010- The GROMACS Authors
+# and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+# Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
 #
 # GROMACS is free software; you can redistribute it and/or
 # modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
 #
 # You should have received a copy of the GNU Lesser General Public
 # License along with GROMACS; if not, see
-# http://www.gnu.org/licenses, or write to the Free Software Foundation,
+# https://www.gnu.org/licenses, or write to the Free Software Foundation,
 # Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
 #
 # If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
 # consider code for inclusion in the official distribution, but
 # derived work must not be called official GROMACS. Details are found
 # in the README & COPYING files - if they are missing, get the
-# official version at http://www.gromacs.org.
+# official version at https://www.gromacs.org.
 #
 # To help us fund GROMACS development, we humbly ask that you cite
-# the research papers on the package. Check out http://www.gromacs.org.
+# the research papers on the package. Check out https://www.gromacs.org.
 
 # Generate Gromacs development build version information.
 
@@ -93,6 +92,9 @@ execute_process(COMMAND ${GIT_EXECUTABLE} rev-parse HEAD
     OUTPUT_STRIP_TRAILING_WHITESPACE
 )
 set(GMX_VERSION_FULL_HASH ${HEAD_HASH})
+if ("${GMX_VERSION_FULL_HASH}" STREQUAL "")
+    message(FATAL_ERROR "Git failed to get repository info:\n${EXEC_ERR}")
+endif()
 
 # extract the shortened hash (7 char)
 execute_process(COMMAND ${GIT_EXECUTABLE} rev-parse --short HEAD
@@ -147,6 +149,23 @@ if("${GMX_REMOTES}" STREQUAL "")
     endif()
     set(GMX_VERSION_CENTRAL_BASE_HASH "unknown")
 else()
+    # Check whether git knows "git name-rev --annotate-stdin", which
+    # was new in 2.36.0. Using the former name for the parameter with
+    # such git versions issues a deprecation warning, which we must
+    # avoid for use in CI.
+    set(TEMPORARY_EMPTY_FILE_NAME "${PROJECT_BINARY_DIR}/empty.tmp")
+    file(TOUCH "${TEMPORARY_EMPTY_FILE_NAME}")
+    execute_process(COMMAND ${GIT_EXECUTABLE} name-rev --annotate-stdin
+        RESULT_VARIABLE GIT_NAME_REV_KNOWS_ANNOTATE_STDIN
+        INPUT_FILE "${TEMPORARY_EMPTY_FILE_NAME}"
+        OUTPUT_QUIET ERROR_QUIET)
+    file(REMOVE "${TEMPORARY_EMPTY_FILE_NAME}")
+    if (GIT_NAME_REV_KNOWS_ANNOTATE_STDIN EQUAL 0)
+        set(GIT_NAME_REV_ARGUMENT "--annotate-stdin")
+    else()
+        set(GIT_NAME_REV_ARGUMENT "--stdin")
+    endif()
+
     string(REPLACE "\n" ";" GMX_REMOTES ${GMX_REMOTES})
     # construct a command pipeline that produces a reverse-time-ordered
     # list of commits and their annotated names in GMX_REMOTES
@@ -154,7 +173,7 @@ else()
     set(BASEREVCOMMAND "COMMAND ${GIT_EXECUTABLE} rev-list --max-count=1000 HEAD")
     foreach(REMOTE ${GMX_REMOTES})
         string(REGEX REPLACE "remote\\.(.*)\\.url.*" "\\1" REMOTE ${REMOTE})
-        set(BASEREVCOMMAND "${BASEREVCOMMAND} COMMAND ${GIT_EXECUTABLE} name-rev --stdin --refs=refs/remotes/${REMOTE}/*")
+        set(BASEREVCOMMAND "${BASEREVCOMMAND} COMMAND ${GIT_EXECUTABLE} name-rev ${GIT_NAME_REV_ARGUMENT} --refs=refs/remotes/${REMOTE}/*")
     endforeach(REMOTE)
     # this is necessary for CMake to properly split the variable into
     # parameters for execute_process().
@@ -177,7 +196,7 @@ else()
         # stop and set the hash if we have a hit, otherwise loop and count
         # how far ahead is the local repo
         if(COUNT GREATER 1)
-            LIST(GET HASH_AND_REVNAMES 0 GMX_VERSION_CENTRAL_BASE_HASH)
+            list(GET HASH_AND_REVNAMES 0 GMX_VERSION_CENTRAL_BASE_HASH)
             break()
         endif()
         math(EXPR AHEAD ${AHEAD}+1)

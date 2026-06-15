@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2015,2016,2017,2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2015- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 
 /*! \internal \file
@@ -43,6 +42,10 @@
  * \ingroup module_awh
  */
 
+/*!
+ * \defgroup module_applied_forces Module Applied Forces
+ * \brief A brief description for Module Applied Forces
+ */
 #include "gmxpre.h"
 
 #include "awh.h"
@@ -54,16 +57,22 @@
 #include <cstring>
 
 #include <algorithm>
+#include <iterator>
+#include <utility>
+#include <vector>
 
+#include "gromacs/applied_forces/awh/biasstate.h"
+#include "gromacs/applied_forces/awh/coordstate.h"
+#include "gromacs/applied_forces/awh/dimparams.h"
 #include "gromacs/fileio/enxio.h"
 #include "gromacs/gmxlib/network.h"
 #include "gromacs/math/units.h"
+#include "gromacs/math/utilities.h"
 #include "gromacs/mdrunutility/multisim.h"
 #include "gromacs/mdtypes/awh_history.h"
 #include "gromacs/mdtypes/awh_params.h"
-#include "gromacs/mdtypes/commrec.h"
-#include "gromacs/mdtypes/forceoutput.h"
 #include "gromacs/mdtypes/inputrec.h"
+#include "gromacs/mdtypes/md_enums.h"
 #include "gromacs/mdtypes/pull_params.h"
 #include "gromacs/mdtypes/state.h"
 #include "gromacs/pbcutil/pbc.h"
@@ -73,7 +82,9 @@
 #include "gromacs/utility/arrayref.h"
 #include "gromacs/utility/exceptions.h"
 #include "gromacs/utility/gmxassert.h"
+#include "gromacs/utility/mpicomm.h"
 #include "gromacs/utility/pleasecite.h"
+#include "gromacs/utility/stringutil.h"
 
 #include "bias.h"
 #include "biassharing.h"
@@ -107,62 +118,49 @@ struct BiasCoupledToSystem
     /* Here AWH can be extended to work on other coordinates than pull. */
 };
 
-/*! \brief Checks whether any dimension uses pulling as a coordinate provider.
+/*! \brief Checks whether any dimension uses the given coordinate provider type.
  *
  * \param[in] awhBiasParams The bias params to check.
- * \returns true if any dimension of the bias is linked to pulling.
+ * \param[in] awhCoordProvider The type of coordinate provider
+ * \returns true if any dimension of the bias is linked to the given provider
  */
-static bool anyDimUsesPull(const AwhBiasParams& awhBiasParams)
+static bool anyDimUsesProvider(const AwhBiasParams&            awhBiasParams,
+                               const AwhCoordinateProviderType awhCoordProvider)
 {
-    for (int d = 0; d < awhBiasParams.ndim; d++)
-    {
-        const AwhDimParams& awhDimParams = awhBiasParams.dimParams[d];
-        if (awhDimParams.eCoordProvider == eawhcoordproviderPULL)
-        {
-            return true;
-        }
-    }
-    return false;
+    return std::any_of(awhBiasParams.dimParams().begin(),
+                       awhBiasParams.dimParams().end(),
+                       [&awhCoordProvider](const auto& awhDimParam)
+                       { return awhDimParam.coordinateProvider() == awhCoordProvider; });
 }
 
-/*! \brief Checks whether any dimension uses pulling as a coordinate provider.
+/*! \brief Checks whether any dimension uses the given coordinate provider type.
  *
  * \param[in] awhParams The AWH params to check.
- * \returns true if any dimension of awh is linked to pulling.
+ * \param[in] awhCoordProvider The type of coordinate provider
+ * \returns true if any dimension of awh is linked to the given provider type.
  */
-static bool anyDimUsesPull(const AwhParams& awhParams)
+static bool anyDimUsesProvider(const AwhParams& awhParams, const AwhCoordinateProviderType awhCoordProvider)
 {
-    for (int k = 0; k < awhParams.numBias; k++)
-    {
-        const AwhBiasParams& awhBiasParams = awhParams.awhBiasParams[k];
-        if (anyDimUsesPull(awhBiasParams))
-        {
-            return true;
-        }
-    }
-    return false;
+    return std::any_of(awhParams.awhBiasParams().begin(),
+                       awhParams.awhBiasParams().end(),
+                       [&awhCoordProvider](const auto& awhBiasParam)
+                       { return anyDimUsesProvider(awhBiasParam, awhCoordProvider); });
 }
 
-/*! \brief Checks whether any dimension uses pulling as a coordinate provider.
+/*! \brief Checks whether any bias scales the target distribution based on the AWH friction metric.
  *
- * \param[in] biasCoupledToSystem The AWH biases to check.
- * \returns true if any dimension of the provided biases is linked to pulling.
+ * \param[in] awhParams The AWH params to check.
+ * \returns true if any of the biases scale the target distribution by the friction metric.
  */
-static bool anyDimUsesPull(const ArrayRef<BiasCoupledToSystem> biasCoupledToSystem)
+static bool anyBiasIsScaledByMetric(const AwhParams& awhParams)
 {
-    for (const auto& biasCts : biasCoupledToSystem)
-    {
-        if (!biasCts.pullCoordIndex_.empty())
-        {
-            return true;
-        }
-    }
-    return false;
+    return std::any_of(awhParams.awhBiasParams().begin(),
+                       awhParams.awhBiasParams().end(),
+                       [](const auto& awhBiasParam) { return awhBiasParam.scaleTargetByMetric(); });
 }
 
 BiasCoupledToSystem::BiasCoupledToSystem(Bias bias, const std::vector<int>& pullCoordIndex) :
-    bias_(std::move(bias)),
-    pullCoordIndex_(pullCoordIndex)
+    bias_(std::move(bias)), pullCoordIndex_(pullCoordIndex)
 {
     /* We already checked for this in grompp, but check again here. */
     GMX_RELEASE_ASSERT(
@@ -172,23 +170,22 @@ BiasCoupledToSystem::BiasCoupledToSystem(Bias bias, const std::vector<int>& pull
 
 Awh::Awh(FILE*                 fplog,
          const t_inputrec&     inputRecord,
-         const t_commrec*      commRecord,
+         const MpiComm&        mpiComm,
          const gmx_multisim_t* multiSimRecord,
          const AwhParams&      awhParams,
          const std::string&    biasInitFilename,
          pull_t*               pull_work,
          int                   numFepLambdaStates,
          int                   fepLambdaState) :
-    seed_(awhParams.seed),
-    nstout_(awhParams.nstOut),
-    commRecord_(commRecord),
-    multiSimRecord_(multiSimRecord),
+    seed_(awhParams.seed()),
+    nstout_(awhParams.nstout()),
+    mpiComm_(mpiComm),
     pull_(pull_work),
     potentialOffset_(0),
     numFepLambdaStates_(numFepLambdaStates),
     fepLambdaState_(fepLambdaState)
 {
-    if (anyDimUsesPull(awhParams))
+    if (anyDimUsesProvider(awhParams, AwhCoordinateProviderType::Pull))
     {
         GMX_RELEASE_ASSERT(inputRecord.pull != nullptr, "With AWH we should have pull parameters");
         GMX_RELEASE_ASSERT(pull_work != nullptr,
@@ -198,6 +195,16 @@ Awh::Awh(FILE*                 fplog,
     if (fplog != nullptr)
     {
         please_cite(fplog, "Lindahl2014");
+
+        if (anyDimUsesProvider(awhParams, AwhCoordinateProviderType::FreeEnergyLambda))
+        {
+            please_cite(fplog, "Lundborg2021");
+        }
+
+        if (anyBiasIsScaledByMetric(awhParams))
+        {
+            please_cite(fplog, "Lundborg2023");
+        }
     }
 
     if (haveBiasSharingWithinSimulation(awhParams))
@@ -208,42 +215,70 @@ Awh::Awh(FILE*                 fplog,
                                   "biases is only supported between simulations"));
     }
 
-    int numSharingSimulations = 1;
-    if (awhParams.shareBiasMultisim && isMultiSim(multiSimRecord_))
+    if (awhParams.shareBiasMultisim() && multiSimRecord != nullptr)
     {
-        numSharingSimulations = multiSimRecord_->numSimulations_;
+        biasSharing_ = std::make_unique<BiasSharing>(awhParams, mpiComm, multiSimRecord->mainRanksComm_);
+        if (fplog)
+        {
+            for (int k = 0; k < awhParams.numBias(); k++)
+            {
+                const int shareGroup = awhParams.awhBiasParams(k).shareGroup();
+                if (shareGroup > 0)
+                {
+                    fprintf(fplog,
+                            "awh%d: bias with share group %d is shared between %d simulations\n",
+                            1 + k,
+                            shareGroup,
+                            biasSharing_->numSharingSimulations(k));
+                }
+                else
+                {
+                    fprintf(fplog, "awh%d: bias is not shared between simulations\n", 1 + k);
+                }
+            }
+        }
     }
 
-    /* Initialize all the biases */
-    const double beta = 1 / (BOLTZ * inputRecord.opts.ref_t[0]);
-    for (int k = 0; k < awhParams.numBias; k++)
-    {
-        const AwhBiasParams& awhBiasParams = awhParams.awhBiasParams[k];
+    // TPX version number tpxv_RemoveTholeRfac from tpxio.cpp, which is the version of release-2022
+    const int c_tpxVersionCoverDiameterUnitChange = 127;
 
+    /* Initialize all the biases */
+    const double beta          = 1 / (gmx::c_boltz * constantEnsembleTemperature(inputRecord));
+    const auto&  awhBiasParams = awhParams.awhBiasParams();
+    for (int k = 0; k < gmx::ssize(awhBiasParams); k++)
+    {
         std::vector<int>       pullCoordIndex;
         std::vector<DimParams> dimParams;
-        for (int d = 0; d < awhBiasParams.ndim; d++)
+        for (const auto& awhDimParam : awhBiasParams[k].dimParams())
         {
-            const AwhDimParams& awhDimParams = awhBiasParams.dimParams[d];
-            if (awhDimParams.eCoordProvider != eawhcoordproviderPULL
-                && awhDimParams.eCoordProvider != eawhcoordproviderFREE_ENERGY_LAMBDA)
+            if (awhDimParam.coordinateProvider() != AwhCoordinateProviderType::Pull
+                && awhDimParam.coordinateProvider() != AwhCoordinateProviderType::FreeEnergyLambda)
             {
                 GMX_THROW(
                         InvalidInputError("Currently only the pull code and lambda are supported "
                                           "as coordinate providers"));
             }
-            if (awhDimParams.eCoordProvider == eawhcoordproviderPULL)
+            if (awhDimParam.coordinateProvider() == AwhCoordinateProviderType::Pull)
             {
-                const t_pull_coord& pullCoord = inputRecord.pull->coord[awhDimParams.coordIndex];
-                if (pullCoord.eGeom == epullgDIRPBC)
+                const t_pull_coord& pullCoord = inputRecord.pull->coord[awhDimParam.coordinateIndex()];
+                if (pullCoord.eGeom == PullGroupGeometry::DirectionPBC)
                 {
                     GMX_THROW(InvalidInputError(
                             "Pull geometry 'direction-periodic' is not supported by AWH"));
                 }
-                double conversionFactor = pull_coordinate_is_angletype(&pullCoord) ? DEG2RAD : 1;
-                pullCoordIndex.push_back(awhDimParams.coordIndex);
-                dimParams.push_back(DimParams::pullDimParams(conversionFactor,
-                                                             awhDimParams.forceConstant, beta));
+                double conversionFactor = pull_conversion_factor_userinput2internal(pullCoord);
+                if (inputRecord.tpxFileVersion < c_tpxVersionCoverDiameterUnitChange
+                    && conversionFactor != 1.0 && awhDimParam.coverDiameter() != 0.0)
+                {
+                    GMX_THROW(InvalidInputError(formatString(
+                            "The units for a cover diameter parameter in AWH bias %d in the tpr "
+                            "file are radians while this code usees degrees. "
+                            "Please regenerate your tpr file.",
+                            1 + k)));
+                }
+                pullCoordIndex.push_back(awhDimParam.coordinateIndex());
+                dimParams.emplace_back(DimParams::pullDimParams(
+                        conversionFactor, awhDimParam.forceConstant(), beta));
             }
             else
             {
@@ -253,11 +288,17 @@ Awh::Awh(FILE*                 fplog,
 
         /* Construct the bias and couple it to the system. */
         Bias::ThisRankWillDoIO thisRankWillDoIO =
-                (MASTER(commRecord_) ? Bias::ThisRankWillDoIO::Yes : Bias::ThisRankWillDoIO::No);
-        biasCoupledToSystem_.emplace_back(
-                Bias(k, awhParams, awhParams.awhBiasParams[k], dimParams, beta, inputRecord.delta_t,
-                     numSharingSimulations, biasInitFilename, thisRankWillDoIO),
-                pullCoordIndex);
+                (mpiComm_.isMainRank() ? Bias::ThisRankWillDoIO::Yes : Bias::ThisRankWillDoIO::No);
+        biasCoupledToSystem_.emplace_back(Bias(k,
+                                               awhParams,
+                                               awhBiasParams[k],
+                                               dimParams,
+                                               beta,
+                                               inputRecord.delta_t,
+                                               biasSharing_.get(),
+                                               biasInitFilename,
+                                               thisRankWillDoIO),
+                                          pullCoordIndex);
 
         biasCoupledToSystem_.back().bias_.printInitializationToLog(fplog);
     }
@@ -265,15 +306,16 @@ Awh::Awh(FILE*                 fplog,
     /* Need to register the AWH coordinates to be allowed to apply forces to the pull coordinates. */
     registerAwhWithPull(awhParams, pull_);
 
-    if (numSharingSimulations > 1 && MASTER(commRecord_))
+    if (biasSharing_ && mpiComm_.isMainRank())
     {
         std::vector<size_t> pointSize;
+        pointSize.reserve(biasCoupledToSystem_.size());
         for (auto const& biasCts : biasCoupledToSystem_)
         {
             pointSize.push_back(biasCts.bias_.state().points().size());
         }
         /* Ensure that the shared biased are compatible between simulations */
-        biasesAreCompatibleForSharingBetweenSimulations(awhParams, pointSize, multiSimRecord_);
+        biasesAreCompatibleForSharingBetweenSimulations(awhParams, pointSize, *biasSharing_);
     }
 }
 
@@ -285,22 +327,15 @@ bool Awh::isOutputStep(int64_t step) const
 }
 
 real Awh::applyBiasForcesAndUpdateBias(PbcType                pbcType,
-                                       const real*            masses,
                                        ArrayRef<const double> neighborLambdaEnergies,
                                        ArrayRef<const double> neighborLambdaDhdl,
                                        const matrix           box,
-                                       gmx::ForceWithVirial*  forceWithVirial,
                                        double                 t,
                                        int64_t                step,
                                        gmx_wallcycle*         wallcycle,
                                        FILE*                  fplog)
 {
-    if (anyDimUsesPull(biasCoupledToSystem_))
-    {
-        GMX_ASSERT(forceWithVirial, "Need a valid ForceWithVirial object");
-    }
-
-    wallcycle_start(wallcycle, ewcAWH);
+    wallcycle_start(wallcycle, WallCycleCounter::Awh);
 
     t_pbc pbc;
     set_pbc(&pbc, pbcType, box);
@@ -321,8 +356,11 @@ real Awh::applyBiasForcesAndUpdateBias(PbcType                pbcType,
         {
             if (biasCts.bias_.dimParams()[d].isPullDimension())
             {
+                /* Note that we do not pass time here, as time is not allowed as
+                 * a variable for transformation coordinates when AWH is in use.
+                 */
                 coordValue[d] = get_pull_coord_value(
-                        pull_, biasCts.pullCoordIndex_[d - numLambdaDimsCounted], &pbc);
+                        pull_, biasCts.pullCoordIndex_[d - numLambdaDimsCounted], pbc);
             }
             else
             {
@@ -340,9 +378,16 @@ real Awh::applyBiasForcesAndUpdateBias(PbcType                pbcType,
         /* Note: In the near future this call will be split in calls
          *       to supports bias sharing within a single simulation.
          */
-        gmx::ArrayRef<const double> biasForce = biasCts.bias_.calcForceAndUpdateBias(
-                coordValue, neighborLambdaEnergies, neighborLambdaDhdl, &biasPotential,
-                &biasPotentialJump, commRecord_, multiSimRecord_, t, step, seed_, fplog);
+        gmx::ArrayRef<const double> biasForce =
+                biasCts.bias_.calcForceAndUpdateBias(coordValue,
+                                                     neighborLambdaEnergies,
+                                                     neighborLambdaDhdl,
+                                                     &biasPotential,
+                                                     &biasPotentialJump,
+                                                     t,
+                                                     step,
+                                                     seed_,
+                                                     fplog);
 
         awhPotential += biasPotential;
 
@@ -358,8 +403,8 @@ real Awh::applyBiasForcesAndUpdateBias(PbcType                pbcType,
         {
             if (biasCts.bias_.dimParams()[d].isPullDimension())
             {
-                apply_external_pull_coord_force(pull_, biasCts.pullCoordIndex_[d - numLambdaDimsCounted],
-                                                biasForce[d], masses, forceWithVirial);
+                apply_external_pull_coord_force(
+                        pull_, biasCts.pullCoordIndex_[d - numLambdaDimsCounted], biasForce[d]);
             }
             else
             {
@@ -378,14 +423,14 @@ real Awh::applyBiasForcesAndUpdateBias(PbcType                pbcType,
         }
     }
 
-    wallcycle_stop(wallcycle, ewcAWH);
+    wallcycle_stop(wallcycle, WallCycleCounter::Awh);
 
-    return MASTER(commRecord_) ? static_cast<real>(awhPotential) : 0;
+    return mpiComm_.isMainRank() ? static_cast<real>(awhPotential) : 0;
 }
 
 std::shared_ptr<AwhHistory> Awh::initHistoryFromState() const
 {
-    if (MASTER(commRecord_))
+    if (mpiComm_.isMainRank())
     {
         std::shared_ptr<AwhHistory> awhHistory(new AwhHistory);
         awhHistory->bias.clear();
@@ -408,10 +453,10 @@ std::shared_ptr<AwhHistory> Awh::initHistoryFromState() const
 void Awh::restoreStateFromHistory(const AwhHistory* awhHistory)
 {
     /* Restore the history to the current state */
-    if (MASTER(commRecord_))
+    if (mpiComm_.isMainRank())
     {
         GMX_RELEASE_ASSERT(awhHistory != nullptr,
-                           "The master rank should have a valid awhHistory when restoring the "
+                           "The main rank should have a valid awhHistory when restoring the "
                            "state from history.");
 
         if (awhHistory->bias.size() != biasCoupledToSystem_.size())
@@ -423,26 +468,26 @@ void Awh::restoreStateFromHistory(const AwhHistory* awhHistory)
 
         potentialOffset_ = awhHistory->potentialOffset;
     }
-    if (PAR(commRecord_))
+    if (mpiComm_.isParallel())
     {
-        gmx_bcast(sizeof(potentialOffset_), &potentialOffset_, commRecord_->mpi_comm_mygroup);
+        gmx_bcast(sizeof(potentialOffset_), &potentialOffset_, mpiComm_.comm());
     }
 
     for (size_t k = 0; k < biasCoupledToSystem_.size(); k++)
     {
         biasCoupledToSystem_[k].bias_.restoreStateFromHistory(
-                awhHistory ? &awhHistory->bias[k] : nullptr, commRecord_);
+                awhHistory ? &awhHistory->bias[k] : nullptr, mpiComm_);
     }
 }
 
 void Awh::updateHistory(AwhHistory* awhHistory) const
 {
-    if (!MASTER(commRecord_))
+    if (!mpiComm_.isMainRank())
     {
         return;
     }
 
-    /* This assert will also catch a non-master rank calling this function. */
+    /* This assert will also catch a worker rank calling this function. */
     GMX_RELEASE_ASSERT(awhHistory->bias.size() == biasCoupledToSystem_.size(),
                        "AWH state and history bias count should match");
 
@@ -461,27 +506,26 @@ const char* Awh::externalPotentialString()
 
 void Awh::registerAwhWithPull(const AwhParams& awhParams, pull_t* pull_work)
 {
-    GMX_RELEASE_ASSERT(!anyDimUsesPull(awhParams) || pull_work, "Need a valid pull object");
+    GMX_RELEASE_ASSERT(!anyDimUsesProvider(awhParams, AwhCoordinateProviderType::Pull) || pull_work,
+                       "Need a valid pull object");
 
-    for (int k = 0; k < awhParams.numBias; k++)
+    for (const auto& biasParam : awhParams.awhBiasParams())
     {
-        const AwhBiasParams& biasParams = awhParams.awhBiasParams[k];
-
-        for (int d = 0; d < biasParams.ndim; d++)
+        for (const auto& dimParam : biasParam.dimParams())
         {
-            if (biasParams.dimParams[d].eCoordProvider == eawhcoordproviderPULL)
+            if (dimParam.coordinateProvider() == AwhCoordinateProviderType::Pull)
             {
-                register_external_pull_potential(pull_work, biasParams.dimParams[d].coordIndex,
-                                                 Awh::externalPotentialString());
+                register_external_pull_potential(
+                        pull_work, dimParam.coordinateIndex(), Awh::externalPotentialString());
             }
         }
     }
 }
 
 /* Fill the AWH data block of an energy frame with data (if there is any). */
-void Awh::writeToEnergyFrame(int64_t step, t_enxframe* frame) const
+void Awh::writeToEnergyFrame(int64_t step, t_enxframe* frame)
 {
-    GMX_ASSERT(MASTER(commRecord_), "writeToEnergyFrame should only be called on the master rank");
+    GMX_ASSERT(mpiComm_.isMainRank(), "writeToEnergyFrame should only be called on the main rank");
     GMX_ASSERT(frame != nullptr, "Need a valid energy frame");
 
     if (!isOutputStep(step))
@@ -492,7 +536,7 @@ void Awh::writeToEnergyFrame(int64_t step, t_enxframe* frame) const
 
     /* Get the total number of energy subblocks that AWH needs */
     int numSubblocks = 0;
-    for (auto& biasCoupledToSystem : biasCoupledToSystem_)
+    for (const auto& biasCoupledToSystem : biasCoupledToSystem_)
     {
         numSubblocks += biasCoupledToSystem.bias_.numEnergySubblocksToWrite();
     }
@@ -508,9 +552,15 @@ void Awh::writeToEnergyFrame(int64_t step, t_enxframe* frame) const
     /* Claim it as an AWH block. */
     awhEnergyBlock->id = enxAWH;
 
+    /* Update data shared between walkers. */
+    for (auto& biasCoupledToSystem : biasCoupledToSystem_)
+    {
+        biasCoupledToSystem.bias_.updateBiasStateSharedCorrelationTensorTimeIntegral();
+    }
+
     /* Transfer AWH data blocks to energy sub blocks */
     int energySubblockCount = 0;
-    for (auto& biasCoupledToSystem : biasCoupledToSystem_)
+    for (const auto& biasCoupledToSystem : biasCoupledToSystem_)
     {
         energySubblockCount += biasCoupledToSystem.bias_.writeToEnergySubblocks(
                 &(awhEnergyBlock->sub[energySubblockCount]));
@@ -519,9 +569,10 @@ void Awh::writeToEnergyFrame(int64_t step, t_enxframe* frame) const
 
 bool Awh::hasFepLambdaDimension() const
 {
-    return std::any_of(
-            std::begin(biasCoupledToSystem_), std::end(biasCoupledToSystem_),
-            [](const auto& coupledBias) { return coupledBias.bias_.hasFepLambdaDimension(); });
+    return std::any_of(std::begin(biasCoupledToSystem_),
+                       std::end(biasCoupledToSystem_),
+                       [](const auto& coupledBias)
+                       { return coupledBias.bias_.hasFepLambdaDimension(); });
 }
 
 bool Awh::needForeignEnergyDifferences(const int64_t step) const
@@ -539,20 +590,18 @@ bool Awh::needForeignEnergyDifferences(const int64_t step) const
     /* Check whether the bias(es) that has/have a FEP lambda dimension should sample coordinates
      * this step. Since the biases may have different sampleCoordStep it is necessary to check
      * this combination. */
-    for (const auto& biasCts : biasCoupledToSystem_)
-    {
-        if (biasCts.bias_.hasFepLambdaDimension() && biasCts.bias_.isSampleCoordStep(step))
-        {
-            return true;
-        }
-    }
-    return false;
+    return std::any_of(biasCoupledToSystem_.begin(),
+                       biasCoupledToSystem_.end(),
+                       [step](const auto& biasCts) {
+                           return biasCts.bias_.hasFepLambdaDimension()
+                                  && biasCts.bias_.isSampleCoordStep(step);
+                       });
 }
 
 std::unique_ptr<Awh> prepareAwhModule(FILE*                 fplog,
                                       const t_inputrec&     inputRecord,
                                       t_state*              stateGlobal,
-                                      const t_commrec*      commRecord,
+                                      const MpiComm&        mpiComm,
                                       const gmx_multisim_t* multiSimRecord,
                                       const bool            startingFromCheckpoint,
                                       const bool            usingShellParticles,
@@ -568,16 +617,22 @@ std::unique_ptr<Awh> prepareAwhModule(FILE*                 fplog,
         GMX_THROW(InvalidInputError("AWH biasing does not support shell particles."));
     }
 
-    auto awh = std::make_unique<Awh>(
-            fplog, inputRecord, commRecord, multiSimRecord, *inputRecord.awhParams, biasInitFilename,
-            pull_work, inputRecord.fepvals->n_lambda, inputRecord.fepvals->init_fep_state);
+    auto awh = std::make_unique<Awh>(fplog,
+                                     inputRecord,
+                                     mpiComm,
+                                     multiSimRecord,
+                                     *inputRecord.awhParams,
+                                     biasInitFilename,
+                                     pull_work,
+                                     inputRecord.fepvals->n_lambda,
+                                     inputRecord.fepvals->init_fep_state);
 
     if (startingFromCheckpoint)
     {
         // Restore the AWH history read from checkpoint
-        awh->restoreStateFromHistory(MASTER(commRecord) ? stateGlobal->awhHistory.get() : nullptr);
+        awh->restoreStateFromHistory(mpiComm.isMainRank() ? stateGlobal->awhHistory.get() : nullptr);
     }
-    else if (MASTER(commRecord))
+    else if (mpiComm.isMainRank())
     {
         // Initialize the AWH history here
         stateGlobal->awhHistory = awh->initHistoryFromState();

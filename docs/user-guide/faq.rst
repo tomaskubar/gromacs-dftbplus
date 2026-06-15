@@ -14,11 +14,14 @@ Questions regarding |Gromacs| installation
 
 #. Do I need to compile all utilities with MPI?
 
-   With one rarely-used exception (:ref:`pme_error <gmx pme_error>`), only the
-   :ref:`mdrun <gmx mdrun>` binary is able to use the :ref:`MPI <mpi-support>`
+   With one rarely-used exception (:ref:`pme_error <gmx pme_error>`), only
+   :ref:`mdrun <gmx mdrun>` is able to use the :ref:`MPI <mpi-support>`
    parallelism. So you only need to use the ``-DGMX_MPI=on`` flag
    when :ref:`configuring <configure-cmake>` for a build intended to run
-   the main simulation engine :ref:`mdrun <gmx mdrun>`.
+   the main simulation engine :ref:`mdrun <gmx mdrun>`. Generally that
+   is desirable when running on a multi-node cluster, and necessary
+   when using multi-simulation algorithms. Usually also installing a
+   build of |Gromacs| configured without MPI is convenient for users.
 
 
 #. Should my version be compiled using double precision?
@@ -53,7 +56,7 @@ Questions concerning system preparation and preprocessing
    increase the vdW radius of the atoms, to suppress such interstitial insertions.
    Recommended e.g. at a common `tutorial`_ is the use of 0.375 instead of 0.15.
 
-.. _tutorial: http://www.bevanlab.biochem.vt.edu/Pages/Personal/justin/gmx-tutorials/membrane_protein/03_solvate.html
+.. _tutorial: http://www.mdtutorials.com/gmx/lysozyme/03_solvate.html
 
 #. How do I provide multiple definitions of bonds / dihedrals in a topology?
 
@@ -77,15 +80,14 @@ Questions concerning system preparation and preprocessing
 
    You don't need to prepare additional files if you already have all :ref:`itp` and :ref:`top` files prepared through other tools.
 
-   Examples for those are `CHARMM-GUI <http://www.charmm-gui.org/>`__, `ATB (Automated Topology Builder) <https://atb.uq.edu.au/>`__,
-   `pmx <http://pmx.mpibpc.mpg.de/instructions.html>`__. and `PRODRG <http://davapc1.bioch.dundee.ac.uk/cgi-bin/prodrg>`__.
-
+   Examples for those can be found in the :doc:`System Preparation section of this user guide <../user-guide/system-preparation>`.
+   
 #. How can I build in missing atoms?
 
    |Gromacs| has no support for building coordinates of missing non-hydrogen atoms. If your system is missing some part,
    you will have to add the missing pieces using external programs to avoid the :ref:`missing atom <gmx-atom-missing>`
    error. This can be done using programs such as `Chimera <https://www.cgl.ucsf.edu/chimera/>`__ in combination
-   with `Modeller <https://salilab.org/modeller/>`__, `Swiss PDB Viewer <https://spdbv.vital-it.ch/>`__,
+   with `Modeller <https://salilab.org/modeller/>`__, `Swiss PDB Viewer <https://spdbv.unil.ch/>`__,
    `Maestro <https://www.schrodinger.com/maestro>`__. **Do not run** a simulation that had missing atoms unless
    you know exactly why it will be stable.
 

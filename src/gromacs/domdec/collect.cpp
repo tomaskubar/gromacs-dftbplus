@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2018- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,14 +26,14 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /* \internal \file
  *
- * \brief Implements functions to collect state data to the master rank.
+ * \brief Implements functions to collect state data to the main rank.
  *
  * \author Berk Hess <hess@kth.se>
  * \ingroup module_domdec
@@ -46,23 +45,38 @@
 
 #include "config.h"
 
+#include <cstdio>
+
+#include <filesystem>
+#include <memory>
+#include <string>
+#include <vector>
+
 #include "gromacs/domdec/domdec_network.h"
-#include "gromacs/math/vec.h"
+#include "gromacs/domdec/domdec_struct.h"
 #include "gromacs/mdtypes/state.h"
+#include "gromacs/utility/arrayref.h"
+#include "gromacs/utility/enumerationhelpers.h"
 #include "gromacs/utility/fatalerror.h"
+#include "gromacs/utility/gmxassert.h"
+#include "gromacs/utility/mpicomm.h"
+#include "gromacs/utility/real.h"
+#include "gromacs/utility/vec.h"
 
 #include "atomdistribution.h"
 #include "distribute.h"
 #include "domdec_internal.h"
+
+enum class FreeEnergyPerturbationCouplingType : int;
 
 static void dd_collect_cg(gmx_domdec_t*            dd,
                           const int                ddpCount,
                           const int                ddpCountCgGl,
                           gmx::ArrayRef<const int> localCGNumbers)
 {
-    if (ddpCount == dd->comm->master_cg_ddp_count)
+    if (ddpCount == dd->comm->main_cg_ddp_count)
     {
-        /* The master has the correct distribution */
+        /* The main has the correct distribution */
         return;
     }
 
@@ -72,7 +86,7 @@ static void dd_collect_cg(gmx_domdec_t*            dd,
     if (ddpCount == dd->ddp_count)
     {
         /* The local state and DD are in sync, use the DD indices */
-        atomGroups = gmx::constArrayRefFromArray(dd->globalAtomGroupIndices.data(), dd->ncg_home);
+        atomGroups = gmx::constArrayRefFromArray(dd->globalAtomIndices.data(), dd->numHomeAtoms);
         nat_home   = dd->comm->atomRanges.numHomeAtoms();
     }
     else if (ddpCountCgGl == ddpCount)
@@ -92,22 +106,30 @@ static void dd_collect_cg(gmx_domdec_t*            dd,
 
     AtomDistribution* ma = dd->ma.get();
 
-    /* Collect the charge group and atom counts on the master */
+    /* Collect the charge group and atom counts on the main */
     int localBuffer[2] = { static_cast<int>(atomGroups.size()), nat_home };
-    dd_gather(dd, 2 * sizeof(int), localBuffer, DDMASTER(dd) ? ma->intBuffer.data() : nullptr);
+    dd_gather(dd, 2 * sizeof(int), localBuffer, DDMAIN(dd) ? ma->intBuffer.data() : nullptr);
 
-    if (DDMASTER(dd))
+    if (DDMAIN(dd))
     {
+        int numAtomGroups = 0;
+        for (int rank = 0; rank < dd->nnodes; rank++)
+        {
+            numAtomGroups += ma->intBuffer[2 * rank];
+        }
+        // We need to resize because of the (variable) number of filler particles
+        ma->atomGroups.resize(numAtomGroups);
+        ma->rvecBuffer.resize(numAtomGroups);
+
         int groupOffset = 0;
         for (int rank = 0; rank < dd->nnodes; rank++)
         {
-            auto& domainGroups = ma->domainGroups[rank];
-            int   numGroups    = ma->intBuffer[2 * rank];
-
-            domainGroups.atomGroups =
-                    gmx::constArrayRefFromArray(ma->atomGroups.data() + groupOffset, numGroups);
+            auto&     domainGroups = ma->domainGroups[rank];
+            const int numGroups    = ma->intBuffer[2 * rank];
 
             domainGroups.numAtoms = ma->intBuffer[2 * rank + 1];
+            domainGroups.atomGroups =
+                    gmx::constArrayRefFromArray(ma->atomGroups.data() + groupOffset, numGroups);
 
             groupOffset += numGroups;
         }
@@ -127,47 +149,58 @@ static void dd_collect_cg(gmx_domdec_t*            dd,
         for (int rank = 0; rank < dd->nnodes; rank++)
         {
             int numGroups                    = ma->domainGroups[rank].atomGroups.size();
-            ma->intBuffer[rank]              = numGroups * sizeof(int);
-            ma->intBuffer[dd->nnodes + rank] = offset * sizeof(int);
+            ma->intBuffer[rank]              = numGroups;
+            ma->intBuffer[dd->nnodes + rank] = offset;
             offset += numGroups;
         }
     }
 
-    /* Collect the charge group indices on the master */
-    dd_gatherv(dd, atomGroups.size() * sizeof(int), atomGroups.data(),
-               DDMASTER(dd) ? ma->intBuffer.data() : nullptr,
-               DDMASTER(dd) ? ma->intBuffer.data() + dd->nnodes : nullptr,
-               DDMASTER(dd) ? ma->atomGroups.data() : nullptr);
+    /* Collect the charge group indices on the main */
+    dd_gatherv(*dd,
+               atomGroups,
+               DDMAIN(dd) ? gmx::makeArrayRef(ma->intBuffer).subArray(0, dd->nnodes)
+                          : gmx::ArrayRef<int>{},
+               DDMAIN(dd) ? gmx::makeArrayRef(ma->intBuffer).subArray(dd->nnodes, dd->nnodes)
+                          : gmx::ArrayRef<int>{},
+               DDMAIN(dd) ? ma->atomGroups : gmx::ArrayRef<int>{});
 
-    dd->comm->master_cg_ddp_count = ddpCount;
+    dd->comm->main_cg_ddp_count = ddpCount;
 }
 
 static void dd_collect_vec_sendrecv(gmx_domdec_t*                  dd,
                                     gmx::ArrayRef<const gmx::RVec> lv,
                                     gmx::ArrayRef<gmx::RVec>       v)
 {
-    if (!DDMASTER(dd))
+    if (!DDMAIN(dd))
     {
 #if GMX_MPI
         const int numHomeAtoms = dd->comm->atomRanges.numHomeAtoms();
-        MPI_Send(const_cast<void*>(static_cast<const void*>(lv.data())),
-                 numHomeAtoms * sizeof(rvec), MPI_BYTE, dd->masterrank, dd->rank, dd->mpi_comm_all);
+        MPI_Send(lv.data(),
+                 numHomeAtoms * sizeof(rvec),
+                 MPI_BYTE,
+                 dd->mpiComm().mainRank(),
+                 dd->mpiComm().rank(),
+                 dd->mpiComm().comm());
 #endif
     }
     else
     {
         AtomDistribution& ma = *dd->ma;
 
-        int rank      = dd->masterrank;
-        int localAtom = 0;
-        for (const int& globalAtom : ma.domainGroups[rank].atomGroups)
+        int mainRank          = dd->mpiComm().mainRank();
+        int localAtomMainRank = 0;
+        for (const int& globalAtom : ma.domainGroups[mainRank].atomGroups)
         {
-            copy_rvec(lv[localAtom++], v[globalAtom]);
+            if (isValidGlobalAtom(globalAtom))
+            {
+                copy_rvec(lv[localAtomMainRank], v[globalAtom]);
+            }
+            localAtomMainRank++;
         }
 
         for (int rank = 0; rank < dd->nnodes; rank++)
         {
-            if (rank != dd->rank)
+            if (rank != dd->mpiComm().rank())
             {
                 const auto& domainGroups = ma.domainGroups[rank];
 
@@ -183,13 +216,22 @@ static void dd_collect_vec_sendrecv(gmx_domdec_t*                  dd,
                 }
 
 #if GMX_MPI
-                MPI_Recv(ma.rvecBuffer.data(), domainGroups.numAtoms * sizeof(rvec), MPI_BYTE, rank,
-                         rank, dd->mpi_comm_all, MPI_STATUS_IGNORE);
+                MPI_Recv(ma.rvecBuffer.data(),
+                         domainGroups.numAtoms * sizeof(rvec),
+                         MPI_BYTE,
+                         rank,
+                         rank,
+                         dd->mpiComm().comm(),
+                         MPI_STATUS_IGNORE);
 #endif
                 int localAtom = 0;
                 for (const int& globalAtom : domainGroups.atomGroups)
                 {
-                    copy_rvec(ma.rvecBuffer[localAtom++], v[globalAtom]);
+                    if (isValidGlobalAtom(globalAtom))
+                    {
+                        copy_rvec(ma.rvecBuffer[localAtom], v[globalAtom]);
+                    }
+                    localAtom++;
                 }
             }
         }
@@ -200,19 +242,22 @@ static void dd_collect_vec_gatherv(gmx_domdec_t*                  dd,
                                    gmx::ArrayRef<const gmx::RVec> lv,
                                    gmx::ArrayRef<gmx::RVec>       v)
 {
-    int* recvCounts    = nullptr;
-    int* displacements = nullptr;
+    gmx::ArrayRef<const int> recvCounts;
+    gmx::ArrayRef<const int> displacements;
 
-    if (DDMASTER(dd))
+    if (DDMAIN(dd))
     {
         get_commbuffer_counts(dd->ma.get(), &recvCounts, &displacements);
     }
 
     const int numHomeAtoms = dd->comm->atomRanges.numHomeAtoms();
-    dd_gatherv(dd, numHomeAtoms * sizeof(rvec), lv.data(), recvCounts, displacements,
-               DDMASTER(dd) ? dd->ma->rvecBuffer.data() : nullptr);
+    dd_gatherv(*dd,
+               lv.subArray(0, numHomeAtoms),
+               recvCounts,
+               displacements,
+               DDMAIN(dd) ? dd->ma->rvecBuffer : gmx::ArrayRef<gmx::RVec>{});
 
-    if (DDMASTER(dd))
+    if (DDMAIN(dd))
     {
         const AtomDistribution& ma = *dd->ma;
 
@@ -222,7 +267,11 @@ static void dd_collect_vec_gatherv(gmx_domdec_t*                  dd,
             const auto& domainGroups = ma.domainGroups[rank];
             for (const int& globalAtom : domainGroups.atomGroups)
             {
-                copy_rvec(ma.rvecBuffer[bufferAtom++], v[globalAtom]);
+                if (isValidGlobalAtom(globalAtom))
+                {
+                    copy_rvec(ma.rvecBuffer[bufferAtom], v[globalAtom]);
+                }
+                bufferAtom++;
             }
         }
     }
@@ -252,12 +301,12 @@ void dd_collect_state(gmx_domdec_t* dd, const t_state* state_local, t_state* sta
 {
     int nh = state_local->nhchainlength;
 
-    if (DDMASTER(dd))
+    if (DDMAIN(dd))
     {
         GMX_RELEASE_ASSERT(state->nhchainlength == nh,
                            "The global and local Nose-Hoover chain lengths should match");
 
-        for (int i = 0; i < efptNR; i++)
+        for (auto i : gmx::EnumerationArray<FreeEnergyPerturbationCouplingType, real>::keys())
         {
             state->lambda[i] = state_local->lambda[i];
         }
@@ -290,22 +339,34 @@ void dd_collect_state(gmx_domdec_t* dd, const t_state* state_local, t_state* sta
         state->baros_integral     = state_local->baros_integral;
         state->pull_com_prev_step = state_local->pull_com_prev_step;
     }
-    if (state_local->flags & (1 << estX))
+    if (state_local->hasEntry(StateEntry::X))
     {
-        auto globalXRef = state ? state->x : gmx::ArrayRef<gmx::RVec>();
-        dd_collect_vec(dd, state_local->ddp_count, state_local->ddp_count_cg_gl, state_local->cg_gl,
-                       state_local->x, globalXRef);
+        auto globalXRef = state ? state->x : gmx::ArrayRef<gmx::RVec>{};
+        dd_collect_vec(dd,
+                       state_local->ddp_count,
+                       state_local->ddp_count_cg_gl,
+                       state_local->cg_gl,
+                       state_local->x,
+                       globalXRef);
     }
-    if (state_local->flags & (1 << estV))
+    if (state_local->hasEntry(StateEntry::V))
     {
-        auto globalVRef = state ? state->v : gmx::ArrayRef<gmx::RVec>();
-        dd_collect_vec(dd, state_local->ddp_count, state_local->ddp_count_cg_gl, state_local->cg_gl,
-                       state_local->v, globalVRef);
+        auto globalVRef = state ? state->v : gmx::ArrayRef<gmx::RVec>{};
+        dd_collect_vec(dd,
+                       state_local->ddp_count,
+                       state_local->ddp_count_cg_gl,
+                       state_local->cg_gl,
+                       state_local->v,
+                       globalVRef);
     }
-    if (state_local->flags & (1 << estCGP))
+    if (state_local->hasEntry(StateEntry::Cgp))
     {
-        auto globalCgpRef = state ? state->cg_p : gmx::ArrayRef<gmx::RVec>();
-        dd_collect_vec(dd, state_local->ddp_count, state_local->ddp_count_cg_gl, state_local->cg_gl,
-                       state_local->cg_p, globalCgpRef);
+        auto globalCgpRef = state ? state->cg_p : gmx::ArrayRef<gmx::RVec>{};
+        dd_collect_vec(dd,
+                       state_local->ddp_count,
+                       state_local->ddp_count_cg_gl,
+                       state_local->cg_gl,
+                       state_local->cg_p,
+                       globalCgpRef);
     }
 }

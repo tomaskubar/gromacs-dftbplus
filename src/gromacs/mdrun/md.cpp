@@ -1,12 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
- * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2011-2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 1991- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -20,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -29,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \internal \file
  *
@@ -49,35 +46,48 @@
 #include <cstdlib>
 
 #include <algorithm>
+#include <array>
+#include <filesystem>
 #include <memory>
 #include <numeric>
+#include <optional>
+#include <string>
+#include <utility>
+#include <vector>
 
 #include "gromacs/applied_forces/awh/awh.h"
+#include "gromacs/applied_forces/awh/read_params.h"
 #include "gromacs/commandline/filenm.h"
+#include "gromacs/compat/pointers.h"
 #include "gromacs/domdec/collect.h"
 #include "gromacs/domdec/dlbtiming.h"
 #include "gromacs/domdec/domdec.h"
 #include "gromacs/domdec/domdec_network.h"
 #include "gromacs/domdec/domdec_struct.h"
 #include "gromacs/domdec/gpuhaloexchange.h"
+#include "gromacs/domdec/localtopologychecker.h"
 #include "gromacs/domdec/mdsetup.h"
 #include "gromacs/domdec/partition.h"
 #include "gromacs/essentialdynamics/edsam.h"
+#include "gromacs/ewald/pme.h"
 #include "gromacs/ewald/pme_load_balancing.h"
 #include "gromacs/ewald/pme_pp.h"
+#include "gromacs/fileio/enxio.h"
 #include "gromacs/fileio/trxio.h"
 #include "gromacs/gmxlib/network.h"
 #include "gromacs/gmxlib/nrnb.h"
 #include "gromacs/gpu_utils/device_stream_manager.h"
 #include "gromacs/gpu_utils/gpu_utils.h"
+#include "gromacs/gpu_utils/hostallocator.h"
 #include "gromacs/imd/imd.h"
 #include "gromacs/listed_forces/listed_forces.h"
+#include "gromacs/listed_forces/listed_forces_gpu.h"
+#include "gromacs/math/arrayrefwithpadding.h"
+#include "gromacs/math/boxmatrix.h"
 #include "gromacs/math/functions.h"
-#include "gromacs/math/invertmatrix.h"
-#include "gromacs/math/vec.h"
-#include "gromacs/math/vectypes.h"
+#include "gromacs/math/matrix.h"
+#include "gromacs/math/paddedvector.h"
 #include "gromacs/mdlib/checkpointhandler.h"
-#include "gromacs/mdlib/compute_io.h"
 #include "gromacs/mdlib/constr.h"
 #include "gromacs/mdlib/coupling.h"
 #include "gromacs/mdlib/ebin.h"
@@ -90,6 +100,7 @@
 #include "gromacs/mdlib/freeenergyparameters.h"
 #include "gromacs/mdlib/md_support.h"
 #include "gromacs/mdlib/mdatoms.h"
+#include "gromacs/mdlib/mdgraph_gpu.h"
 #include "gromacs/mdlib/mdoutf.h"
 #include "gromacs/mdlib/membed.h"
 #include "gromacs/mdlib/resethandler.h"
@@ -104,25 +115,32 @@
 #include "gromacs/mdlib/update_vv.h"
 #include "gromacs/mdlib/vcm.h"
 #include "gromacs/mdlib/vsite.h"
+#include "gromacs/mdrunutility/freeenergy.h"
 #include "gromacs/mdrunutility/handlerestart.h"
+#include "gromacs/mdrunutility/mdmodulesnotifiers.h"
 #include "gromacs/mdrunutility/multisim.h"
 #include "gromacs/mdrunutility/printtime.h"
 #include "gromacs/mdtypes/awh_history.h"
 #include "gromacs/mdtypes/awh_params.h"
 #include "gromacs/mdtypes/commrec.h"
 #include "gromacs/mdtypes/df_history.h"
+#include "gromacs/mdtypes/enerdata.h"
 #include "gromacs/mdtypes/energyhistory.h"
 #include "gromacs/mdtypes/fcdata.h"
 #include "gromacs/mdtypes/forcebuffers.h"
 #include "gromacs/mdtypes/forcerec.h"
 #include "gromacs/mdtypes/group.h"
+#include "gromacs/mdtypes/iforceprovider.h"
 #include "gromacs/mdtypes/inputrec.h"
 #include "gromacs/mdtypes/interaction_const.h"
+#include "gromacs/mdtypes/locality.h"
 #include "gromacs/mdtypes/md_enums.h"
 #include "gromacs/mdtypes/mdatom.h"
 #include "gromacs/mdtypes/mdrunoptions.h"
 #include "gromacs/mdtypes/multipletimestepping.h"
 #include "gromacs/mdtypes/observableshistory.h"
+#include "gromacs/mdtypes/observablesreducer.h"
+#include "gromacs/mdtypes/pull_params.h"
 #include "gromacs/mdtypes/pullhistory.h"
 #include "gromacs/mdtypes/simulation_workload.h"
 #include "gromacs/mdtypes/state.h"
@@ -134,32 +152,35 @@
 #include "gromacs/pulling/output.h"
 #include "gromacs/pulling/pull.h"
 #include "gromacs/swap/swapcoords.h"
+#include "gromacs/taskassignment/include/gromacs/taskassignment/decidesimulationworkload.h"
 #include "gromacs/timing/wallcycle.h"
 #include "gromacs/timing/walltime_accounting.h"
 #include "gromacs/topology/atoms.h"
 #include "gromacs/topology/idef.h"
+#include "gromacs/topology/ifunc.h"
 #include "gromacs/topology/mtop_util.h"
 #include "gromacs/topology/topology.h"
+#include "gromacs/topology/topology_enums.h"
 #include "gromacs/trajectory/trajectoryframe.h"
+#include "gromacs/utility/arrayref.h"
 #include "gromacs/utility/basedefinitions.h"
 #include "gromacs/utility/cstringutil.h"
+#include "gromacs/utility/enumerationhelpers.h"
 #include "gromacs/utility/fatalerror.h"
+#include "gromacs/utility/gmxassert.h"
 #include "gromacs/utility/logger.h"
 #include "gromacs/utility/real.h"
 #include "gromacs/utility/smalloc.h"
+#include "gromacs/utility/vec.h"
+#include "gromacs/utility/vectypes.h"
 
 #include "legacysimulator.h"
 #include "replicaexchange.h"
 #include "shellfc.h"
 
-/* PLUMED */
-#if (GMX_PLUMED)
-#include "../../../Plumed.h"
-#include "gromacs/math/units.h"
-extern int    plumedswitch;
-extern plumed plumedmain;
-#endif
-/* END PLUMED */
+struct gmx_mdoutf;
+struct gmx_shellfc_t;
+struct pme_load_balancing_t;
 
 using gmx::SimulationSignaller;
 
@@ -171,71 +192,40 @@ void gmx::LegacySimulator::do_md()
     // alias to avoid a large ripple of nearly useless changes.
     // t_inputrec is being replaced by IMdpOptionsProvider, so this
     // will go away eventually.
-    t_inputrec*  ir = inputrec;
-    int64_t      step, step_rel;
-    double       t, t0 = ir->init_t;
-    gmx_bool     bGStatEveryStep, bGStat, bCalcVir, bCalcEnerStep, bCalcEner;
-    gmx_bool     bNS = FALSE, bNStList, bStopCM, bFirstStep, bInitStep, bLastStep = FALSE;
-    gmx_bool     bDoDHDL = FALSE, bDoFEP = FALSE, bDoExpanded = FALSE;
-    gmx_bool     do_ene, do_log, do_verbose;
-    gmx_bool     bMasterState;
-    unsigned int force_flags;
-    tensor force_vir = { { 0 } }, shake_vir = { { 0 } }, total_vir = { { 0 } }, pres = { { 0 } };
-    int    i, m;
-    rvec   mu_tot;
-    matrix pressureCouplingMu, M;
+    const t_inputrec* ir = inputRec_;
+
+    const double t0 = ir->init_t;
+    gmx_bool     bFirstStep, bInitStep, bLastStep = FALSE;
+    gmx_bool     bDoExpanded = FALSE;
+    tensor    force_vir = { { 0 } }, shake_vir = { { 0 } }, total_vir = { { 0 } }, pres = { { 0 } };
+    rvec      mu_tot;
+    Matrix3x3 pressureCouplingMu{ 0. }, parrinelloRahmanM{ 0. };
     gmx_repl_ex_t     repl_ex = nullptr;
-    gmx_global_stat_t gstat;
-    gmx_shellfc_t*    shellfc;
     gmx_bool          bSumEkinhOld, bDoReplEx, bExchanged, bNeedRepartition;
-    gmx_bool          bTrotter;
     real              dvdl_constr;
     std::vector<RVec> cbuf;
     matrix            lastbox;
     int               lamnew = 0;
     /* for FEP */
-    int       nstfep = 0;
-    double    cycles;
     real      saved_conserved_quantity = 0;
     real      last_ekin                = 0;
     t_extmass MassQ;
     char      sbuf[STEPSTRSIZE], sbuf2[STEPSTRSIZE];
 
-    /* PME load balancing data for GPU kernels */
-    gmx_bool bPMETune         = FALSE;
-    gmx_bool bPMETunePrinting = FALSE;
-
     bool bInteractiveMDstep = false;
 
-    /* PLUMED */
-#if (GMX_PLUMED)
-    int plumedNeedsEnergy=0;
-    int plumedWantsToStop=0;
-    matrix plumed_vir;
-#endif
-    /* END PLUMED */
-
-    /* Domain decomposition could incorrectly miss a bonded
-       interaction, but checking for that requires a global
-       communication stage, which does not otherwise happen in DD
-       code. So we do that alongside the first global energy reduction
-       after a new DD is made. These variables handle whether the
-       check happens, and the result it returns. */
-    bool shouldCheckNumberOfBondedInteractions = false;
-    int  totalNumberOfBondedInteractions       = -1;
-
     SimulationSignals signals;
-    // Most global communnication stages don't propagate mdrun
+    // Most global communication stages don't propagate mdrun
     // signals, and will use this object to achieve that.
     SimulationSignaller nullSignaller(nullptr, nullptr, nullptr, false, false);
 
-    if (!mdrunOptions.writeConfout)
+    if (!mdrunOptions_.writeConfout)
     {
         // This is on by default, and the main known use case for
         // turning it off is for convenience in benchmarking, which is
         // something that should not show up in the general user
         // interface.
-        GMX_LOG(mdlog.info)
+        GMX_LOG(mdLog_.info)
                 .asParagraph()
                 .appendText(
                         "The -noconfout functionality is deprecated, and may be removed in a "
@@ -245,24 +235,35 @@ void gmx::LegacySimulator::do_md()
     /* md-vv uses averaged full step velocities for T-control
        md-vv-avek uses averaged half step velocities for T-control (but full step ekin for P control)
        md uses averaged half step kinetic energies to determine temperature unless defined otherwise by GMX_EKIN_AVE_VEL; */
-    bTrotter = (EI_VV(ir->eI)
-                && (inputrecNptTrotter(ir) || inputrecNphTrotter(ir) || inputrecNvtTrotter(ir)));
+    const bool bTrotter =
+            (EI_VV(ir->eI)
+             && (inputrecNptTrotter(ir) || inputrecNphTrotter(ir) || inputrecNvtTrotter(ir)));
 
     const bool bRerunMD = false;
 
-    int nstglobalcomm = computeGlobalCommunicationPeriod(mdlog, ir, cr);
-    bGStatEveryStep   = (nstglobalcomm == 1);
+    const int  nstglobalcomm   = computeGlobalCommunicationPeriod(mdLog_, ir, cr_->commMyGroup);
+    const bool bGStatEveryStep = (nstglobalcomm == 1);
 
-    const SimulationGroups* groups = &top_global->groups;
+    const SimulationGroups* groups = &topGlobal_.groups;
 
     std::unique_ptr<EssentialDynamics> ed = nullptr;
-    if (opt2bSet("-ei", nfile, fnm))
+    if (opt2bSet("-ei", nFile_, fnm_))
     {
         /* Initialize essential dynamics sampling */
-        ed = init_edsam(mdlog, opt2fn_null("-ei", nfile, fnm), opt2fn("-eo", nfile, fnm), top_global,
-                        ir, cr, constr, state_global, observablesHistory, oenv, startingBehavior);
+        ed = init_edsam(mdLog_,
+                        opt2fn_null("-ei", nFile_, fnm_),
+                        opt2fn("-eo", nFile_, fnm_),
+                        topGlobal_,
+                        *ir,
+                        cr_->commMyGroup,
+                        cr_->dd,
+                        constr_,
+                        stateGlobal_,
+                        observablesHistory_,
+                        oenv_,
+                        startingBehavior_);
     }
-    else if (observablesHistory->edsamHistory)
+    else if (observablesHistory_->edsamHistory)
     {
         gmx_fatal(FARGS,
                   "The checkpoint is from a run with essential dynamics sampling, "
@@ -270,23 +271,33 @@ void gmx::LegacySimulator::do_md()
                   "Either specify the -ei option to mdrun, or do not use this checkpoint file.");
     }
 
-    int*                fep_state = MASTER(cr) ? &state_global->fep_state : nullptr;
-    gmx::ArrayRef<real> lambda    = MASTER(cr) ? state_global->lambda : gmx::ArrayRef<real>();
-    initialize_lambdas(fplog, *ir, MASTER(cr), fep_state, lambda);
-    Update     upd(*ir, deform);
-    const bool doSimulatedAnnealing = initSimulatedAnnealing(ir, &upd);
-    const bool useReplicaExchange   = (replExParams.exchangeInterval > 0);
+    const bool isMainRank = cr_->commMySim.isMainRank();
 
-    const t_fcdata& fcdata = *fr->fcdata;
+    int*                fep_state = isMainRank ? &stateGlobal_->fep_state : nullptr;
+    gmx::ArrayRef<real> lambda    = isMainRank ? stateGlobal_->lambda : gmx::ArrayRef<real>{};
+    initialize_lambdas(
+            fpLog_, ir->efep, ir->bSimTemp, *ir->fepvals, ir->simtempvals->temperatures, ekind_, isMainRank, fep_state, lambda);
+    Update upd(*ir, *ekind_, deform_);
 
-    bool simulationsShareState = false;
-    int  nstSignalComm         = nstglobalcomm;
+    // Simulated annealing updates the reference temperature.
+    const bool doSimulatedAnnealing = initSimulatedAnnealing(*ir, ekind_, &upd);
+
+    const bool useReplicaExchange = (replExParams_.exchangeInterval > 0);
+
+    t_fcdata& fcdata = *fr_->fcdata;
+
+    // We should let all special algorithms use MDModules, so notifiers tells if we need to share
+    bool simulationsShareState =
+            (ms_ != nullptr)
+            && mdModulesNotifiers_.simulationSetupNotifier_.haveSubscribers<const gmx_multisim_t*>();
+    bool simulationsShareHamiltonian = false;
+    int  nstSignalComm               = nstglobalcomm;
     {
         // TODO This implementation of ensemble orientation restraints is nasty because
         // a user can't just do multi-sim with single-sim orientation restraints.
         bool usingEnsembleRestraints =
-                (fcdata.disres->nsystems > 1) || ((ms != nullptr) && (fcdata.orires->nr != 0));
-        bool awhUsesMultiSim = (ir->bDoAwh && ir->awhParams->shareBiasMultisim && (ms != nullptr));
+                (fcdata.disres->nsystems > 1) || ((ms_ != nullptr) && fcdata.orires);
+        bool awhUsesMultiSim = (ir->bDoAwh && ir->awhParams->shareBiasMultisim() && (ms_ != nullptr));
 
         // Replica exchange, ensemble restraints and AWH need all
         // simulations to remain synchronized, so they need
@@ -294,163 +305,202 @@ void gmx::LegacySimulator::do_md()
         // the propagation of such signals must take place between
         // simulations, not just within simulations.
         // TODO: Make algorithm initializers set these flags.
-        simulationsShareState = useReplicaExchange || usingEnsembleRestraints || awhUsesMultiSim
-#if (GMX_PLUMED)
-            // PLUMED hack, if we have multiple sim and plumed we usually want them to be in sync 
-            || (plumedswitch && ms != nullptr)
-#endif
-            ;
+        simulationsShareState = simulationsShareState || useReplicaExchange
+                                || usingEnsembleRestraints || awhUsesMultiSim;
+
+        // With AWH with bias sharing each simulation uses an non-shared, but identical, Hamiltonian
+        simulationsShareHamiltonian = useReplicaExchange || usingEnsembleRestraints;
 
         if (simulationsShareState)
         {
             // Inter-simulation signal communication does not need to happen
             // often, so we use a minimum of 200 steps to reduce overhead.
             const int c_minimumInterSimulationSignallingInterval = 200;
-            nstSignalComm = ((c_minimumInterSimulationSignallingInterval + nstglobalcomm - 1) / nstglobalcomm)
+            nstSignalComm = gmx::divideRoundUp(c_minimumInterSimulationSignallingInterval, nstglobalcomm)
                             * nstglobalcomm;
         }
     }
 
-    if (startingBehavior != StartingBehavior::RestartWithAppending)
+    if (startingBehavior_ != StartingBehavior::RestartWithAppending)
     {
-        pleaseCiteCouplingAlgorithms(fplog, *ir);
+        pleaseCiteCouplingAlgorithms(fpLog_, *ir);
     }
-    gmx_mdoutf* outf =
-            init_mdoutf(fplog, nfile, fnm, mdrunOptions, cr, outputProvider, mdModulesNotifier, ir,
-                        top_global, oenv, wcycle, startingBehavior, simulationsShareState, ms);
-    gmx::EnergyOutput energyOutput(mdoutf_get_fp_ene(outf), top_global, ir, pull_work,
-                                   mdoutf_get_fp_dhdl(outf), false, startingBehavior,
-                                   simulationsShareState, mdModulesNotifier);
+    gmx_mdoutf*       outf = init_mdoutf(fpLog_,
+                                   nFile_,
+                                   fnm_,
+                                   mdrunOptions_,
+                                   cr_,
+                                   outputProvider_,
+                                   mdModulesNotifiers_,
+                                   ir,
+                                   topGlobal_,
+                                   oenv_,
+                                   wallCycleCounters_,
+                                   startingBehavior_,
+                                   simulationsShareState,
+                                   ms_);
+    gmx::EnergyOutput energyOutput(mdoutf_get_fp_ene(outf),
+                                   topGlobal_,
+                                   *ir,
+                                   pullWork_,
+                                   mdoutf_get_fp_dhdl(outf),
+                                   false,
+                                   startingBehavior_,
+                                   simulationsShareHamiltonian,
+                                   mdModulesNotifiers_);
 
-    gstat = global_stat_init(ir);
+    gmx_global_stat_t gstat = global_stat_init(ir);
 
-    const auto& simulationWork     = runScheduleWork->simulationWork;
+    const auto& simulationWork     = runScheduleWork_->simulationWork;
     const bool  useGpuForPme       = simulationWork.useGpuPme;
     const bool  useGpuForNonbonded = simulationWork.useGpuNonbonded;
-    const bool  useGpuForBufferOps = simulationWork.useGpuBufferOps;
     const bool  useGpuForUpdate    = simulationWork.useGpuUpdate;
 
     /* Check for polarizable models and flexible constraints */
-    shellfc = init_shell_flexcon(fplog, top_global, constr ? constr->numFlexibleConstraints() : 0,
-                                 ir->nstcalcenergy, DOMAINDECOMP(cr), useGpuForPme);
+    gmx_shellfc_t* shellfc = init_shell_flexcon(fpLog_,
+                                                topGlobal_,
+                                                constr_ ? constr_->numFlexibleConstraints() : 0,
+                                                ir->nstcalcenergy,
+                                                haveDDAtomOrdering(*cr_),
+                                                simulationWork);
 
+    ObservablesReducer observablesReducer = observablesReducerBuilder_->build();
+
+    ForceBuffers     f(simulationWork.useMts,
+                   (simulationWork.useGpuFBufferOpsWhenAllowed || useGpuForUpdate)
+                               ? PinningPolicy::PinnedIfSupported
+                               : PinningPolicy::CannotBePinned);
+    const t_mdatoms* md = mdAtoms_->mdatoms();
+    if (haveDDAtomOrdering(*cr_))
     {
-        double io = compute_io(ir, top_global->natoms, *groups, energyOutput.numEnergyTerms(), 1);
-        if ((io > 2000) && MASTER(cr))
-        {
-            fprintf(stderr, "\nWARNING: This run will generate roughly %.0f Mb of data\n\n", io);
-        }
-    }
+        // Local state only becomes valid now.
+        dd_init_local_state(*cr_->dd, stateGlobal_, state_);
 
-    // Local state only becomes valid now.
-    std::unique_ptr<t_state> stateInstance;
-    t_state*                 state;
-
-    gmx_localtop_t top(top_global->ffparams);
-
-    auto mdatoms = mdAtoms->mdatoms();
-
-    ForceBuffers f(fr->useMts, ((useGpuForNonbonded && useGpuForBufferOps) || useGpuForUpdate)
-                                       ? PinningPolicy::PinnedIfSupported
-                                       : PinningPolicy::CannotBePinned);
-    if (DOMAINDECOMP(cr))
-    {
-        stateInstance = std::make_unique<t_state>();
-        state         = stateInstance.get();
-        dd_init_local_state(cr->dd, state_global, state);
-
-        /* Distribute the charge groups over the nodes from the master node */
-        dd_partition_system(fplog, mdlog, ir->init_step, cr, TRUE, 1, state_global, *top_global, ir,
-                            imdSession, pull_work, state, &f, mdAtoms, &top, fr, vsite, constr,
-                            nrnb, nullptr, FALSE);
-        shouldCheckNumberOfBondedInteractions = true;
-        upd.setNumAtoms(state->natoms);
+        /* Distribute the charge groups over the nodes from the main node */
+        dd_partition_system(fpLog_,
+                            mdLog_,
+                            ir->init_step,
+                            cr_->dd,
+                            TRUE,
+                            stateGlobal_,
+                            topGlobal_,
+                            *ir,
+                            mdModulesNotifiers_,
+                            imdSession_,
+                            pullWork_,
+                            state_,
+                            &f,
+                            mdAtoms_,
+                            top_,
+                            fr_,
+                            virtualSites_,
+                            constr_,
+                            nrnb_,
+                            nullptr,
+                            FALSE);
+        upd.updateAfterPartition(state_->numAtoms(), md->cFREEZE, md->cTC, md->cACC);
+        fr_->longRangeNonbondeds->updateAfterPartition(*md);
     }
     else
     {
-        state_change_natoms(state_global, state_global->natoms);
-        /* Copy the pointer to the global state */
-        state = state_global;
-
         /* Generate and initialize new topology */
-        mdAlgorithmsSetupAtomData(cr, ir, *top_global, &top, fr, &f, mdAtoms, constr, vsite, shellfc);
+        mdAlgorithmsSetupAtomData(
+                cr_->dd, *ir, topGlobal_, top_, fr_, &f, mdAtoms_, constr_, virtualSites_, shellfc);
 
-        upd.setNumAtoms(state->natoms);
+        upd.updateAfterPartition(state_->numAtoms(), md->cFREEZE, md->cTC, md->cACC);
+        fr_->longRangeNonbondeds->updateAfterPartition(*md);
     }
+
+    // Now that the state is valid we can set up Parrinello-Rahman
+    init_parrinellorahman(ir->pressureCouplingOptions,
+                          ir->deform,
+                          ir->delta_t * ir->pressureCouplingOptions.nstpcouple,
+                          state_->box,
+                          state_->box_rel,
+                          state_->boxv,
+                          &parrinelloRahmanM,
+                          &pressureCouplingMu);
 
     std::unique_ptr<UpdateConstrainGpu> integrator;
 
-    StatePropagatorDataGpu* stateGpu = fr->stateGpu;
+    StatePropagatorDataGpu* stateGpu = fr_->stateGpu;
 
     // TODO: the assertions below should be handled by UpdateConstraintsBuilder.
     if (useGpuForUpdate)
     {
-        GMX_RELEASE_ASSERT(!DOMAINDECOMP(cr) || ddUsesUpdateGroups(*cr->dd) || constr == nullptr
-                                   || constr->numConstraintsTotal() == 0,
+        GMX_RELEASE_ASSERT(!haveDDAtomOrdering(*cr_) || ddUsesUpdateGroups(*cr_->dd)
+                                   || constr_ == nullptr || constr_->numConstraintsTotal() == 0,
                            "Constraints in domain decomposition are only supported with update "
                            "groups if using GPU update.\n");
-        GMX_RELEASE_ASSERT(ir->eConstrAlg != econtSHAKE || constr == nullptr
-                                   || constr->numConstraintsTotal() == 0,
+        GMX_RELEASE_ASSERT(ir->eConstrAlg != ConstraintAlgorithm::Shake || constr_ == nullptr
+                                   || constr_->numConstraintsTotal() == 0,
                            "SHAKE is not supported with GPU update.");
-        GMX_RELEASE_ASSERT(useGpuForPme || (useGpuForNonbonded && simulationWork.useGpuBufferOps),
+        GMX_RELEASE_ASSERT(useGpuForPme || (useGpuForNonbonded && simulationWork.useGpuXBufferOpsWhenAllowed),
                            "Either PME or short-ranged non-bonded interaction tasks must run on "
                            "the GPU to use GPU update.\n");
-        GMX_RELEASE_ASSERT(ir->eI == eiMD,
+        GMX_RELEASE_ASSERT(ir->eI == IntegrationAlgorithm::MD,
                            "Only the md integrator is supported with the GPU update.\n");
         GMX_RELEASE_ASSERT(
-                ir->etc != etcNOSEHOOVER,
+                ir->etc != TemperatureCoupling::NoseHoover,
                 "Nose-Hoover temperature coupling is not supported with the GPU update.\n");
         GMX_RELEASE_ASSERT(
-                ir->epc == epcNO || ir->epc == epcPARRINELLORAHMAN || ir->epc == epcBERENDSEN
-                        || ir->epc == epcCRESCALE,
+                ir->pressureCouplingOptions.epc == PressureCoupling::No
+                        || ir->pressureCouplingOptions.epc == PressureCoupling::ParrinelloRahman
+                        || ir->pressureCouplingOptions.epc == PressureCoupling::Berendsen
+                        || ir->pressureCouplingOptions.epc == PressureCoupling::CRescale,
                 "Only Parrinello-Rahman, Berendsen, and C-rescale pressure coupling are supported "
                 "with the GPU update.\n");
-        GMX_RELEASE_ASSERT(!mdatoms->haveVsites,
+        GMX_RELEASE_ASSERT(!md->haveVsites,
                            "Virtual sites are not supported with the GPU update.\n");
         GMX_RELEASE_ASSERT(ed == nullptr,
                            "Essential dynamics is not supported with the GPU update.\n");
         GMX_RELEASE_ASSERT(!ir->bPull || !pull_have_constraint(*ir->pull),
                            "Constraints pulling is not supported with the GPU update.\n");
-        GMX_RELEASE_ASSERT(fcdata.orires->nr == 0,
+        GMX_RELEASE_ASSERT(fcdata.orires == nullptr,
                            "Orientation restraints are not supported with the GPU update.\n");
         GMX_RELEASE_ASSERT(
-                ir->efep == efepNO
-                        || (!haveFepPerturbedMasses(*top_global) && !havePerturbedConstraints(*top_global)),
+                ir->efep == FreeEnergyPerturbationType::No
+                        || (!haveFepPerturbedMasses(topGlobal_) && !havePerturbedConstraints(topGlobal_)),
                 "Free energy perturbation of masses and constraints are not supported with the GPU "
                 "update.");
 
-        if (constr != nullptr && constr->numConstraintsTotal() > 0)
+        if (constr_ != nullptr && constr_->numConstraintsTotal() > 0)
         {
-            GMX_LOG(mdlog.info)
+            GMX_LOG(mdLog_.info)
                     .asParagraph()
                     .appendText("Updating coordinates and applying constraints on the GPU.");
         }
         else
         {
-            GMX_LOG(mdlog.info).asParagraph().appendText("Updating coordinates on the GPU.");
+            GMX_LOG(mdLog_.info).asParagraph().appendText("Updating coordinates on the GPU.");
         }
-        GMX_RELEASE_ASSERT(fr->deviceStreamManager != nullptr,
+        GMX_RELEASE_ASSERT(fr_->deviceStreamManager != nullptr,
                            "Device stream manager should be initialized in order to use GPU "
                            "update-constraints.");
         GMX_RELEASE_ASSERT(
-                fr->deviceStreamManager->streamIsValid(gmx::DeviceStreamType::UpdateAndConstraints),
+                fr_->deviceStreamManager->streamIsValid(gmx::DeviceStreamType::UpdateAndConstraints),
                 "Update stream should be initialized in order to use GPU "
                 "update-constraints.");
         integrator = std::make_unique<UpdateConstrainGpu>(
-                *ir, *top_global, fr->deviceStreamManager->context(),
-                fr->deviceStreamManager->stream(gmx::DeviceStreamType::UpdateAndConstraints),
-                stateGpu->xUpdatedOnDevice(), wcycle);
+                *ir,
+                topGlobal_,
+                ekind_->numTemperatureCouplingGroups(),
+                fr_->deviceStreamManager->context(),
+                fr_->deviceStreamManager->stream(gmx::DeviceStreamType::UpdateAndConstraints),
+                wallCycleCounters_);
 
-        integrator->setPbc(PbcType::Xyz, state->box);
+        stateGpu->setXUpdatedOnDeviceEvent(integrator->xUpdatedOnDeviceEvent());
+
+        integrator->setPbc(PbcType::Xyz, state_->box);
     }
 
-    if (useGpuForPme || (useGpuForNonbonded && useGpuForBufferOps) || useGpuForUpdate)
+    if (useGpuForPme || simulationWork.useGpuXBufferOpsWhenAllowed || useGpuForUpdate)
     {
-        changePinningPolicy(&state->x, PinningPolicy::PinnedIfSupported);
+        changePinningPolicy(&state_->x, PinningPolicy::PinnedIfSupported);
     }
     if (useGpuForUpdate)
     {
-        changePinningPolicy(&state->v, PinningPolicy::PinnedIfSupported);
+        changePinningPolicy(&state_->v, PinningPolicy::PinnedIfSupported);
     }
 
     // NOTE: The global state is no longer used at this point.
@@ -458,7 +508,7 @@ void gmx::LegacySimulator::do_md()
     // the global state to file and potentially for replica exchange.
     // (Global topology should persist.)
 
-    update_mdatoms(mdatoms, state->lambda[efptMASS]);
+    update_mdatoms(mdAtoms_->mdatoms(), state_->lambda[FreeEnergyPerturbationCouplingType::Mass]);
 
     if (ir->bExpanded)
     {
@@ -468,55 +518,65 @@ void gmx::LegacySimulator::do_md()
             gmx_fatal(FARGS,
                       "With expanded ensemble, nstexpanded should be a multiple of nstcalcenergy");
         }
-        init_expanded_ensemble(startingBehavior != StartingBehavior::NewSimulation, ir, state->dfhist);
+        init_expanded_ensemble(
+                startingBehavior_ != StartingBehavior::NewSimulation, ir, state_->dfhist.get());
     }
 
-    if (MASTER(cr))
+    if (isMainRank)
     {
-        EnergyData::initializeEnergyHistory(startingBehavior, observablesHistory, &energyOutput);
+        EnergyData::initializeEnergyHistory(startingBehavior_, observablesHistory_, &energyOutput);
     }
 
-    preparePrevStepPullCom(ir, pull_work, mdatoms->massT, state, state_global, cr,
-                           startingBehavior != StartingBehavior::NewSimulation);
+    preparePrevStepPullCom(ir,
+                           pullWork_,
+                           md->massT,
+                           state_,
+                           stateGlobal_,
+                           cr_->commMyGroup,
+                           startingBehavior_ != StartingBehavior::NewSimulation);
 
     // TODO: Remove this by converting AWH into a ForceProvider
-    auto awh = prepareAwhModule(fplog, *ir, state_global, cr, ms,
-                                startingBehavior != StartingBehavior::NewSimulation,
-                                shellfc != nullptr, opt2fn("-awh", nfile, fnm), pull_work);
+    auto awh = prepareAwhModule(fpLog_,
+                                *ir,
+                                stateGlobal_,
+                                cr_->commMyGroup,
+                                ms_,
+                                startingBehavior_ != StartingBehavior::NewSimulation,
+                                shellfc != nullptr,
+                                opt2fn("-awh", nFile_, fnm_),
+                                pullWork_);
 
-    if (useReplicaExchange && MASTER(cr))
+    if (useReplicaExchange && isMainRank)
     {
-        repl_ex = init_replica_exchange(fplog, ms, top_global->natoms, ir, replExParams);
+        repl_ex = init_replica_exchange(fpLog_, ms_, topGlobal_.natoms, ir, replExParams_);
     }
-    /* PME tuning is only supported in the Verlet scheme, with PME for
-     * Coulomb. It is not supported with only LJ PME. */
-    bPMETune = (mdrunOptions.tunePme && EEL_PME(fr->ic->eeltype) && !mdrunOptions.reproducible
-                && ir->cutoff_scheme != ecutsGROUP);
 
-    pme_load_balancing_t* pme_loadbal = nullptr;
-    if (bPMETune)
+    // PME tuning is only supported with PME for Coulomb. It is not supported with only LJ PME
+    std::unique_ptr<PmeLoadBalancing> pmeLoadBal;
+    if (mdrunOptions_.tunePme
+        && pmeTuningIsSupported(fr_->ic->coulomb.type, mdrunOptions_.reproducible, simulationWork))
     {
-        pme_loadbal_init(&pme_loadbal, cr, mdlog, *ir, state->box, *fr->ic, *fr->nbv, fr->pmedata,
-                         fr->nbv->useGpu());
+        pmeLoadBal = std::make_unique<PmeLoadBalancing>(
+                cr_->dd, mdLog_, *ir, state_->box, *fr_->ic, *fr_->nbv, fr_->pmedata, simulationWork);
     }
 
     if (!ir->bContinuation)
     {
-        if (state->flags & (1U << estV))
+        if (state_->hasEntry(StateEntry::V))
         {
-            auto v = makeArrayRef(state->v);
+            auto v = makeArrayRef(state_->v);
             /* Set the velocities of vsites, shells and frozen atoms to zero */
-            for (i = 0; i < mdatoms->homenr; i++)
+            for (int i = 0; i < md->homenr; i++)
             {
-                if (mdatoms->ptype[i] == eptVSite || mdatoms->ptype[i] == eptShell)
+                if (md->ptype[i] == ParticleType::Shell)
                 {
                     clear_rvec(v[i]);
                 }
-                else if (mdatoms->cFREEZE)
+                else if (!md->cFREEZE.empty())
                 {
-                    for (m = 0; m < DIM; m++)
+                    for (int m = 0; m < DIM; m++)
                     {
-                        if (ir->opts.nFreeze[mdatoms->cFREEZE[i]][m])
+                        if (ir->opts.nFreeze[md->cFREEZE[i]][m])
                         {
                             v[i][m] = 0;
                         }
@@ -525,63 +585,48 @@ void gmx::LegacySimulator::do_md()
             }
         }
 
-        if (constr)
+        if (constr_)
         {
             /* Constrain the initial coordinates and velocities */
-            do_constrain_first(fplog, constr, ir, mdatoms->nr, mdatoms->homenr,
-                               state->x.arrayRefWithPadding(), state->v.arrayRefWithPadding(),
-                               state->box, state->lambda[efptBONDED]);
-        }
-        if (vsite)
-        {
-            /* Construct the virtual sites for the initial configuration */
-            vsite->construct(state->x, ir->delta_t, {}, state->box);
+            do_constrain_first(fpLog_,
+                               constr_,
+                               *ir,
+                               md->homenr,
+                               state_->x.arrayRefWithPadding(),
+                               state_->v.arrayRefWithPadding(),
+                               state_->box,
+                               state_->lambda[FreeEnergyPerturbationCouplingType::Bonded]);
         }
     }
 
-    if (ir->efep != efepNO)
-    {
-        /* Set free energy calculation frequency as the greatest common
-         * denominator of nstdhdl and repl_ex_nst. */
-        nstfep = ir->fepvals->nstdhdl;
-        if (ir->bExpanded)
-        {
-            nstfep = std::gcd(ir->expandedvals->nstexpanded, nstfep);
-        }
-        if (useReplicaExchange)
-        {
-            nstfep = std::gcd(replExParams.exchangeInterval, nstfep);
-        }
-        if (ir->bDoAwh)
-        {
-            nstfep = std::gcd(ir->awhParams->nstSampleCoord, nstfep);
-        }
-    }
+    const int nstfep = computeFepPeriod(*ir, replExParams_);
 
     /* Be REALLY careful about what flags you set here. You CANNOT assume
      * this is the first step, since we might be restarting from a checkpoint,
      * and in that case we should not do any modifications to the state.
      */
-    bStopCM = (ir->comm_mode != ecmNO && !ir->bContinuation);
+    const bool stopCenterOfMassMovementBeforeFirstStep =
+            (ir->comm_mode != ComRemovalAlgorithm::No && !ir->bContinuation);
 
     // When restarting from a checkpoint, it can be appropriate to
     // initialize ekind from quantities in the checkpoint. Otherwise,
     // compute_globals must initialize ekind before the simulation
-    // starts/restarts. However, only the master rank knows what was
+    // starts/restarts. However, only the main rank knows what was
     // found in the checkpoint file, so we have to communicate in
     // order to coordinate the restart.
     //
     // TODO Consider removing this communication if/when checkpoint
     // reading directly follows .tpr reading, because all ranks can
     // agree on hasReadEkinState at that time.
-    bool hasReadEkinState = MASTER(cr) ? state_global->ekinstate.hasReadEkinState : false;
-    if (PAR(cr))
+    bool hasReadEkinState = isMainRank ? stateGlobal_->ekinstate.hasReadEkinState : false;
+    if (cr_->commMyGroup.isParallel())
     {
-        gmx_bcast(sizeof(hasReadEkinState), &hasReadEkinState, cr->mpi_comm_mygroup);
+        gmx_bcast(sizeof(hasReadEkinState), &hasReadEkinState, cr_->commMyGroup.comm());
     }
     if (hasReadEkinState)
     {
-        restore_ekinstate_from_state(cr, ekind, &state_global->ekinstate);
+        restore_ekinstate_from_state(
+                cr_->commMyGroup, ekind_, isMainRank ? &stateGlobal_->ekinstate : nullptr);
     }
 
     unsigned int cglo_flags =
@@ -590,44 +635,65 @@ void gmx::LegacySimulator::do_md()
 
     bSumEkinhOld = FALSE;
 
-    t_vcm vcm(top_global->groups, *ir);
-    reportComRemovalInfo(fplog, vcm);
+    t_vcm vcm(topGlobal_.groups, *ir, topGlobal_.natoms);
+    reportComRemovalInfo(fpLog_, vcm);
+
+    int64_t step     = ir->init_step;
+    int64_t step_rel = 0;
 
     /* To minimize communication, compute_globals computes the COM velocity
      * and the kinetic energy for the velocities without COM motion removed.
      * Thus to get the kinetic energy without the COM contribution, we need
      * to call compute_globals twice.
      */
-    for (int cgloIteration = 0; cgloIteration < (bStopCM ? 2 : 1); cgloIteration++)
+    for (int cgloIteration = 0; cgloIteration < (stopCenterOfMassMovementBeforeFirstStep ? 2 : 1);
+         cgloIteration++)
     {
         unsigned int cglo_flags_iteration = cglo_flags;
-        if (bStopCM && cgloIteration == 0)
+        if (stopCenterOfMassMovementBeforeFirstStep && cgloIteration == 0)
         {
             cglo_flags_iteration |= CGLO_STOPCM;
             cglo_flags_iteration &= ~CGLO_TEMPERATURE;
         }
-        compute_globals(gstat, cr, ir, fr, ekind, makeConstArrayRef(state->x),
-                        makeConstArrayRef(state->v), state->box, mdatoms, nrnb, &vcm, nullptr,
-                        enerd, force_vir, shake_vir, total_vir, pres, constr, &nullSignaller,
-                        state->box, &totalNumberOfBondedInteractions, &bSumEkinhOld,
-                        cglo_flags_iteration
-                                | (shouldCheckNumberOfBondedInteractions ? CGLO_CHECK_NUMBER_OF_BONDED_INTERACTIONS
-                                                                         : 0));
+        compute_globals(gstat,
+                        cr_->commMyGroup,
+                        ir,
+                        fr_,
+                        ekind_,
+                        makeConstArrayRef(state_->x),
+                        makeConstArrayRef(state_->v),
+                        state_->box,
+                        md,
+                        nrnb_,
+                        &vcm,
+                        nullptr,
+                        enerd_,
+                        force_vir,
+                        shake_vir,
+                        total_vir,
+                        pres,
+                        &nullSignaller,
+                        state_->box,
+                        &bSumEkinhOld,
+                        cglo_flags_iteration,
+                        step - 1, // Pass step-1 to signal that v is from minus a half step
+                        &observablesReducer);
+        // Clean up after pre-step use of compute_globals()
+        observablesReducer.markAsReadyToReduce();
+
         if (cglo_flags_iteration & CGLO_STOPCM)
         {
             /* At initialization, do not pass x with acceleration-correction mode
              * to avoid (incorrect) correction of the initial coordinates.
              */
-            auto x = (vcm.mode == ecmLINEAR_ACCELERATION_CORRECTION) ? ArrayRef<RVec>()
-                                                                     : makeArrayRef(state->x);
-            process_and_stopcm_grp(fplog, &vcm, *mdatoms, x, makeArrayRef(state->v));
-            inc_nrnb(nrnb, eNR_STOPCM, mdatoms->homenr);
+            auto x = (vcm.mode == ComRemovalAlgorithm::LinearAccelerationCorrection)
+                             ? ArrayRef<RVec>{}
+                             : makeArrayRef(state_->x);
+            process_and_stopcm_grp(fpLog_, &vcm, *md, x, makeArrayRef(state_->v));
+            inc_nrnb(nrnb_, eNR_STOPCM, md->homenr);
         }
     }
-    checkNumberOfBondedInteractions(mdlog, cr, totalNumberOfBondedInteractions, top_global, &top,
-                                    makeConstArrayRef(state->x), state->box,
-                                    &shouldCheckNumberOfBondedInteractions);
-    if (ir->eI == eiVVAK)
+    if (ir->eI == IntegrationAlgorithm::VVAK)
     {
         /* a second call to get the half step temperature initialized as well */
         /* we do the same call as above, but turn the pressure off -- internally to
@@ -635,50 +701,72 @@ void gmx::LegacySimulator::do_md()
            kinetic energy calculation.  This minimized excess variables, but
            perhaps loses some logic?*/
 
-        compute_globals(gstat, cr, ir, fr, ekind, makeConstArrayRef(state->x),
-                        makeConstArrayRef(state->v), state->box, mdatoms, nrnb, &vcm, nullptr,
-                        enerd, force_vir, shake_vir, total_vir, pres, constr, &nullSignaller,
-                        state->box, nullptr, &bSumEkinhOld, cglo_flags & ~CGLO_PRESSURE);
+        compute_globals(gstat,
+                        cr_->commMyGroup,
+                        ir,
+                        fr_,
+                        ekind_,
+                        makeConstArrayRef(state_->x),
+                        makeConstArrayRef(state_->v),
+                        state_->box,
+                        md,
+                        nrnb_,
+                        &vcm,
+                        nullptr,
+                        enerd_,
+                        force_vir,
+                        shake_vir,
+                        total_vir,
+                        pres,
+                        &nullSignaller,
+                        state_->box,
+                        &bSumEkinhOld,
+                        cglo_flags & ~CGLO_PRESSURE,
+                        step,
+                        &observablesReducer);
+        // Clean up after pre-step use of compute_globals()
+        observablesReducer.markAsReadyToReduce();
     }
 
     /* Calculate the initial half step temperature, and save the ekinh_old */
-    if (startingBehavior == StartingBehavior::NewSimulation)
+    if (startingBehavior_ == StartingBehavior::NewSimulation)
     {
-        for (i = 0; (i < ir->opts.ngtc); i++)
+        for (int i = 0; (i < ir->opts.ngtc); i++)
         {
-            copy_mat(ekind->tcstat[i].ekinh, ekind->tcstat[i].ekinh_old);
+            copy_mat(ekind_->tcstat[i].ekinh, ekind_->tcstat[i].ekinh_old);
         }
     }
 
     /* need to make an initiation call to get the Trotter variables set, as well as other constants
        for non-trotter temperature control */
-    auto trotter_seq = init_npt_vars(ir, state, &MassQ, bTrotter);
+    auto trotter_seq = init_npt_vars(ir, *ekind_, state_, &MassQ, bTrotter);
 
-    if (MASTER(cr))
+    if (isMainRank)
     {
         if (!ir->bContinuation)
         {
-            if (constr && ir->eConstrAlg == econtLINCS)
+            if (constr_ && ir->eConstrAlg == ConstraintAlgorithm::Lincs)
             {
-                fprintf(fplog, "RMS relative constraint deviation after constraining: %.2e\n",
-                        constr->rmsd());
+                fprintf(fpLog_,
+                        "RMS relative constraint deviation after constraining: %.2e\n",
+                        constr_->rmsd());
             }
             if (EI_STATE_VELOCITY(ir->eI))
             {
-                real temp = enerd->term[F_TEMP];
-                if (ir->eI != eiVV)
+                real temp = enerd_->term[InteractionFunction::Temperature];
+                if (ir->eI != IntegrationAlgorithm::VV)
                 {
                     /* Result of Ekin averaged over velocities of -half
                      * and +half step, while we only have -half step here.
                      */
                     temp *= 2;
                 }
-                fprintf(fplog, "Initial temperature: %g K\n", temp);
+                fprintf(fpLog_, "Initial temperature: %g K\n", temp);
             }
         }
 
         char tbuf[20];
-        fprintf(stderr, "starting mdrun '%s'\n", *(top_global->name));
+        fprintf(stderr, "starting mdrun '%s'\n", *(topGlobal_.name));
         if (ir->nsteps >= 0)
         {
             sprintf(tbuf, "%8.1f", (ir->init_step + ir->nsteps) * ir->delta_t);
@@ -689,69 +777,23 @@ void gmx::LegacySimulator::do_md()
         }
         if (ir->init_step > 0)
         {
-            fprintf(stderr, "%s steps, %s ps (continuing from step %s, %8.1f ps).\n",
-                    gmx_step_str(ir->init_step + ir->nsteps, sbuf), tbuf,
-                    gmx_step_str(ir->init_step, sbuf2), ir->init_step * ir->delta_t);
+            fprintf(stderr,
+                    "%s steps, %s ps (continuing from step %s, %8.1f ps).\n",
+                    gmx_step_str(ir->init_step + ir->nsteps, sbuf),
+                    tbuf,
+                    gmx_step_str(ir->init_step, sbuf2),
+                    ir->init_step * ir->delta_t);
         }
         else
         {
             fprintf(stderr, "%s steps, %s ps.\n", gmx_step_str(ir->nsteps, sbuf), tbuf);
         }
-        fprintf(fplog, "\n");
+        fprintf(fpLog_, "\n");
     }
 
-    /* PLUMED */
-#if (GMX_PLUMED)
-    if(plumedswitch){
-      /* detect plumed API version */
-      int pversion=0;
-      plumed_cmd(plumedmain,"getApiVersion",&pversion);
-      /* setting kbT is only implemented with api>1) */
-      real kbT=ir->opts.ref_t[0]*BOLTZ;
-      if(pversion>1) plumed_cmd(plumedmain,"setKbT",&kbT);
-      if(pversion>2){
-        int res=1;
-        if( (startingBehavior != StartingBehavior::NewSimulation) ) plumed_cmd(plumedmain,"setRestart",&res);
-      }
-
-    //if(cr->ms && cr->ms->nsim>1) {
-      if(ms && ms->numSimulations_>1) {
-        if(MASTER(cr)) plumed_cmd(plumedmain,"GREX setMPIIntercomm",&ms->mastersComm_);
-        if(PAR(cr)){
-          if(DOMAINDECOMP(cr)) {
-            plumed_cmd(plumedmain,"GREX setMPIIntracomm",&cr->dd->mpi_comm_all);
-          }else{
-            plumed_cmd(plumedmain,"GREX setMPIIntracomm",&cr->mpi_comm_mysim);
-          }
-        }
-        plumed_cmd(plumedmain,"GREX init",NULL);
-      }
-      if(PAR(cr)){
-        if(DOMAINDECOMP(cr)) {
-          plumed_cmd(plumedmain,"setMPIComm",&cr->dd->mpi_comm_all);
-        }
-      }
-      plumed_cmd(plumedmain,"setNatoms",&top_global->natoms);
-      plumed_cmd(plumedmain,"setMDEngine","gromacs");
-      plumed_cmd(plumedmain,"setLog",fplog);
-      real real_delta_t=ir->delta_t;
-      plumed_cmd(plumedmain,"setTimestep",&real_delta_t);
-      plumed_cmd(plumedmain,"init",NULL);
-
-      if(PAR(cr)){
-        if(DOMAINDECOMP(cr)) {
-          int nat_home = dd_numHomeAtoms(*cr->dd);
-          plumed_cmd(plumedmain,"setAtomsNlocal",&nat_home);
-          plumed_cmd(plumedmain,"setAtomsGatindex",cr->dd->globalAtomIndices.data());
-        }
-      }
-    }
-#endif
-    /* END PLUMED */
-
-    walltime_accounting_start_time(walltime_accounting);
-    wallcycle_start(wcycle, ewcRUN);
-    print_start(fplog, cr, walltime_accounting, "mdrun");
+    walltime_accounting_start_time(wallTimeAccounting_);
+    wallcycle_start(wallCycleCounters_, WallCycleCounter::Run);
+    print_start(fpLog_, cr_, wallTimeAccounting_, "mdrun");
 
     /***********************************************************
      *
@@ -761,97 +803,128 @@ void gmx::LegacySimulator::do_md()
 
     bFirstStep = TRUE;
     /* Skip the first Nose-Hoover integration when we get the state from tpx */
-    bInitStep        = startingBehavior == StartingBehavior::NewSimulation || EI_VV(ir->eI);
+    bInitStep        = startingBehavior_ == StartingBehavior::NewSimulation || EI_VV(ir->eI);
     bSumEkinhOld     = FALSE;
     bExchanged       = FALSE;
     bNeedRepartition = FALSE;
 
-    step     = ir->init_step;
-    step_rel = 0;
+    auto stopHandler = stopHandlerBuilder_->getStopHandlerMD(
+            compat::not_null<SimulationSignal*>(&signals[eglsSTOPCOND]),
+            simulationsShareState,
+            isMainRank,
+            ir->nstlist,
+            mdrunOptions_.reproducible,
+            nstSignalComm,
+            mdrunOptions_.maximumHoursToRun,
+            fpLog_,
+            step,
+            wallTimeAccounting_);
 
-    auto stopHandler = stopHandlerBuilder->getStopHandlerMD(
-            compat::not_null<SimulationSignal*>(&signals[eglsSTOPCOND]), simulationsShareState,
-            MASTER(cr), ir->nstlist, mdrunOptions.reproducible, nstSignalComm,
-            mdrunOptions.maximumHoursToRun, ir->nstlist == 0, fplog, step, bNS, walltime_accounting);
-
+    real checkpointPeriod = mdrunOptions_.checkpointOptions.period;
+    if (ir->bExpanded)
+    {
+        GMX_LOG(mdLog_.info)
+                .asParagraph()
+                .appendText(
+                        "Expanded ensemble with the legacy simulator does not always "
+                        "checkpoint correctly, so checkpointing is disabled. You will "
+                        "not be able to do a checkpoint restart of this simulation. "
+                        "If you use the modular simulator (e.g. by choosing md-vv integrator) "
+                        "then checkpointing is enabled. See "
+                        "https://gitlab.com/gromacs/gromacs/-/issues/4629 for details.");
+        // Use a negative period to disable checkpointing.
+        checkpointPeriod = -1;
+    }
     auto checkpointHandler = std::make_unique<CheckpointHandler>(
-            compat::make_not_null<SimulationSignal*>(&signals[eglsCHKPT]), simulationsShareState,
-            ir->nstlist == 0, MASTER(cr), mdrunOptions.writeConfout,
-            mdrunOptions.checkpointOptions.period);
+            compat::make_not_null<SimulationSignal*>(&signals[eglsCHKPT]),
+            simulationsShareState,
+            ir->nstlist == 0,
+            isMainRank,
+            mdrunOptions_.writeConfout,
+            checkpointPeriod);
 
     const bool resetCountersIsLocal = true;
     auto       resetHandler         = std::make_unique<ResetHandler>(
             compat::make_not_null<SimulationSignal*>(&signals[eglsRESETCOUNTERS]),
-            !resetCountersIsLocal, ir->nsteps, MASTER(cr), mdrunOptions.timingOptions.resetHalfway,
-            mdrunOptions.maximumHoursToRun, mdlog, wcycle, walltime_accounting);
+            !resetCountersIsLocal,
+            ir->nsteps,
+            isMainRank,
+            mdrunOptions_.timingOptions.resetHalfway,
+            mdrunOptions_.maximumHoursToRun,
+            mdLog_,
+            wallCycleCounters_,
+            wallTimeAccounting_);
 
-    const DDBalanceRegionHandler ddBalanceRegionHandler(cr);
+    const DDBalanceRegionHandler ddBalanceRegionHandler(cr_->dd);
 
-    if (MASTER(cr) && isMultiSim(ms) && !useReplicaExchange)
+    if (isMainRank && isMultiSim(ms_) && !useReplicaExchange)
     {
-        logInitialMultisimStatus(ms, cr, mdlog, simulationsShareState, ir->nsteps, ir->init_step);
+        logInitialMultisimStatus(*ms_, cr_, mdLog_, simulationsShareState, ir->nsteps, ir->init_step);
     }
 
+    bool usedMdGpuGraphLastStep = false;
     /* and stop now if we should */
     bLastStep = (bLastStep || (ir->nsteps >= 0 && step_rel > ir->nsteps));
     while (!bLastStep)
     {
-
         /* Determine if this is a neighbor search step */
-        bNStList = (ir->nstlist > 0 && step % ir->nstlist == 0);
+        const bool bNStList = (ir->nstlist > 0 && step % ir->nstlist == 0);
 
-        if (bPMETune && bNStList)
+        if (pmeLoadBal && bNStList)
         {
             // This has to be here because PME load balancing is called so early.
             // TODO: Move to after all booleans are defined.
             if (useGpuForUpdate && !bFirstStep)
             {
-                stateGpu->copyCoordinatesFromGpu(state->x, AtomLocality::Local);
+                stateGpu->copyCoordinatesFromGpu(state_->x, AtomLocality::Local);
                 stateGpu->waitCoordinatesReadyOnHost(AtomLocality::Local);
             }
             /* PME grid + cut-off optimization with GPUs or PME nodes */
-            pme_loadbal_do(pme_loadbal, cr, (mdrunOptions.verbose && MASTER(cr)) ? stderr : nullptr,
-                           fplog, mdlog, *ir, fr, state->box, state->x, wcycle, step, step_rel,
-                           &bPMETunePrinting, simulationWork.useGpuPmePpCommunication);
+            pmeLoadBal->addCycles((mdrunOptions_.verbose && isMainRank) ? stderr : nullptr,
+                                  fr_,
+                                  state_->box,
+                                  state_->x,
+                                  wallCycleCounters_,
+                                  step,
+                                  step_rel);
         }
 
-        wallcycle_start(wcycle, ewcSTEP);
+        wallcycle_start(wallCycleCounters_, WallCycleCounter::Step);
 
-        bLastStep = (step_rel == ir->nsteps);
-        t         = t0 + step * ir->delta_t;
+        bLastStep      = (step_rel == ir->nsteps);
+        const double t = t0 + step * ir->delta_t;
 
         // TODO Refactor this, so that nstfep does not need a default value of zero
-        if (ir->efep != efepNO || ir->bSimTemp)
+        if (ir->efep != FreeEnergyPerturbationType::No || ir->bSimTemp)
         {
             /* find and set the current lambdas */
-            state->lambda = currentLambdas(step, *(ir->fepvals), state->fep_state);
+            state_->lambda = currentLambdas(step, *(ir->fepvals), state_->fep_state);
 
-            bDoDHDL     = do_per_step(step, ir->fepvals->nstdhdl);
-            bDoFEP      = ((ir->efep != efepNO) && do_per_step(step, nstfep));
             bDoExpanded = (do_per_step(step, ir->expandedvals->nstexpanded) && (ir->bExpanded)
                            && (!bFirstStep));
         }
 
         bDoReplEx = (useReplicaExchange && (step > 0) && !bLastStep
-                     && do_per_step(step, replExParams.exchangeInterval));
+                     && do_per_step(step, replExParams_.exchangeInterval));
 
         if (doSimulatedAnnealing)
         {
-            update_annealing_target_temp(ir, t, &upd);
+            // Simulated annealing updates the reference temperature.
+            update_annealing_target_temp(*ir, t, ekind_, &upd);
         }
 
         /* Stop Center of Mass motion */
-        bStopCM = (ir->comm_mode != ecmNO && do_per_step(step, ir->nstcomm));
+        const bool bStopCM = (ir->comm_mode != ComRemovalAlgorithm::No && do_per_step(step, ir->nstcomm));
 
         /* Determine whether or not to do Neighbour Searching */
-        bNS = (bFirstStep || bNStList || bExchanged || bNeedRepartition);
+        const bool bNS = (bFirstStep || bNStList || bExchanged || bNeedRepartition);
 
         /* Note that the stopHandler will cause termination at nstglobalcomm
          * steps. Since this concides with nstcalcenergy, nsttcouple and/or
          * nstpcouple steps, we have computed the half-step kinetic energy
          * of the previous step and can always output energies at the last step.
          */
-        bLastStep = bLastStep || stopHandler->stoppingAfterCurrentStep(bNS);
+        bLastStep = bLastStep || stopHandler->stoppingAfterCurrentStep(step);
 
         /* do_log triggers energy and virial calculation. Because this leads
          * to different code paths, forces can be different. Thus for exact
@@ -859,83 +932,119 @@ void gmx::LegacySimulator::do_md()
          * Note that the || bLastStep can result in non-exact continuation
          * beyond the last step. But we don't consider that to be an issue.
          */
-        do_log     = (do_per_step(step, ir->nstlog)
-                  || (bFirstStep && startingBehavior == StartingBehavior::NewSimulation) || bLastStep);
-        do_verbose = mdrunOptions.verbose
-                     && (step % mdrunOptions.verboseStepPrintInterval == 0 || bFirstStep || bLastStep);
+        const bool do_log = (do_per_step(step, ir->nstlog)
+                             || (bFirstStep && startingBehavior_ == StartingBehavior::NewSimulation)
+                             || bLastStep);
+        const bool do_verbose =
+                mdrunOptions_.verbose
+                && (step % mdrunOptions_.verboseStepPrintInterval == 0 || bFirstStep || bLastStep);
 
-        if (useGpuForUpdate && !bFirstStep && bNS)
+        // On search steps, when doing the update on the GPU, copy
+        // the coordinates and velocities to the host unless they are
+        // already there (ie on the first step and after replica
+        // exchange).
+        if (useGpuForUpdate && bNS && !bFirstStep && !bExchanged)
         {
-            // Copy velocities from the GPU on search steps to keep a copy on host (device buffers are reinitialized).
-            stateGpu->copyVelocitiesFromGpu(state->v, AtomLocality::Local);
+            if (usedMdGpuGraphLastStep)
+            {
+                // Wait on coordinates produced from GPU graph
+                stateGpu->waitCoordinatesUpdatedOnDevice();
+            }
+            stateGpu->copyVelocitiesFromGpu(state_->v, AtomLocality::Local);
+            stateGpu->copyCoordinatesFromGpu(state_->x, AtomLocality::Local);
             stateGpu->waitVelocitiesReadyOnHost(AtomLocality::Local);
-            // Copy coordinate from the GPU when needed at the search step.
-            // NOTE: The cases when coordinates needed on CPU for force evaluation are handled in sim_utils.
-            // NOTE: If the coordinates are to be written into output file they are also copied separately before the output.
-            stateGpu->copyCoordinatesFromGpu(state->x, AtomLocality::Local);
             stateGpu->waitCoordinatesReadyOnHost(AtomLocality::Local);
+        }
+
+        // We need to calculate virtual velocities if we are writing them in the current step.
+        // They also need to be periodically updated. Every 1000 steps is arbitrary, but a reasonable number.
+        // The reason why the velocities need to be updated regularly is that the virtual site coordinates
+        // are updated using these velocities during integration. Those coordinates are used for, e.g., domain
+        // decomposition. Before computing any forces the positions of the virtual sites are recalculated.
+        // This fixes a bug, #4879, which was introduced in MR !979.
+        const int  c_virtualSiteVelocityUpdateInterval = 1000;
+        const bool needVirtualVelocitiesThisStep =
+                (virtualSites_ != nullptr)
+                && (do_per_step(step, ir->nstvout) || checkpointHandler->isCheckpointingStep()
+                    || do_per_step(step, c_virtualSiteVelocityUpdateInterval));
+
+        if (virtualSites_ != nullptr)
+        {
+            // Virtual sites need to be updated before domain decomposition and forces are calculated
+            wallcycle_start(wallCycleCounters_, WallCycleCounter::VsiteConstr);
+            // md-vv calculates virtual velocities once it has full-step real velocities
+            virtualSites_->construct(state_->x,
+                                     state_->v,
+                                     state_->box,
+                                     (!EI_VV(inputRec_->eI) && needVirtualVelocitiesThisStep)
+                                             ? VSiteOperation::PositionsAndVelocities
+                                             : VSiteOperation::Positions);
+            wallcycle_stop(wallCycleCounters_, WallCycleCounter::VsiteConstr);
         }
 
         if (bNS && !(bFirstStep && ir->bContinuation))
         {
-            bMasterState = FALSE;
             /* Correct the new box if it is too skewed */
-            if (inputrecDynamicBox(ir))
+            const bool bMainState = inputrecDynamicBox(ir) && correct_box(fpLog_, step, state_->box);
+            // If update is offloaded, and the box was changed either
+            // above or in a replica exchange on the previous step,
+            // the GPU Update object should be informed
+            if (useGpuForUpdate && (bMainState || bExchanged))
             {
-                if (correct_box(fplog, step, state->box))
-                {
-                    bMasterState = TRUE;
-                    // If update is offloaded, it should be informed about the box size change
-                    if (useGpuForUpdate)
-                    {
-                        integrator->setPbc(PbcType::Xyz, state->box);
-                    }
-                }
+                integrator->setPbc(PbcType::Xyz, state_->box);
             }
-            if (DOMAINDECOMP(cr) && bMasterState)
+            if (haveDDAtomOrdering(*cr_) && bMainState)
             {
-                dd_collect_state(cr->dd, state, state_global);
+                dd_collect_state(cr_->dd, state_, stateGlobal_);
             }
 
-            if (DOMAINDECOMP(cr))
+            if (haveDDAtomOrdering(*cr_))
             {
                 /* Repartition the domain decomposition */
-                dd_partition_system(fplog, mdlog, step, cr, bMasterState, nstglobalcomm, state_global,
-                                    *top_global, ir, imdSession, pull_work, state, &f, mdAtoms, &top,
-                                    fr, vsite, constr, nrnb, wcycle, do_verbose && !bPMETunePrinting);
-                shouldCheckNumberOfBondedInteractions = true;
-                upd.setNumAtoms(state->natoms);
-
-                /* PLUMED */
-#if (GMX_PLUMED)
-                if(plumedswitch){
-                  int nat_home = dd_numHomeAtoms(*cr->dd);
-                  plumed_cmd(plumedmain,"setAtomsNlocal",&nat_home);
-                  plumed_cmd(plumedmain,"setAtomsGatindex",cr->dd->globalAtomIndices.data());
-                }
-#endif
-                /* END PLUMED */
+                dd_partition_system(fpLog_,
+                                    mdLog_,
+                                    step,
+                                    cr_->dd,
+                                    bMainState,
+                                    stateGlobal_,
+                                    topGlobal_,
+                                    *ir,
+                                    mdModulesNotifiers_,
+                                    imdSession_,
+                                    pullWork_,
+                                    state_,
+                                    &f,
+                                    mdAtoms_,
+                                    top_,
+                                    fr_,
+                                    virtualSites_,
+                                    constr_,
+                                    nrnb_,
+                                    wallCycleCounters_,
+                                    do_verbose && !(pmeLoadBal && pmeLoadBal->isPrintingLoad()));
+                upd.updateAfterPartition(state_->numAtoms(), md->cFREEZE, md->cTC, md->cACC);
+                fr_->longRangeNonbondeds->updateAfterPartition(*md);
             }
         }
 
         // Allocate or re-size GPU halo exchange object, if necessary
-        if (bNS && havePPDomainDecomposition(cr) && simulationWork.useGpuHaloExchange)
+        if (bNS && simulationWork.havePpDomainDecomposition && simulationWork.useGpuHaloExchange)
         {
-            GMX_RELEASE_ASSERT(fr->deviceStreamManager != nullptr,
+            GMX_RELEASE_ASSERT(fr_->deviceStreamManager != nullptr,
                                "GPU device manager has to be initialized to use GPU "
                                "version of halo exchange.");
-            constructGpuHaloExchange(mdlog, *cr, *fr->deviceStreamManager, wcycle);
+            constructGpuHaloExchange(
+                    *cr_, *fr_->deviceStreamManager, wallCycleCounters_, simulationWork.useNvshmem);
         }
 
-        if (MASTER(cr) && do_log)
+        if (isMainRank && do_log)
         {
-            gmx::EnergyOutput::printHeader(fplog, step,
-                                           t); /* can we improve the information printed here? */
+            gmx::EnergyOutput::printHeader(fpLog_, step, t); /* can we improve the information printed here? */
         }
 
-        if (ir->efep != efepNO)
+        if (ir->efep != FreeEnergyPerturbationType::No)
         {
-            update_mdatoms(mdatoms, state->lambda[efptMASS]);
+            update_mdatoms(mdAtoms_->mdatoms(), state_->lambda[FreeEnergyPerturbationCouplingType::Mass]);
         }
 
         if (bExchanged)
@@ -943,14 +1052,30 @@ void gmx::LegacySimulator::do_md()
             /* We need the kinetic energy at minus the half step for determining
              * the full step kinetic energy and possibly for T-coupling.*/
             /* This may not be quite working correctly yet . . . . */
-            compute_globals(gstat, cr, ir, fr, ekind, makeConstArrayRef(state->x),
-                            makeConstArrayRef(state->v), state->box, mdatoms, nrnb, &vcm, wcycle,
-                            enerd, nullptr, nullptr, nullptr, nullptr, constr, &nullSignaller,
-                            state->box, &totalNumberOfBondedInteractions, &bSumEkinhOld,
-                            CGLO_GSTAT | CGLO_TEMPERATURE | CGLO_CHECK_NUMBER_OF_BONDED_INTERACTIONS);
-            checkNumberOfBondedInteractions(mdlog, cr, totalNumberOfBondedInteractions, top_global,
-                                            &top, makeConstArrayRef(state->x), state->box,
-                                            &shouldCheckNumberOfBondedInteractions);
+            int cgloFlagsExchanged = CGLO_GSTAT | CGLO_COMPUTEEKIN;
+            compute_globals(gstat,
+                            cr_->commMyGroup,
+                            ir,
+                            fr_,
+                            ekind_,
+                            makeConstArrayRef(state_->x),
+                            makeConstArrayRef(state_->v),
+                            state_->box,
+                            md,
+                            nrnb_,
+                            &vcm,
+                            wallCycleCounters_,
+                            enerd_,
+                            nullptr,
+                            nullptr,
+                            nullptr,
+                            nullptr,
+                            &nullSignaller,
+                            state_->box,
+                            &bSumEkinhOld,
+                            cgloFlagsExchanged,
+                            step - 1, // Pass step-1 to indicate that v is from minus half a step
+                            &observablesReducer);
         }
         clear_mat(force_vir);
 
@@ -959,268 +1084,67 @@ void gmx::LegacySimulator::do_md()
         /* Determine the energy and pressure:
          * at nstcalcenergy steps and at energy output steps (set below).
          */
-        if (EI_VV(ir->eI) && (!bInitStep))
-        {
-            bCalcEnerStep = do_per_step(step, ir->nstcalcenergy);
-            bCalcVir      = bCalcEnerStep
-                       || (ir->epc != epcNO
-                           && (do_per_step(step, ir->nstpcouple) || do_per_step(step - 1, ir->nstpcouple)));
-        }
-        else
-        {
-            bCalcEnerStep = do_per_step(step, ir->nstcalcenergy);
-            bCalcVir = bCalcEnerStep || (ir->epc != epcNO && do_per_step(step, ir->nstpcouple));
-        }
-        bCalcEner = bCalcEnerStep;
 
-        do_ene = (do_per_step(step, ir->nstenergy) || bLastStep);
+        const bool do_ene              = (do_per_step(step, ir->nstenergy) || bLastStep);
+        const bool needEnergyAndVirial = do_ene || do_log || bDoReplEx;
 
-        if (do_ene || do_log || bDoReplEx)
+        const bool bCalcEnerStep = do_per_step(step, ir->nstcalcenergy);
+        const bool bCalcVir      = [&]() -> bool
         {
-            bCalcVir  = TRUE;
-            bCalcEner = TRUE;
-        }
+            auto doPressureCoupling = [ir](int64_t s) -> bool
+            {
+                return ir->pressureCouplingOptions.epc != PressureCoupling::No
+                       && do_per_step(s, ir->pressureCouplingOptions.nstpcouple);
+            };
+            if (EI_VV(ir->eI) && (!bInitStep))
+            {
+                return bCalcEnerStep || needEnergyAndVirial || doPressureCoupling(step)
+                       || doPressureCoupling(step - 1);
+            }
+            else
+            {
+                return bCalcEnerStep || needEnergyAndVirial || doPressureCoupling(step);
+            }
+        }();
+
+        const bool bCalcEner = bCalcEnerStep || needEnergyAndVirial;
+
+        // bCalcEner is only here for when the last step is not a multiple of nstfep
+        const bool computeDHDL = ((ir->efep != FreeEnergyPerturbationType::No || ir->bSimTemp)
+                                  && (do_per_step(step, nstfep) || bCalcEner));
 
         /* Do we need global communication ? */
-        bGStat = (bCalcVir || bCalcEner || bStopCM || do_per_step(step, nstglobalcomm)
-                  || (EI_VV(ir->eI) && inputrecNvtTrotter(ir) && do_per_step(step - 1, nstglobalcomm)));
+        const bool bGStat =
+                (bCalcVir || bCalcEner || bStopCM || do_per_step(step, nstglobalcomm)
+                 || (EI_VV(ir->eI) && inputrecNvtTrotter(ir) && do_per_step(step - 1, nstglobalcomm)));
 
-        force_flags = (GMX_FORCE_STATECHANGED | ((inputrecDynamicBox(ir)) ? GMX_FORCE_DYNAMICBOX : 0)
-                       | GMX_FORCE_ALLFORCES | (bCalcVir ? GMX_FORCE_VIRIAL : 0)
-                       | (bCalcEner ? GMX_FORCE_ENERGY : 0) | (bDoFEP ? GMX_FORCE_DHDL : 0));
-        if (fr->useMts && !do_per_step(step, ir->nstfout))
+        unsigned int force_flags =
+                (GMX_FORCE_STATECHANGED | GMX_FORCE_ALLFORCES | (bCalcVir ? GMX_FORCE_VIRIAL : 0)
+                 | (bCalcEner ? GMX_FORCE_ENERGY : 0) | (computeDHDL ? GMX_FORCE_DHDL : 0));
+        if (simulationWork.useMts && !do_per_step(step, ir->nstfout))
         {
+            // TODO: merge this with stepWork.useOnlyMtsCombinedForceBuffer
             force_flags |= GMX_FORCE_DO_NOT_NEED_NORMAL_FORCE;
         }
 
-        if (shellfc)
+        if (bNS)
         {
-            /* Now is the time to relax the shells */
-            relax_shell_flexcon(fplog, cr, ms, mdrunOptions.verbose, enforcedRotation, step, ir,
-                                imdSession, pull_work, bNS, force_flags, &top, constr, enerd,
-                                state->natoms, state->x.arrayRefWithPadding(),
-                                state->v.arrayRefWithPadding(), state->box, state->lambda,
-                                &state->hist, &f.view(), force_vir, mdatoms, nrnb, wcycle, shellfc,
-                                fr, runScheduleWork, t, mu_tot, vsite, ddBalanceRegionHandler);
-        }
-        else
-        {
-            /* The AWH history need to be saved _before_ doing force calculations where the AWH bias
-               is updated (or the AWH update will be performed twice for one step when continuing).
-               It would be best to call this update function from do_md_trajectory_writing but that
-               would occur after do_force. One would have to divide the update_awh function into one
-               function applying the AWH force and one doing the AWH bias update. The update AWH
-               bias function could then be called after do_md_trajectory_writing (then containing
-               update_awh_history). The checkpointing will in the future probably moved to the start
-               of the md loop which will rid of this issue. */
-            if (awh && checkpointHandler->isCheckpointingStep() && MASTER(cr))
+            if (fr_->listedForcesGpu)
             {
-                awh->updateHistory(state_global->awhHistory.get());
+                fr_->listedForcesGpu->updateHaveInteractions(top_->idef);
             }
-
-            /* The coordinates (x) are shifted (to get whole molecules)
-             * in do_force.
-             * This is parallellized as well, and does communication too.
-             * Check comments in sim_util.c
-             */
-
-            /* PLUMED */
-#if (GMX_PLUMED)
-            plumedNeedsEnergy=0;
-            if(plumedswitch){
-              int pversion=0;
-              plumed_cmd(plumedmain,"getApiVersion",&pversion);
-              long int lstep=step; plumed_cmd(plumedmain,"setStepLong",&lstep);
-              plumed_cmd(plumedmain,"setPositions",&state->x[0][0]);
-              plumed_cmd(plumedmain,"setMasses",&mdatoms->massT[0]);
-              plumed_cmd(plumedmain,"setCharges",&mdatoms->chargeA[0]);
-              plumed_cmd(plumedmain,"setBox",&state->box[0][0]);
-              plumed_cmd(plumedmain,"prepareCalc",NULL);
-              plumed_cmd(plumedmain,"setStopFlag",&plumedWantsToStop);
-              int checkp=0; if(checkpointHandler->isCheckpointingStep()) checkp=1;
-              if(pversion>3) plumed_cmd(plumedmain,"doCheckPoint",&checkp);
-        //    plumed_cmd(plumedmain,"setForces",&f[0][0]);
-              auto forceView = &f.view();
-              plumed_cmd(plumedmain,"setForces",forceView->forceWithPadding().unpaddedArrayRef().data());
-              plumed_cmd(plumedmain,"isEnergyNeeded",&plumedNeedsEnergy);
-              if(plumedNeedsEnergy) force_flags |= GMX_FORCE_ENERGY | GMX_FORCE_VIRIAL;
-              clear_mat(plumed_vir);
-              plumed_cmd(plumedmain,"setVirial",&plumed_vir[0][0]);
-            }
-#endif
-            /* END PLUMED */
-
-         // do_force(fplog, cr, ms, ir, awh.get(), enforcedRotation, imdSession, pull_work, step,
-         //          nrnb, wcycle, &top, state->box, state->x.arrayRefWithPadding(), &state->hist,
-         //          f.arrayRefWithPadding(), force_vir, mdatoms, enerd, fcd, state->lambda, graph,
-         //          fr, runScheduleWork, vsite, mu_tot, t, ed ? ed->getLegacyED() : nullptr,
-         //          (bNS ? GMX_FORCE_NS : 0) | force_flags, ddBalanceRegionHandler);
-            do_force(fplog, cr, ms, ir, awh.get(), enforcedRotation, imdSession, pull_work, step,
-                     nrnb, wcycle, &top, state->box, state->x.arrayRefWithPadding(), &state->hist,
-                     &f.view(), force_vir, mdatoms, enerd, state->lambda, fr, runScheduleWork,
-                     vsite, mu_tot, t, ed ? ed->getLegacyED() : nullptr,
-                     (bNS ? GMX_FORCE_NS : 0) | force_flags, ddBalanceRegionHandler);
-
-            /* PLUMED */
-#if (GMX_PLUMED)
-            if(plumedswitch){
-              if(plumedNeedsEnergy){
-                msmul(force_vir,2.0,plumed_vir);
-                plumed_cmd(plumedmain,"setEnergy",&enerd->term[F_EPOT]);
-                plumed_cmd(plumedmain,"performCalc",NULL);
-                msmul(plumed_vir,0.5,force_vir);
-              } else {
-                msmul(plumed_vir,0.5,plumed_vir);
-                m_add(force_vir,plumed_vir,force_vir);
-              }
-              if(bDoReplEx) plumed_cmd(plumedmain,"GREX savePositions",NULL);
-              if(plumedWantsToStop) ir->nsteps=step_rel+1;
-            //if(bHREX) plumed_cmd(plumedmain,"GREX cacheLocalUNow",&enerd->term[F_EPOT]);
-            }
-#endif
-            /* END PLUMED */
+            runScheduleWork_->domainWork = setupDomainLifetimeWorkload(
+                    *ir, *fr_, pullWork_, ed ? ed->getLegacyED() : nullptr, *md, simulationWork);
         }
 
-        // VV integrators do not need the following velocity half step
-        // if it is the first step after starting from a checkpoint.
-        // That is, the half step is needed on all other steps, and
-        // also the first step when starting from a .tpr file.
-        if (EI_VV(ir->eI))
-        {
-            integrateVVFirstStep(step, bFirstStep, bInitStep, startingBehavior, nstglobalcomm, ir,
-                                 fr, cr, state, mdatoms, fcdata, &MassQ, &vcm, top_global, top, enerd,
-                                 ekind, gstat, &last_ekin, bCalcVir, total_vir, shake_vir, force_vir,
-                                 pres, M, do_log, do_ene, bCalcEner, bGStat, bStopCM, bTrotter,
-                                 bExchanged, &bSumEkinhOld, &shouldCheckNumberOfBondedInteractions,
-                                 &saved_conserved_quantity, &f, &upd, constr, &nullSignaller,
-                                 trotter_seq, nrnb, mdlog, fplog, wcycle);
-        }
+        const int shellfcFlags = force_flags | (mdrunOptions_.verbose ? GMX_FORCE_ENERGY : 0);
+        const int legacyForceFlags = ((shellfc) ? shellfcFlags : force_flags) | (bNS ? GMX_FORCE_NS : 0);
 
-        /* ########  END FIRST UPDATE STEP  ############## */
-        /* ########  If doing VV, we now have v(dt) ###### */
-        if (bDoExpanded)
-        {
-            /* perform extended ensemble sampling in lambda - we don't
-               actually move to the new state before outputting
-               statistics, but if performing simulated tempering, we
-               do update the velocities and the tau_t. */
+        runScheduleWork_->stepWork = setupStepWorkload(
+                legacyForceFlags, ir->mtsLevels, step, runScheduleWork_->domainWork, simulationWork);
 
-            lamnew = ExpandedEnsembleDynamics(fplog, ir, enerd, state, &MassQ, state->fep_state,
-                                              state->dfhist, step, state->v.rvec_array(), mdatoms);
-            /* history is maintained in state->dfhist, but state_global is what is sent to trajectory and log output */
-            if (MASTER(cr))
-            {
-                copy_df_history(state_global->dfhist, state->dfhist);
-            }
-        }
-
-        // Copy coordinate from the GPU for the output/checkpointing if the update is offloaded and
-        // coordinates have not already been copied for i) search or ii) CPU force tasks.
-        if (useGpuForUpdate && !bNS && !runScheduleWork->domainWork.haveCpuLocalForceWork
-            && (do_per_step(step, ir->nstxout) || do_per_step(step, ir->nstxout_compressed)
-                || checkpointHandler->isCheckpointingStep()))
-        {
-            stateGpu->copyCoordinatesFromGpu(state->x, AtomLocality::Local);
-            stateGpu->waitCoordinatesReadyOnHost(AtomLocality::Local);
-        }
-        // Copy velocities if needed for the output/checkpointing.
-        // NOTE: Copy on the search steps is done at the beginning of the step.
-        if (useGpuForUpdate && !bNS
-            && (do_per_step(step, ir->nstvout) || checkpointHandler->isCheckpointingStep()))
-        {
-            stateGpu->copyVelocitiesFromGpu(state->v, AtomLocality::Local);
-            stateGpu->waitVelocitiesReadyOnHost(AtomLocality::Local);
-        }
-        // Copy forces for the output if the forces were reduced on the GPU (not the case on virial steps)
-        // and update is offloaded hence forces are kept on the GPU for update and have not been
-        // already transferred in do_force().
-        // TODO: There should be an improved, explicit mechanism that ensures this copy is only executed
-        //       when the forces are ready on the GPU -- the same synchronizer should be used as the one
-        //       prior to GPU update.
-        // TODO: When the output flags will be included in step workload, this copy can be combined with the
-        //       copy call in do_force(...).
-        // NOTE: The forces should not be copied here if the vsites are present, since they were modified
-        //       on host after the D2H copy in do_force(...).
-        if (runScheduleWork->stepWork.useGpuFBufferOps && (simulationWork.useGpuUpdate && !vsite)
-            && do_per_step(step, ir->nstfout))
-        {
-            stateGpu->copyForcesFromGpu(f.view().force(), AtomLocality::Local);
-            stateGpu->waitForcesReadyOnHost(AtomLocality::Local);
-        }
-        /* Now we have the energies and forces corresponding to the
-         * coordinates at time t. We must output all of this before
-         * the update.
-         */
-        do_md_trajectory_writing(fplog, cr, nfile, fnm, step, step_rel, t, ir, state, state_global,
-                                 observablesHistory, top_global, fr, outf, energyOutput, ekind,
-                                 f.view().force(), checkpointHandler->isCheckpointingStep(),
-                                 bRerunMD, bLastStep, mdrunOptions.writeConfout, bSumEkinhOld);
-        /* Check if IMD step and do IMD communication, if bIMD is TRUE. */
-        bInteractiveMDstep = imdSession->run(step, bNS, state->box, state->x.rvec_array(), t);
-
-        /* kludge -- virial is lost with restart for MTTK NPT control. Must reload (saved earlier). */
-        if (startingBehavior != StartingBehavior::NewSimulation && bFirstStep
-            && (inputrecNptTrotter(ir) || inputrecNphTrotter(ir)))
-        {
-            copy_mat(state->svir_prev, shake_vir);
-            copy_mat(state->fvir_prev, force_vir);
-        }
-
-        stopHandler->setSignal();
-        resetHandler->setSignal(walltime_accounting);
-
-        if (bGStat || !PAR(cr))
-        {
-            /* In parallel we only have to check for checkpointing in steps
-             * where we do global communication,
-             *  otherwise the other nodes don't know.
-             */
-            checkpointHandler->setSignal(walltime_accounting);
-        }
-
-        /* #########   START SECOND UPDATE STEP ################# */
-
-        /* at the start of step, randomize or scale the velocities ((if vv. Restriction of Andersen
-           controlled in preprocessing */
-
-        if (ETC_ANDERSEN(ir->etc)) /* keep this outside of update_tcouple because of the extra info required to pass */
-        {
-            gmx_bool bIfRandomize;
-            bIfRandomize = update_randomize_velocities(ir, step, cr, mdatoms, state->v, &upd, constr);
-            /* if we have constraints, we have to remove the kinetic energy parallel to the bonds */
-            if (constr && bIfRandomize)
-            {
-                constrain_velocities(constr, do_log, do_ene, step, state, nullptr, false, nullptr);
-            }
-        }
-        /* Box is changed in update() when we do pressure coupling,
-         * but we should still use the old box for energy corrections and when
-         * writing it to the energy file, so it matches the trajectory files for
-         * the same timestep above. Make a copy in a separate array.
-         */
-        copy_mat(state->box, lastbox);
-
-        dvdl_constr = 0;
-
-        if (!useGpuForUpdate)
-        {
-            wallcycle_start(wcycle, ewcUPDATE);
-        }
-        /* UPDATE PRESSURE VARIABLES IN TROTTER FORMULATION WITH CONSTRAINTS */
-        if (bTrotter)
-        {
-            trotter_update(ir, step, ekind, enerd, state, total_vir, mdatoms, &MassQ, trotter_seq, ettTSEQ3);
-            /* We can only do Berendsen coupling after we have summed
-             * the kinetic energy or virial. Since the happens
-             * in global_state after update, we should only do it at
-             * step % nstlist = 1 with bGStatEveryStep=FALSE.
-             */
-        }
-        else
-        {
-            update_tcouple(step, ir, state, ekind, &MassQ, mdatoms);
-            update_pcouple_before_coordinates(fplog, step, ir, state, pressureCouplingMu, M, bInitStep);
-        }
+        const bool doTemperatureScaling = (ir->etc != TemperatureCoupling::No
+                                           && do_per_step(step + ir->nsttcouple - 1, ir->nsttcouple));
 
         /* With leap-frog type integrators we compute the kinetic energy
          * at a whole time step as the average of the half-time step kinetic
@@ -1230,118 +1154,594 @@ void gmx::LegacySimulator::do_md()
         const bool needHalfStepKineticEnergy =
                 (!EI_VV(ir->eI) && (do_per_step(step + 1, nstglobalcomm) || step_rel + 1 == ir->nsteps));
 
-        // Parrinello-Rahman requires the pressure to be availible before the update to compute
+        // Parrinello-Rahman requires the pressure to be available before the update to compute
         // the velocity scaling matrix. Hence, it runs one step after the nstpcouple step.
-        const bool doParrinelloRahman = (ir->epc == epcPARRINELLORAHMAN
-                                         && do_per_step(step + ir->nstpcouple - 1, ir->nstpcouple));
+        const bool doParrinelloRahman =
+                (ir->pressureCouplingOptions.epc == PressureCoupling::ParrinelloRahman
+                 && do_per_step(step + ir->pressureCouplingOptions.nstpcouple - 1,
+                                ir->pressureCouplingOptions.nstpcouple));
 
-        if (EI_VV(ir->eI))
-        {
-            GMX_ASSERT(!useGpuForUpdate, "GPU update is not supported with VVAK integrator.");
+        MdGpuGraph* mdGraph = simulationWork.useMdGpuGraph ? fr_->mdGraph[step % 2].get() : nullptr;
 
-            integrateVVSecondStep(step, ir, fr, cr, state, mdatoms, fcdata, &MassQ, &vcm, pull_work,
-                                  enerd, ekind, gstat, &dvdl_constr, bCalcVir, total_vir, shake_vir,
-                                  force_vir, pres, M, lastbox, do_log, do_ene, bGStat, &bSumEkinhOld,
-                                  &f, &cbuf, &upd, constr, &nullSignaller, trotter_seq, nrnb, wcycle);
-        }
-        else
+        if (simulationWork.useMdGpuGraph)
         {
-            if (useGpuForUpdate)
+            // Reset graph on search step (due to changing neighbour list etc)
+            // or virial step (due to changing shifts and box).
+            if (bNS || bCalcVir)
             {
-
-                wallcycle_stop(wcycle, ewcUPDATE);
-
-                if (bNS && (bFirstStep || DOMAINDECOMP(cr)))
-                {
-                    integrator->set(stateGpu->getCoordinates(), stateGpu->getVelocities(),
-                                    stateGpu->getForces(), top.idef, *mdatoms, ekind->ngtc);
-
-                    // Copy data to the GPU after buffers might have being reinitialized
-                    stateGpu->copyVelocitiesToGpu(state->v, AtomLocality::Local);
-                    stateGpu->copyCoordinatesToGpu(state->x, AtomLocality::Local);
-                }
-
-                if (simulationWork.useGpuPme && !runScheduleWork->simulationWork.useGpuPmePpCommunication
-                    && !thisRankHasDuty(cr, DUTY_PME))
-                {
-                    // The PME forces were recieved to the host, so have to be copied
-                    stateGpu->copyForcesToGpu(f.view().force(), AtomLocality::All);
-                }
-                else if (!runScheduleWork->stepWork.useGpuFBufferOps)
-                {
-                    // The buffer ops were not offloaded this step, so the forces are on the
-                    // host and have to be copied
-                    stateGpu->copyForcesToGpu(f.view().force(), AtomLocality::Local);
-                }
-
-                const bool doTemperatureScaling =
-                        (ir->etc != etcNO && do_per_step(step + ir->nsttcouple - 1, ir->nsttcouple));
-
-                // This applies Leap-Frog, LINCS and SETTLE in succession
-                integrator->integrate(
-                        stateGpu->getForcesReadyOnDeviceEvent(
-                                AtomLocality::Local, runScheduleWork->stepWork.useGpuFBufferOps),
-                        ir->delta_t, true, bCalcVir, shake_vir, doTemperatureScaling, ekind->tcstat,
-                        doParrinelloRahman, ir->nstpcouple * ir->delta_t, M);
-
-                // Copy velocities D2H after update if:
-                // - Globals are computed this step (includes the energy output steps).
-                // - Temperature is needed for the next step.
-                if (bGStat || needHalfStepKineticEnergy)
-                {
-                    stateGpu->copyVelocitiesFromGpu(state->v, AtomLocality::Local);
-                    stateGpu->waitVelocitiesReadyOnHost(AtomLocality::Local);
-                }
+                fr_->mdGraph[MdGraphEvenOrOddStep::EvenStep]->reset();
+                fr_->mdGraph[MdGraphEvenOrOddStep::OddStep]->reset();
             }
             else
             {
-                /* With multiple time stepping we need to do an additional normal
-                 * update step to obtain the virial, as the actual MTS integration
-                 * using an acceleration where the slow forces are multiplied by mtsFactor.
-                 * Using that acceleration would result in a virial with the slow
-                 * force contribution would be a factor mtsFactor too large.
-                 */
-                if (fr->useMts && bCalcVir && constr != nullptr)
+                mdGraph->setUsedGraphLastStep(usedMdGpuGraphLastStep);
+                bool canUseMdGpuGraphThisStep =
+                        !bNS && !bCalcVir && !doTemperatureScaling && !doParrinelloRahman && !bGStat
+                        && !needHalfStepKineticEnergy && !do_per_step(step, ir->nstxout)
+                        && !do_per_step(step, ir->nstxout_compressed)
+                        && !do_per_step(step, ir->nstvout) && !do_per_step(step, ir->nstfout)
+                        && !checkpointHandler->isCheckpointingStep();
+                if (mdGraph->captureThisStep(canUseMdGpuGraphThisStep))
                 {
-                    upd.update_for_constraint_virial(*ir, *mdatoms, *state,
-                                                     f.view().forceWithPadding(), *ekind);
+                    mdGraph->startRecord(stateGpu->getCoordinatesReadyOnDeviceEvent(
+                            AtomLocality::Local, simulationWork, runScheduleWork_->stepWork));
+                }
+            }
+        }
+        if (!simulationWork.useMdGpuGraph || mdGraph->graphIsCapturingThisStep()
+            || !mdGraph->useGraphThisStep())
+        {
 
-                    constrain_coordinates(constr, do_log, do_ene, step, state,
-                                          upd.xp()->arrayRefWithPadding(), &dvdl_constr, bCalcVir,
-                                          shake_vir);
+            if (shellfc)
+            {
+                /* Now is the time to relax the shells */
+                relax_shell_flexcon(fpLog_,
+                                    cr_,
+                                    mdrunOptions_.verbose,
+                                    enforcedRotation_,
+                                    step,
+                                    ir,
+                                    mdModulesNotifiers_,
+                                    imdSession_,
+                                    pullWork_,
+                                    bNS,
+                                    top_,
+                                    constr_,
+                                    enerd_,
+                                    state_->numAtoms(),
+                                    state_->x.arrayRefWithPadding(),
+                                    state_->v.arrayRefWithPadding(),
+                                    state_->box,
+                                    state_->lambda,
+                                    &state_->hist,
+                                    &f.view(),
+                                    force_vir,
+                                    *md,
+                                    fr_->longRangeNonbondeds.get(),
+                                    nrnb_,
+                                    wallCycleCounters_,
+                                    shellfc,
+                                    fr_,
+                                    *runScheduleWork_,
+                                    t,
+                                    mu_tot,
+                                    virtualSites_,
+                                    ddBalanceRegionHandler);
+            }
+            else
+            {
+                /* The AWH history need to be saved _before_ doing force calculations where the AWH bias
+                   is updated (or the AWH update will be performed twice for one step when continuing).
+                   It would be best to call this update function from do_md_trajectory_writing but that
+                   would occur after do_force. One would have to divide the update_awh function into one
+                   function applying the AWH force and one doing the AWH bias update. The update AWH
+                   bias function could then be called after do_md_trajectory_writing (then containing
+                   update_awh_history). The checkpointing will in the future probably moved to the start
+                   of the md loop which will rid of this issue. */
+                if (awh && checkpointHandler->isCheckpointingStep() && isMainRank)
+                {
+                    awh->updateHistory(stateGlobal_->awhHistory.get());
                 }
 
-                ArrayRefWithPadding<const RVec> forceCombined =
-                        (fr->useMts && step % ir->mtsLevels[1].stepFactor == 0)
-                                ? f.view().forceMtsCombinedWithPadding()
-                                : f.view().forceWithPadding();
-                upd.update_coords(*ir, step, mdatoms, state, forceCombined, fcdata, ekind, M,
-                                  etrtPOSITION, cr, constr != nullptr);
-
-                wallcycle_stop(wcycle, ewcUPDATE);
-
-                constrain_coordinates(constr, do_log, do_ene, step, state,
-                                      upd.xp()->arrayRefWithPadding(), &dvdl_constr,
-                                      bCalcVir && !fr->useMts, shake_vir);
-
-                upd.update_sd_second_half(*ir, step, &dvdl_constr, mdatoms, state, cr, nrnb, wcycle,
-                                          constr, do_log, do_ene);
-                upd.finish_update(*ir, mdatoms, state, wcycle, constr != nullptr);
+                /* The coordinates (x) are shifted (to get whole molecules)
+                 * in do_force.
+                 * This is parallellized as well, and does communication too.
+                 * Check comments in sim_util.c
+                 */
+                do_force(fpLog_,
+                         cr_,
+                         *ir,
+                         mdModulesNotifiers_,
+                         awh.get(),
+                         enforcedRotation_,
+                         imdSession_,
+                         pullWork_,
+                         step,
+                         nrnb_,
+                         wallCycleCounters_,
+                         top_,
+                         state_->box,
+                         state_->x.arrayRefWithPadding(),
+                         state_->v.arrayRefWithPadding().unpaddedArrayRef(),
+                         &state_->hist,
+                         &f.view(),
+                         force_vir,
+                         md,
+                         enerd_,
+                         state_->lambda,
+                         fr_,
+                         *runScheduleWork_,
+                         virtualSites_,
+                         mu_tot,
+                         t,
+                         ed ? ed->getLegacyED() : nullptr,
+                         fr_->longRangeNonbondeds.get(),
+                         ddBalanceRegionHandler);
             }
 
-            if (ir->bPull && ir->pull->bSetPbcRefToPrevStepCOM)
+            // VV integrators do not need the following velocity half step
+            // if it is the first step after starting from a checkpoint.
+            // That is, the half step is needed on all other steps, and
+            // also the first step when starting from a .tpr file.
+            if (EI_VV(ir->eI))
             {
-                updatePrevStepPullCom(pull_work, state);
+                integrateVVFirstStep(step,
+                                     bFirstStep,
+                                     bInitStep,
+                                     startingBehavior_,
+                                     nstglobalcomm,
+                                     ir,
+                                     fr_,
+                                     cr_->commMyGroup,
+                                     cr_->dd,
+                                     state_,
+                                     mdAtoms_->mdatoms(),
+                                     &fcdata,
+                                     &MassQ,
+                                     &vcm,
+                                     enerd_,
+                                     &observablesReducer,
+                                     ekind_,
+                                     gstat,
+                                     &last_ekin,
+                                     bCalcVir,
+                                     total_vir,
+                                     shake_vir,
+                                     force_vir,
+                                     pres,
+                                     do_log,
+                                     do_ene,
+                                     bCalcEner,
+                                     bGStat,
+                                     bStopCM,
+                                     bTrotter,
+                                     bExchanged,
+                                     &bSumEkinhOld,
+                                     &saved_conserved_quantity,
+                                     &f,
+                                     &upd,
+                                     constr_,
+                                     &nullSignaller,
+                                     trotter_seq,
+                                     nrnb_,
+                                     fpLog_,
+                                     wallCycleCounters_);
+                if (virtualSites_ != nullptr && needVirtualVelocitiesThisStep)
+                {
+                    // Positions were calculated earlier
+                    wallcycle_start(wallCycleCounters_, WallCycleCounter::VsiteConstr);
+                    virtualSites_->construct(state_->x, state_->v, state_->box, VSiteOperation::Velocities);
+                    wallcycle_stop(wallCycleCounters_, WallCycleCounter::VsiteConstr);
+                }
             }
 
-            enerd->term[F_DVDL_CONSTR] += dvdl_constr;
+            /* ########  END FIRST UPDATE STEP  ############## */
+            /* ########  If doing VV, we now have v(dt) ###### */
+            if (bDoExpanded)
+            {
+                /* perform extended ensemble sampling in lambda - we don't
+                   actually move to the new state before outputting
+                   statistics, but if performing simulated tempering, we
+                   do update the velocities and the tau_t. */
+                lamnew = ExpandedEnsembleDynamics(fpLog_,
+                                                  *inputRec_,
+                                                  *enerd_,
+                                                  ekind_,
+                                                  state_,
+                                                  &MassQ,
+                                                  state_->fep_state,
+                                                  state_->dfhist.get(),
+                                                  step,
+                                                  state_->v.rvec_array(),
+                                                  md->homenr,
+                                                  md->cTC);
+                /* history is maintained in state->dfhist, but state_global is what is sent to trajectory and log output */
+                if (isMainRank)
+                {
+                    *stateGlobal_->dfhist = *state_->dfhist;
+                }
+            }
+
+            // Copy coordinate from the GPU for the output/checkpointing if the update is offloaded
+            // and coordinates have not already been copied for i) search or ii) CPU force tasks.
+            if (useGpuForUpdate && !bNS && !runScheduleWork_->domainWork.haveCpuLocalForceWork
+                && (do_per_step(step, ir->nstxout) || do_per_step(step, ir->nstxout_compressed)
+                    || checkpointHandler->isCheckpointingStep()))
+            {
+                stateGpu->copyCoordinatesFromGpu(state_->x, AtomLocality::Local);
+                stateGpu->waitCoordinatesReadyOnHost(AtomLocality::Local);
+            }
+            // Copy velocities if needed for the output/checkpointing.
+            // NOTE: Copy on the search steps is done at the beginning of the step.
+            if (useGpuForUpdate && !bNS
+                && (do_per_step(step, ir->nstvout) || checkpointHandler->isCheckpointingStep()))
+            {
+                stateGpu->copyVelocitiesFromGpu(state_->v, AtomLocality::Local);
+                stateGpu->waitVelocitiesReadyOnHost(AtomLocality::Local);
+            }
+            // Copy forces for the output if the forces were reduced on the GPU (not the case on virial steps)
+            // and update is offloaded hence forces are kept on the GPU for update and have not been
+            // already transferred in do_force().
+            // TODO: There should be an improved, explicit mechanism that ensures this copy is only executed
+            //       when the forces are ready on the GPU -- the same synchronizer should be used as the one
+            //       prior to GPU update.
+            // TODO: When the output flags will be included in step workload, this copy can be combined with the
+            //       copy call in do_force(...).
+            // NOTE: The forces should not be copied here if the vsites are present, since they were modified
+            //       on host after the D2H copy in do_force(...).
+            if (runScheduleWork_->stepWork.useGpuFBufferOps
+                && (simulationWork.useGpuUpdate && !virtualSites_) && do_per_step(step, ir->nstfout))
+            {
+                stateGpu->copyForcesFromGpu(f.view().force(), AtomLocality::Local);
+                stateGpu->waitForcesReadyOnHost(AtomLocality::Local);
+            }
+            /* Now we have the energies and forces corresponding to the
+             * coordinates at time t. We must output all of this before
+             * the update.
+             */
+            const EkindataState ekindataState =
+                    bGStat ? (bSumEkinhOld ? EkindataState::UsedNeedToReduce
+                                           : EkindataState::UsedDoNotNeedToReduce)
+                           : EkindataState::NotUsed;
+            do_md_trajectory_writing(fpLog_,
+                                     cr_,
+                                     nFile_,
+                                     fnm_,
+                                     step,
+                                     step_rel,
+                                     t,
+                                     ir,
+                                     state_,
+                                     stateGlobal_,
+                                     observablesHistory_,
+                                     topGlobal_,
+                                     fr_,
+                                     outf,
+                                     energyOutput,
+                                     ekind_,
+                                     f.view().force(),
+                                     checkpointHandler->isCheckpointingStep(),
+                                     bRerunMD,
+                                     bLastStep,
+                                     mdrunOptions_.writeConfout,
+                                     ekindataState);
+            /* Check if IMD step and do IMD communication, if bIMD is TRUE. */
+            bInteractiveMDstep = imdSession_->run(step, bNS, state_->box, state_->x, t);
+
+            /* kludge -- virial is lost with restart for MTTK NPT control. Must reload (saved earlier). */
+            if (startingBehavior_ != StartingBehavior::NewSimulation && bFirstStep
+                && (inputrecNptTrotter(ir) || inputrecNphTrotter(ir)))
+            {
+                copy_mat(state_->svir_prev, shake_vir);
+                copy_mat(state_->fvir_prev, force_vir);
+            }
+
+            stopHandler->setSignal();
+            resetHandler->setSignal(wallTimeAccounting_);
+
+            if (bGStat || cr_->commMySim.isSerial())
+            {
+                /* In parallel we only have to check for checkpointing in steps
+                 * where we do global communication,
+                 *  otherwise the other nodes don't know.
+                 */
+                checkpointHandler->setSignal(wallTimeAccounting_);
+            }
+
+            /* #########   START SECOND UPDATE STEP ################# */
+
+            /* at the start of step, randomize or scale the velocities ((if vv. Restriction of
+               Andersen controlled in preprocessing */
+
+            if (ETC_ANDERSEN(ir->etc)) /* keep this outside of update_tcouple because of the extra info required to pass */
+            {
+                gmx_bool bIfRandomize;
+                bIfRandomize = update_randomize_velocities(
+                        ir, step, cr_->dd, md->homenr, md->cTC, md->invmass, state_->v, &upd, constr_);
+                /* if we have constraints, we have to remove the kinetic energy parallel to the bonds */
+                if (constr_ && bIfRandomize)
+                {
+                    constrain_velocities(constr_, do_log || do_ene, step, state_, nullptr, false, nullptr);
+                }
+            }
+            /* Box is changed in update() when we do pressure coupling,
+             * but we should still use the old box for energy corrections and when
+             * writing it to the energy file, so it matches the trajectory files for
+             * the same timestep above. Make a copy in a separate array.
+             */
+            copy_mat(state_->box, lastbox);
+
+            dvdl_constr = 0;
+
+            if (!useGpuForUpdate)
+            {
+                wallcycle_start(wallCycleCounters_, WallCycleCounter::Update);
+            }
+            /* UPDATE PRESSURE VARIABLES IN TROTTER FORMULATION WITH CONSTRAINTS */
+            if (bTrotter)
+            {
+                trotter_update(ir,
+                               step,
+                               ekind_,
+                               state_,
+                               total_vir,
+                               md->homenr,
+                               md->cTC,
+                               md->invmass,
+                               &MassQ,
+                               trotter_seq,
+                               TrotterSequence::Three);
+                /* We can only do Berendsen coupling after we have summed
+                 * the kinetic energy or virial. Since the happens
+                 * in global_state after update, we should only do it at
+                 * step % nstlist = 1 with bGStatEveryStep=FALSE.
+                 */
+            }
+            else
+            {
+                update_tcouple(step, ir, state_, ekind_, &MassQ, md->homenr, md->cTC);
+                update_pcouple_before_coordinates(mdLog_,
+                                                  step,
+                                                  ir->pressureCouplingOptions,
+                                                  ir->deform,
+                                                  ir->delta_t,
+                                                  state_,
+                                                  &pressureCouplingMu,
+                                                  &parrinelloRahmanM);
+            }
+
+            if (EI_VV(ir->eI))
+            {
+                GMX_ASSERT(!useGpuForUpdate, "GPU update is not supported with VVAK integrator.");
+
+                integrateVVSecondStep(step,
+                                      ir,
+                                      fr_,
+                                      cr_->commMyGroup,
+                                      cr_->dd,
+                                      state_,
+                                      mdAtoms_->mdatoms(),
+                                      &fcdata,
+                                      &MassQ,
+                                      &vcm,
+                                      pullWork_,
+                                      enerd_,
+                                      &observablesReducer,
+                                      ekind_,
+                                      gstat,
+                                      &dvdl_constr,
+                                      bCalcVir,
+                                      total_vir,
+                                      shake_vir,
+                                      force_vir,
+                                      pres,
+                                      lastbox,
+                                      do_log,
+                                      do_ene,
+                                      bGStat,
+                                      &bSumEkinhOld,
+                                      &f,
+                                      &cbuf,
+                                      &upd,
+                                      constr_,
+                                      &nullSignaller,
+                                      trotter_seq,
+                                      nrnb_,
+                                      wallCycleCounters_);
+            }
+            else
+            {
+                if (useGpuForUpdate)
+                {
+                    // On search steps, update handles to device vectors
+                    // TODO: this condition has redundant / unnecessary clauses
+                    if (bNS && (bFirstStep || haveDDAtomOrdering(*cr_) || bExchanged))
+                    {
+                        integrator->set(stateGpu->getCoordinates(),
+                                        stateGpu->getVelocities(),
+                                        stateGpu->getForces(),
+                                        top_->idef,
+                                        *md);
+
+                        // Copy data to the GPU after buffers might have been reinitialized
+                        /* The velocity copy is redundant if we had Center-of-Mass motion removed on
+                         * the previous step. We don't check that now. */
+                        stateGpu->copyVelocitiesToGpu(state_->v, AtomLocality::Local);
+                    }
+
+                    // Copy x to the GPU unless we have already transferred in do_force().
+                    // We transfer in do_force() if a GPU force task requires x (PME or x buffer ops).
+                    if (!(runScheduleWork_->stepWork.haveGpuPmeOnThisRank
+                          || runScheduleWork_->stepWork.useGpuXBufferOps))
+                    {
+                        stateGpu->copyCoordinatesToGpu(state_->x, AtomLocality::Local);
+                        // Coordinates are later used by the integrator running in the same stream.
+                        stateGpu->consumeCoordinatesCopiedToDeviceEvent(AtomLocality::Local);
+                    }
+
+                    if ((simulationWork.useGpuPme && simulationWork.useCpuPmePpCommunication)
+                        || (!runScheduleWork_->stepWork.useGpuFBufferOps))
+                    {
+                        // The PME forces were received to the host, and reduced on the CPU with the
+                        // rest of the forces computed on the GPU, so the final forces have to be
+                        // copied back to the GPU. Or the buffer ops were not offloaded this step,
+                        // so the forces are on the host and have to be copied
+                        stateGpu->copyForcesToGpu(f.view().force(), AtomLocality::Local);
+                    }
+                    const bool doTemperatureScalingGpu =
+                            (ir->etc != TemperatureCoupling::No
+                             && do_per_step(step + ir->nsttcouple - 1, ir->nsttcouple));
+
+                    // This applies Leap-Frog, LINCS and SETTLE in succession
+                    integrator->integrate(
+                            stateGpu->getLocalForcesReadyOnDeviceEvent(
+                                    runScheduleWork_->stepWork, runScheduleWork_->simulationWork),
+                            ir->delta_t,
+                            true,
+                            bCalcVir,
+                            shake_vir,
+                            doTemperatureScalingGpu,
+                            ekind_->tcstat,
+                            doParrinelloRahman,
+                            ir->pressureCouplingOptions.nstpcouple * ir->delta_t,
+                            parrinelloRahmanM);
+                }
+                else
+                {
+                    /* With multiple time stepping we need to do an additional normal
+                     * update step to obtain the virial and dH/dl, as the actual MTS integration
+                     * using an acceleration where the slow forces are multiplied by mtsFactor.
+                     * Using that acceleration would result in a virial with the slow
+                     * force contribution would be a factor mtsFactor too large.
+                     */
+                    const bool separateVirialConstraining =
+                            (simulationWork.useMts && (bCalcVir || computeDHDL) && constr_ != nullptr);
+                    if (separateVirialConstraining)
+                    {
+                        upd.update_for_constraint_virial(*ir,
+                                                         md->homenr,
+                                                         md->havePartiallyFrozenAtoms,
+                                                         md->invmass,
+                                                         md->invMassPerDim,
+                                                         *state_,
+                                                         f.view().forceWithPadding(),
+                                                         *ekind_);
+
+                        // Call apply() directly so we can avoid constraining the velocities
+                        constr_->apply(false,
+                                       step,
+                                       1,
+                                       1.0,
+                                       state_->x.arrayRefWithPadding(),
+                                       upd.xp()->arrayRefWithPadding(),
+                                       {},
+                                       state_->box,
+                                       state_->lambda[FreeEnergyPerturbationCouplingType::Bonded],
+                                       &dvdl_constr,
+                                       {},
+                                       bCalcVir,
+                                       shake_vir,
+                                       ConstraintVariable::Positions);
+                    }
+
+                    ArrayRefWithPadding<const RVec> forceCombined =
+                            (simulationWork.useMts && step % ir->mtsLevels[1].stepFactor == 0)
+                                    ? f.view().forceMtsCombinedWithPadding()
+                                    : f.view().forceWithPadding();
+                    upd.update_coords(*ir,
+                                      step,
+                                      md->homenr,
+                                      md->havePartiallyFrozenAtoms,
+                                      md->ptype,
+                                      md->invmass,
+                                      md->invMassPerDim,
+                                      state_,
+                                      forceCombined,
+                                      &fcdata,
+                                      ekind_,
+                                      parrinelloRahmanM,
+                                      etrtPOSITION,
+                                      cr_->dd,
+                                      constr_ != nullptr);
+
+                    wallcycle_stop(wallCycleCounters_, WallCycleCounter::Update);
+
+                    constrain_coordinates(constr_,
+                                          do_log || do_ene,
+                                          step,
+                                          state_,
+                                          upd.xp()->arrayRefWithPadding(),
+                                          separateVirialConstraining ? nullptr : &dvdl_constr,
+                                          bCalcVir && !separateVirialConstraining,
+                                          shake_vir);
+
+                    upd.update_sd_second_half(*ir,
+                                              step,
+                                              &dvdl_constr,
+                                              md->homenr,
+                                              md->ptype,
+                                              md->invmass,
+                                              state_,
+                                              cr_->dd,
+                                              nrnb_,
+                                              wallCycleCounters_,
+                                              constr_,
+                                              do_log,
+                                              do_ene);
+                    upd.finish_update(*ir,
+                                      md->havePartiallyFrozenAtoms,
+                                      md->homenr,
+                                      state_,
+                                      wallCycleCounters_,
+                                      constr_ != nullptr);
+                }
+
+                if (ir->bPull && ir->pull->bSetPbcRefToPrevStepCOM)
+                {
+                    updatePrevStepPullCom(pullWork_, state_->pull_com_prev_step);
+                }
+
+                enerd_->term[InteractionFunction::dHdLambdaConstraint] += dvdl_constr;
+            }
         }
 
-        if (vsite != nullptr)
+        if (simulationWork.useMdGpuGraph)
         {
-            wallcycle_start(wcycle, ewcVSITECONSTR);
-            vsite->construct(state->x, ir->delta_t, state->v, state->box);
-            wallcycle_stop(wcycle, ewcVSITECONSTR);
+            GMX_ASSERT((mdGraph != nullptr), "MD GPU graph does not exist.");
+            if (mdGraph->graphIsCapturingThisStep())
+            {
+                mdGraph->endRecord();
+                // Force graph reinstantiation (instead of graph exec
+                // update): with PME tuning, since the GPU kernels
+                // chosen by the FFT library can vary with grid size;
+                // or with an odd nstlist, since the odd/even step
+                // pruning pattern will change.
+                // We also must reinstantiate to handle the one-time parity flip
+                // caused by an odd init_step with an even nstlist during the
+                // first neighbour search interval.
+                bool isFirstNsIntervalWithParityFlip =
+                        (((ir->init_step % 2) != 0) && ((ir->nstlist % 2) == 0)
+                         && (step <= ir->init_step + ir->nstlist + 1));
+
+                bool forceGraphReinstantiation = (pmeLoadBal && pmeLoadBal->isActive())
+                                                 || ((ir->nstlist % 2) == 1)
+                                                 || isFirstNsIntervalWithParityFlip;
+                mdGraph->createExecutableGraph(forceGraphReinstantiation);
+            }
+            if (mdGraph->useGraphThisStep())
+            {
+                mdGraph->launchGraphMdStep(integrator->xUpdatedOnDeviceEvent());
+            }
+            if (bNS)
+            {
+                // TODO: merge disableForDomainIfAnyPpRankHasCpuForces() back into reset() when
+                // domainWork initialization is moved out of do_force().
+                fr_->mdGraph[MdGraphEvenOrOddStep::EvenStep]->disableForDomainIfAnyPpRankHasCpuForces(
+                        runScheduleWork_->domainWork.haveCpuLocalForceWork);
+                fr_->mdGraph[MdGraphEvenOrOddStep::OddStep]->disableForDomainIfAnyPpRankHasCpuForces(
+                        runScheduleWork_->domainWork.haveCpuLocalForceWork);
+            }
+            usedMdGpuGraphLastStep = mdGraph->useGraphThisStep();
         }
 
         /* ############## IF NOT VV, Calculate globals HERE  ############ */
@@ -1354,14 +1754,33 @@ void gmx::LegacySimulator::do_md()
             // and when algorithms require it.
             const bool doInterSimSignal = (simulationsShareState && do_per_step(step, nstSignalComm));
 
-            if (bGStat || needHalfStepKineticEnergy || doInterSimSignal)
+            if (useGpuForUpdate)
             {
-                // Copy coordinates when needed to stop the CM motion.
-                if (useGpuForUpdate && !EI_VV(ir->eI) && bStopCM)
+                const bool coordinatesRequiredForStopCM =
+                        bStopCM && (bGStat || needHalfStepKineticEnergy || doInterSimSignal)
+                        && !EI_VV(ir->eI);
+
+                // Copy coordinates when needed to stop the CM motion or for replica exchange
+                if (coordinatesRequiredForStopCM || bDoReplEx)
                 {
-                    stateGpu->copyCoordinatesFromGpu(state->x, AtomLocality::Local);
+                    stateGpu->copyCoordinatesFromGpu(state_->x, AtomLocality::Local);
                     stateGpu->waitCoordinatesReadyOnHost(AtomLocality::Local);
                 }
+
+                // Copy velocities back to the host if:
+                // - Globals are computed this step (includes the energy output steps).
+                // - Temperature is needed for the next step.
+                // - This is a replica exchange step (even though we will only need
+                //     the velocities if an exchange succeeds)
+                if (bGStat || needHalfStepKineticEnergy || bDoReplEx)
+                {
+                    stateGpu->copyVelocitiesFromGpu(state_->v, AtomLocality::Local);
+                    stateGpu->waitVelocitiesReadyOnHost(AtomLocality::Local);
+                }
+            }
+
+            if (bGStat || needHalfStepKineticEnergy || doInterSimSignal)
+            {
                 // Since we're already communicating at this step, we
                 // can propagate intra-simulation signals. Note that
                 // check_nstglobalcomm has the responsibility for
@@ -1369,40 +1788,55 @@ void gmx::LegacySimulator::do_md()
                 // bGStat becomes true, so we can't get into a
                 // situation where e.g. checkpointing can't be
                 // signalled.
-                bool                doIntraSimSignal = true;
-                SimulationSignaller signaller(&signals, cr, ms, doInterSimSignal, doIntraSimSignal);
+                bool doIntraSimSignal = true;
+                SimulationSignaller signaller(&signals, cr_, ms_, doInterSimSignal, doIntraSimSignal);
 
-                compute_globals(gstat, cr, ir, fr, ekind, makeConstArrayRef(state->x),
-                                makeConstArrayRef(state->v), state->box, mdatoms, nrnb, &vcm,
-                                wcycle, enerd, force_vir, shake_vir, total_vir, pres, constr,
-                                &signaller, lastbox, &totalNumberOfBondedInteractions, &bSumEkinhOld,
+                compute_globals(gstat,
+                                cr_->commMyGroup,
+                                ir,
+                                fr_,
+                                ekind_,
+                                makeConstArrayRef(state_->x),
+                                makeConstArrayRef(state_->v),
+                                state_->box,
+                                md,
+                                nrnb_,
+                                &vcm,
+                                wallCycleCounters_,
+                                enerd_,
+                                force_vir,
+                                shake_vir,
+                                total_vir,
+                                pres,
+                                &signaller,
+                                lastbox,
+                                &bSumEkinhOld,
                                 (bGStat ? CGLO_GSTAT : 0) | (!EI_VV(ir->eI) && bCalcEner ? CGLO_ENERGY : 0)
                                         | (!EI_VV(ir->eI) && bStopCM ? CGLO_STOPCM : 0)
                                         | (!EI_VV(ir->eI) ? CGLO_TEMPERATURE : 0)
-                                        | (!EI_VV(ir->eI) ? CGLO_PRESSURE : 0) | CGLO_CONSTRAINT
-                                        | (shouldCheckNumberOfBondedInteractions ? CGLO_CHECK_NUMBER_OF_BONDED_INTERACTIONS
-                                                                                 : 0));
-                checkNumberOfBondedInteractions(mdlog, cr, totalNumberOfBondedInteractions,
-                                                top_global, &top, makeConstArrayRef(state->x),
-                                                state->box, &shouldCheckNumberOfBondedInteractions);
+                                        | (!EI_VV(ir->eI) ? CGLO_PRESSURE : 0) | CGLO_CONSTRAINT,
+                                step,
+                                &observablesReducer);
                 if (!EI_VV(ir->eI) && bStopCM)
                 {
-                    process_and_stopcm_grp(fplog, &vcm, *mdatoms, makeArrayRef(state->x),
-                                           makeArrayRef(state->v));
-                    inc_nrnb(nrnb, eNR_STOPCM, mdatoms->homenr);
+                    process_and_stopcm_grp(
+                            fpLog_, &vcm, *md, makeArrayRef(state_->x), makeArrayRef(state_->v));
+                    inc_nrnb(nrnb_, eNR_STOPCM, md->homenr);
 
                     // TODO: The special case of removing CM motion should be dealt more gracefully
                     if (useGpuForUpdate)
                     {
-                        stateGpu->copyCoordinatesToGpu(state->x, AtomLocality::Local);
+                        // Issue #3988, #4106.
+                        stateGpu->resetCoordinatesCopiedToDeviceEvent(AtomLocality::Local);
+                        stateGpu->copyCoordinatesToGpu(state_->x, AtomLocality::Local);
                         // Here we block until the H2D copy completes because event sync with the
                         // force kernels that use the coordinates on the next steps is not implemented
                         // (not because of a race on state->x being modified on the CPU while H2D is in progress).
                         stateGpu->waitCoordinatesCopiedToDevice(AtomLocality::Local);
                         // If the COM removal changed the velocities on the CPU, this has to be accounted for.
-                        if (vcm.mode != ecmNO)
+                        if (vcm.mode != ComRemovalAlgorithm::No)
                         {
-                            stateGpu->copyVelocitiesToGpu(state->v, AtomLocality::Local);
+                            stateGpu->copyVelocitiesToGpu(state_->v, AtomLocality::Local);
                         }
                     }
                 }
@@ -1412,35 +1846,54 @@ void gmx::LegacySimulator::do_md()
         /* #############  END CALC EKIN AND PRESSURE ################# */
 
         /* Note: this is OK, but there are some numerical precision issues with using the convergence of
-           the virial that should probably be addressed eventually. state->veta has better properies,
+           the virial that should probably be addressed eventually. state->veta has better properties,
            but what we actually need entering the new cycle is the new shake_vir value. Ideally, we could
            generate the new shake_vir, but test the veta value for convergence.  This will take some thought. */
 
-        if (ir->efep != efepNO && !EI_VV(ir->eI))
+        if (ir->efep != FreeEnergyPerturbationType::No && !EI_VV(ir->eI))
         {
             /* Sum up the foreign energy and dK/dl terms for md and sd.
                Currently done every step so that dH/dl is correct in the .edr */
-            accumulateKineticLambdaComponents(enerd, state->lambda, *ir->fepvals);
+            accumulateKineticLambdaComponents(enerd_, state_->lambda, *ir->fepvals);
         }
 
-        update_pcouple_after_coordinates(fplog, step, ir, mdatoms, pres, force_vir, shake_vir,
-                                         pressureCouplingMu, state, nrnb, upd.deform(), !useGpuForUpdate);
+        const real currentSystemRefT =
+                (haveEnsembleTemperature(*ir) ? ekind_->currentEnsembleTemperature() : 0.0_real);
+        const bool scaleCoordinates = !useGpuForUpdate || bDoReplEx;
+        update_pcouple_after_coordinates(fpLog_,
+                                         step,
+                                         ir->pressureCouplingOptions,
+                                         ir->ld_seed,
+                                         currentSystemRefT,
+                                         ir->opts.nFreeze,
+                                         ir->deform,
+                                         ir->delta_t,
+                                         md->homenr,
+                                         md->cFREEZE,
+                                         pres,
+                                         force_vir,
+                                         shake_vir,
+                                         &pressureCouplingMu,
+                                         state_,
+                                         nrnb_,
+                                         upd.deform(),
+                                         scaleCoordinates);
 
         const bool doBerendsenPressureCoupling =
-                (inputrec->epc == epcBERENDSEN && do_per_step(step, inputrec->nstpcouple));
+                (inputRec_->pressureCouplingOptions.epc == PressureCoupling::Berendsen
+                 && do_per_step(step, inputRec_->pressureCouplingOptions.nstpcouple));
         const bool doCRescalePressureCoupling =
-                (inputrec->epc == epcCRESCALE && do_per_step(step, inputrec->nstpcouple));
+                (inputRec_->pressureCouplingOptions.epc == PressureCoupling::CRescale
+                 && do_per_step(step, inputRec_->pressureCouplingOptions.nstpcouple));
         if (useGpuForUpdate
             && (doBerendsenPressureCoupling || doCRescalePressureCoupling || doParrinelloRahman))
         {
             integrator->scaleCoordinates(pressureCouplingMu);
             if (doCRescalePressureCoupling)
             {
-                matrix pressureCouplingInvMu;
-                gmx::invertBoxMatrix(pressureCouplingMu, pressureCouplingInvMu);
-                integrator->scaleVelocities(pressureCouplingInvMu);
+                integrator->scaleVelocities(invertBoxMatrix(pressureCouplingMu));
             }
-            integrator->setPbc(PbcType::Xyz, state->box);
+            integrator->setPbc(PbcType::Xyz, state_->box);
         }
 
         /* ################# END UPDATE STEP 2 ################# */
@@ -1460,44 +1913,74 @@ void gmx::LegacySimulator::do_md()
             /* #########  BEGIN PREPARING EDR OUTPUT  ###########  */
 
             /* use the directly determined last velocity, not actually the averaged half steps */
-            if (bTrotter && ir->eI == eiVV)
+            if (bTrotter && ir->eI == IntegrationAlgorithm::VV)
             {
-                enerd->term[F_EKIN] = last_ekin;
+                enerd_->term[InteractionFunction::KineticEnergy] = last_ekin;
             }
-            enerd->term[F_ETOT] = enerd->term[F_EPOT] + enerd->term[F_EKIN];
+            enerd_->term[InteractionFunction::TotalEnergy] =
+                    enerd_->term[InteractionFunction::PotentialEnergy]
+                    + enerd_->term[InteractionFunction::KineticEnergy];
 
             if (integratorHasConservedEnergyQuantity(ir))
             {
                 if (EI_VV(ir->eI))
                 {
-                    enerd->term[F_ECONSERVED] = enerd->term[F_ETOT] + saved_conserved_quantity;
+                    enerd_->term[InteractionFunction::ConservedEnergy] =
+                            enerd_->term[InteractionFunction::TotalEnergy] + saved_conserved_quantity;
                 }
                 else
                 {
-                    enerd->term[F_ECONSERVED] = enerd->term[F_ETOT] + NPT_energy(ir, state, &MassQ);
+                    enerd_->term[InteractionFunction::ConservedEnergy] =
+                            enerd_->term[InteractionFunction::TotalEnergy]
+                            + NPT_energy(ir->pressureCouplingOptions,
+                                         ir->etc,
+                                         gmx::constArrayRefFromArray(ir->opts.nrdf, ir->opts.ngtc),
+                                         *ekind_,
+                                         inputrecNvtTrotter(ir) || inputrecNptTrotter(ir),
+                                         state_,
+                                         &MassQ);
                 }
             }
             /* #########  END PREPARING EDR OUTPUT  ###########  */
         }
 
         /* Output stuff */
-        if (MASTER(cr))
+        if (isMainRank)
         {
-            if (fplog && do_log && bDoExpanded)
+            if (fpLog_ && do_log && bDoExpanded)
             {
                 /* only needed if doing expanded ensemble */
-                PrintFreeEnergyInfoToFile(fplog, ir->fepvals, ir->expandedvals,
-                                          ir->bSimTemp ? ir->simtempvals : nullptr,
-                                          state_global->dfhist, state->fep_state, ir->nstlog, step);
+                PrintFreeEnergyInfoToFile(fpLog_,
+                                          ir->fepvals.get(),
+                                          ir->expandedvals.get(),
+                                          ir->bSimTemp ? ir->simtempvals.get() : nullptr,
+                                          stateGlobal_->dfhist.get(),
+                                          state_->fep_state,
+                                          ir->nstlog,
+                                          step);
             }
             if (bCalcEner)
             {
-                energyOutput.addDataAtEnergyStep(
-                        bDoDHDL, bCalcEnerStep, t, mdatoms->tmass, enerd, ir->fepvals,
-                        ir->expandedvals, lastbox,
-                        PTCouplingArrays{ state->boxv, state->nosehoover_xi, state->nosehoover_vxi,
-                                          state->nhpres_xi, state->nhpres_vxi },
-                        state->fep_state, shake_vir, force_vir, total_vir, pres, ekind, mu_tot, constr);
+                const bool outputDHDL = (computeDHDL && do_per_step(step, ir->fepvals->nstdhdl));
+
+                energyOutput.addDataAtEnergyStep(outputDHDL,
+                                                 bCalcEnerStep,
+                                                 t,
+                                                 md->tmass,
+                                                 enerd_,
+                                                 ir->fepvals.get(),
+                                                 lastbox,
+                                                 PTCouplingArrays{ state_->boxv,
+                                                                   state_->nosehoover_xi,
+                                                                   state_->nosehoover_vxi,
+                                                                   state_->nhpres_xi,
+                                                                   state_->nhpres_vxi },
+                                                 state_->fep_state,
+                                                 total_vir,
+                                                 pres,
+                                                 ekind_,
+                                                 mu_tot,
+                                                 constr_);
             }
             else
             {
@@ -1509,29 +1992,35 @@ void gmx::LegacySimulator::do_md()
 
             if (doSimulatedAnnealing)
             {
-                gmx::EnergyOutput::printAnnealingTemperatures(do_log ? fplog : nullptr, groups,
-                                                              &(ir->opts));
+                gmx::EnergyOutput::printAnnealingTemperatures(
+                        do_log ? fpLog_ : nullptr, *groups, ir->opts, *ekind_);
             }
             if (do_log || do_ene || do_dr || do_or)
             {
-                energyOutput.printStepToEnergyFile(mdoutf_get_fp_ene(outf), do_ene, do_dr, do_or,
-                                                   do_log ? fplog : nullptr, step, t,
-                                                   fr->fcdata.get(), awh.get());
+                energyOutput.printStepToEnergyFile(mdoutf_get_fp_ene(outf),
+                                                   do_ene,
+                                                   do_dr,
+                                                   do_or,
+                                                   do_log ? fpLog_ : nullptr,
+                                                   step,
+                                                   t,
+                                                   fr_->fcdata.get(),
+                                                   awh.get());
             }
-            if (do_log && ir->bDoAwh && awh->hasFepLambdaDimension())
+            if (do_log && ((ir->bDoAwh && awh->hasFepLambdaDimension()) || ir->fepvals->delta_lambda != 0))
             {
                 const bool isInitialOutput = false;
-                printLambdaStateToLog(fplog, state->lambda, isInitialOutput);
+                printLambdaStateToLog(fpLog_, state_->lambda, isInitialOutput);
             }
 
             if (ir->bPull)
             {
-                pull_print_output(pull_work, step, t);
+                pull_print_output(pullWork_, step, t);
             }
 
             if (do_per_step(step, ir->nstlog))
             {
-                if (fflush(fplog) != 0)
+                if (std::fflush(fpLog_) != 0)
                 {
                     gmx_fatal(FARGS, "Cannot flush logfile - maybe you are out of disk space?");
                 }
@@ -1541,35 +2030,44 @@ void gmx::LegacySimulator::do_md()
         {
             /* Have to do this part _after_ outputting the logfile and the edr file */
             /* Gets written into the state at the beginning of next loop*/
-            state->fep_state = lamnew;
+            state_->fep_state = lamnew;
         }
         else if (ir->bDoAwh && awh->needForeignEnergyDifferences(step))
         {
-            state->fep_state = awh->fepLambdaState();
+            state_->fep_state = awh->fepLambdaState();
         }
         /* Print the remaining wall clock time for the run */
-        if (isMasterSimMasterRank(ms, MASTER(cr)) && (do_verbose || gmx_got_usr_signal()) && !bPMETunePrinting)
+        if (isMainSimMainRank(ms_, isMainRank) && (do_verbose || gmx_got_usr_signal())
+            && !(pmeLoadBal && pmeLoadBal->isPrintingLoad()))
         {
             if (shellfc)
             {
                 fprintf(stderr, "\n");
             }
-            print_time(stderr, walltime_accounting, step, ir, cr);
+            print_time(stderr, wallTimeAccounting_, step, ir, cr_->commMySim);
         }
 
         /* Ion/water position swapping.
          * Not done in last step since trajectory writing happens before this call
          * in the MD loop and exchanges would be lost anyway. */
         bNeedRepartition = FALSE;
-        if ((ir->eSwapCoords != eswapNO) && (step > 0) && !bLastStep && do_per_step(step, ir->swap->nstswap))
+        if ((ir->eSwapCoords != SwapType::No) && (step > 0) && !bLastStep
+            && do_per_step(step, ir->swap->nstswap))
         {
-            bNeedRepartition =
-                    do_swapcoords(cr, step, t, ir, swap, wcycle, as_rvec_array(state->x.data()),
-                                  state->box, MASTER(cr) && mdrunOptions.verbose, bRerunMD);
+            bNeedRepartition = do_swapcoords(cr_->commMyGroup,
+                                             step,
+                                             t,
+                                             ir,
+                                             swap_,
+                                             wallCycleCounters_,
+                                             state_->x,
+                                             state_->box,
+                                             isMainRank && mdrunOptions_.verbose,
+                                             bRerunMD);
 
-            if (bNeedRepartition && DOMAINDECOMP(cr))
+            if (bNeedRepartition && haveDDAtomOrdering(*cr_))
             {
-                dd_collect_state(cr->dd, state, state_global);
+                dd_collect_state(cr_->dd, state_, stateGlobal_);
             }
         }
 
@@ -1577,16 +2075,40 @@ void gmx::LegacySimulator::do_md()
         bExchanged = FALSE;
         if (bDoReplEx)
         {
-            bExchanged = replica_exchange(fplog, cr, ms, repl_ex, state_global, enerd, state, step, t);
+            bExchanged =
+                    replica_exchange(fpLog_, cr_, ms_, repl_ex, stateGlobal_, enerd_, state_, step, t);
         }
 
-        if ((bExchanged || bNeedRepartition) && DOMAINDECOMP(cr))
+        if ((bExchanged || bNeedRepartition) && haveDDAtomOrdering(*cr_))
         {
-            dd_partition_system(fplog, mdlog, step, cr, TRUE, 1, state_global, *top_global, ir,
-                                imdSession, pull_work, state, &f, mdAtoms, &top, fr, vsite, constr,
-                                nrnb, wcycle, FALSE);
-            shouldCheckNumberOfBondedInteractions = true;
-            upd.setNumAtoms(state->natoms);
+            dd_partition_system(fpLog_,
+                                mdLog_,
+                                step,
+                                cr_->dd,
+                                TRUE,
+                                stateGlobal_,
+                                topGlobal_,
+                                *ir,
+                                mdModulesNotifiers_,
+                                imdSession_,
+                                pullWork_,
+                                state_,
+                                &f,
+                                mdAtoms_,
+                                top_,
+                                fr_,
+                                virtualSites_,
+                                constr_,
+                                nrnb_,
+                                wallCycleCounters_,
+                                FALSE);
+            upd.updateAfterPartition(state_->numAtoms(), md->cFREEZE, md->cTC, md->cACC);
+            fr_->longRangeNonbondeds->updateAfterPartition(*md);
+            if (runScheduleWork_->stepWork.haveGpuPmeOnThisRank)
+            {
+                pme_gpu_prepare_computation(
+                        fr_->pmedata, state_->box, simulationWork.haveDynamicBox, runScheduleWork_->stepWork);
+            }
         }
 
         bFirstStep = FALSE;
@@ -1596,44 +2118,64 @@ void gmx::LegacySimulator::do_md()
         /* With all integrators, except VV, we need to retain the pressure
          * at the current step for coupling at the next step.
          */
-        if ((state->flags & (1U << estPRES_PREV))
-            && (bGStatEveryStep || (ir->nstpcouple > 0 && step % ir->nstpcouple == 0)))
+        if (state_->hasEntry(StateEntry::PressurePrevious)
+            && (bGStatEveryStep
+                || (ir->pressureCouplingOptions.nstpcouple > 0
+                    && step % ir->pressureCouplingOptions.nstpcouple == 0)))
         {
             /* Store the pressure in t_state for pressure coupling
              * at the next MD step.
              */
-            copy_mat(pres, state->pres_prev);
+            copy_mat(pres, state_->pres_prev);
         }
 
         /* #######  END SET VARIABLES FOR NEXT ITERATION ###### */
 
-        if ((membed != nullptr) && (!bLastStep))
+        if ((membed_ != nullptr) && (!bLastStep))
         {
-            rescale_membed(step_rel, membed, as_rvec_array(state_global->x.data()));
+            rescale_membed(step_rel, membed_, as_rvec_array(stateGlobal_->x.data()));
         }
 
-        cycles = wallcycle_stop(wcycle, ewcSTEP);
-        if (DOMAINDECOMP(cr) && wcycle)
+        const double cycles = wallcycle_stop(wallCycleCounters_, WallCycleCounter::Step);
+        if (haveDDAtomOrdering(*cr_) && wallCycleCounters_)
         {
-            dd_cycles_add(cr->dd, cycles, ddCyclStep);
+            dd_cycles_add(cr_->dd, cycles, ddCyclStep);
         }
 
         /* increase the MD step number */
         step++;
         step_rel++;
+        observablesReducer.markAsReadyToReduce();
 
 #if GMX_FAHCORE
-        if (MASTER(cr))
+        if (MAIN(cr))
         {
             fcReportProgress(ir->nsteps + ir->init_step, step);
         }
 #endif
 
-        resetHandler->resetCounters(step, step_rel, mdlog, fplog, cr, fr->nbv.get(), nrnb,
-                                    fr->pmedata, pme_loadbal, wcycle, walltime_accounting);
+        resetHandler->resetCounters(step,
+                                    step_rel,
+                                    mdLog_,
+                                    fpLog_,
+                                    cr_,
+                                    fr_->nbv.get(),
+                                    nrnb_,
+                                    fr_->pmedata,
+                                    pmeLoadBal.get(),
+                                    wallCycleCounters_,
+                                    wallTimeAccounting_);
 
-        /* If bIMD is TRUE, the master updates the IMD energy record and sends positions to VMD client */
-        imdSession->updateEnergyRecordAndSendPositionsAndEnergies(bInteractiveMDstep, step, bCalcEner);
+        /* If bIMD is TRUE, the main updates the IMD energy record and sends positions to VMD client */
+        imdSession_->updateEnergyRecordAndSendPositionsAndEnergies(bInteractiveMDstep, step, bCalcEner);
+
+        // any run that uses GPUs must be at least offloading nonbondeds
+        const bool usingGpu = simulationWork.useGpuNonbonded;
+        if (usingGpu)
+        {
+            // ensure that GPU errors do not propagate between MD steps
+            checkPendingDeviceErrorBetweenSteps();
+        }
     }
     /* End of main MD loop */
 
@@ -1642,39 +2184,48 @@ void gmx::LegacySimulator::do_md()
     mdoutf_tng_close(outf);
 
     /* Stop measuring walltime */
-    walltime_accounting_end_time(walltime_accounting);
+    walltime_accounting_end_time(wallTimeAccounting_);
 
-    if (!thisRankHasDuty(cr, DUTY_PME))
+    if (simulationWork.haveSeparatePmeRank)
     {
         /* Tell the PME only node to finish */
-        gmx_pme_send_finish(cr);
+        gmx_pme_send_finish(cr_->dd);
     }
 
-    if (MASTER(cr))
+    // This is to free PP ranks gpuhaloexchange symmetric buffer `d_recvBuf_`
+    // as calling its destruction happens very late causing hang as this is a collective
+    // call, the PME side free of the same buffer happens quite early.
+    if (cr_->commMySim.isParallel() && simulationWork.useNvshmem)
+    {
+        destroyGpuHaloExchangeNvshmemBuf(*cr_);
+    }
+
+    if (isMainRank)
     {
         if (ir->nstcalcenergy > 0)
         {
-            energyOutput.printEnergyConservation(fplog, ir->simulation_part, EI_MD(ir->eI));
+            energyOutput.printEnergyConservation(fpLog_, ir->simulation_part, EI_MD(ir->eI));
 
-            gmx::EnergyOutput::printAnnealingTemperatures(fplog, groups, &(ir->opts));
-            energyOutput.printAverages(fplog, groups);
+            gmx::EnergyOutput::printAnnealingTemperatures(fpLog_, *groups, ir->opts, *ekind_);
+            energyOutput.printAverages(fpLog_, groups);
         }
     }
     done_mdoutf(outf);
 
-    if (bPMETune)
+    if (pmeLoadBal)
     {
-        pme_loadbal_done(pme_loadbal, fplog, mdlog, fr->nbv->useGpu());
+        pmeLoadBal->printSettings();
+        pmeLoadBal.reset(nullptr);
     }
 
-    done_shellfc(fplog, shellfc, step_rel);
+    done_shellfc(fpLog_, shellfc, step_rel);
 
-    if (useReplicaExchange && MASTER(cr))
+    if (useReplicaExchange && isMainRank)
     {
-        print_replica_exchange_statistics(fplog, repl_ex);
+        print_replica_exchange_statistics(fpLog_, repl_ex);
     }
 
-    walltime_accounting_set_nsteps_done(walltime_accounting, step_rel);
+    walltime_accounting_set_nsteps_done(wallTimeAccounting_, step_rel);
 
     global_stat_destroy(gstat);
 }

@@ -1,11 +1,9 @@
 #
 # This file is part of the GROMACS molecular simulation package.
 #
-# Copyright (c) 2012,2013,2014,2015,2018 by the GROMACS development team.
-# Copyright (c) 2019,2020, by the GROMACS development team, led by
-# Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
-# and including many others, as listed in the AUTHORS file in the
-# top-level source directory and at http://www.gromacs.org.
+# Copyright 2012- The GROMACS Authors
+# and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+# Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
 #
 # GROMACS is free software; you can redistribute it and/or
 # modify it under the terms of the GNU Lesser General Public License
@@ -19,7 +17,7 @@
 #
 # You should have received a copy of the GNU Lesser General Public
 # License along with GROMACS; if not, see
-# http://www.gnu.org/licenses, or write to the Free Software Foundation,
+# https://www.gnu.org/licenses, or write to the Free Software Foundation,
 # Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
 #
 # If you want to redistribute modifications to GROMACS, please
@@ -28,36 +26,52 @@
 # consider code for inclusion in the official distribution, but
 # derived work must not be called official GROMACS. Details are found
 # in the README & COPYING files - if they are missing, get the
-# official version at http://www.gromacs.org.
+# official version at https://www.gromacs.org.
 #
 # To help us fund GROMACS development, we humbly ask that you cite
-# the research papers on the package. Check out http://www.gromacs.org.
+# the research papers on the package. Check out https://www.gromacs.org.
 
-file(GLOB LINEARALGEBRA_SOURCES *.cpp)
+add_library(linearalgebra OBJECT)
+target_sources(linearalgebra PRIVATE
+        binary_information.cpp
+        eigensolver.cpp
+        gmx_arpack.cpp
+        matrix.cpp
+        sparsematrix.cpp
+)
+
+# Note that the use of MKL for FFT determines that MKL will be used
+# also for linear algebra, for simplicity.
+set_source_files_properties(binary_information.cpp PROPERTIES COMPILE_FLAGS
+    "-DGMX_DESCRIBE_BLAS=\"${GMX_DESCRIBE_BLAS}\" -DGMX_DESCRIBE_LAPACK=\"${GMX_DESCRIBE_LAPACK}\" -DGMX_FFT_MKL=${GMX_FFT_MKL}")
 
 if (NOT GMX_EXTERNAL_BLAS)
     file(GLOB BLAS_SOURCES gmx_blas/*.cpp)
+    target_sources(linearalgebra PRIVATE ${BLAS_SOURCES})
 endif()
 
 if (NOT GMX_EXTERNAL_LAPACK)
     file(GLOB LAPACK_SOURCES gmx_lapack/*.cpp)
+    target_sources(linearalgebra PRIVATE ${LAPACK_SOURCES})
 endif()
 
-set(LINEARALGEBRA_SOURCES
-    ${LINEARALGEBRA_SOURCES} ${BLAS_SOURCES} ${LAPACK_SOURCES})
+if (BUILD_SHARED_LIBS)
+    set_target_properties(linearalgebra PROPERTIES POSITION_INDEPENDENT_CODE ON)
+endif()
 
-add_library(linearalgebra OBJECT ${LINEARALGEBRA_SOURCES})
-# TODO: Only expose the module's public headers.
-target_include_directories(linearalgebra INTERFACE
+target_include_directories(linearalgebra PUBLIC
                            $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>)
 target_include_directories(linearalgebra PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+if (GMX_EXTERNAL_BLAS AND GMX_EXTERNAL_LAPACK AND GMX_FFT_MKL)
+    target_link_libraries(linearalgebra PRIVATE MKL::MKL)
+endif()
 
 gmx_target_compile_options(linearalgebra)
 target_compile_definitions(linearalgebra PRIVATE HAVE_CONFIG_H)
 # The linearalgebra code is all considered external, and we will
 # not keep it free of warnings. Any compiler suppressions required
 # should be added here.
-if (WIN32)
+if (MSVC)
     gmx_target_warning_suppression(linearalgebra /wd4305 HAS_NO_MSVC_INITIALIZING_FLOAT_FROM_DOUBLE)
     gmx_target_warning_suppression(linearalgebra /wd4244 HAS_NO_MSVC_LOSSY_CONVERSION_DOUBLE_TO_REAL)
     gmx_target_warning_suppression(linearalgebra /wd4996 HAS_NO_MSVC_UNSAFE_FUNCTION)
@@ -69,7 +83,5 @@ else()
 endif()
 target_link_libraries(linearalgebra PRIVATE legacy_api)
 target_link_libraries(linearalgebra PRIVATE common)
-# TODO: Link specific modules.
-target_link_libraries(linearalgebra PRIVATE legacy_modules)
-list(APPEND libgromacs_object_library_dependencies linearalgebra)
-set(libgromacs_object_library_dependencies ${libgromacs_object_library_dependencies} PARENT_SCOPE)
+# TODO: Remove `legacy_modules` once specific modules are explicitly linked.
+target_link_libraries(linearalgebra PRIVATE legacy_modules utility)

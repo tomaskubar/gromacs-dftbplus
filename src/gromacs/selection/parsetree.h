@@ -1,11 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2009-2018, The GROMACS development team.
- * Copyright (c) 2019, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2009- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -19,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -28,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \internal \file
  * \brief
@@ -56,11 +54,12 @@
 #include <list>
 #include <memory>
 #include <string>
+#include <utility>
 
-#include "gromacs/math/vec.h"
-#include "gromacs/math/vectypes.h"
 #include "gromacs/utility/gmxassert.h"
 #include "gromacs/utility/real.h"
+#include "gromacs/utility/vec.h"
+#include "gromacs/utility/vectypes.h"
 
 #include "selelem.h"
 #include "selvalue.h"
@@ -219,25 +218,26 @@ public:
     //! Returns the location of this value in the parsed selection text.
     const SelectionLocation& location() const { return location_; }
     //! Returns true if the value comes from expression evaluation.
-    bool hasExpressionValue() const { return static_cast<bool>(expr); }
+    bool hasExpressionValue() const { return static_cast<bool>(expr_); }
 
     //! Returns the string value (\a type must be ::STR_VALUE).
     const std::string& stringValue() const
     {
-        GMX_ASSERT(type == STR_VALUE && !hasExpressionValue(),
+        GMX_ASSERT(type_ == STR_VALUE && !hasExpressionValue(),
                    "Attempted to retrieve string value from a non-string value");
         return str;
     }
 
     // TODO: boost::any or similar could be nicer for the implementation.
     //! Type of the value.
-    e_selvalue_t type;
+    e_selvalue_t type_;
     //! Expression pointer if the value is the result of an expression.
-    gmx::SelectionTreeElementPointer expr;
+    gmx::SelectionTreeElementPointer expr_;
     //! String value for \a type ::STR_VALUE.
     std::string str;
     //! The actual value if \a expr is NULL and \a type is not ::STR_VALUE.
-    union {
+    union
+    {
         //! The integer value/range (\a type ::INT_VALUE).
         struct
         {
@@ -295,9 +295,7 @@ public:
     // Default move constructor and assignment. Only needed for old compilers.
     //! \cond
     SelectionParserParameter(SelectionParserParameter&& o) noexcept :
-        name_(std::move(o.name_)),
-        location_(o.location_),
-        values_(std::move(o.values_))
+        name_(std::move(o.name_)), location_(o.location_), values_(std::move(o.values_))
     {
     }
 
@@ -485,7 +483,7 @@ gmx::SelectionTreeElementPointer _gmx_sel_init_arithmetic(const gmx::SelectionTr
                                                           const gmx::SelectionTreeElementPointer& right,
                                                           char     op,
                                                           yyscan_t scanner);
-/** Creates a gmx::SelectionTreeElement for comparsion expression evaluation. */
+/** Creates a gmx::SelectionTreeElement for comparison expression evaluation. */
 gmx::SelectionTreeElementPointer _gmx_sel_init_comparison(const gmx::SelectionTreeElementPointer& left,
                                                           const gmx::SelectionTreeElementPointer& right,
                                                           const char* cmpop,
@@ -548,9 +546,9 @@ bool _gmx_sel_parser_should_finish(void* scanner);
 
 /* In params.c */
 /** Initializes an array of parameters based on input from the selection parser. */
-void _gmx_sel_parse_params(const gmx::SelectionParserParameterList& params,
+void _gmx_sel_parse_params(const gmx::SelectionParserParameterList& pparams,
                            int                                      nparam,
-                           struct gmx_ana_selparam_t*               param,
+                           struct gmx_ana_selparam_t*               params,
                            const gmx::SelectionTreeElementPointer&  root,
                            void*                                    scanner);
 

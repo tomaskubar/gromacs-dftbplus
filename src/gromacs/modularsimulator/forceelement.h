@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2019- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \internal \file
  * \brief Declares the force element for the modular simulator
@@ -51,6 +50,7 @@
 
 #include "gromacs/domdec/dlbtiming.h"
 #include "gromacs/mdtypes/md_enums.h"
+#include "gromacs/utility/enumerationhelpers.h"
 #include "gromacs/utility/real.h"
 
 #include "modularsimulatorinterfaces.h"
@@ -59,6 +59,7 @@
 struct gmx_enfrot;
 struct gmx_shellfc_t;
 struct gmx_wallcycle;
+class CpuPpLongRangeNonbondeds;
 struct pull_t;
 struct t_nrnb;
 
@@ -71,8 +72,10 @@ class GlobalCommunicationHelper;
 class ImdSession;
 class LegacySimulatorData;
 class MDAtoms;
+struct MDModulesNotifiers;
 class MdrunScheduleWorkload;
 class ModularSimulatorAlgorithmBuilderHelper;
+class ObservablesReducer;
 class StatePropagatorData;
 class VirtualSitesHandler;
 
@@ -87,7 +90,8 @@ class ForceElement final :
     public ISimulatorElement,
     public ITopologyHolderClient,
     public INeighborSearchSignallerClient,
-    public IEnergySignallerClient
+    public IEnergySignallerClient,
+    public IDomDecHelperClient
 {
 public:
     //! Constructor
@@ -95,10 +99,10 @@ public:
                  EnergyData*                 energyData,
                  FreeEnergyPerturbationData* freeEnergyPerturbationData,
                  bool                        isVerbose,
-                 bool                        isDynamicBox,
                  FILE*                       fplog,
                  const t_commrec*            cr,
                  const t_inputrec*           inputrec,
+                 const MDModulesNotifiers&   mdModulesNotifiers,
                  const MDAtoms*              mdAtoms,
                  t_nrnb*                     nrnb,
                  t_forcerec*                 fr,
@@ -108,8 +112,10 @@ public:
                  ImdSession*                 imdSession,
                  pull_t*                     pull_work,
                  Constraints*                constr,
-                 const gmx_mtop_t*           globalTopology,
+                 const gmx_mtop_t&           globalTopology,
                  gmx_enfrot*                 enforcedRotation);
+    //! Destructor
+    ~ForceElement();
 
     /*! \brief Register force calculation for step / time
      *
@@ -131,16 +137,21 @@ public:
      * \param statePropagatorData  Pointer to the \c StatePropagatorData object
      * \param energyData  Pointer to the \c EnergyData object
      * \param freeEnergyPerturbationData  Pointer to the \c FreeEnergyPerturbationData object
-     * \param globalCommunicationHelper  Pointer to the \c GlobalCommunicationHelper object
+     * \param globalCommunicationHelper   Pointer to the \c GlobalCommunicationHelper object
+     * \param observablesReducer          Pointer to the \c ObservablesReducer object
      *
      * \return  Pointer to the element to be added. Element needs to have been stored using \c storeElement
      */
     static ISimulatorElement* getElementPointerImpl(LegacySimulatorData* legacySimulatorData,
                                                     ModularSimulatorAlgorithmBuilderHelper* builderHelper,
-                                                    StatePropagatorData*        statePropagatorData,
-                                                    EnergyData*                 energyData,
+                                                    StatePropagatorData* statePropagatorData,
+                                                    EnergyData*          energyData,
                                                     FreeEnergyPerturbationData* freeEnergyPerturbationData,
-                                                    GlobalCommunicationHelper* globalCommunicationHelper);
+                                                    GlobalCommunicationHelper* globalCommunicationHelper,
+                                                    ObservablesReducer* observablesReducer);
+
+    //! Callback on domain decomposition repartitioning
+    DomDecCallback registerDomDecCallback() override;
 
 private:
     //! ITopologyHolderClient implementation
@@ -178,8 +189,6 @@ private:
     //! The local topology - updated by Topology via Client system
     const gmx_localtop_t* localTopology_;
 
-    //! Whether we're having a dynamic box
-    const bool isDynamicBox_;
     //! Whether we're being verbose
     const bool isVerbose_;
     //! The number of shell relaxation steps we did
@@ -187,13 +196,15 @@ private:
 
     //! DD / DLB helper object
     const DDBalanceRegionHandler ddBalanceRegionHandler_;
+    //! Long range force calculator
+    std::unique_ptr<CpuPpLongRangeNonbondeds> longRangeNonbondeds_;
 
     /* \brief The FEP lambda vector
      *
      * Used if FEP is off, since do_force
      * requires lambda to be allocated anyway
      */
-    std::array<real, efptNR> lambda_;
+    gmx::EnumerationArray<FreeEnergyPerturbationCouplingType, real> lambda_;
 
     // Access to ISimulator data
     //! Handles logging.
@@ -202,6 +213,8 @@ private:
     const t_commrec* cr_;
     //! Contains user input mdp options.
     const t_inputrec* inputrec_;
+    //! Notifiers for MDModules
+    const MDModulesNotifiers& mdModulesNotifiers_;
     //! Atom parameters for this domain.
     const MDAtoms* mdAtoms_;
     //! Manages flop accounting.

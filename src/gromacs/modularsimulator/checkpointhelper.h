@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2019- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \internal \file
  * \brief Declares the checkpoint helper for the modular simulator
@@ -44,16 +43,27 @@
 #ifndef GMX_MODULARSIMULATOR_CHECKPOINTHELPER_H
 #define GMX_MODULARSIMULATOR_CHECKPOINTHELPER_H
 
+#include <cstdio>
+
 #include <map>
+#include <memory>
+#include <optional>
+#include <string>
+#include <tuple>
+#include <utility>
 #include <vector>
 
 #include "gromacs/mdlib/checkpointhandler.h"
 #include "gromacs/mdrunutility/handlerestart.h"
+#include "gromacs/mdtypes/checkpointdata.h"
+#include "gromacs/utility/exceptions.h"
 
 #include "modularsimulatorinterfaces.h"
 
 struct gmx_walltime_accounting;
 struct ObservablesHistory;
+struct t_commrec;
+class t_state;
 
 namespace gmx
 {
@@ -72,9 +82,9 @@ class TrajectoryElement;
  * Writing checkpoints is done just before neighbor-searching (NS) steps,
  * or after the last step. Checkpointing occurs periodically (by default,
  * every 15 minutes), and needs two NS steps to take effect - on the first
- * NS step, the checkpoint helper on master rank signals to all other ranks
+ * NS step, the checkpoint helper on main rank signals to all other ranks
  * that checkpointing is about to occur. At the next NS step, the checkpoint
- * is written. On the last step, checkpointing happens immediately after the
+ * is written. On the last step, checkpointing happens immediately before the
  * step (no signalling). To be able to react to last step being signalled,
  * the CheckpointHelper does also implement the `ISimulatorElement` interface,
  * but does only register a function if the last step has been called. It
@@ -101,7 +111,7 @@ public:
                      int                                initStep,
                      TrajectoryElement*                 trajectoryElement,
                      FILE*                              fplog,
-                     t_commrec*                         cr,
+                     const t_commrec*                   cr,
                      ObservablesHistory*                observablesHistory,
                      gmx_walltime_accounting*           walltime_accounting,
                      t_state*                           state_global,
@@ -160,12 +170,12 @@ private:
     //! Handles logging.
     FILE* fplog_;
     //! Handles communication.
-    t_commrec* cr_;
+    const t_commrec* cr_;
     //! History of simulation observables.
     ObservablesHistory* observablesHistory_;
     //! Manages wall time accounting.
     gmx_walltime_accounting* walltime_accounting_;
-    //! Full simulation state (only non-nullptr on master rank).
+    //! Full simulation state (only non-nullptr on main rank).
     t_state* state_global_;
 };
 
@@ -179,7 +189,7 @@ public:
     //! Constructor
     CheckpointHelperBuilder(std::unique_ptr<ReadCheckpointDataHolder> checkpointDataHolder,
                             StartingBehavior                          startingBehavior,
-                            t_commrec*                                cr);
+                            const t_commrec*                          cr);
 
     //! Register checkpointing client
     void registerClient(ICheckpointHelperClient* client);
@@ -201,7 +211,7 @@ private:
     //! The checkpoint handler
     std::unique_ptr<CheckpointHandler> checkpointHandler_;
     //! Handles communication.
-    t_commrec* cr_;
+    const t_commrec* cr_;
     //! Whether the builder accepts registrations.
     ModularSimulatorBuilderState state_;
 };
@@ -227,8 +237,8 @@ std::unique_ptr<CheckpointHelper> CheckpointHelperBuilder::build(Args&&... args)
 
     std::vector<std::tuple<std::string, ICheckpointHelperClient*>>&& clients = { clientsMap_.begin(),
                                                                                  clientsMap_.end() };
-    return std::make_unique<CheckpointHelper>(std::move(clients), std::move(checkpointHandler_),
-                                              std::forward<Args>(args)...);
+    return std::make_unique<CheckpointHelper>(
+            std::move(clients), std::move(checkpointHandler_), std::forward<Args>(args)...);
 }
 
 } // namespace gmx

@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2018,2019, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2018- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \internal \file
  *
@@ -45,8 +44,14 @@
 
 #include "dlb.h"
 
+#include <array>
+#include <memory>
+#include <vector>
+
+#include "gromacs/domdec/domdec.h"
 #include "gromacs/domdec/domdec_struct.h"
 #include "gromacs/gmxlib/nrnb.h"
+#include "gromacs/utility/basedefinitions.h"
 #include "gromacs/utility/gmxassert.h"
 
 #include "domdec_internal.h"
@@ -54,7 +59,7 @@
 
 float dd_pme_f_ratio(const gmx_domdec_t* dd)
 {
-    GMX_ASSERT(DDMASTER(dd), "This function should only be called on the master rank");
+    GMX_ASSERT(DDMAIN(dd), "This function should only be called on the main rank");
 
     if (dd->comm->load[0].mdf > 0 && dd->comm->cycl_n[ddCyclPME] > 0)
     {
@@ -72,7 +77,7 @@ void set_dlb_limits(gmx_domdec_t* dd)
     for (int d = 0; d < dd->ndim; d++)
     {
         /* Set the number of pulses to the value for DLB */
-        dd->comm->cd[d].ind.resize(dd->comm->cd[d].np_dlb);
+        dd->comm->cd[d].ind.resize(dd->comm->maxNumPulsesDlb[d]);
 
         dd->comm->cellsize_min[dd->dim[d]] = dd->comm->cellsize_min_dlb[dd->dim[d]];
     }
@@ -130,14 +135,14 @@ gmx_bool dd_dlb_get_should_check_whether_to_turn_dlb_on(gmx_domdec_t* dd)
         return TRUE;
     }
     /* We check whether we should use DLB every c_checkTurnDlbOnInterval
-     * partitionings (we do not do this every partioning, so that we
+     * partitionings (we do not do this every partitioning, so that we
      * avoid excessive communication). */
     return dd->comm->n_load_have % c_checkTurnDlbOnInterval == c_checkTurnDlbOnInterval - 1;
 }
 
 gmx_bool dd_dlb_is_on(const gmx_domdec_t* dd)
 {
-    return isDlbOn(dd->comm);
+    return isDlbOn(dd->comm->dlbState);
 }
 
 gmx_bool dd_dlb_is_locked(const gmx_domdec_t* dd)

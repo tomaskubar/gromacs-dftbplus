@@ -1,13 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
- * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2010,2014,2015,2017,2018 by the GROMACS development team.
- * Copyright (c) 2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 1991- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -21,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -30,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \libinternal \file
  * \brief
@@ -49,6 +45,7 @@
 #ifndef GMX_DOMDEC_GA2LA_H
 #define GMX_DOMDEC_GA2LA_H
 
+#include <variant>
 #include <vector>
 
 #include "gromacs/domdec/hashedmap.h"
@@ -69,13 +66,16 @@ public:
         int cell; /**< The DD zone index for neighboring domains, zone+zone otherwise */
     };
 
+    using DirectList = std::vector<Entry>;
+    using HashedList = gmx::HashedMap<Entry>;
+
     /*! \brief Constructor
      *
      * \param[in] numAtomsTotal  The total number of atoms in the system
      * \param[in] numAtomsLocal  An estimate of the number of home+communicated atoms
      */
     gmx_ga2la_t(int numAtomsTotal, int numAtomsLocal);
-    ~gmx_ga2la_t() { usingDirect_ ? data_.direct.~vector() : data_.hashed.~HashedMap(); }
+    ~gmx_ga2la_t() {}
 
     /*! \brief Inserts an entry, there should not already be an entry for \p a_gl
      *
@@ -85,41 +85,46 @@ public:
     void insert(int a_gl, const Entry& value)
     {
         GMX_ASSERT(a_gl >= 0, "Only global atom indices >= 0 are supported");
-        if (usingDirect_)
+        if (usingDirect())
         {
-            GMX_ASSERT(data_.direct[a_gl].cell == -1,
-                       "The key to be inserted should not be present");
-            data_.direct[a_gl] = value;
+            auto& directList = *std::get_if<DirectList>(&data_);
+            GMX_ASSERT(directList[a_gl].cell == -1, "The key to be inserted should not be present");
+            directList[a_gl] = value;
         }
         else
         {
-            data_.hashed.insert(a_gl, value);
+            auto& hashedList = *std::get_if<HashedList>(&data_);
+            hashedList.insert(a_gl, value);
         }
     }
 
     //! Delete the entry for global atom a_gl
     void erase(int a_gl)
     {
-        if (usingDirect_)
+        if (usingDirect())
         {
-            data_.direct[a_gl].cell = -1;
+            auto& directList      = *std::get_if<DirectList>(&data_);
+            directList[a_gl].cell = -1;
         }
         else
         {
-            data_.hashed.erase(a_gl);
+            auto& hashedList = *std::get_if<HashedList>(&data_);
+            hashedList.erase(a_gl);
         }
     }
 
     //! Returns a pointer to the entry when present, nullptr otherwise
     const Entry* find(int a_gl) const
     {
-        if (usingDirect_)
+        if (usingDirect())
         {
-            return (data_.direct[a_gl].cell == -1) ? nullptr : &(data_.direct[a_gl]);
+            const auto& directList = *std::get_if<DirectList>(&data_);
+            return (directList[a_gl].cell == -1) ? nullptr : &(directList[a_gl]);
         }
         else
         {
-            return (data_.hashed.find(a_gl));
+            const auto& hashedList = *std::get_if<HashedList>(&data_);
+            return hashedList.find(a_gl);
         }
     }
 
@@ -136,44 +141,44 @@ public:
      */
     Entry& at(int a_gl)
     {
-        if (usingDirect_)
+        if (usingDirect())
         {
-            GMX_ASSERT(data_.direct[a_gl].cell >= 0, "a_gl should be present");
-            return data_.direct[a_gl];
+            auto& directList = *std::get_if<DirectList>(&data_);
+            GMX_ASSERT(directList[a_gl].cell >= 0, "a_gl should be present");
+            return directList[a_gl];
         }
         else
         {
-            Entry* search = data_.hashed.find(a_gl);
+            auto&  hashedList = *std::get_if<HashedList>(&data_);
+            Entry* search     = hashedList.find(a_gl);
             GMX_ASSERT(search, "a_gl should be present");
             return *search;
         }
     }
 
-    //! Clear all the entries in the list.
-    void clear()
-    {
-        if (usingDirect_)
-        {
-            for (Entry& entry : data_.direct)
-            {
-                entry.cell = -1;
-            }
-        }
-        else
-        {
-            data_.hashed.clear();
-        }
-    }
+    /*! \brief Clear all the entries in the list.
+     *
+     * Note that this might use OpenMP threading, so it should not be called from within an OpenMP region.
+     *
+     * \param[in] resizeHashTable  When true the hash table is optimized based on the current number of entries stored
+     */
+    void clear(bool resizeHashTable);
 
 private:
-    union Data {
-        std::vector<Entry>    direct;
-        gmx::HashedMap<Entry> hashed;
-        // constructor and destructor function in parent class
-        Data() {}
-        ~Data() {}
-    } data_;
-    const bool usingDirect_;
+    //! Returns whether we are using the direct list
+    bool usingDirect() const { return std::holds_alternative<DirectList>(data_); }
+
+    /*! \brief Variant for storing the global atom index to local atom information map
+     *
+     * Direct list uses std::vector<Entry> of size number of global atoms
+     * Hashed map alternative for larger lists, indexed by global atom index
+     */
+    std::variant<
+            //! Direct list of local atom information of size number of global atoms
+            std::vector<Entry>,
+            //! A Hashed map of local atom information, indexed by global atom index
+            gmx::HashedMap<Entry>>
+            data_;
 };
 
 #endif

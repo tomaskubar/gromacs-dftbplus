@@ -1,13 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
- * Copyright (c) 2001-2008, The GROMACS development team.
- * Copyright (c) 2012,2013,2014,2015,2017 by the GROMACS development team.
- * Copyright (c) 2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 1991- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -21,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -30,18 +26,20 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 #include "gmxpre.h"
 
-#include "matrix.h"
+#include "gromacs/linearalgebra/matrix.h"
 
 #include "config.h"
 
-#include <stdio.h>
+#include <cstdio>
+
+#include <filesystem>
 
 #include "gromacs/utility/fatalerror.h"
 #include "gromacs/utility/smalloc.h"
@@ -71,14 +69,14 @@ void free_matrix(double** a)
 }
 
 #define DEBUG_MATRIX
-void matrix_multiply(FILE* fp, int n, int m, double** x, double** y, double** z)
+void matrix_multiply(FILE* fp, int n, int m, const double* const* x, const double* const* y, double* const* z)
 {
     int i, j, k;
 
 #ifdef DEBUG_MATRIX
     if (fp)
     {
-        fprintf(fp, "Multiplying %d x %d matrix with a %d x %d matrix\n", n, m, m, n);
+        std::fprintf(fp, "Multiplying %d x %d matrix with a %d x %d matrix\n", n, m, m, n);
     }
     if (fp)
     {
@@ -86,9 +84,9 @@ void matrix_multiply(FILE* fp, int n, int m, double** x, double** y, double** z)
         {
             for (j = 0; (j < m); j++)
             {
-                fprintf(fp, " %7g", x[i][j]);
+                std::fprintf(fp, " %7g", x[i][j]);
             }
-            fprintf(fp, "\n");
+            std::fprintf(fp, "\n");
         }
     }
 #endif
@@ -105,22 +103,22 @@ void matrix_multiply(FILE* fp, int n, int m, double** x, double** y, double** z)
     }
 }
 
-static void dump_matrix(FILE* fp, const char* title, int n, double** a)
+static void dump_matrix(FILE* fp, const char* title, int n, const double* const* a)
 {
     double d = 1;
     int    i, j;
 
-    fprintf(fp, "%s\n", title);
+    std::fprintf(fp, "%s\n", title);
     for (i = 0; (i < n); i++)
     {
         d = d * a[i][i];
         for (j = 0; (j < n); j++)
         {
-            fprintf(fp, " %8.2f", a[i][j]);
+            std::fprintf(fp, " %8.2f", a[i][j]);
         }
-        fprintf(fp, "\n");
+        std::fprintf(fp, "\n");
     }
-    fprintf(fp, "Prod a[i][i] = %g\n", d);
+    std::fprintf(fp, "Prod a[i][i] = %g\n", d);
 }
 
 int matrix_invert(FILE* fp, int n, double** a)
@@ -131,7 +129,7 @@ int matrix_invert(FILE* fp, int n, double** a)
 #ifdef DEBUG_MATRIX
     if (fp)
     {
-        fprintf(fp, "Inverting %d square matrix\n", n);
+        std::fprintf(fp, "Inverting %d square matrix\n", n);
         test = alloc_matrix(n, n);
         for (i = 0; (i < n); i++)
         {
@@ -187,7 +185,7 @@ int matrix_invert(FILE* fp, int n, double** a)
     return 0;
 }
 
-double multi_regression(FILE* fp, int nrow, double* y, int ncol, double** xx, double* a0)
+double multi_regression(FILE* fp, int nrow, const double* y, int ncol, const double* const* xx, double* a0)
 {
     int    row, i, j;
     double ax, chi2, **a, **at, **ata, *atx;

@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2015,2018,2019, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2015- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \internal \file
  * \brief
@@ -41,34 +40,21 @@
  */
 #include "gmxpre.h"
 
-#include "invertmatrix.h"
+#include "gromacs/math/invertmatrix.h"
 
 #include <cmath>
 
+#include <filesystem>
+
+#include "gromacs/utility/exceptions.h"
 #include "gromacs/utility/fatalerror.h"
 #include "gromacs/utility/gmxassert.h"
+#include "gromacs/utility/real.h"
+#include "gromacs/utility/vec.h"
+#include "gromacs/utility/vectypes.h"
 
 namespace gmx
 {
-
-void invertBoxMatrix(const matrix src, matrix dest)
-{
-    double tmp = src[XX][XX] * src[YY][YY] * src[ZZ][ZZ];
-    if (std::fabs(tmp) <= 100 * GMX_REAL_MIN)
-    {
-        gmx_fatal(FARGS, "Can not invert matrix, determinant is zero");
-    }
-
-    dest[XX][XX] = 1 / src[XX][XX];
-    dest[YY][YY] = 1 / src[YY][YY];
-    dest[ZZ][ZZ] = 1 / src[ZZ][ZZ];
-    dest[ZZ][XX] = (src[YY][XX] * src[ZZ][YY] * dest[YY][YY] - src[ZZ][XX]) * dest[XX][XX] * dest[ZZ][ZZ];
-    dest[YY][XX] = -src[YY][XX] * dest[XX][XX] * dest[YY][YY];
-    dest[ZZ][YY] = -src[ZZ][YY] * dest[YY][YY] * dest[ZZ][ZZ];
-    dest[XX][YY] = 0.0;
-    dest[XX][ZZ] = 0.0;
-    dest[YY][ZZ] = 0.0;
-}
 
 void invertMatrix(const matrix src, matrix dest)
 {

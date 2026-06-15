@@ -1,11 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2012,2013,2014,2015,2016 by the GROMACS development team.
- * Copyright (c) 2017,2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2012- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -19,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -28,32 +26,35 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \libinternal \file
  * \brief
  * Declares utilities testing command-line programs.
  *
  * \author Teemu Murtola <teemu.murtola@gmail.com>
+ * \author Mark Abraham <mark.j.abraham@gmail.com>
  * \inlibraryapi
  * \ingroup module_testutils
  */
 #ifndef GMX_TESTUTILS_CMDLINETEST_H
 #define GMX_TESTUTILS_CMDLINETEST_H
 
+#include <filesystem>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 
 #include <gtest/gtest.h>
 
 // arrayref.h is not strictly necessary for this header, but nearly all
 // callers will need it to use the constructor that takes ArrayRef.
+#include "gromacs/commandline/cmdlinemodulesettings.h"
 #include "gromacs/utility/arrayref.h"
-#include "gromacs/utility/classhelpers.h"
 
 namespace gmx
 {
@@ -162,6 +163,8 @@ public:
     void addOption(const char* name, const char* value);
     //! Convenience overload taking a std::string.
     void addOption(const char* name, const std::string& value);
+    //! Convenience overload taking a std::filesystem::path.
+    void addOption(const char* name, const std::filesystem::path& value);
     //! Overload taking an int.
     void addOption(const char* name, int value);
     //! Overload taking a double.
@@ -189,12 +192,15 @@ public:
     std::string toString() const;
 
     //! Whether the command line contains the given option.
-    bool contains(const char* name) const;
+    bool contains(std::string_view name) const;
+
+    //! The value of the argument following the given option, if found
+    std::optional<std::string_view> argumentOf(std::string_view name) const;
 
 private:
     class Impl;
 
-    PrivateImplPointer<Impl> impl_;
+    std::unique_ptr<Impl> impl_;
 };
 
 /*! \libinternal \brief
@@ -229,10 +235,13 @@ public:
      *     The function does not take ownership.
      * \param[in,out] commandLine  Command line parameters to pass.
      *     This is only modified if \p module modifies it.
+     * \param[in]     settings     Settings for the command-line module
      * \returns The return value of the module.
      * \throws  unspecified  Any exception thrown by the module.
      */
-    static int runModuleDirect(ICommandLineModule* module, CommandLine* commandLine);
+    static int runModuleDirect(ICommandLineModule*         module,
+                               CommandLine*                commandLine,
+                               CommandLineModuleSettings&& settings = {});
     /*! \brief
      * Runs a command-line program that implements
      * ICommandLineOptionsModule.
@@ -240,10 +249,13 @@ public:
      * \param[in,out] module       Module to run.
      * \param[in,out] commandLine  Command line parameters to pass.
      *     This is only modified if \p module modifies it.
+     * \param[in]     settings     Settings for the command-line module
      * \returns The return value of the module.
      * \throws  unspecified  Any exception thrown by the module.
      */
-    static int runModuleDirect(std::unique_ptr<ICommandLineOptionsModule> module, CommandLine* commandLine);
+    static int runModuleDirect(std::unique_ptr<ICommandLineOptionsModule> module,
+                               CommandLine*                               commandLine,
+                               CommandLineModuleSettings&&                settings = {});
     /*! \brief
      * Runs a command-line program that implements
      * ICommandLineOptionsModule.
@@ -251,12 +263,14 @@ public:
      * \param[in] factory          Factory method for the module to run.
      * \param[in,out] commandLine  Command line parameters to pass.
      *     This is only modified if the module modifies it.
+     * \param[in]     settings     Settings for the command-line module
      * \returns The return value of the module.
      * \throws  unspecified  Any exception thrown by the factory or the
      *     module.
      */
     static int runModuleFactory(const std::function<std::unique_ptr<ICommandLineOptionsModule>()>& factory,
-                                CommandLine* commandLine);
+                                CommandLine*                commandLine,
+                                CommandLineModuleSettings&& settings = {});
 
     /*! \brief
      * Initializes an instance.
@@ -306,6 +320,7 @@ public:
      * \param[in]     filename  Name of the output file.
      * \param[in]     matcher   Specifies how the contents of the file are
      *     tested.
+     * \return        The name of the output file
      *
      * This method does the following:
      *  - Adds \p option to \p args to point a temporary file name
@@ -325,15 +340,30 @@ public:
      * are not interesting for the test, use NoContentsMatch as the matcher.
      * Note that the existence of the output file is still verified.
      */
-    void setOutputFile(CommandLine*                     args,
-                       const char*                      option,
-                       const char*                      filename,
-                       const ITextBlockMatcherSettings& matcher);
+    std::string setOutputFile(CommandLine*                     args,
+                              const char*                      option,
+                              const char*                      filename,
+                              const ITextBlockMatcherSettings& matcher);
     //! \copydoc setOutputFile(CommandLine *, const char *, const char *, const ITextBlockMatcherSettings &)
-    void setOutputFile(CommandLine*                args,
-                       const char*                 option,
-                       const char*                 filename,
-                       const IFileMatcherSettings& matcher);
+    std::string setOutputFile(CommandLine*                args,
+                              const char*                 option,
+                              const char*                 filename,
+                              const IFileMatcherSettings& matcher);
+    /*! \brief As for \c setOutputFile() but does not create an option
+     *
+     * Sometimes \c label and \c filename can be the same, depending
+     * how the tool generates the filename. When the tool has
+     * generated the filename from the name of another output file,
+     * rather than as its own string, it can be necessary to prefix \c
+     * filename with the temporary directory name so it can be found.
+     *
+     * This method is useful when a tool generates a series of output
+     * files by modifying a common base name. Call this method with
+     * every file name that is expected to be generated by the tool.
+     * It returns the name of the output file */
+    std::string setOutputFileWithGeneratedName(const std::string_view       label,
+                                               const std::filesystem::path& filename,
+                                               const IFileMatcherSettings&  matcher);
 
     /*! \brief
      * Checks output files added with setOutputFile() against reference
@@ -354,7 +384,7 @@ public:
 private:
     class Impl;
 
-    PrivateImplPointer<Impl> impl_;
+    std::unique_ptr<Impl> impl_;
 };
 
 /*! \libinternal \brief
@@ -416,26 +446,45 @@ public:
                               const char*                        extension,
                               const ArrayRef<const char* const>& contents);
     /*! \brief
-     * Sets an output file parameter and adds it to the set of tested files.
+     * Sets an output file whose name is passed via an option and adds it to the set of tested files.
      *
      * \see CommandLineTestHelper::setOutputFile()
      */
-    void setOutputFile(const char* option, const char* filename, const ITextBlockMatcherSettings& matcher);
+    std::string setOutputFile(const char* option, const char* filename, const ITextBlockMatcherSettings& matcher);
+    //! \copydoc setOutputFile(const char *, const ITextBlockMatcherSettings &)
+    std::string setOutputFile(const char* option, const char* filename, const IFileMatcherSettings& matcher);
     /*! \brief
-     * Sets an output file parameter and adds it to the set of tested files.
+     * Sets an output file whose name is generated by the tool and adds it to the set of tested files.
      *
-     * \see CommandLineTestHelper::setOutputFile()
-     */
-    void setOutputFile(const char* option, const char* filename, const IFileMatcherSettings& matcher);
+     * Sometimes \c label and \c filename can be the same, depending
+     * how the tool generates the filename. When the tool has
+     * generated the filename from the name of another output file,
+     * rather than as its own string, it can be necessary to prefix \c
+     * filename with the temporary directory name so it can be found.
+     *
+     * This method is useful when a tool generates a series of output
+     * files by modifying a common base name. Call this method with
+     * every file name that is expected to be generated by the tool.
+     *
+     * \see CommandLineTestHelper::setOutputFileWithGeneratedName() */
+    std::string setOutputFileWithGeneratedName(const std::string_view           label,
+                                               const std::filesystem::path&     filename,
+                                               const ITextBlockMatcherSettings& matcher);
+    //! \copydoc setOutputFileWithGeneratedName(const std::string_view, const std::string_view, const ITextBlockMatcherSettings &)
+    std::string setOutputFileWithGeneratedName(const std::string_view       label,
+                                               const std::filesystem::path& filename,
+                                               const IFileMatcherSettings&  matcher);
     /*! \brief
      * Sets a file parameter that is used for input and modified as output. The input file
      * is copied to a temporary file that is used as input and can be modified.
      */
-    void setInputAndOutputFile(const char*                      option,
-                               const char*                      filename,
-                               const ITextBlockMatcherSettings& matcher);
+    std::string setInputAndOutputFile(const char*                      option,
+                                      const char*                      filename,
+                                      const ITextBlockMatcherSettings& matcher);
     //! \copydoc setInputAndOutputFile(const char *, const char *, const ITextBlockMatcherSettings&);
-    void setInputAndOutputFile(const char* option, const char* filename, const IFileMatcherSettings& matcher);
+    std::string setInputAndOutputFile(const char*                 option,
+                                      const char*                 filename,
+                                      const IFileMatcherSettings& matcher);
 
     /*! \brief
      * Returns the internal CommandLine object used to construct the
@@ -489,7 +538,7 @@ public:
 private:
     class Impl;
 
-    PrivateImplPointer<Impl> impl_;
+    std::unique_ptr<Impl> impl_;
 };
 
 } // namespace test

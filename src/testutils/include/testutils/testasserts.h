@@ -1,11 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2013,2014,2015,2016,2017 by the GROMACS development team.
- * Copyright (c) 2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2013- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -19,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -28,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \libinternal \file
  * \brief
@@ -43,6 +41,7 @@
  *  - floating-point comparison
  *  - comparison against NULL
  *  - death tests
+ *  - ensuring test names don't get too long
  *
  * \if internal
  * \todo
@@ -59,6 +58,7 @@
 
 #include "config.h"
 
+#include <optional>
 #include <string>
 
 #include <gtest/gtest.h>
@@ -504,13 +504,17 @@ FloatingPointTolerance relativeToleranceAsPrecisionDependentFloatingPoint(double
  *
  * \related FloatingPointTolerance
  */
-static inline FloatingPointTolerance relativeToleranceAsPrecisionDependentUlp(double   magnitude,
+static inline FloatingPointTolerance relativeToleranceAsPrecisionDependentUlp(double magnitude,
                                                                               uint64_t singleUlpDiff,
                                                                               uint64_t doubleUlpDiff)
 {
     return FloatingPointTolerance(float(magnitude) * singleUlpDiff * GMX_FLOAT_EPS,
-                                  magnitude * doubleUlpDiff * GMX_DOUBLE_EPS, 0.0, 0.0,
-                                  singleUlpDiff, doubleUlpDiff, false);
+                                  magnitude * doubleUlpDiff * GMX_DOUBLE_EPS,
+                                  0.0,
+                                  0.0,
+                                  singleUlpDiff,
+                                  doubleUlpDiff,
+                                  false);
 }
 
 /*! \brief
@@ -573,7 +577,8 @@ static inline FloatingPointTolerance defaultRealTolerance()
 static inline FloatingPointTolerance defaultFloatTolerance()
 {
     return relativeToleranceAsPrecisionDependentUlp(
-            1.0, detail::g_defaultUlpTolerance,
+            1.0,
+            detail::g_defaultUlpTolerance,
             static_cast<uint64_t>(detail::g_defaultUlpTolerance * (GMX_FLOAT_EPS / GMX_DOUBLE_EPS)));
 }
 
@@ -707,6 +712,28 @@ static inline ::testing::AssertionResult plainAssertHelper(const char* /*expr*/,
  * \hideinitializer
  */
 #define ASSERT_PLAIN(expr) ASSERT_PRED_FORMAT1(plainAssertHelper, expr)
+
+/*! \brief Gives a GoogleTest assertion if the test's name is too long
+ *
+ * On Windows, MAX_PATH is 260 characters by default. Particularly
+ * when using parameterized tests it is convenient to generate
+ * descriptive names. However the reference data files for these tests
+ * can have names that get too long. For example, by default Visual
+ * Studio will put files in `{user-folder}\source\repos\gromacs` and
+ * we need to leave room for that, plus the path to the user's folder,
+ * plus a build folder, then
+ * e.g. `src\gromacs\gmxpreprocess\tests\refdata` and then the test
+ * data filename. So we limit the name of the test to help keep things
+ * working.
+ *
+ * When we identify tests whose names go close to this limit
+ * (e.g. because MSVC builds fail), then call this function from them
+ * to help maintainers keep that length under control when working on
+ * other platforms.
+ *
+ * If a test computes its own name for the purposes of reference data
+ * files (e.g. PME unit tests), pass that name in here. */
+void checkTestNameLength(std::optional<std::string> testName = std::nullopt);
 
 //! \}
 

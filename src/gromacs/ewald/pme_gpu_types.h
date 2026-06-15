@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2016,2017,2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2016- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 
 /*! \internal \file
@@ -78,8 +77,12 @@ static_assert(sizeof(DeviceBuffer<float>) == 8,
               "DeviceBuffer is defined as an 8 byte stub for OpenCL C");
 static_assert(sizeof(DeviceBuffer<int>) == 8,
               "DeviceBuffer is defined as an 8 byte stub for OpenCL C");
+
+struct PpRanksSendFInfo;
 #else
 #    define HIDE_FROM_OPENCL_COMPILER(x) char8
+/*! \brief A dummy typedef for the PpRanksSendFInfo on OCL builds */
+typedef int PpRanksSendFInfo;
 #endif
 
 #ifndef NUMFEPSTATES
@@ -90,9 +93,8 @@ static_assert(sizeof(DeviceBuffer<int>) == 8,
 /* What follows is all the PME GPU function arguments,
  * sorted into several device-side structures depending on the update rate.
  * This is GPU agnostic (float3 replaced by float[3], etc.).
- * The GPU-framework specifics (e.g. cudaTextureObject_t handles) are described
- * in the larger structure PmeGpuCudaKernelParams in the pme.cuh.
  */
+
 
 /*! \internal \brief
  * A GPU data structure for storing the constant PME data.
@@ -100,7 +102,7 @@ static_assert(sizeof(DeviceBuffer<int>) == 8,
  */
 struct PmeGpuConstParams
 {
-    /*! \brief Electrostatics coefficient = ONE_4PI_EPS0 / pme->epsilon_r */
+    /*! \brief Electrostatics coefficient = c_one4PiEps0 / pme->epsilon_r */
     float elFactor;
     /*! \brief Virial and energy GPU array. Size is c_virialAndEnergyCount (7) floats.
      * The element order is virxx, viryy, virzz, virxy, virxz, viryz, energy. */
@@ -128,16 +130,24 @@ struct PmeGpuGridParams
     /*! \brief Fourier grid dimensions (padded). This counts the complex numbers! */
     int complexGridSizePadded[DIM];
 
+    /*! \brief Local Fourier grid dimensions. This counts the complex numbers! */
+    int localComplexGridSize[DIM];
+    /*! \brief Local Fourier grid dimensions (padded). This counts the complex numbers! */
+    int localComplexGridSizePadded[DIM];
+
     /*! \brief Offsets for X/Y/Z components of d_splineModuli */
     int splineValuesOffset[DIM];
     /*! \brief Offsets for X/Y/Z components of d_fractShiftsTable and d_gridlineIndicesTable */
     int tablesOffsets[DIM];
 
+    /*! \brief Offsets for the complex grid in pme_solve */
+    int kOffsets[DIM];
+
     /* Grid arrays */
-    /*! \brief Real space grid. */
+    /*! \brief Real space PME grid. */
     HIDE_FROM_OPENCL_COMPILER(DeviceBuffer<float>) d_realGrid[NUMFEPSTATES];
-    /*! \brief Complex grid - used in FFT/solve. If inplace cu/clFFT is used, then it is the same handle as realGrid. */
-    HIDE_FROM_OPENCL_COMPILER(DeviceBuffer<float>) d_fourierGrid[NUMFEPSTATES];
+    /*! \brief Complex grid - used in FFT/solve. If inplace cu/clFFT is used, then it is the same handle as fftRealGrid. */
+    HIDE_FROM_OPENCL_COMPILER(DeviceBuffer<float>) d_fftComplexGrid[NUMFEPSTATES];
 
     /*! \brief Grid spline values as in pme->bsp_mod
      * (laid out sequentially (XXX....XYYY......YZZZ.....Z))
@@ -171,7 +181,7 @@ struct PmeGpuAtomParams
      * The forces change and need to be copied from (and possibly to) the GPU for every PME
      * computation, but reallocation happens only at DD.
      */
-    HIDE_FROM_OPENCL_COMPILER(DeviceBuffer<float>) d_forces;
+    HIDE_FROM_OPENCL_COMPILER(DeviceBuffer<gmx::RVec>) d_forces;
     /*! \brief Global GPU memory array handle with ivec atom gridline indices.
      * Computed on GPU in the spline calculation part.
      */
@@ -211,7 +221,7 @@ struct PmeGpuDynamicParams
  * To extend the list with platform-specific parameters, this can be inherited by the
  * GPU framework-specific structure.
  */
-struct PmeGpuKernelParamsBase
+struct PmeGpuKernelParams
 {
     /*! \brief Constant data that is set once. */
     struct PmeGpuConstParams constants;
@@ -224,6 +234,30 @@ struct PmeGpuKernelParamsBase
      * before launching spreading.
      */
     struct PmeGpuDynamicParams current;
+
+    /*! \brief Whether pipelining with PP communications is active
+     * char rather than bool to avoid problem with OpenCL compiler */
+    char usePipeline;
+    /*! \brief Start atom for this stage of pipeline */
+    int pipelineAtomStart;
+    /*! \brief End atom for this stage of pipeline */
+    int pipelineAtomEnd;
+
+    /*! \brief PpRanksSendFInfo struct total size */
+    int ppRanksInfoSize;
+    /*! \brief PpRanksSendFInfo struct containing each PP rank forces buffer offsets */
+    HIDE_FROM_OPENCL_COMPILER(DeviceBuffer<PpRanksSendFInfo>) ppRanksInfo;
+    /*! \brief atomic counter used for tracking last processed block in pme gather kernel for each PP rank */
+    HIDE_FROM_OPENCL_COMPILER(DeviceBuffer<unsigned int>) lastProcessedBlockPerPpRank;
+    /*! \brief sync object used for NVSHMEM pme-pp force comm */
+    HIDE_FROM_OPENCL_COMPILER(DeviceBuffer<uint64_t>) forcesReadyNvshmemFlags;
+    /*! \brief sync object counter used for nvshmem pme-pp force comm */
+    HIDE_FROM_OPENCL_COMPILER(uint64_t) forcesReadyNvshmemFlagsCounter;
+    /*! \brief whether this is virial step */
+    int isVirialStep;
+    /*! \brief whether to use NVSHMEM for GPU comm*/
+    int useNvshmem;
+
     /* These texture objects are only used in CUDA and are related to the grid size. */
     /*! \brief Texture object for accessing grid.d_fractShiftsTable */
     HIDE_FROM_OPENCL_COMPILER(DeviceTexture) fractShiftsTableTexture;

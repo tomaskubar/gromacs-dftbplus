@@ -150,7 +150,7 @@ void init_gamess(const t_commrec* cr, const QMMM_QMrec& qm, const QMMM_MMrec& mm
                 }
             }
             fprintf(out, "END\nBASIS %s\nRUNTYPE GRADIENT\nSCFTYPE %s\n",
-                    eQMbasis_names[qm.QMbasis_get()], eQMmethod_names[qm.QMmethod_get()]); /* see enum.h */
+                    enumValueToString(qm.QMbasis_get()), enumValueToString(qm.QMmethod_get())); /* see enum.h */
             fclose(out);
         }
         gmx_barrier(cr->mpi_comm_mygroup);
@@ -189,7 +189,7 @@ void init_gamess(const t_commrec* cr, const QMMM_QMrec& qm, const QMMM_MMrec& mm
             }
         }
         fprintf(out, "END\nBASIS %s\nRUNTYPE GRADIENT\nSCFTYPE %s\n",
-                eQMbasis_names[qm.QMbasis_get()], eQMmethod_names[qm.QMmethod_get()]); /* see enum.h */
+                enumValueToString(qm.QMbasis_get()), enumValueToString(qm.QMmethod_get())); /* see enum.h */
         F77_FUNC(inigms, IMIGMS)();
     }
 }

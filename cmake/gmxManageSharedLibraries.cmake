@@ -1,10 +1,9 @@
 #
 # This file is part of the GROMACS molecular simulation package.
 #
-# Copyright (c) 2012,2013,2014,2015,2018,2020, by the GROMACS development team, led by
-# Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
-# and including many others, as listed in the AUTHORS file in the
-# top-level source directory and at http://www.gromacs.org.
+# Copyright 2012- The GROMACS Authors
+# and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+# Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
 #
 # GROMACS is free software; you can redistribute it and/or
 # modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
 #
 # You should have received a copy of the GNU Lesser General Public
 # License along with GROMACS; if not, see
-# http://www.gnu.org/licenses, or write to the Free Software Foundation,
+# https://www.gnu.org/licenses, or write to the Free Software Foundation,
 # Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
 #
 # If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
 # consider code for inclusion in the official distribution, but
 # derived work must not be called official GROMACS. Details are found
 # in the README & COPYING files - if they are missing, get the
-# official version at http://www.gromacs.org.
+# official version at https://www.gromacs.org.
 #
 # To help us fund GROMACS development, we humbly ask that you cite
-# the research papers on the package. Check out http://www.gromacs.org.
+# the research papers on the package. Check out https://www.gromacs.org.
 
 # Manage the GROMACS shared library setup.
 
@@ -39,19 +38,19 @@
 ########################################################################
 # Determine the defaults (this block has no effect if the variables have
 # already been set)
-if((APPLE OR CYGWIN OR ${CMAKE_SYSTEM_NAME} MATCHES "Linux|.*BSD|GNU") AND NOT GMX_BUILD_MDRUN_ONLY)
+if((APPLE OR CYGWIN OR ${CMAKE_SYSTEM_NAME} MATCHES "Linux|.*BSD|GNU"))
     # Maybe Solaris should be here? Patch this if you know!
-    SET(SHARED_LIBS_DEFAULT ON)
+    set(SHARED_LIBS_DEFAULT ON)
 elseif(WIN32)
     # Support for shared libs on native Windows is a bit new. Its
     # default might change later if/when we sort things out. Also,
     # Cray should go here. What variable value can detect it?
-    SET(SHARED_LIBS_DEFAULT OFF)
+    set(SHARED_LIBS_DEFAULT OFF)
 else()
     if (NOT DEFINED BUILD_SHARED_LIBS)
         message(STATUS "Defaulting to building static libraries")
     endif()
-    SET(SHARED_LIBS_DEFAULT OFF)
+    set(SHARED_LIBS_DEFAULT OFF)
 endif()
 
 if (GMX_PREFER_STATIC_LIBS)
@@ -74,10 +73,6 @@ if (WIN32 AND NOT BUILD_SHARED_LIBS)
     set(GMX_PREFER_STATIC_LIBS_DEFAULT ON)
 endif()
 
-if(BUILD_SHARED_LIBS AND GMX_BUILD_MDRUN_ONLY)
-    message(WARNING "Both BUILD_SHARED_LIBS and GMX_BUILD_MDRUN_ONLY are set. Generally, an mdrun-only build should prefer to use static libraries, which is the default if you make a fresh build tree. You may be re-using an old build tree, and so may wish to set BUILD_SHARED_LIBS=off yourself.")
-endif()
-
 if (UNIX)
     set(GMX_PREFER_STATIC_LIBS_DESCRIPTION
         "When finding libraries prefer static archives (it will only work if static versions of external dependencies are available and found)")
@@ -97,7 +92,7 @@ if (UNIX AND GMX_PREFER_STATIC_LIBS)
     endif()
     # On Linux .a is the static library suffix, on Mac OS X .lib can also
     # be used, so we'll add both to the preference list.
-    SET(CMAKE_FIND_LIBRARY_SUFFIXES ".lib;.a" ${CMAKE_FIND_LIBRARY_SUFFIXES})
+    set(CMAKE_FIND_LIBRARY_SUFFIXES ".lib;.a" ${CMAKE_FIND_LIBRARY_SUFFIXES})
 endif()
 
 # ==========
@@ -116,12 +111,13 @@ function(gmx_manage_prefer_static_libs_flags build_type)
     # Change the real CMake variables for the given build type in each
     # language, in the parent scope.
     foreach(language C CXX)
-        string(REPLACE /MD /MT CMAKE_${language}_FLAGS${punctuation}${build_type} ${CMAKE_${language}_FLAGS${punctuation}${build_type}})
-	set(CMAKE_${language}_FLAGS${punctuation}${build_type} ${CMAKE_${language}_FLAGS${punctuation}${build_type}} PARENT_SCOPE)
+        set(varname "CMAKE_${language}_FLAGS${punctuation}${build_type}")
+        string(REPLACE /MD /MT ${varname} "${${varname}}")
+        set(${varname} "${${varname}}" PARENT_SCOPE)
     endforeach()
 endfunction()
 
-IF( WIN32)
+if( WIN32)
   if (NOT BUILD_SHARED_LIBS)
       if(NOT GMX_PREFER_STATIC_LIBS)
           message(WARNING "Shared system libraries requested, and static GROMACS libraries requested.")
@@ -130,7 +126,7 @@ IF( WIN32)
       if(MINGW)
           set(CMAKE_SHARED_LINKER_FLAGS "-Wl,--export-all-symbols ${CMAKE_SHARED_LINKER_FLAGS}")
       else()
-          message(FATAL_ERROR "BUILD_SHARED_LIBS=ON not yet working for Windows in the master branch")
+          set(CMAKE_WINDOWS_EXPORT_ALL_SYMBOLS ON)
       endif()
       if(GMX_PREFER_STATIC_LIBS)
           #this combination segfaults (illegal passing of file handles)
@@ -141,15 +137,15 @@ IF( WIN32)
       # set(PKG_CFLAGS "$PKG_CFLAGS -DUSE_VISIBILITY -DTMPI_USE_VISIBILITY")
   endif()
 
-  IF (GMX_PREFER_STATIC_LIBS)
+  if(GMX_PREFER_STATIC_LIBS)
       foreach(build_type "" ${build_types_with_explicit_flags})
           gmx_manage_prefer_static_libs_flags("${build_type}")
       endforeach()
-  ENDIF()
-  IF( CMAKE_C_COMPILER_ID MATCHES "Intel" )
+  endif()
+  if( CMAKE_C_COMPILER_ID STREQUAL "Intel" )
     if(BUILD_SHARED_LIBS) #not sure why incremental building with shared libs doesn't work
-        STRING(REPLACE "/INCREMENTAL:YES" "" CMAKE_SHARED_LINKER_FLAGS ${CMAKE_SHARED_LINKER_FLAGS})
+        string(REPLACE "/INCREMENTAL:YES" "" CMAKE_SHARED_LINKER_FLAGS ${CMAKE_SHARED_LINKER_FLAGS})
         set(CMAKE_SHARED_LINKER_FLAGS ${CMAKE_SHARED_LINKER_FLAGS} PARENT_SCOPE)
     endif()
-  ENDIF()
-ENDIF()
+  endif()
+endif()

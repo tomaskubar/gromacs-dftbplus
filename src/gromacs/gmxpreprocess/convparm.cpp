@@ -1,13 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
- * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2016,2017 by the GROMACS development team.
- * Copyright (c) 2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 1991- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -21,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -30,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /* This file is completely threadsafe - keep it that way! */
 #include "gmxpre.h"
@@ -44,7 +40,10 @@
 #include <cmath>
 #include <cstring>
 
+#include <array>
+#include <filesystem>
 #include <memory>
+#include <vector>
 
 #include "gromacs/gmxpreprocess/gpp_atomtype.h"
 #include "gromacs/gmxpreprocess/grompp_impl.h"
@@ -53,35 +52,48 @@
 #include "gromacs/math/functions.h"
 #include "gromacs/math/units.h"
 #include "gromacs/math/utilities.h"
-#include "gromacs/math/vec.h"
 #include "gromacs/mdtypes/md_enums.h"
+#include "gromacs/topology/forcefieldparameters.h"
+#include "gromacs/topology/idef.h"
 #include "gromacs/topology/ifunc.h"
 #include "gromacs/topology/topology.h"
+#include "gromacs/utility/arrayref.h"
+#include "gromacs/utility/basedefinitions.h"
 #include "gromacs/utility/fatalerror.h"
+#include "gromacs/utility/gmxassert.h"
 #include "gromacs/utility/smalloc.h"
+#include "gromacs/utility/vec.h"
+#include "gromacs/utility/vectypes.h"
 
-static int round_check(real r, int limit, int ftype, const char* name)
+static int round_check(real r, int limit, InteractionFunction ftype, const char* name)
 {
     const int i = gmx::roundToInt(r);
 
     if (r - i > 0.01 || r - i < -0.01)
     {
-        gmx_fatal(FARGS, "A non-integer value (%f) was supplied for '%s' in %s", r, name,
+        gmx_fatal(FARGS,
+                  "A non-integer value (%f) was supplied for '%s' in %s",
+                  r,
+                  name,
                   interaction_function[ftype].longname);
     }
 
     if (i < limit)
     {
-        gmx_fatal(FARGS, "Value of '%s' in %s is %d, which is smaller than the minimum of %d", name,
-                  interaction_function[ftype].longname, i, limit);
+        gmx_fatal(FARGS,
+                  "Value of '%s' in %s is %d, which is smaller than the minimum of %d",
+                  name,
+                  interaction_function[ftype].longname,
+                  i,
+                  limit);
     }
 
     return i;
 }
 
-static void set_ljparams(int comb, double reppow, double v, double w, real* c6, real* c12)
+static void set_ljparams(CombinationRule comb, double reppow, double v, double w, real* c6, real* c12)
 {
-    if (comb == eCOMB_ARITHMETIC || comb == eCOMB_GEOM_SIG_EPS)
+    if (comb == CombinationRule::Arithmetic || comb == CombinationRule::GeomSigEps)
     {
         if (v >= 0)
         {
@@ -105,7 +117,11 @@ static void set_ljparams(int comb, double reppow, double v, double w, real* c6, 
 /* A return value of 0 means parameters were assigned successfully,
  * returning -1 means this is an all-zero interaction that should not be added.
  */
-static int assign_param(t_functype ftype, t_iparams* newparam, gmx::ArrayRef<const real> old, int comb, double reppow)
+static int assign_param(InteractionFunction       ftype,
+                        t_iparams*                newparam,
+                        gmx::ArrayRef<const real> old,
+                        CombinationRule           comb,
+                        double                    reppow)
 {
     bool all_param_zero = true;
 
@@ -118,13 +134,18 @@ static int assign_param(t_functype ftype, t_iparams* newparam, gmx::ArrayRef<con
          * zero parameters (e.g. an index to a Cmap interaction, or LJ parameters), but
          * we use it for angles and torsions that are typically generated automatically.
          */
-        all_param_zero = all_param_zero && fabs(old[j]) < GMX_REAL_MIN;
+        all_param_zero = all_param_zero && std::fabs(old[j]) < GMX_REAL_MIN;
     }
 
     if (all_param_zero)
     {
-        if (IS_ANGLE(ftype) || IS_RESTRAINT_TYPE(ftype) || ftype == F_IDIHS || ftype == F_PDIHS
-            || ftype == F_PIDIHS || ftype == F_RBDIHS || ftype == F_FOURDIHS)
+        // Note that InteractionFunction::VSITES1 and InteractionFunction::ConnectBonds use no
+        // parameters so have all parameters zero at this point, but elsewhere we rely on the fact
+        // that the parameter set is assigned even though it is all zero.
+        if (IS_ANGLE(ftype) || IS_RESTRAINT_TYPE(ftype) || ftype == InteractionFunction::ImproperDihedrals
+            || ftype == InteractionFunction::ProperDihedrals || ftype == InteractionFunction::PeriodicImproperDihedrals
+            || ftype == InteractionFunction::RyckaertBellemansDihedrals
+            || ftype == InteractionFunction::FourierDihedrals)
         {
             return -1;
         }
@@ -132,25 +153,25 @@ static int assign_param(t_functype ftype, t_iparams* newparam, gmx::ArrayRef<con
 
     switch (ftype)
     {
-        case F_G96ANGLES:
+        case InteractionFunction::GROMOS96Angles:
             /* Post processing of input data: store cosine iso angle itself */
-            newparam->harmonic.rA  = cos(old[0] * DEG2RAD);
+            newparam->harmonic.rA  = std::cos(old[0] * gmx::c_deg2Rad);
             newparam->harmonic.krA = old[1];
-            newparam->harmonic.rB  = cos(old[2] * DEG2RAD);
+            newparam->harmonic.rB  = std::cos(old[2] * gmx::c_deg2Rad);
             newparam->harmonic.krB = old[3];
             break;
-        case F_G96BONDS:
+        case InteractionFunction::GROMOS96Bonds:
             /* Post processing of input data: store square of length itself */
             newparam->harmonic.rA  = gmx::square(old[0]);
             newparam->harmonic.krA = old[1];
             newparam->harmonic.rB  = gmx::square(old[2]);
             newparam->harmonic.krB = old[3];
             break;
-        case F_FENEBONDS:
+        case InteractionFunction::FENEBonds:
             newparam->fene.bm = old[0];
             newparam->fene.kb = old[1];
             break;
-        case F_RESTRBONDS:
+        case InteractionFunction::RestraintBonds:
             newparam->restraint.lowA = old[0];
             newparam->restraint.up1A = old[1];
             newparam->restraint.up2A = old[2];
@@ -160,26 +181,26 @@ static int assign_param(t_functype ftype, t_iparams* newparam, gmx::ArrayRef<con
             newparam->restraint.up2B = old[6];
             newparam->restraint.kB   = old[7];
             break;
-        case F_TABBONDS:
-        case F_TABBONDSNC:
-        case F_TABANGLES:
-        case F_TABDIHS:
+        case InteractionFunction::TabulatedBonds:
+        case InteractionFunction::TabulatedBondsNoCoupling:
+        case InteractionFunction::TabulatedAngles:
+        case InteractionFunction::TabulatedDihedrals:
             newparam->tab.table = round_check(old[0], 0, ftype, "table index");
             newparam->tab.kA    = old[1];
             newparam->tab.kB    = old[3];
             break;
-        case F_CROSS_BOND_BONDS:
+        case InteractionFunction::CrossBondBonds:
             newparam->cross_bb.r1e = old[0];
             newparam->cross_bb.r2e = old[1];
             newparam->cross_bb.krr = old[2];
             break;
-        case F_CROSS_BOND_ANGLES:
+        case InteractionFunction::CrossBondAngles:
             newparam->cross_ba.r1e = old[0];
             newparam->cross_ba.r2e = old[1];
             newparam->cross_ba.r3e = old[2];
             newparam->cross_ba.krt = old[3];
             break;
-        case F_UREY_BRADLEY:
+        case InteractionFunction::UreyBradleyPotential:
             newparam->u_b.thetaA  = old[0];
             newparam->u_b.kthetaA = old[1];
             newparam->u_b.r13A    = old[2];
@@ -189,33 +210,30 @@ static int assign_param(t_functype ftype, t_iparams* newparam, gmx::ArrayRef<con
             newparam->u_b.r13B    = old[6];
             newparam->u_b.kUBB    = old[7];
             break;
-        case F_QUARTIC_ANGLES:
+        case InteractionFunction::QuarticAngles:
             newparam->qangle.theta = old[0];
             for (int i = 0; i < 5; i++)
             {
                 newparam->qangle.c[i] = old[i + 1];
             }
             break;
-        case F_LINEAR_ANGLES:
+        case InteractionFunction::LinearAngles:
             newparam->linangle.aA    = old[0];
             newparam->linangle.klinA = old[1];
             newparam->linangle.aB    = old[2];
             newparam->linangle.klinB = old[3];
             break;
-        case F_BONDS:
-        case F_ANGLES:
-        case F_HARMONIC:
-        case F_IDIHS:
+        case InteractionFunction::Bonds:
+        case InteractionFunction::Angles:
+        case InteractionFunction::HarmonicPotential:
+        case InteractionFunction::ImproperDihedrals:
+        case InteractionFunction::RestrictedBendingPotential:
             newparam->harmonic.rA  = old[0];
             newparam->harmonic.krA = old[1];
             newparam->harmonic.rB  = old[2];
             newparam->harmonic.krB = old[3];
             break;
-        case F_RESTRANGLES:
-            newparam->harmonic.rA  = old[0];
-            newparam->harmonic.krA = old[1];
-            break;
-        case F_MORSE:
+        case InteractionFunction::MorsePotential:
             newparam->morse.b0A   = old[0];
             newparam->morse.cbA   = old[1];
             newparam->morse.betaA = old[2];
@@ -223,19 +241,19 @@ static int assign_param(t_functype ftype, t_iparams* newparam, gmx::ArrayRef<con
             newparam->morse.cbB   = old[4];
             newparam->morse.betaB = old[5];
             break;
-        case F_CUBICBONDS:
+        case InteractionFunction::CubicBonds:
             newparam->cubic.b0   = old[0];
             newparam->cubic.kb   = old[1];
             newparam->cubic.kcub = old[2];
             break;
-        case F_CONNBONDS: break;
-        case F_POLARIZATION: newparam->polarize.alpha = old[0]; break;
-        case F_ANHARM_POL:
+        case InteractionFunction::ConnectBonds: break;
+        case InteractionFunction::Polarization: newparam->polarize.alpha = old[0]; break;
+        case InteractionFunction::AnharmonicPolarization:
             newparam->anharm_polarize.alpha = old[0];
             newparam->anharm_polarize.drcut = old[1];
             newparam->anharm_polarize.khyp  = old[2];
             break;
-        case F_WATER_POL:
+        case InteractionFunction::WaterPolarization:
             newparam->wpol.al_x = old[0];
             newparam->wpol.al_y = old[1];
             newparam->wpol.al_z = old[2];
@@ -243,46 +261,38 @@ static int assign_param(t_functype ftype, t_iparams* newparam, gmx::ArrayRef<con
             newparam->wpol.rHH  = old[4];
             newparam->wpol.rOD  = old[5];
             break;
-        case F_THOLE_POL:
+        case InteractionFunction::TholePolarization:
             newparam->thole.a      = old[0];
             newparam->thole.alpha1 = old[1];
             newparam->thole.alpha2 = old[2];
-            if ((old[1] > 0) && (old[2] > 0))
-            {
-                newparam->thole.rfac = old[0] * gmx::invsixthroot(old[1] * old[2]);
-            }
-            else
-            {
-                newparam->thole.rfac = 1;
-            }
             break;
-        case F_BHAM:
+        case InteractionFunction::BuckinghamShortRange:
             newparam->bham.a = old[0];
             newparam->bham.b = old[1];
             newparam->bham.c = old[2];
             break;
-        case F_LJ14:
+        case InteractionFunction::LennardJones14:
             set_ljparams(comb, reppow, old[0], old[1], &newparam->lj14.c6A, &newparam->lj14.c12A);
             set_ljparams(comb, reppow, old[2], old[3], &newparam->lj14.c6B, &newparam->lj14.c12B);
             break;
-        case F_LJC14_Q:
+        case InteractionFunction::LennardJonesCoulomb14Q:
             newparam->ljc14.fqq = old[0];
             newparam->ljc14.qi  = old[1];
             newparam->ljc14.qj  = old[2];
             set_ljparams(comb, reppow, old[3], old[4], &newparam->ljc14.c6, &newparam->ljc14.c12);
             break;
-        case F_LJC_PAIRS_NB:
+        case InteractionFunction::LennardJonesCoulombNonBondedPairs:
             newparam->ljcnb.qi = old[0];
             newparam->ljcnb.qj = old[1];
             set_ljparams(comb, reppow, old[2], old[3], &newparam->ljcnb.c6, &newparam->ljcnb.c12);
             break;
-        case F_LJ:
+        case InteractionFunction::LennardJonesShortRange:
             set_ljparams(comb, reppow, old[0], old[1], &newparam->lj.c6, &newparam->lj.c12);
             break;
-        case F_PDIHS:
-        case F_PIDIHS:
-        case F_ANGRES:
-        case F_ANGRESZ:
+        case InteractionFunction::ProperDihedrals:
+        case InteractionFunction::PeriodicImproperDihedrals:
+        case InteractionFunction::AngleRestraints:
+        case InteractionFunction::AngleZAxisRestraints:
             newparam->pdihs.phiA = old[0];
             newparam->pdihs.cpA  = old[1];
 
@@ -294,7 +304,7 @@ static int assign_param(t_functype ftype, t_iparams* newparam, gmx::ArrayRef<con
             /* If both force constants are zero there is no interaction. Return -1 to signal
              * this entry should NOT be added.
              */
-            if (fabs(newparam->pdihs.cpA) < GMX_REAL_MIN && fabs(newparam->pdihs.cpB) < GMX_REAL_MIN)
+            if (std::fabs(newparam->pdihs.cpA) < GMX_REAL_MIN && std::fabs(newparam->pdihs.cpB) < GMX_REAL_MIN)
             {
                 return -1;
             }
@@ -302,11 +312,13 @@ static int assign_param(t_functype ftype, t_iparams* newparam, gmx::ArrayRef<con
             newparam->pdihs.mult = round_check(old[2], -99, ftype, "multiplicity");
 
             break;
-        case F_RESTRDIHS:
+        case InteractionFunction::RestrictedTorsionPotential:
             newparam->pdihs.phiA = old[0];
             newparam->pdihs.cpA  = old[1];
+            newparam->pdihs.phiB = old[2];
+            newparam->pdihs.cpB  = old[3];
             break;
-        case F_POSRES:
+        case InteractionFunction::PositionRestraints:
             newparam->posres.fcA[XX]   = old[0];
             newparam->posres.fcA[YY]   = old[1];
             newparam->posres.fcA[ZZ]   = old[2];
@@ -320,14 +332,15 @@ static int assign_param(t_functype ftype, t_iparams* newparam, gmx::ArrayRef<con
             newparam->posres.pos0B[YY] = old[10];
             newparam->posres.pos0B[ZZ] = old[11];
             break;
-        case F_FBPOSRES:
+        case InteractionFunction::FlatBottomedPositionRestraints:
             newparam->fbposres.geom = round_check(old[0], 0, ftype, "geometry");
             if (!(newparam->fbposres.geom > efbposresZERO && newparam->fbposres.geom < efbposresNR))
             {
                 gmx_fatal(FARGS,
                           "Invalid geometry for flat-bottomed position restraint.\n"
                           "Expected number between 1 and %d. Found %d\n",
-                          efbposresNR - 1, newparam->fbposres.geom);
+                          efbposresNR - 1,
+                          newparam->fbposres.geom);
             }
             newparam->fbposres.r        = old[1];
             newparam->fbposres.k        = old[2];
@@ -335,7 +348,7 @@ static int assign_param(t_functype ftype, t_iparams* newparam, gmx::ArrayRef<con
             newparam->fbposres.pos0[YY] = old[4];
             newparam->fbposres.pos0[ZZ] = old[5];
             break;
-        case F_DISRES:
+        case InteractionFunction::DistanceRestraints:
             newparam->disres.label = round_check(old[0], 0, ftype, "label");
             newparam->disres.type  = round_check(old[1], 1, ftype, "type'");
             newparam->disres.low   = old[2];
@@ -343,7 +356,7 @@ static int assign_param(t_functype ftype, t_iparams* newparam, gmx::ArrayRef<con
             newparam->disres.up2   = old[4];
             newparam->disres.kfac  = old[5];
             break;
-        case F_ORIRES:
+        case InteractionFunction::OrientationRestraints:
             newparam->orires.ex    = round_check(old[0], 1, ftype, "experiment") - 1;
             newparam->orires.label = round_check(old[1], 1, ftype, "label");
             newparam->orires.power = round_check(old[2], 0, ftype, "power");
@@ -351,7 +364,7 @@ static int assign_param(t_functype ftype, t_iparams* newparam, gmx::ArrayRef<con
             newparam->orires.obs   = old[4];
             newparam->orires.kfac  = old[5];
             break;
-        case F_DIHRES:
+        case InteractionFunction::DihedralRestraints:
             newparam->dihres.phiA  = old[0];
             newparam->dihres.dphiA = old[1];
             newparam->dihres.kfacA = old[2];
@@ -359,20 +372,21 @@ static int assign_param(t_functype ftype, t_iparams* newparam, gmx::ArrayRef<con
             newparam->dihres.dphiB = old[4];
             newparam->dihres.kfacB = old[5];
             break;
-        case F_RBDIHS:
+        case InteractionFunction::RyckaertBellemansDihedrals:
             for (int i = 0; (i < NR_RBDIHS); i++)
             {
                 newparam->rbdihs.rbcA[i] = old[i];
                 newparam->rbdihs.rbcB[i] = old[NR_RBDIHS + i];
             }
             break;
-        case F_CBTDIHS:
+        case InteractionFunction::CombinedBendingTorsionPotential:
             for (int i = 0; (i < NR_CBTDIHS); i++)
             {
                 newparam->cbtdihs.cbtcA[i] = old[i];
+                newparam->cbtdihs.cbtcB[i] = old[i + NR_CBTDIHS];
             }
             break;
-        case F_FOURDIHS:
+        case InteractionFunction::FourierDihedrals:
             /* Read the dihedral parameters to temporary arrays,
              * and convert them to the computationally faster
              * Ryckaert-Bellemans form.
@@ -393,23 +407,23 @@ static int assign_param(t_functype ftype, t_iparams* newparam, gmx::ArrayRef<con
             newparam->rbdihs.rbcB[4] = -4.0 * old[NR_FOURDIHS + 3];
             newparam->rbdihs.rbcB[5] = 0.0;
             break;
-        case F_CONSTR:
-        case F_CONSTRNC:
+        case InteractionFunction::Constraints:
+        case InteractionFunction::ConstraintsNoCoupling:
             newparam->constr.dA = old[0];
             newparam->constr.dB = old[1];
             break;
-        case F_SETTLE:
+        case InteractionFunction::SETTLE:
             newparam->settle.doh = old[0];
             newparam->settle.dhh = old[1];
             break;
-        case F_VSITE1:
-        case F_VSITE2:
-        case F_VSITE2FD:
-        case F_VSITE3:
-        case F_VSITE3FD:
-        case F_VSITE3OUT:
-        case F_VSITE4FD:
-        case F_VSITE4FDN:
+        case InteractionFunction::VirtualSite1:
+        case InteractionFunction::VirtualSite2:
+        case InteractionFunction::VirtualSite2FlexibleDistance:
+        case InteractionFunction::VirtualSite3:
+        case InteractionFunction::VirtualSite3FlexibleDistance:
+        case InteractionFunction::VirtualSite3Outside:
+        case InteractionFunction::VirtualSite4FlexibleDistance:
+        case InteractionFunction::VirtualSite4FlexibleDistanceNormalization:
             newparam->vsite.a = old[0];
             newparam->vsite.b = old[1];
             newparam->vsite.c = old[2];
@@ -417,35 +431,35 @@ static int assign_param(t_functype ftype, t_iparams* newparam, gmx::ArrayRef<con
             newparam->vsite.e = old[4];
             newparam->vsite.f = old[5];
             break;
-        case F_VSITE3FAD:
-            newparam->vsite.a = old[1] * cos(DEG2RAD * old[0]);
-            newparam->vsite.b = old[1] * sin(DEG2RAD * old[0]);
+        case InteractionFunction::VirtualSite3FlexibleAngleDistance:
+            newparam->vsite.a = old[1] * std::cos(gmx::c_deg2Rad * old[0]);
+            newparam->vsite.b = old[1] * std::sin(gmx::c_deg2Rad * old[0]);
             newparam->vsite.c = old[2];
             newparam->vsite.d = old[3];
             newparam->vsite.e = old[4];
             newparam->vsite.f = old[5];
             break;
-        case F_VSITEN:
+        case InteractionFunction::VirtualSiteN:
             newparam->vsiten.n = round_check(old[0], 1, ftype, "number of atoms");
             newparam->vsiten.a = old[1];
             break;
-        case F_CMAP:
+        case InteractionFunction::DihedralEnergyCorrectionMap:
             newparam->cmap.cmapA = static_cast<int>(old[0]);
             newparam->cmap.cmapB = static_cast<int>(old[1]);
             break;
-        case F_GB12_NOLONGERUSED:
-        case F_GB13_NOLONGERUSED:
-        case F_GB14_NOLONGERUSED: break;
+        case InteractionFunction::GeneralizedBorn12PolarizationUnused:
+        case InteractionFunction::GeneralizedBorn13PolarizationUnused:
+        case InteractionFunction::GeneralizedBorn14PolarizationUnused: break;
         default:
-            gmx_fatal(FARGS, "unknown function type %d in %s line %d", ftype, __FILE__, __LINE__);
+            gmx_fatal(FARGS, "unknown function type %d in %s line %d", static_cast<int>(ftype), __FILE__, __LINE__);
     }
     return 0;
 }
 
 static int enter_params(gmx_ffparams_t*           ffparams,
-                        t_functype                ftype,
+                        InteractionFunction       ftype,
                         gmx::ArrayRef<const real> forceparams,
-                        int                       comb,
+                        CombinationRule           comb,
                         real                      reppow,
                         int                       start,
                         bool                      bAppend)
@@ -461,13 +475,14 @@ static int enter_params(gmx_ffparams_t*           ffparams,
 
     if (!bAppend)
     {
-        if (ftype != F_DISRES)
+        if (ftype != InteractionFunction::DistanceRestraints)
         {
             for (int type = start; type < ffparams->numTypes(); type++)
             {
                 // Note that the first condition is always met by starting the loop at start
                 if (ffparams->functype[type] == ftype
-                    && memcmp(&newparam, &ffparams->iparams[type], static_cast<size_t>(sizeof(newparam))) == 0)
+                    && std::memcmp(&newparam, &ffparams->iparams[type], static_cast<size_t>(sizeof(newparam)))
+                               == 0)
                 {
                     return type;
                 }
@@ -480,7 +495,7 @@ static int enter_params(gmx_ffparams_t*           ffparams,
             // This changes the complexity from quadratic to linear in the number of restraints.
             const int type = ffparams->numTypes() - 1;
             if (type >= 0 && ffparams->functype[type] == ftype
-                && memcmp(&newparam, &ffparams->iparams[type], static_cast<size_t>(sizeof(newparam))) == 0)
+                && std::memcmp(&newparam, &ffparams->iparams[type], static_cast<size_t>(sizeof(newparam))) == 0)
             {
                 return type;
             }
@@ -507,8 +522,8 @@ static void append_interaction(InteractionList* ilist, int type, gmx::ArrayRef<c
 }
 
 static void enter_function(const InteractionsOfType* p,
-                           t_functype                ftype,
-                           int                       comb,
+                           InteractionFunction       ftype,
+                           CombinationRule           comb,
                            real                      reppow,
                            gmx_ffparams_t*           ffparams,
                            InteractionList*          il,
@@ -517,7 +532,7 @@ static void enter_function(const InteractionsOfType* p,
 {
     int start = ffparams->numTypes();
 
-    for (auto& parm : p->interactionTypes)
+    for (const auto& parm : p->interactionTypes)
     {
         int type = enter_params(ffparams, ftype, parm.forceParam(), comb, reppow, start, bAppend);
         /* Type==-1 is used as a signal that this interaction is all-zero and should not be added. */
@@ -531,17 +546,23 @@ static void enter_function(const InteractionsOfType* p,
     }
 }
 
-void convertInteractionsOfType(int                                      atnr,
-                               gmx::ArrayRef<const InteractionsOfType>  nbtypes,
+bool shouldConvertInteractionType(InteractionFunction ftype)
+{
+    const unsigned long flags = interaction_function[ftype].flags;
+    return ((ftype != InteractionFunction::LennardJonesShortRange)
+            && (ftype != InteractionFunction::BuckinghamShortRange)
+            && ((flags & IF_BOND) != 0u || (flags & IF_VSITE) != 0u || (flags & IF_CONSTRAINT) != 0u));
+}
+
+void convertInteractionsOfType(int atnr,
+                               const gmx::EnumerationArray<InteractionFunction, InteractionsOfType>& nbtypes,
                                gmx::ArrayRef<const MoleculeInformation> mi,
                                const MoleculeInformation*               intermolecular_interactions,
-                               int                                      comb,
+                               CombinationRule                          comb,
                                double                                   reppow,
                                real                                     fudgeQQ,
                                gmx_mtop_t*                              mtop)
 {
-    int             i;
-    unsigned long   flags;
     gmx_ffparams_t* ffp;
     gmx_moltype_t*  molt;
 
@@ -551,25 +572,44 @@ void convertInteractionsOfType(int                                      atnr,
     ffp->iparams.clear();
     ffp->reppow = reppow;
 
-    enter_function(&(nbtypes[F_LJ]), static_cast<t_functype>(F_LJ), comb, reppow, ffp, nullptr, TRUE, TRUE);
-    enter_function(&(nbtypes[F_BHAM]), static_cast<t_functype>(F_BHAM), comb, reppow, ffp, nullptr,
-                   TRUE, TRUE);
+    enter_function(&(nbtypes[InteractionFunction::LennardJonesShortRange]),
+                   InteractionFunction::LennardJonesShortRange,
+                   comb,
+                   reppow,
+                   ffp,
+                   nullptr,
+                   TRUE,
+                   TRUE);
+    enter_function(&(nbtypes[InteractionFunction::BuckinghamShortRange]),
+                   InteractionFunction::BuckinghamShortRange,
+                   comb,
+                   reppow,
+                   ffp,
+                   nullptr,
+                   TRUE,
+                   TRUE);
 
     for (size_t mt = 0; mt < mtop->moltype.size(); mt++)
     {
         molt = &mtop->moltype[mt];
-        for (i = 0; (i < F_NRE); i++)
+        for (const auto i : gmx::EnumerationWrapper<InteractionFunction>{})
         {
             molt->ilist[i].iatoms.clear();
 
-            gmx::ArrayRef<const InteractionsOfType> interactions = mi[mt].interactions;
+            const gmx::EnumerationArray<InteractionFunction, InteractionsOfType>& interactions =
+                    mi[mt].interactions;
 
-            flags = interaction_function[i].flags;
-            if ((i != F_LJ) && (i != F_BHAM)
-                && ((flags & IF_BOND) || (flags & IF_VSITE) || (flags & IF_CONSTRAINT)))
+            if (shouldConvertInteractionType(i))
             {
-                enter_function(&(interactions[i]), static_cast<t_functype>(i), comb, reppow, ffp,
-                               &molt->ilist[i], FALSE, (i == F_POSRES || i == F_FBPOSRES));
+                enter_function(&(interactions[i]),
+                               i,
+                               comb,
+                               reppow,
+                               ffp,
+                               &molt->ilist[i],
+                               FALSE,
+                               (i == InteractionFunction::PositionRestraints
+                                || i == InteractionFunction::FlatBottomedPositionRestraints));
             }
         }
     }
@@ -580,15 +620,16 @@ void convertInteractionsOfType(int                                      atnr,
         /* Process the intermolecular interaction list */
         mtop->intermolecular_ilist = std::make_unique<InteractionLists>();
 
-        for (i = 0; (i < F_NRE); i++)
+        for (const auto i : gmx::EnumerationWrapper<InteractionFunction>{})
         {
             (*mtop->intermolecular_ilist)[i].iatoms.clear();
 
-            gmx::ArrayRef<const InteractionsOfType> interactions = intermolecular_interactions->interactions;
+            const gmx::EnumerationArray<InteractionFunction, InteractionsOfType>& interactions =
+                    intermolecular_interactions->interactions;
 
             if (!interactions[i].interactionTypes.empty())
             {
-                flags = interaction_function[i].flags;
+                const unsigned long flags = interaction_function[i].flags;
                 /* For intermolecular interactions we (currently)
                  * only support potentials.
                  * Constraints and virtual sites would be possible,
@@ -615,8 +656,8 @@ void convertInteractionsOfType(int                                      atnr,
                 }
                 else
                 {
-                    enter_function(&(interactions[i]), static_cast<t_functype>(i), comb, reppow,
-                                   ffp, &(*mtop->intermolecular_ilist)[i], FALSE, FALSE);
+                    enter_function(
+                            &(interactions[i]), i, comb, reppow, ffp, &(*mtop->intermolecular_ilist)[i], FALSE, FALSE);
 
                     mtop->bIntermolecularInteractions = TRUE;
                 }

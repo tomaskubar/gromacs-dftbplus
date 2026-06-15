@@ -1,12 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
- * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013-2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 1991- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -20,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -29,17 +26,23 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 #include "gmxpre.h"
 
 #include "genhydro.h"
 
+#include <cstdio>
 #include <cstring>
 #include <ctime>
+
+#include <algorithm>
+#include <array>
+#include <filesystem>
+#include <string>
 
 #include "gromacs/fileio/confio.h"
 #include "gromacs/gmxlib/network.h"
@@ -48,14 +51,18 @@
 #include "gromacs/gmxpreprocess/notset.h"
 #include "gromacs/gmxpreprocess/pgutil.h"
 #include "gromacs/gmxpreprocess/ter_db.h"
-#include "gromacs/math/vec.h"
 #include "gromacs/topology/atoms.h"
 #include "gromacs/topology/symtab.h"
+#include "gromacs/utility/arrayref.h"
+#include "gromacs/utility/basedefinitions.h"
 #include "gromacs/utility/cstringutil.h"
 #include "gromacs/utility/exceptions.h"
 #include "gromacs/utility/fatalerror.h"
 #include "gromacs/utility/futil.h"
+#include "gromacs/utility/gmxassert.h"
 #include "gromacs/utility/smalloc.h"
+#include "gromacs/utility/stringutil.h"
+#include "gromacs/utility/vec.h"
 
 #include "hackblock.h"
 #include "resall.h"
@@ -66,12 +73,12 @@ static void copy_atom(const t_atoms* atoms1, int a1, t_atoms* atoms2, int a2, t_
     atoms2->atomname[a2] = put_symtab(symtab, *atoms1->atomname[a1]);
 }
 
-static int pdbasearch_atom(const char*              name,
-                           int                      resind,
-                           const t_atoms*           pdba,
-                           const char*              searchtype,
-                           bool                     bAllowMissing,
-                           gmx::ArrayRef<const int> cyclicBondsIndex)
+static std::optional<int> pdbasearch_atom(const char*              name,
+                                          int                      resind,
+                                          const t_atoms*           pdba,
+                                          const char*              searchtype,
+                                          bool                     bAllowMissing,
+                                          gmx::ArrayRef<const int> cyclicBondsIndex)
 {
     int i;
 
@@ -80,6 +87,21 @@ static int pdbasearch_atom(const char*              name,
     return search_atom(name, i, pdba, searchtype, bAllowMissing, cyclicBondsIndex);
 }
 
+/*! \brief Return the index of the first atom whose residue index
+ * matches and which has a patch with the given name.
+ *
+ * \param[out] ii      Index of the first atom in the residue that matches,
+ *                       -1 if no match occurs.
+ * \param[out] jj      Index of the patch that matches,
+ *                       unchanged if no match occurs.
+ * \param[in]  name    Name of the desired patch to match
+ * \param[in]  patches The patch database to search
+ * \param[in]  resind  The residue index to match
+ * \param[in]  pdba    The atoms to work with
+ *
+ * \todo The short-circuit logic will be simpler if this returned a
+ * std::pair<int, int> as soon as the first double match is found.
+ */
 static void hacksearch_atom(int*                                            ii,
                             int*                                            jj,
                             const char*                                     name,
@@ -105,6 +127,10 @@ static void hacksearch_atom(int*                                            ii,
             {
                 *ii = i;
                 *jj = j;
+                if (*ii >= 0)
+                {
+                    break;
+                }
             }
             j++;
         }
@@ -158,7 +184,7 @@ static void expand_hackblocks_one(const MoleculePatchDatabase& newPatch,
 {
     /* we'll recursively add atoms to atoms */
     int pos = 0;
-    for (auto& singlePatch : newPatch.hack)
+    for (const auto& singlePatch : newPatch.hack)
     {
         /* first check if we're in the N- or C-terminus, then we should ignore
            all hacks involving atoms from resp. previous or next residue
@@ -208,7 +234,9 @@ static void expand_hackblocks_one(const MoleculePatchDatabase& newPatch,
                     {
                         fprintf(debug,
                                 "Hack '%s' %d, replacing nname '%s' with '%s' (old name '%s')\n",
-                                localAtomName.c_str(), pos, patch->nname.c_str(),
+                                localAtomName.c_str(),
+                                pos,
+                                patch->nname.c_str(),
                                 singlePatch.nname.c_str(),
                                 patch->oname.empty() ? "" : patch->oname.c_str());
                     }
@@ -218,8 +246,11 @@ static void expand_hackblocks_one(const MoleculePatchDatabase& newPatch,
                 if (singlePatch.tp == 10 && k == 2)
                 {
                     /* This is a water virtual site, not a hydrogen */
-                    /* Ugly hardcoded name hack */
-                    patch->nname.assign("M");
+                    /* Ugly hardcoded name hack to replace 'H' with 'M' */
+                    GMX_RELEASE_ASSERT(
+                            !patch->nname.empty() && patch->nname[0] == 'H',
+                            "Water virtual site should be named starting with H at this point");
+                    patch->nname[0] = 'M';
                 }
                 else if (singlePatch.tp == 11 && k >= 2)
                 {
@@ -240,8 +271,11 @@ static void expand_hackblocks_one(const MoleculePatchDatabase& newPatch,
                 for (int k = 0; k < singlePatch.nr; k++)
                 {
                     expand_hackblocks_one(
-                            newPatch, globalPatches->at(globalPatches->size() - singlePatch.nr + k).nname,
-                            globalPatches, bN, bC);
+                            newPatch,
+                            globalPatches->at(globalPatches->size() - singlePatch.nr + k).nname,
+                            globalPatches,
+                            bN,
+                            bC);
                 }
             }
         }
@@ -290,15 +324,11 @@ static int check_atoms_present(const t_atoms*                            pdba,
                 {
                     /* we're adding */
                     /* check if the atom is already present */
-                    int k = pdbasearch_atom(patch->nname.c_str(), rnr, pdba, "check", TRUE, cyclicBondsIndex);
-                    if (k != -1)
+                    patch->bAlreadyPresent =
+                            pdbasearch_atom(patch->nname.c_str(), rnr, pdba, "check", TRUE, cyclicBondsIndex)
+                                    .has_value();
+                    if (!patch->bAlreadyPresent)
                     {
-                        /* We found the added atom. */
-                        patch->bAlreadyPresent = true;
-                    }
-                    else
-                    {
-                        patch->bAlreadyPresent = false;
                         /* count how many atoms we'll add */
                         nadd++;
                     }
@@ -310,9 +340,13 @@ static int check_atoms_present(const t_atoms*                            pdba,
                     nadd--;
                     break;
                 }
-                case MoleculePatchType::Replace: { break;
+                case MoleculePatchType::Replace:
+                {
+                    break;
                 }
-                default: { GMX_THROW(gmx::InternalError("Case not handled"));
+                default:
+                {
+                    GMX_THROW(gmx::InternalError("Case not handled"));
                 }
             }
         }
@@ -347,9 +381,13 @@ static void calc_all_pos(const t_atoms*                            pdba,
                 bool bFoundAll = true;
                 for (int m = 0; (m < patch->nctl && bFoundAll); m++)
                 {
-                    int ia = pdbasearch_atom(patch->a[m].c_str(), rnr, pdba, bCheckMissing ? "atom" : "check",
-                                             !bCheckMissing, cyclicBondsIndex);
-                    if (ia < 0)
+                    const std::optional<int> ia = pdbasearch_atom(patch->a[m].c_str(),
+                                                                  rnr,
+                                                                  pdba,
+                                                                  bCheckMissing ? "atom" : "check",
+                                                                  !bCheckMissing,
+                                                                  cyclicBondsIndex);
+                    if (!ia.has_value())
                     {
                         /* not found in original atoms, might still be in
                          * the patch Instructions (patches) */
@@ -367,14 +405,16 @@ static void calc_all_pos(const t_atoms*                            pdba,
                                           "Atom %s not found in residue %s %d"
                                           ", rtp entry %s"
                                           " while adding hydrogens",
-                                          patch->a[m].c_str(), *pdba->resinfo[rnr].name,
-                                          pdba->resinfo[rnr].nr, *pdba->resinfo[rnr].rtp);
+                                          patch->a[m].c_str(),
+                                          *pdba->resinfo[rnr].name,
+                                          pdba->resinfo[rnr].nr,
+                                          *pdba->resinfo[rnr].rtp);
                             }
                         }
                     }
                     else
                     {
-                        copy_rvec(x[ia], xa[m]);
+                        copy_rvec(x[ia.value()], xa[m]);
                     }
                 }
                 if (bFoundAll)
@@ -510,7 +550,9 @@ static int add_h_low(t_atoms**                                   initialAtoms,
                     {
                         if (gmx_debug_at)
                         {
-                            fprintf(debug, "Replacing %d '%s' with (old name '%s') %s\n", newi,
+                            fprintf(debug,
+                                    "Replacing %d '%s' with (old name '%s') %s\n",
+                                    newi,
                                     ((*modifiedAtoms)->atomname[newi] && *(*modifiedAtoms)->atomname[newi])
                                             ? *(*modifiedAtoms)->atomname[newi]
                                             : "",
@@ -525,8 +567,11 @@ static int add_h_low(t_atoms**                                   initialAtoms,
                     }
                     if (debug)
                     {
-                        fprintf(debug, " %s %g %g", *(*modifiedAtoms)->atomname[newi],
-                                (*modifiedAtoms)->atom[newi].m, (*modifiedAtoms)->atom[newi].q);
+                        fprintf(debug,
+                                " %s %g %g",
+                                *(*modifiedAtoms)->atomname[newi],
+                                (*modifiedAtoms)->atom[newi].m,
+                                (*modifiedAtoms)->atom[newi].q);
                     }
                 }
             }
@@ -567,8 +612,8 @@ int add_h(t_atoms**                                   initialAtoms,
     do
     {
         nold = nnew;
-        nnew = add_h_low(initialAtoms, localAtoms, xptr, globalPatches, symtab, nterpairs, ntdb,
-                         ctdb, rN, rC, FALSE, cyclicBondsIndex);
+        nnew = add_h_low(
+                initialAtoms, localAtoms, xptr, globalPatches, symtab, nterpairs, ntdb, ctdb, rN, rC, FALSE, cyclicBondsIndex);
         niter++;
         if (niter > 100)
         {
@@ -581,8 +626,7 @@ int add_h(t_atoms**                                   initialAtoms,
     if (!bAllowMissing)
     {
         /* Call add_h_low once more, now only for the missing atoms check */
-        add_h_low(initialAtoms, localAtoms, xptr, globalPatches, symtab, nterpairs, ntdb, ctdb, rN,
-                  rC, TRUE, cyclicBondsIndex);
+        add_h_low(initialAtoms, localAtoms, xptr, globalPatches, symtab, nterpairs, ntdb, ctdb, rN, rC, TRUE, cyclicBondsIndex);
     }
 
     return nnew;

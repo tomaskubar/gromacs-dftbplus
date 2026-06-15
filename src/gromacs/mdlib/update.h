@@ -1,13 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
- * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2016,2017 by the GROMACS development team.
- * Copyright (c) 2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 1991- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -21,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -30,39 +26,47 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 #ifndef GMX_MDLIB_UPDATE_H
 #define GMX_MDLIB_UPDATE_H
 
+#include <cstdint>
+
+#include <memory>
+#include <vector>
+
+#include "gromacs/math/matrix.h"
 #include "gromacs/math/paddedvector.h"
-#include "gromacs/math/vectypes.h"
 #include "gromacs/mdtypes/md_enums.h"
 #include "gromacs/timing/wallcycle.h"
 #include "gromacs/utility/arrayref.h"
-#include "gromacs/utility/basedefinitions.h"
-#include "gromacs/utility/classhelpers.h"
 #include "gromacs/utility/real.h"
+#include "gromacs/utility/vectypes.h"
 
 class ekinstate_t;
-struct gmx_ekindata_t;
+struct gmx_domdec_t;
+class gmx_ekindata_t;
 struct gmx_enerdata_t;
 enum class PbcType;
 struct t_fcdata;
 struct t_graph;
 struct t_grpopts;
 struct t_inputrec;
-struct t_mdatoms;
 struct t_nrnb;
 class t_state;
+enum class ParticleType;
 
 namespace gmx
 {
 class BoxDeformation;
 class Constraints;
+class MpiComm;
+template<typename T>
+class ArrayRefWithPadding;
 
 
 /*! \libinternal
@@ -73,9 +77,10 @@ public:
     /*! \brief Constructor
      *
      * \param[in] inputRecord     Input record, used to construct SD object.
+     * \param[in] ekind           Kinetic energy data
      * \param[in] boxDeformation  Periodic box deformation object.
      */
-    Update(const t_inputrec& inputRecord, BoxDeformation* boxDeformation);
+    Update(const t_inputrec& inputRecord, const gmx_ekindata_t& ekind, BoxDeformation* boxDeformation);
     //! Destructor
     ~Update();
     /*! \brief Get the pointer to updated coordinates
@@ -92,38 +97,52 @@ public:
      * \returns handle to box deformation class
      */
     BoxDeformation* deform() const;
-    /*! \brief Resizes buffer that stores intermediate coordinates.
+    /*! \brief Sets data that changes only at domain decomposition time.
      *
      * \param[in] numAtoms  Updated number of atoms.
+     * \param[in] cFREEZE   Group index for freezing
+     * \param[in] cTC       Group index for center of mass motion removal
+     * \param[in] cAcceleration  Group index for constant acceleration groups
      */
-    void setNumAtoms(int numAtoms);
+    void updateAfterPartition(int                                 numAtoms,
+                              gmx::ArrayRef<const unsigned short> cFREEZE,
+                              gmx::ArrayRef<const unsigned short> cTC,
+                              gmx::ArrayRef<const unsigned short> cAcceleration);
 
     /*! \brief Perform numerical integration step.
      *
      * Selects the appropriate integrator, based on the input record and performs a numerical integration step.
      *
-     * \param[in]  inputRecord      Input record.
-     * \param[in]  step             Current timestep.
-     * \param[in]  md               MD atoms data.
-     * \param[in]  state            System state object.
-     * \param[in]  f                Buffer with atomic forces for home particles.
-     * \param[in]  fcdata           Force calculation data to update distance and orientation restraints.
-     * \param[in]  ekind            Kinetic energy data (for temperature coupling, energy groups, etc.).
-     * \param[in]  M                Parrinello-Rahman velocity scaling matrix.
-     * \param[in]  updatePart       What should be updated, coordinates or velocities. This enum only used in VV integrator.
-     * \param[in]  cr               Comunication record  (Old comment: these shouldn't be here -- need to think about it).
-     * \param[in]  haveConstraints  If the system has constraints.
+     * \param[in]  inputRecord               Input record.
+     * \param[in]  step                      Current timestep.
+     * \param[in]  homenr                    The number of atoms on this processor.
+     * \param[in]  havePartiallyFrozenAtoms  Whether atoms are frozen along 1 or 2 (not 3) dimensions?
+     * \param[in]  ptype                     The list of particle types.
+     * \param[in]  invMass                   Inverse atomic mass per atom, 0 for vsites and shells.
+     * \param[in]  invMassPerDim             Inverse atomic mass per atom and dimension, 0 for vsites, shells and frozen dimensions
+     * \param[in]  state                     System state object.
+     * \param[in]  f                         Buffer with atomic forces for home particles.
+     * \param[in]  fcdata                    Force calculation data to update distance and orientation restraints.
+     * \param[in]  ekind                     Kinetic energy data (for temperature coupling, energy groups, etc.).
+     * \param[in]  parrinelloRahmanM         Parrinello-Rahman velocity scaling matrix.
+     * \param[in]  updatePart                What should be updated, coordinates or velocities. This enum only used in VV integrator.
+     * \param[in]  dd                        Domain decomposition object, nullptr without DD.
+     * \param[in]  haveConstraints           If the system has constraints.
      */
     void update_coords(const t_inputrec&                                inputRecord,
                        int64_t                                          step,
-                       const t_mdatoms*                                 md,
+                       int                                              homenr,
+                       bool                                             havePartiallyFrozenAtoms,
+                       gmx::ArrayRef<const ParticleType>                ptype,
+                       gmx::ArrayRef<const real>                        invMass,
+                       gmx::ArrayRef<const gmx::RVec>                   invMassPerDim,
                        t_state*                                         state,
                        const gmx::ArrayRefWithPadding<const gmx::RVec>& f,
-                       const t_fcdata&                                  fcdata,
+                       t_fcdata*                                        fcdata,
                        const gmx_ekindata_t*                            ekind,
-                       const matrix                                     M,
+                       const Matrix3x3&                                 parrinelloRahmanM,
                        int                                              updatePart,
-                       const t_commrec*                                 cr,
+                       const gmx_domdec_t*                              dd,
                        bool                                             haveConstraints);
 
     /*! \brief Finalize the coordinate update.
@@ -131,15 +150,17 @@ public:
      * Copy the updated coordinates to the main coordinates buffer for the atoms that are not frozen.
      *
      * \param[in]  inputRecord      Input record.
-     * \param[in]  md               MD atoms data.
+     * \param[in]  havePartiallyFrozenAtoms  Whether atoms are frozen along 1 or 2 (not 3) dimensions?
+     * \param[in]  homenr                    The number of atoms on this processor.
      * \param[in]  state            System state object.
      * \param[in]  wcycle           Wall-clock cycle counter.
      * \param[in]  haveConstraints  If the system has constraints.
      */
     void finish_update(const t_inputrec& inputRecord,
-                       const t_mdatoms*  md,
+                       bool              havePartiallyFrozenAtoms,
+                       int               homenr,
                        t_state*          state,
-                       gmx_wallcycle_t   wcycle,
+                       gmx_wallcycle*    wcycle,
                        bool              haveConstraints);
 
     /*! \brief Secong part of the SD integrator.
@@ -150,9 +171,11 @@ public:
      * \param[in]  step         Current timestep.
      * \param[in]  dvdlambda    Free energy derivative. Contribution to be added to
      *                          the bonded interactions.
-     * \param[in]  md           MD atoms data.
+     * \param[in]  homenr       The number of atoms on this processor.
+     * \param[in]  ptype        The list of particle types.
+     * \param[in]  invMass      Inverse atomic mass per atom, 0 for vsites and shells.
      * \param[in]  state        System state object.
-     * \param[in]  cr           Comunication record.
+     * \param[in]  dd           Domain decomposition object, pass nullptr when DD is not in use.
      * \param[in]  nrnb         Cycle counters.
      * \param[in]  wcycle       Wall-clock cycle counter.
      * \param[in]  constr       Constraints object. The constraints are applied
@@ -160,24 +183,29 @@ public:
      * \param[in]  do_log       If this is logging step.
      * \param[in]  do_ene       If this is an energy evaluation step.
      */
-    void update_sd_second_half(const t_inputrec& inputRecord,
-                               int64_t           step,
-                               real*             dvdlambda,
-                               const t_mdatoms*  md,
-                               t_state*          state,
-                               const t_commrec*  cr,
-                               t_nrnb*           nrnb,
-                               gmx_wallcycle_t   wcycle,
-                               gmx::Constraints* constr,
-                               bool              do_log,
-                               bool              do_ene);
+    void update_sd_second_half(const t_inputrec&                 inputRecord,
+                               int64_t                           step,
+                               real*                             dvdlambda,
+                               int                               homenr,
+                               gmx::ArrayRef<const ParticleType> ptype,
+                               gmx::ArrayRef<const real>         invMass,
+                               t_state*                          state,
+                               const gmx_domdec_t*               dd,
+                               t_nrnb*                           nrnb,
+                               gmx_wallcycle*                    wcycle,
+                               gmx::Constraints*                 constr,
+                               bool                              do_log,
+                               bool                              do_ene);
 
     /*! \brief Performs a leap-frog update without updating \p state so the constrain virial
      * can be computed.
      */
-    void update_for_constraint_virial(const t_inputrec&                                inputRecord,
-                                      const t_mdatoms&                                 md,
-                                      const t_state&                                   state,
+    void update_for_constraint_virial(const t_inputrec&              inputRecord,
+                                      int                            homenr,
+                                      bool                           havePartiallyFrozenAtoms,
+                                      gmx::ArrayRef<const real>      invmass,
+                                      gmx::ArrayRef<const gmx::RVec> invMassPerDim,
+                                      const t_state&                 state,
                                       const gmx::ArrayRefWithPadding<const gmx::RVec>& f,
                                       const gmx_ekindata_t&                            ekind);
 
@@ -185,9 +213,10 @@ public:
      *
      * This could change e.g. in simulated annealing.
      *
-     * \param[in]  inputRecord  Input record.
+     * \param[in]  inputRecord  The input record
+     * \param[in]  ekind        Kinetic energy data
      */
-    void update_temperature_constants(const t_inputrec& inputRecord);
+    void update_temperature_constants(const t_inputrec& inputRecord, const gmx_ekindata_t& ekind);
 
     /*!\brief Getter for the list of the randomize groups.
      *
@@ -208,7 +237,7 @@ private:
     //! Implementation type.
     class Impl;
     //! Implementation object.
-    PrivateImplPointer<Impl> impl_;
+    std::unique_ptr<Impl> impl_;
 };
 
 }; // namespace gmx
@@ -232,11 +261,29 @@ private:
 
 void init_ekinstate(ekinstate_t* ekinstate, const t_inputrec* ir);
 
-void update_ekinstate(ekinstate_t* ekinstate, const gmx_ekindata_t* ekind);
+/*! \brief Updates \p ekinstate.
+ *
+ * Should be called on all ranks as a global reduction might be required.
+ * This copies ekind->ekinh and ekind->dekindl, which are assumed to be computed
+ * from the velocities at step at time t-dt/2.
+ *
+ * \param[out] ekinstate  The kinetic energy state to update
+ * \param[in]  ekind      The kinetic energy data to store
+ * \param[in]  sumEkin    Whether kinetic energy terms still need to be summed over all ranks
+ * \param[in]  mpiComm    Communication data for my group, needed when sumEkin==true
+ * \param[in]  dd         Domain decomposition object, pass nullptr when DD is not in use
+ */
+void update_ekinstate(ekinstate_t*          ekinstate,
+                      const gmx_ekindata_t* ekind,
+                      bool                  sumEkin,
+                      const gmx::MpiComm&   mpiComm,
+                      const gmx_domdec_t*   dd);
 
 /*! \brief Restores data from \p ekinstate to \p ekind, then broadcasts it
    to the rest of the simulation */
-void restore_ekinstate_from_state(const t_commrec* cr, gmx_ekindata_t* ekind, const ekinstate_t* ekinstate);
+void restore_ekinstate_from_state(const gmx::MpiComm& mpiComm,
+                                  gmx_ekindata_t*     ekind,
+                                  const ekinstate_t*  ekinstate);
 
 /*! \brief Computes the atom range for a thread to operate on, ensuring SIMD aligned ranges
  *

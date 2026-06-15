@@ -56,7 +56,7 @@
 
 #include "impl.h"
 #include "collective.h"
-
+#include "unused.h"
 
 
 int tMPI_Scatter(const void* sendbuf, int sendcount, tMPI_Datatype sendtype,
@@ -90,7 +90,7 @@ int tMPI_Scatter(const void* sendbuf, int sendcount, tMPI_Datatype sendtype,
     {
         int       i;
         size_t    sendsize        = sendtype->size*sendcount;
-        size_t    total_send_size = 0;
+        tmpi_unused size_t    total_send_size = 0;
 #ifdef USE_COLLECTIVE_COPY_BUFFER
         tmpi_bool using_cb;
 #endif
@@ -195,7 +195,7 @@ int tMPI_Scatter(const void* sendbuf, int sendcount, tMPI_Datatype sendtype,
 
 
 
-int tMPI_Scatterv(const void* sendbuf, int *sendcounts, int *displs,
+int tMPI_Scatterv(const void* sendbuf, const int *sendcounts, const int *displs,
                   tMPI_Datatype sendtype, void* recvbuf, int recvcount,
                   tMPI_Datatype recvtype, int root, tMPI_Comm comm)
 {
@@ -227,7 +227,7 @@ int tMPI_Scatterv(const void* sendbuf, int *sendcounts, int *displs,
     if (myrank == root)
     {
         int       i;
-        size_t    total_send_size = 0;
+        tmpi_unused size_t    total_send_size = 0;
 #ifdef USE_COLLECTIVE_COPY_BUFFER
         tmpi_bool using_cb;
 #endif

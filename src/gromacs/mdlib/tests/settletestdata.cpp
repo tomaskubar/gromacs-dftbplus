@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2014,2015,2016,2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2014- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \internal \file
  * \brief Defines the class that accumulates SETTLE test data.
@@ -44,7 +43,10 @@
 
 #include "settletestdata.h"
 
+#include <cstdlib>
+
 #include <algorithm>
+#include <array>
 #include <unordered_map>
 #include <vector>
 
@@ -52,19 +54,21 @@
 
 #include "gromacs/gpu_utils/gpu_utils.h"
 #include "gromacs/math/paddedvector.h"
-#include "gromacs/math/vec.h"
-#include "gromacs/math/vectypes.h"
 #include "gromacs/mdlib/settle.h"
+#include "gromacs/mdlib/tests/watersystem.h"
 #include "gromacs/mdtypes/mdatom.h"
 #include "gromacs/pbcutil/pbc.h"
+#include "gromacs/topology/atoms.h"
+#include "gromacs/topology/forcefieldparameters.h"
 #include "gromacs/topology/idef.h"
 #include "gromacs/topology/ifunc.h"
 #include "gromacs/topology/topology.h"
 #include "gromacs/utility/smalloc.h"
 #include "gromacs/utility/stringutil.h"
 #include "gromacs/utility/unique_cptr.h"
+#include "gromacs/utility/vec.h"
+#include "gromacs/utility/vectypes.h"
 
-#include "gromacs/mdlib/tests/watersystem.h"
 #include "testutils/testasserts.h"
 
 namespace gmx
@@ -73,10 +77,7 @@ namespace test
 {
 
 SettleTestData::SettleTestData(int numSettles) :
-    numSettles_(numSettles),
-    x_(c_waterPositions.size()),
-    xPrime_(c_waterPositions.size()),
-    v_(c_waterPositions.size())
+    x_(c_waterPositions.size()), xPrime_(c_waterPositions.size()), v_(c_waterPositions.size())
 {
     // Initialize coordinates and velocities from the constant set of coordinates
     std::copy(c_waterPositions.begin(), c_waterPositions.end(), x_.begin());
@@ -86,15 +87,15 @@ SettleTestData::SettleTestData(int numSettles) :
     // "update," and where there is definitely constraining
     // work to do.
     const real deltas[] = { 0.01, -0.01, +0.02, -0.02 };
-    int        i        = 0;
+    int        idx      = 0;
     for (auto& xPrime : xPrime_)
     {
-        xPrime[XX] += deltas[i % 4];
-        ++i;
-        xPrime[YY] += deltas[i % 4];
-        ++i;
-        xPrime[ZZ] += deltas[i % 4];
-        ++i;
+        xPrime[XX] += deltas[idx % 4];
+        ++idx;
+        xPrime[YY] += deltas[idx % 4];
+        ++idx;
+        xPrime[ZZ] += deltas[idx % 4];
+        ++idx;
     }
     std::fill(v_.begin(), v_.end(), RVec{ 0.0, 0.0, 0.0 });
 
@@ -103,7 +104,7 @@ SettleTestData::SettleTestData(int numSettles) :
     mtop_.moltype.resize(1);
     mtop_.molblock.resize(1);
     mtop_.molblock[0].type   = 0;
-    std::vector<int>& iatoms = mtop_.moltype[0].ilist[F_SETTLE].iatoms;
+    std::vector<int>& iatoms = mtop_.moltype[0].ilist[InteractionFunction::SETTLE].iatoms;
     for (int i = 0; i < numSettles; ++i)
     {
         iatoms.push_back(settleType);
@@ -120,7 +121,7 @@ SettleTestData::SettleTestData(int numSettles) :
 
     // Set up the masses.
     mtop_.moltype[0].atoms.atom =
-            static_cast<t_atom*>(calloc(numSettles * atomsPerSettle_, sizeof(t_atom)));
+            static_cast<t_atom*>(std::calloc(numSettles * atomsPerSettle_, sizeof(t_atom)));
     numAtoms_ = numSettles * atomsPerSettle_;
     masses_.resize(numAtoms_);
     inverseMasses_.resize(numAtoms_);
@@ -139,8 +140,8 @@ SettleTestData::SettleTestData(int numSettles) :
         mtop_.moltype[0].atoms.atom[i * atomsPerSettle_ + 2].m = hydrogenMass_;
     }
 
-    idef_               = std::make_unique<InteractionDefinitions>(mtop_.ffparams);
-    idef_->il[F_SETTLE] = mtop_.moltype[0].ilist[F_SETTLE];
+    idef_ = std::make_unique<InteractionDefinitions>(mtop_.ffparams);
+    idef_->il[InteractionFunction::SETTLE] = mtop_.moltype[0].ilist[InteractionFunction::SETTLE];
 }
 
 SettleTestData::~SettleTestData() {}

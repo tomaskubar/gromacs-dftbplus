@@ -1,13 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
- * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2016,2017 by the GROMACS development team.
- * Copyright (c) 2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 1991- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -21,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -30,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 #include "gmxpre.h"
 
@@ -41,14 +37,20 @@
 
 #include <cstring>
 
+#include <filesystem>
+#include <string>
+
 #include "gromacs/utility/arraysize.h"
+#include "gromacs/utility/basedefinitions.h"
 #include "gromacs/utility/cstringutil.h"
+#include "gromacs/utility/path.h"
 
 enum
 {
     eftASC,
     eftXDR,
     eftTNG,
+    eftH5MD,
     eftGEN,
     eftNR
 };
@@ -56,16 +58,16 @@ enum
 /* To support multiple file types with one general (eg TRX) we have
  * these arrays.
  */
-static const int trxs[] = { efXTC, efTRR, efCPT, efGRO, efG96, efPDB, efTNG };
+static const int trxs[] = { efXTC, efTRR, efCPT, efGRO, efG96, efPDB, efTNG, efH5MD };
 #define NTRXS asize(trxs)
 
 static const int trcompressed[] = { efXTC, efTNG };
 #define NTRCOMPRESSED asize(trcompressed)
 
-static const int tros[] = { efXTC, efTRR, efGRO, efG96, efPDB, efTNG };
+static const int tros[] = { efXTC, efTRR, efGRO, efG96, efPDB, efTNG, efH5MD };
 #define NTROS asize(tros)
 
-static const int trns[] = { efTRR, efCPT, efTNG };
+static const int trns[] = { efTRR, efCPT, efTNG, efH5MD };
 #define NTRNS asize(trns)
 
 static const int stos[] = { efGRO, efG96, efPDB, efBRK, efENT, efESP };
@@ -95,10 +97,16 @@ static const t_deffile deffile[efNR] = {
     { eftGEN, ".???", "trajout", "-f", "Trajectory", NTROS, tros },
     { eftGEN, ".???", "traj", nullptr, "Full precision trajectory", NTRNS, trns },
     { eftXDR, ".trr", "traj", nullptr, "Trajectory in portable xdr format" },
-    { eftGEN, ".???", "traj_comp", nullptr,
-      "Compressed trajectory (tng format or portable xdr format)", NTRCOMPRESSED, trcompressed },
+    { eftGEN,
+      ".???",
+      "traj_comp",
+      nullptr,
+      "Compressed trajectory (tng format or portable xdr format)",
+      NTRCOMPRESSED,
+      trcompressed },
     { eftXDR, ".xtc", "traj", nullptr, "Compressed trajectory (portable xdr format): xtc" },
     { eftTNG, ".tng", "traj", nullptr, "Trajectory file (tng format)" },
+    { eftH5MD, ".h5md", "traj", nullptr, "Trajectory file (H5md format)" },
     { eftXDR, ".edr", "ener", nullptr, "Energy file" },
     { eftGEN, ".???", "conf", "-c", "Structure file", NSTXS, stxs },
     { eftGEN, ".???", "out", "-o", "Structure file", NSTOS, stos },
@@ -139,7 +147,8 @@ static const t_deffile deffile[efNR] = {
     { eftASC, ".cub", "pot", nullptr, "Gaussian cube file" },
     { eftASC, ".xpm", "root", nullptr, "X PixMap compatible matrix file" },
     { eftASC, "", "rundir", nullptr, "Run directory" },
-    { eftASC, ".csv", "bench", nullptr, "CSV data file" }
+    { eftASC, ".csv", "bench", nullptr, "CSV data file" },
+    { eftASC, ".inp", "topol-qmmm", nullptr, "Input file for QM program" }
 };
 
 const char* ftp2ext(int ftp)
@@ -264,32 +273,40 @@ const char* ftp2defopt(int ftp)
     }
 }
 
-int fn2ftp(const char* fn)
+int fn2ftp(const char* path)
 {
-    int         i, len;
-    const char* feptr;
-    const char* eptr;
-
-    if (!fn)
+    if (path == nullptr)
     {
         return efNR;
-    }
-
-    len = std::strlen(fn);
-    if ((len >= 4) && (fn[len - 4] == '.'))
-    {
-        feptr = &(fn[len - 4]);
     }
     else
     {
+        return fn2ftp(std::filesystem::path{ path });
+    }
+}
+
+int fn2ftp(const std::filesystem::path& fn)
+{
+    if (fn.empty())
+    {
         return efNR;
     }
-
-    for (i = 0; (i < efNR); i++)
+    // We need an extra check if the path is ONLY the extension, or if there is no extension
+    if (!fn.has_extension())
     {
-        if ((eptr = deffile[i].ext) != nullptr)
+        if (!gmx::concatenateBeforeExtension("t", fn.filename().string()).has_extension())
         {
-            if (gmx_strcasecmp(feptr, eptr) == 0)
+            return efNR;
+        }
+    }
+    int        i         = 0;
+    const auto pathToUse = fn.has_extension() ? fn.extension() : fn.filename();
+    for (; (i < efNR); i++)
+    {
+        const char* eptr = deffile[i].ext;
+        if (eptr != nullptr)
+        {
+            if (gmx_strcasecmp(pathToUse.string().c_str(), eptr) == 0)
             {
                 break;
             }

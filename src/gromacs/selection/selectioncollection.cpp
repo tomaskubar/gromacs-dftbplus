@@ -1,11 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2010-2018, The GROMACS development team.
- * Copyright (c) 2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2010- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -19,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -28,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \internal \file
  * \brief
@@ -42,29 +40,39 @@
  */
 #include "gmxpre.h"
 
-#include "selectioncollection.h"
+#include "gromacs/selection/selectioncollection.h"
 
 #include <cctype>
 #include <cstdio>
 
+#include <algorithm>
+#include <filesystem>
 #include <memory>
+#include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "gromacs/onlinehelp/helpmanager.h"
 #include "gromacs/onlinehelp/helpwritercontext.h"
+#include "gromacs/onlinehelp/ihelptopic.h"
 #include "gromacs/options/basicoptions.h"
 #include "gromacs/options/ioptionscontainer.h"
+#include "gromacs/selection/indexutil.h"
+#include "gromacs/selection/parsetree.h"
 #include "gromacs/selection/selection.h"
+#include "gromacs/selection/selectionenums.h"
 #include "gromacs/selection/selhelp.h"
-#include "gromacs/topology/mtop_util.h"
+#include "gromacs/selection/selvalue.h"
 #include "gromacs/topology/topology.h"
 #include "gromacs/trajectory/trajectoryframe.h"
+#include "gromacs/utility/enumerationhelpers.h"
 #include "gromacs/utility/exceptions.h"
 #include "gromacs/utility/filestream.h"
 #include "gromacs/utility/gmxassert.h"
 #include "gromacs/utility/smalloc.h"
 #include "gromacs/utility/stringutil.h"
+#include "gromacs/utility/textstream.h"
 #include "gromacs/utility/textwriter.h"
 
 #include "compiler.h"
@@ -77,6 +85,9 @@
 #include "selmethod.h"
 #include "symrec.h"
 
+struct gmx_ana_indexgrps_t;
+struct t_pbc;
+
 namespace gmx
 {
 
@@ -85,9 +96,7 @@ namespace gmx
  */
 
 SelectionCollection::Impl::Impl() :
-    debugLevel_(DebugLevel::None),
-    bExternalGroupsSet_(false),
-    grps_(nullptr)
+    debugLevel_(DebugLevel::None), bExternalGroupsSet_(false), grps_(nullptr)
 {
     sc_.nvars   = 0;
     sc_.varstrs = nullptr;
@@ -257,14 +266,14 @@ void printCurrentStatus(TextWriter*              writer,
         }
         for (size_t i = firstSelection; i < sc->sel.size(); ++i)
         {
-            writer->writeString(formatString(" %2d. %s\n", static_cast<int>(i - firstSelection + 1),
-                                             sc->sel[i]->selectionText()));
+            writer->writeString(formatString(
+                    " %2d. %s\n", static_cast<int>(i - firstSelection + 1), sc->sel[i]->selectionText()));
         }
         if (maxCount > 0)
         {
             const int remaining = maxCount - static_cast<int>(sc->sel.size() - firstSelection);
-            writer->writeString(formatString("(%d more selection%s required)\n", remaining,
-                                             remaining > 1 ? "s" : ""));
+            writer->writeString(formatString(
+                    "(%d more selection%s required)\n", remaining, remaining > 1 ? "s" : ""));
         }
     }
 }
@@ -453,7 +462,7 @@ void checkTopologyProperties(const gmx_mtop_t* top, const SelectionTopologyPrope
         }
         return;
     }
-    if (props.needsMasses && !gmx_mtop_has_masses(top))
+    if (props.needsMasses_ && !gmx_mtop_has_masses(top))
     {
         GMX_THROW(InconsistentInputError(
                 "Selection requires mass information, but it is not available in the topology"));
@@ -530,8 +539,55 @@ SelectionCollection::Impl::requiredTopologyPropertiesForPositionType(const std::
 SelectionCollection::SelectionCollection() : impl_(new Impl) {}
 
 
-SelectionCollection::~SelectionCollection() {}
+SelectionCollection::~SelectionCollection() = default;
 
+SelectionCollection::SelectionCollection(const SelectionCollection& rhs) :
+    impl_(std::make_unique<Impl>())
+{
+    setReferencePosType(rhs.impl_->rpost_.empty() ? PositionCalculationCollection::typeEnumValues[0]
+                                                  : rhs.impl_->rpost_.c_str());
+    setOutputPosType(rhs.impl_->spost_.empty() ? PositionCalculationCollection::typeEnumValues[0]
+                                               : rhs.impl_->spost_.c_str());
+    setDebugLevel(static_cast<int>(rhs.impl_->debugLevel_));
+
+    for (size_t i = 0; i < rhs.impl_->sc_.sel.size(); i++)
+    {
+        const auto& selectionOption = rhs.impl_->sc_.sel[i];
+        parseFromString(selectionOption->selectionText());
+        impl_->sc_.sel[i]->setFlags(selectionOption->flags());
+    }
+
+    // Topology has been initialized in rhs if top is non-null or natoms is set.
+    // Note this needs to be set after selections are parsed to register topology requirements properly.
+    if (rhs.impl_->sc_.top != nullptr || rhs.impl_->sc_.gall.isize > 0)
+    {
+        setTopology(rhs.impl_->sc_.top, rhs.impl_->sc_.gall.isize);
+        gmx_ana_index_copy(&impl_->sc_.gall, &rhs.impl_->sc_.gall, /*balloc=*/false);
+    }
+
+    if (rhs.impl_->grps_ != nullptr)
+    {
+        setIndexGroups(rhs.impl_->grps_);
+    }
+
+    // Only compile the selection if rhs is compiled.
+    if (rhs.impl_->sc_.mempool != nullptr)
+    {
+        compile();
+    }
+}
+
+SelectionCollection& SelectionCollection::operator=(SelectionCollection rhs)
+{
+    rhs.swap(*this);
+    return *this;
+}
+
+void SelectionCollection::swap(SelectionCollection& rhs) noexcept
+{
+    using std::swap;
+    swap(impl_, rhs.impl_);
+}
 
 void SelectionCollection::initOptions(IOptionsContainer* options, SelectionTypeOption selectionTypeOption)
 {
@@ -594,7 +650,7 @@ void SelectionCollection::setDebugLevel(int debugLevel)
 }
 
 
-void SelectionCollection::setTopology(gmx_mtop_t* top, int natoms)
+void SelectionCollection::setTopology(const gmx_mtop_t* top, int natoms)
 {
     GMX_RELEASE_ASSERT(natoms > 0 || top != nullptr,
                        "The number of atoms must be given if there is no topology");
@@ -688,8 +744,8 @@ bool SelectionCollection::requiresIndexGroups() const
 SelectionList SelectionCollection::parseFromStdin(int count, bool bInteractive, const std::string& context)
 {
     StandardInputStream inputStream;
-    return parseInteractive(count, &inputStream,
-                            bInteractive ? &TextOutputFile::standardError() : nullptr, context);
+    return parseInteractive(
+            count, &inputStream, bInteractive ? &TextOutputFile::standardError() : nullptr, context);
 }
 
 namespace
@@ -717,13 +773,13 @@ SelectionList SelectionCollection::parseInteractive(int                count,
     yyscan_t scanner;
 
     const std::unique_ptr<TextWriter> statusWriter(initStatusWriter(statusStream));
-    _gmx_sel_init_lexer(&scanner, &impl_->sc_, statusWriter.get(), count,
-                        impl_->bExternalGroupsSet_, impl_->grps_);
+    _gmx_sel_init_lexer(
+            &scanner, &impl_->sc_, statusWriter.get(), count, impl_->bExternalGroupsSet_, impl_->grps_);
     return runParser(scanner, inputStream, true, count, context);
 }
 
 
-SelectionList SelectionCollection::parseFromFile(const std::string& filename)
+SelectionList SelectionCollection::parseFromFile(const std::filesystem::path& filename)
 {
 
     try
@@ -737,7 +793,8 @@ SelectionList SelectionCollection::parseFromFile(const std::string& filename)
     }
     catch (GromacsException& ex)
     {
-        ex.prependContext(formatString("Error in parsing selections from file '%s'", filename.c_str()));
+        ex.prependContext(formatString("Error in parsing selections from file '%s'",
+                                       filename.string().c_str()));
         throw;
     }
 }
@@ -853,7 +910,8 @@ void SelectionCollection::evaluate(t_trxframe* fr, t_pbc* pbc)
                     "Trajectory has less atoms (%d) than what is required for "
                     "evaluating the provided selections (atoms up to index %d "
                     "are required).",
-                    fr->natoms, maxAtomIndex + 1);
+                    fr->natoms,
+                    maxAtomIndex + 1);
             GMX_THROW(InconsistentInputError(message));
         }
     }
@@ -874,6 +932,20 @@ void SelectionCollection::evaluateFinal(int nframes)
 {
     SelectionEvaluator evaluator;
     evaluator.evaluateFinal(this, nframes);
+}
+
+std::optional<Selection> SelectionCollection::selection(std::string_view selName) const
+{
+    const auto& selections = impl_->sc_.sel;
+    if (const auto foundIter = std::find_if(selections.cbegin(),
+                                            selections.cend(),
+                                            [selName](const auto& selection)
+                                            { return selection->name() == selName; });
+        foundIter != selections.end())
+    {
+        return Selection(foundIter->get());
+    }
+    return std::nullopt;
 }
 
 
@@ -901,6 +973,11 @@ void SelectionCollection::printXvgrInfo(FILE* out) const
         std::fprintf(out, "#   %s\n", sc.sel[i]->selectionText());
     }
     std::fprintf(out, "#\n");
+}
+
+void swap(SelectionCollection& lhs, SelectionCollection& rhs) noexcept
+{
+    lhs.swap(rhs);
 }
 
 } // namespace gmx

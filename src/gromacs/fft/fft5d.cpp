@@ -1,11 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2009-2018, The GROMACS development team.
- * Copyright (c) 2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2009- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -19,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -28,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 #include "gmxpre.h"
 
@@ -50,12 +48,12 @@
 
 #include "gromacs/gpu_utils/gpu_utils.h"
 #include "gromacs/gpu_utils/hostallocator.h"
-#include "gromacs/gpu_utils/pinning.h"
 #include "gromacs/utility/alignedallocator.h"
 #include "gromacs/utility/exceptions.h"
 #include "gromacs/utility/fatalerror.h"
 #include "gromacs/utility/gmxassert.h"
 #include "gromacs/utility/gmxmpi.h"
+#include "gromacs/utility/real.h"
 #include "gromacs/utility/smalloc.h"
 
 #ifdef NOGMX
@@ -86,11 +84,14 @@ FILE* debug = 0;
 
 #if GMX_FFT_FFTW3
 
+#    include <mutex>
+
 #    include "gromacs/utility/exceptions.h"
-#    include "gromacs/utility/mutex.h"
+
 /* none of the fftw3 calls, except execute(), are thread-safe, so
    we need to serialize them with this mutex. */
-static gmx::Mutex big_fftw_mutex;
+// NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)
+static std::mutex big_fftw_mutex;
 #    define FFTW_LOCK              \
         try                        \
         {                          \
@@ -104,19 +105,6 @@ static gmx::Mutex big_fftw_mutex;
         }                            \
         GMX_CATCH_ALL_AND_EXIT_WITH_FATAL_ERROR
 #endif /* GMX_FFT_FFTW3 */
-
-#if GMX_MPI
-/* largest factor smaller than sqrt */
-static int lfactor(int z)
-{
-    int i = static_cast<int>(sqrt(static_cast<double>(z)));
-    while (z % i != 0)
-    {
-        i--;
-    }
-    return i;
-}
-#endif
 
 #if !GMX_MPI
 #    if HAVE_GETTIMEOFDAY
@@ -148,6 +136,8 @@ static int vmax(const int* a, int s)
     return max;
 }
 
+static constexpr bool allocatePmeGpuMixedMode = (GMX_GPU && !GMX_GPU_OPENCL);
+
 
 /* NxMxK the size of the data
  * comm communicator to use for fft5d
@@ -169,7 +159,7 @@ fft5d_plan fft5d_plan_3d(int                NG,
 {
 
     int  P[2], prank[2], i;
-    bool bMaster;
+    bool bMain;
     int  rNG, rMG, rKG;
     int *N0 = nullptr, *N1 = nullptr, *M0 = nullptr, *M1 = nullptr, *K0 = nullptr, *K1 = nullptr,
         *oN0 = nullptr, *oN1 = nullptr, *oM0 = nullptr, *oM1 = nullptr, *oK0 = nullptr, *oK1 = nullptr;
@@ -208,7 +198,7 @@ fft5d_plan fft5d_plan_3d(int                NG,
         prank[1] = 0;
     }
 
-    bMaster = prank[0] == 0 && prank[1] == 0;
+    bMain = prank[0] == 0 && prank[1] == 0;
 
 
     if (debug)
@@ -216,15 +206,21 @@ fft5d_plan fft5d_plan_3d(int                NG,
         fprintf(debug, "FFT5D: Using %dx%d rank grid, rank %d,%d\n", P[0], P[1], prank[0], prank[1]);
     }
 
-    if (bMaster)
+    if (bMain)
     {
         if (debug)
         {
             fprintf(debug,
                     "FFT5D: N: %d, M: %d, K: %d, P: %dx%d, real2complex: %d, backward: %d, order "
                     "yz: %d, debug %d\n",
-                    NG, MG, KG, P[0], P[1], int((flags & FFT5D_REALCOMPLEX) > 0),
-                    int((flags & FFT5D_BACKWARD) > 0), int((flags & FFT5D_ORDER_YZ) > 0),
+                    NG,
+                    MG,
+                    KG,
+                    P[0],
+                    P[1],
+                    int((flags & FFT5D_REALCOMPLEX) > 0),
+                    int((flags & FFT5D_BACKWARD) > 0),
+                    int((flags & FFT5D_ORDER_YZ) > 0),
                     int((flags & FFT5D_DEBUG) > 0));
         }
         /* The check below is not correct, one prime factor 11 or 13 is ok.
@@ -238,7 +234,7 @@ fft5d_plan fft5d_plan_3d(int                NG,
 
     if (NG == 0 || MG == 0 || KG == 0)
     {
-        if (bMaster)
+        if (bMain)
         {
             printf("FFT5D: FATAL: Datasize cannot be zero in any dimension\n");
         }
@@ -271,26 +267,26 @@ fft5d_plan fft5d_plan_3d(int                NG,
 
     /*for transpose we need to know the size for each processor not only our own size*/
 
-    N0  = static_cast<int*>(malloc(P[0] * sizeof(int)));
-    N1  = static_cast<int*>(malloc(P[1] * sizeof(int)));
-    M0  = static_cast<int*>(malloc(P[0] * sizeof(int)));
-    M1  = static_cast<int*>(malloc(P[1] * sizeof(int)));
-    K0  = static_cast<int*>(malloc(P[0] * sizeof(int)));
-    K1  = static_cast<int*>(malloc(P[1] * sizeof(int)));
-    oN0 = static_cast<int*>(malloc(P[0] * sizeof(int)));
-    oN1 = static_cast<int*>(malloc(P[1] * sizeof(int)));
-    oM0 = static_cast<int*>(malloc(P[0] * sizeof(int)));
-    oM1 = static_cast<int*>(malloc(P[1] * sizeof(int)));
-    oK0 = static_cast<int*>(malloc(P[0] * sizeof(int)));
-    oK1 = static_cast<int*>(malloc(P[1] * sizeof(int)));
+    N0  = static_cast<int*>(std::malloc(P[0] * sizeof(int)));
+    N1  = static_cast<int*>(std::malloc(P[1] * sizeof(int)));
+    M0  = static_cast<int*>(std::malloc(P[0] * sizeof(int)));
+    M1  = static_cast<int*>(std::malloc(P[1] * sizeof(int)));
+    K0  = static_cast<int*>(std::malloc(P[0] * sizeof(int)));
+    K1  = static_cast<int*>(std::malloc(P[1] * sizeof(int)));
+    oN0 = static_cast<int*>(std::malloc(P[0] * sizeof(int)));
+    oN1 = static_cast<int*>(std::malloc(P[1] * sizeof(int)));
+    oM0 = static_cast<int*>(std::malloc(P[0] * sizeof(int)));
+    oM1 = static_cast<int*>(std::malloc(P[1] * sizeof(int)));
+    oK0 = static_cast<int*>(std::malloc(P[0] * sizeof(int)));
+    oK1 = static_cast<int*>(std::malloc(P[1] * sizeof(int)));
 
     for (i = 0; i < P[0]; i++)
     {
 #define EVENDIST
 #ifndef EVENDIST
-        oN0[i] = i * ceil((double)NG / P[0]);
-        oM0[i] = i * ceil((double)MG / P[0]);
-        oK0[i] = i * ceil((double)KG / P[0]);
+        oN0[i] = i * std::ceil((double)NG / P[0]);
+        oM0[i] = i * std::ceil((double)MG / P[0]);
+        oK0[i] = i * std::ceil((double)KG / P[0]);
 #else
         oN0[i] = (NG * i) / P[0];
         oM0[i] = (MG * i) / P[0];
@@ -300,9 +296,9 @@ fft5d_plan fft5d_plan_3d(int                NG,
     for (i = 0; i < P[1]; i++)
     {
 #ifndef EVENDIST
-        oN1[i] = i * ceil((double)NG / P[1]);
-        oM1[i] = i * ceil((double)MG / P[1]);
-        oK1[i] = i * ceil((double)KG / P[1]);
+        oN1[i] = i * std::ceil((double)NG / P[1]);
+        oM1[i] = i * std::ceil((double)MG / P[1]);
+        oK1[i] = i * std::ceil((double)KG / P[1]);
 #else
         oN1[i] = (NG * i) / P[1];
         oM1[i] = (MG * i) / P[1];
@@ -374,10 +370,10 @@ fft5d_plan fft5d_plan_3d(int                NG,
         K[2]     = vmax(N1, P[1]);
         pK[2]    = N1[prank[1]];
         oK[2]    = oN1[prank[1]];
-        free(N0);
-        free(oN0); /*these are not used for this order*/
-        free(M1);
-        free(oM1); /*the rest is freed in destroy*/
+        std::free(N0);
+        std::free(oN0); /*these are not used for this order*/
+        std::free(M1);
+        std::free(oM1); /*the rest is freed in destroy*/
     }
     else
     {
@@ -413,10 +409,10 @@ fft5d_plan fft5d_plan_3d(int                NG,
         K[2]     = vmax(M1, P[1]);
         pK[2]    = M1[prank[1]];
         oK[2]    = oM1[prank[1]];
-        free(N1);
-        free(oN1); /*these are not used for this order*/
-        free(K0);
-        free(oK0); /*the rest is freed in destroy*/
+        std::free(N1);
+        std::free(oN1); /*these are not used for this order*/
+        std::free(K0);
+        std::free(oK0); /*the rest is freed in destroy*/
     }
     N[2] = pN[2] = -1; /*not used*/
 
@@ -431,11 +427,11 @@ fft5d_plan fft5d_plan_3d(int                NG,
     if (!(flags & FFT5D_NOMALLOC))
     {
         // only needed for PME GPU mixed mode
-        if (GMX_GPU_CUDA && realGridAllocationPinningPolicy == gmx::PinningPolicy::PinnedIfSupported)
+        if (allocatePmeGpuMixedMode && realGridAllocationPinningPolicy == gmx::PinningPolicy::PinnedIfSupported)
         {
-            const std::size_t numBytes = lsize * sizeof(t_complex);
-            lin = static_cast<t_complex*>(gmx::PageAlignedAllocationPolicy::malloc(numBytes));
-            gmx::pinBuffer(lin, numBytes);
+            gmx::HostAllocationPolicy policy(realGridAllocationPinningPolicy);
+            const std::size_t         numBytes = lsize * sizeof(t_complex);
+            lin = reinterpret_cast<t_complex*>(policy.malloc(numBytes));
         }
         else
         {
@@ -489,7 +485,7 @@ fft5d_plan fft5d_plan_3d(int                NG,
     /*if not FFTW - then we don't do a 3d plan but instead use only 1D plans */
     /* It is possible to use the 3d plan with OMP threads - but in that case it is not allowed to be
      * called from within a parallel region. For now deactivated. If it should be supported it has
-     * to made sure that that the execute of the 3d plan is in a master/serial block (since it
+     * to made sure that that the execute of the 3d plan is in a main/serial block (since it
      * contains it own parallel region) and that the 3d plan is faster than the 1d plan.
      */
     if ((!(flags & FFT5D_INPLACE)) && (!(P[0] > 1 || P[1] > 1))
@@ -582,16 +578,20 @@ fft5d_plan fft5d_plan_3d(int                NG,
 #    endif
         if ((flags & FFT5D_REALCOMPLEX) && !(flags & FFT5D_BACKWARD))
         {
-            plan->p3d = FFTW(plan_guru_dft_r2c)(/*rank*/ 3, dims,
-                                                /*howmany*/ 0, /*howmany_dims*/ nullptr,
+            plan->p3d = FFTW(plan_guru_dft_r2c)(/*rank*/ 3,
+                                                dims,
+                                                /*howmany*/ 0,
+                                                /*howmany_dims*/ nullptr,
                                                 reinterpret_cast<real*>(lin),
                                                 reinterpret_cast<FFTW(complex)*>(lout),
                                                 /*flags*/ fftwflags);
         }
         else if ((flags & FFT5D_REALCOMPLEX) && (flags & FFT5D_BACKWARD))
         {
-            plan->p3d = FFTW(plan_guru_dft_c2r)(/*rank*/ 3, dims,
-                                                /*howmany*/ 0, /*howmany_dims*/ nullptr,
+            plan->p3d = FFTW(plan_guru_dft_c2r)(/*rank*/ 3,
+                                                dims,
+                                                /*howmany*/ 0,
+                                                /*howmany_dims*/ nullptr,
                                                 reinterpret_cast<FFTW(complex)*>(lin),
                                                 reinterpret_cast<real*>(lout),
                                                 /*flags*/ fftwflags);
@@ -599,10 +599,14 @@ fft5d_plan fft5d_plan_3d(int                NG,
         else
         {
             plan->p3d = FFTW(plan_guru_dft)(
-                    /*rank*/ 3, dims,
-                    /*howmany*/ 0, /*howmany_dims*/ nullptr, reinterpret_cast<FFTW(complex)*>(lin),
+                    /*rank*/ 3,
+                    dims,
+                    /*howmany*/ 0,
+                    /*howmany_dims*/ nullptr,
+                    reinterpret_cast<FFTW(complex)*>(lin),
                     reinterpret_cast<FFTW(complex)*>(lout),
-                    /*sign*/ (flags & FFT5D_BACKWARD) ? 1 : -1, /*flags*/ fftwflags);
+                    /*sign*/ (flags & FFT5D_BACKWARD) ? 1 : -1,
+                    /*flags*/ fftwflags);
         }
 #    ifdef FFT5D_THREADS
 #        ifdef FFT5D_FFTW_THREADS
@@ -618,10 +622,9 @@ fft5d_plan fft5d_plan_3d(int                NG,
         {
             if (debug)
             {
-                fprintf(debug, "FFT5D: Plan s %d rC %d M %d pK %d C %d lsize %d\n", s, rC[s], M[s],
-                        pK[s], C[s], lsize);
+                fprintf(debug, "FFT5D: Plan s %d rC %d M %d pK %d C %d lsize %d\n", s, rC[s], M[s], pK[s], C[s], lsize);
             }
-            plan->p1d[s] = static_cast<gmx_fft_t*>(malloc(sizeof(gmx_fft_t) * nthreads));
+            plan->p1d[s] = static_cast<gmx_fft_t*>(std::malloc(sizeof(gmx_fft_t) * nthreads));
 
             /* Make sure that the init routines are only called by one thread at a time and in order
                (later is only important to not confuse valgrind)
@@ -640,12 +643,16 @@ fft5d_plan fft5d_plan_3d(int                NG,
                                 || ((flags & FFT5D_BACKWARD) && s == 2)))
                         {
                             gmx_fft_init_many_1d_real(
-                                    &plan->p1d[s][t], rC[s], tsize,
+                                    &plan->p1d[s][t],
+                                    rC[s],
+                                    tsize,
                                     (flags & FFT5D_NOMEASURE) ? GMX_FFT_FLAG_CONSERVATIVE : 0);
                         }
                         else
                         {
-                            gmx_fft_init_many_1d(&plan->p1d[s][t], C[s], tsize,
+                            gmx_fft_init_many_1d(&plan->p1d[s][t],
+                                                 C[s],
+                                                 tsize,
                                                  (flags & FFT5D_NOMEASURE) ? GMX_FFT_FLAG_CONSERVATIVE : 0);
                         }
                     }
@@ -667,26 +674,6 @@ fft5d_plan fft5d_plan_3d(int                NG,
         plan->cart[1] = comm[0];
         plan->cart[0] = comm[1];
     }
-#ifdef FFT5D_MPI_TRANSPOSE
-    FFTW_LOCK;
-    for (s = 0; s < 2; s++)
-    {
-        if ((s == 0 && !(flags & FFT5D_ORDER_YZ)) || (s == 1 && (flags & FFT5D_ORDER_YZ)))
-        {
-            plan->mpip[s] = FFTW(mpi_plan_many_transpose)(nP[s], nP[s], N[s] * K[s] * pM[s] * 2, 1,
-                                                          1, (real*)lout2, (real*)lout3,
-                                                          plan->cart[s], FFTW_PATIENT);
-        }
-        else
-        {
-            plan->mpip[s] = FFTW(mpi_plan_many_transpose)(nP[s], nP[s], N[s] * pK[s] * M[s] * 2, 1,
-                                                          1, (real*)lout2, (real*)lout3,
-                                                          plan->cart[s], FFTW_PATIENT);
-        }
-    }
-    FFTW_UNLOCK;
-#endif
-
 
     plan->lin   = lin;
     plan->lout  = lout;
@@ -957,8 +944,8 @@ static void compute_offsets(fft5d_plan plan, int xs[], int xl[], int xc[], int N
     /*    int direction = plan->direction;
         int fftorder = plan->fftorder;*/
 
-    int  o = 0;
-    int  pos[3], i;
+    int o = 0;
+    int pos[3], i;
     int *pM = plan->pM, *pK = plan->pK, *oM = plan->oM, *oK = plan->oK, *C = plan->C, *rC = plan->rC;
 
     NG[0] = plan->NG;
@@ -1085,7 +1072,8 @@ static void print_localdata(const t_complex* lin, const char* txt, int s, fft5d_
             {
                 for (l = 0; l < ll; l++)
                 {
-                    fprintf(debug, "%f ",
+                    fprintf(debug,
+                            "%f ",
                             reinterpret_cast<const real*>(
                                     lin)[(z * xs[2] + y * xs[1]) * 2 + (x * xs[0]) * ll + l]);
                 }
@@ -1105,9 +1093,6 @@ void fft5d_execute(fft5d_plan plan, int thread, fft5d_time times)
     t_complex *fftout, *joinin;
 
     gmx_fft_t** p1d = plan->p1d;
-#ifdef FFT5D_MPI_TRANSPOSE
-    FFTW(plan)* mpip = plan->mpip;
-#endif
 #if GMX_MPI
     MPI_Comm* cart = plan->cart;
 #endif
@@ -1195,13 +1180,15 @@ void fft5d_execute(fft5d_plan plan, int thread, fft5d_time times)
             gmx_fft_many_1d_real(p1d[s][thread],
                                  (plan->flags & FFT5D_BACKWARD) ? GMX_FFT_COMPLEX_TO_REAL
                                                                 : GMX_FFT_REAL_TO_COMPLEX,
-                                 lin + tstart, fftout + tstart);
+                                 lin + tstart,
+                                 fftout + tstart);
         }
         else
         {
             gmx_fft_many_1d(p1d[s][thread],
                             (plan->flags & FFT5D_BACKWARD) ? GMX_FFT_BACKWARD : GMX_FFT_FORWARD,
-                            lin + tstart, fftout + tstart);
+                            lin + tstart,
+                            fftout + tstart);
         }
 
 #ifdef NOGMX
@@ -1212,7 +1199,7 @@ void fft5d_execute(fft5d_plan plan, int thread, fft5d_time times)
 #endif
         if ((plan->flags & FFT5D_DEBUG) && thread == 0)
         {
-            print_localdata(lout, "%d %d: FFT %d\n", s, plan);
+            print_localdata(lout, "%d %d: FFT\n", s, plan);
         }
         /* ---------- END FFT ------------ */
 
@@ -1233,8 +1220,20 @@ void fft5d_execute(fft5d_plan plan, int thread, fft5d_time times)
             {
                 tend = ((thread + 1) * pM[s] * pK[s] / plan->nthreads);
                 tstart /= C[s];
-                splitaxes(lout2, lout, N[s], M[s], K[s], pM[s], P[s], C[s], iNout[s], oNout[s],
-                          tstart % pM[s], tstart / pM[s], tend % pM[s], tend / pM[s]);
+                splitaxes(lout2,
+                          lout,
+                          N[s],
+                          M[s],
+                          K[s],
+                          pM[s],
+                          P[s],
+                          C[s],
+                          iNout[s],
+                          oNout[s],
+                          tstart % pM[s],
+                          tstart / pM[s],
+                          tend % pM[s],
+                          tend / pM[s]);
             }
 #pragma omp barrier /*barrier required before AllToAll (all input has to be their) - before timing to make timing more acurate*/
 #ifdef NOGMX
@@ -1254,43 +1253,43 @@ void fft5d_execute(fft5d_plan plan, int thread, fft5d_time times)
                     time = MPI_Wtime();
                 }
 #else
-                wallcycle_start(times, ewcPME_FFTCOMM);
+                wallcycle_start(times, WallCycleCounter::PmeFftComm);
 #endif
-#ifdef FFT5D_MPI_TRANSPOSE
-                FFTW(execute)(mpip[s]);
-#else
-#    if GMX_MPI
+#if GMX_MPI
                 if ((s == 0 && !(plan->flags & FFT5D_ORDER_YZ))
                     || (s == 1 && (plan->flags & FFT5D_ORDER_YZ)))
                 {
                     MPI_Alltoall(reinterpret_cast<real*>(lout2),
                                  N[s] * pM[s] * K[s] * sizeof(t_complex) / sizeof(real),
-                                 GMX_MPI_REAL, reinterpret_cast<real*>(lout3),
+                                 GMX_MPI_REAL,
+                                 reinterpret_cast<real*>(lout3),
                                  N[s] * pM[s] * K[s] * sizeof(t_complex) / sizeof(real),
-                                 GMX_MPI_REAL, cart[s]);
+                                 GMX_MPI_REAL,
+                                 cart[s]);
                 }
                 else
                 {
                     MPI_Alltoall(reinterpret_cast<real*>(lout2),
                                  N[s] * M[s] * pK[s] * sizeof(t_complex) / sizeof(real),
-                                 GMX_MPI_REAL, reinterpret_cast<real*>(lout3),
+                                 GMX_MPI_REAL,
+                                 reinterpret_cast<real*>(lout3),
                                  N[s] * M[s] * pK[s] * sizeof(t_complex) / sizeof(real),
-                                 GMX_MPI_REAL, cart[s]);
+                                 GMX_MPI_REAL,
+                                 cart[s]);
                 }
-#    else
+#else
                 GMX_RELEASE_ASSERT(false, "Invalid call to fft5d_execute");
-#    endif /*GMX_MPI*/
-#endif     /*FFT5D_MPI_TRANSPOSE*/
+#endif /*GMX_MPI*/
 #ifdef NOGMX
                 if (times != 0)
                 {
                     time_mpi[s] = MPI_Wtime() - time;
                 }
 #else
-                wallcycle_stop(times, ewcPME_FFTCOMM);
+                wallcycle_stop(times, WallCycleCounter::PmeFftComm);
 #endif
-            }       /*master*/
-        }           /* bPrallelDim */
+            } /*main*/
+        } /* bPrallelDim */
 #pragma omp barrier /*both needed for parallel and non-parallel dimension (either have to wait on data from AlltoAll or from last FFT*/
 
         /* ---------- END SPLIT + TRANSPOSE------------ */
@@ -1322,8 +1321,20 @@ void fft5d_execute(fft5d_plan plan, int thread, fft5d_time times)
             {
                 tstart = (thread * pM[s] * pN[s] / plan->nthreads);
                 tend   = ((thread + 1) * pM[s] * pN[s] / plan->nthreads);
-                joinAxesTrans13(lin, joinin, N[s], pM[s], K[s], pM[s], P[s], C[s + 1], iNin[s + 1],
-                                oNin[s + 1], tstart % pM[s], tstart / pM[s], tend % pM[s], tend / pM[s]);
+                joinAxesTrans13(lin,
+                                joinin,
+                                N[s],
+                                pM[s],
+                                K[s],
+                                pM[s],
+                                P[s],
+                                C[s + 1],
+                                iNin[s + 1],
+                                oNin[s + 1],
+                                tstart % pM[s],
+                                tstart / pM[s],
+                                tend % pM[s],
+                                tend / pM[s]);
             }
         }
         else
@@ -1332,8 +1343,20 @@ void fft5d_execute(fft5d_plan plan, int thread, fft5d_time times)
             {
                 tstart = (thread * pK[s] * pN[s] / plan->nthreads);
                 tend   = ((thread + 1) * pK[s] * pN[s] / plan->nthreads);
-                joinAxesTrans12(lin, joinin, N[s], M[s], pK[s], pN[s], P[s], C[s + 1], iNin[s + 1],
-                                oNin[s + 1], tstart % pN[s], tstart / pN[s], tend % pN[s], tend / pN[s]);
+                joinAxesTrans12(lin,
+                                joinin,
+                                N[s],
+                                M[s],
+                                pK[s],
+                                pN[s],
+                                P[s],
+                                C[s + 1],
+                                iNin[s + 1],
+                                oNin[s + 1],
+                                tstart % pN[s],
+                                tstart / pN[s],
+                                tend % pN[s],
+                                tend / pN[s]);
             }
         }
 
@@ -1345,11 +1368,10 @@ void fft5d_execute(fft5d_plan plan, int thread, fft5d_time times)
 #endif
         if ((plan->flags & FFT5D_DEBUG) && thread == 0)
         {
-            print_localdata(lin, "%d %d: tranposed %d\n", s + 1, plan);
+            print_localdata(lin, "%d %d: transposed\n", s + 1, plan);
         }
         /* ---------- END JOIN ------------ */
 
-        /*if (debug) print_localdata(lin, "%d %d: transposed x-z\n", N1, M0, K, ZYX, coor);*/
     } /* for(s=0;s<2;s++) */
 #ifdef NOGMX
     if (times != NULL && thread == 0)
@@ -1368,12 +1390,15 @@ void fft5d_execute(fft5d_plan plan, int thread, fft5d_time times)
     {
         gmx_fft_many_1d_real(p1d[s][thread],
                              (plan->flags & FFT5D_BACKWARD) ? GMX_FFT_COMPLEX_TO_REAL : GMX_FFT_REAL_TO_COMPLEX,
-                             lin + tstart, lout + tstart);
+                             lin + tstart,
+                             lout + tstart);
     }
     else
     {
-        gmx_fft_many_1d(p1d[s][thread], (plan->flags & FFT5D_BACKWARD) ? GMX_FFT_BACKWARD : GMX_FFT_FORWARD,
-                        lin + tstart, lout + tstart);
+        gmx_fft_many_1d(p1d[s][thread],
+                        (plan->flags & FFT5D_BACKWARD) ? GMX_FFT_BACKWARD : GMX_FFT_FORWARD,
+                        lin + tstart,
+                        lout + tstart);
     }
     /* ------------ END FFT ---------*/
 
@@ -1407,37 +1432,31 @@ void fft5d_destroy(fft5d_plan plan)
             {
                 gmx_many_fft_destroy(plan->p1d[s][t]);
             }
-            free(plan->p1d[s]);
+            std::free(plan->p1d[s]);
         }
         if (plan->iNin[s])
         {
-            free(plan->iNin[s]);
+            std::free(plan->iNin[s]);
             plan->iNin[s] = nullptr;
         }
         if (plan->oNin[s])
         {
-            free(plan->oNin[s]);
+            std::free(plan->oNin[s]);
             plan->oNin[s] = nullptr;
         }
         if (plan->iNout[s])
         {
-            free(plan->iNout[s]);
+            std::free(plan->iNout[s]);
             plan->iNout[s] = nullptr;
         }
         if (plan->oNout[s])
         {
-            free(plan->oNout[s]);
+            std::free(plan->oNout[s]);
             plan->oNout[s] = nullptr;
         }
     }
 #if GMX_FFT_FFTW3
     FFTW_LOCK
-#    ifdef FFT5D_MPI_TRANSPOS
-    for (s = 0; s < 2; s++)
-    {
-        FFTW(destroy_plan)(plan->mpip[s]);
-    }
-#    endif /* FFT5D_MPI_TRANSPOS */
     if (plan->p3d)
     {
         FFTW(destroy_plan)(plan->p3d);
@@ -1448,11 +1467,20 @@ void fft5d_destroy(fft5d_plan plan)
     if (!(plan->flags & FFT5D_NOMALLOC))
     {
         // only needed for PME GPU mixed mode
-        if (plan->pinningPolicy == gmx::PinningPolicy::PinnedIfSupported && isHostMemoryPinned(plan->lin))
+        if (allocatePmeGpuMixedMode && plan->pinningPolicy == gmx::PinningPolicy::PinnedIfSupported)
         {
-            gmx::unpinBuffer(plan->lin);
+            /* We need DeviceContext to properly check pinning with SYCL. We can work around that,
+             * but for an assert it's not overly important.
+             */
+            GMX_ASSERT(GMX_GPU_SYCL || isHostMemoryPinned(plan->lin),
+                       "Memory should have been pinned");
+            gmx::HostAllocationPolicy policy(plan->pinningPolicy);
+            policy.free(plan->lin);
         }
-        sfree_aligned(plan->lin);
+        else
+        {
+            sfree_aligned(plan->lin);
+        }
         sfree_aligned(plan->lout);
         if (plan->nthreads > 1)
         {
@@ -1467,147 +1495,5 @@ void fft5d_destroy(fft5d_plan plan)
 #    endif
 #endif
 
-    free(plan);
-}
-
-/*Is this better than direct access of plan? enough data?
-   here 0,1 reference divided by which processor grid dimension (not FFT step!)*/
-void fft5d_local_size(fft5d_plan plan, int* N1, int* M0, int* K0, int* K1, int** coor)
-{
-    *N1 = plan->N[0];
-    *M0 = plan->M[0];
-    *K1 = plan->K[0];
-    *K0 = plan->N[1];
-
-    *coor = plan->coor;
-}
-
-
-/*same as fft5d_plan_3d but with cartesian coordinator and automatic splitting
-   of processor dimensions*/
-fft5d_plan fft5d_plan_3d_cart(int         NG,
-                              int         MG,
-                              int         KG,
-                              MPI_Comm    comm,
-                              int         P0,
-                              int         flags,
-                              t_complex** rlin,
-                              t_complex** rlout,
-                              t_complex** rlout2,
-                              t_complex** rlout3,
-                              int         nthreads)
-{
-    MPI_Comm cart[2] = { MPI_COMM_NULL, MPI_COMM_NULL };
-#if GMX_MPI
-    int      size = 1, prank = 0;
-    int      P[2];
-    int      coor[2];
-    int      wrap[] = { 0, 0 };
-    MPI_Comm gcart;
-    int      rdim1[] = { 0, 1 }, rdim2[] = { 1, 0 };
-
-    MPI_Comm_size(comm, &size);
-    MPI_Comm_rank(comm, &prank);
-
-    if (P0 == 0)
-    {
-        P0 = lfactor(size);
-    }
-    if (size % P0 != 0)
-    {
-        if (prank == 0)
-        {
-            printf("FFT5D: WARNING: Number of ranks %d not evenly divisible by %d\n", size, P0);
-        }
-        P0 = lfactor(size);
-    }
-
-    P[0] = P0;
-    P[1] = size / P0; /*number of processors in the two dimensions*/
-
-    /*Difference between x-y-z regarding 2d decomposition is whether they are
-       distributed along axis 1, 2 or both*/
-
-    MPI_Cart_create(comm, 2, P, wrap, 1, &gcart); /*parameter 4: value 1: reorder*/
-    MPI_Cart_get(gcart, 2, P, wrap, coor);
-    MPI_Cart_sub(gcart, rdim1, &cart[0]);
-    MPI_Cart_sub(gcart, rdim2, &cart[1]);
-#else
-    (void)P0;
-    (void)comm;
-#endif
-    return fft5d_plan_3d(NG, MG, KG, cart, flags, rlin, rlout, rlout2, rlout3, nthreads);
-}
-
-
-/*prints in original coordinate system of data (as the input to FFT)*/
-void fft5d_compare_data(const t_complex* lin, const t_complex* in, fft5d_plan plan, int bothLocal, int normalize)
-{
-    int  xs[3], xl[3], xc[3], NG[3];
-    int  x, y, z, l;
-    int* coor = plan->coor;
-    int  ll   = 2; /*compare ll values per element (has to be 2 for complex)*/
-    if ((plan->flags & FFT5D_REALCOMPLEX) && (plan->flags & FFT5D_BACKWARD))
-    {
-        ll = 1;
-    }
-
-    compute_offsets(plan, xs, xl, xc, NG, 2);
-    if (plan->flags & FFT5D_DEBUG)
-    {
-        printf("Compare2\n");
-    }
-    for (z = 0; z < xl[2]; z++)
-    {
-        for (y = 0; y < xl[1]; y++)
-        {
-            if (plan->flags & FFT5D_DEBUG)
-            {
-                printf("%d %d: ", coor[0], coor[1]);
-            }
-            for (x = 0; x < xl[0]; x++)
-            {
-                for (l = 0; l < ll; l++) /*loop over real/complex parts*/
-                {
-                    real a, b;
-                    a = reinterpret_cast<const real*>(lin)[(z * xs[2] + y * xs[1]) * 2 + x * xs[0] * ll + l];
-                    if (normalize)
-                    {
-                        a /= plan->rC[0] * plan->rC[1] * plan->rC[2];
-                    }
-                    if (!bothLocal)
-                    {
-                        b = reinterpret_cast<const real*>(
-                                in)[((z + xc[2]) * NG[0] * NG[1] + (y + xc[1]) * NG[0]) * 2 + (x + xc[0]) * ll + l];
-                    }
-                    else
-                    {
-                        b = reinterpret_cast<const real*>(
-                                in)[(z * xs[2] + y * xs[1]) * 2 + x * xs[0] * ll + l];
-                    }
-                    if (plan->flags & FFT5D_DEBUG)
-                    {
-                        printf("%f %f, ", a, b);
-                    }
-                    else
-                    {
-                        if (std::fabs(a - b) > 2 * NG[0] * NG[1] * NG[2] * GMX_REAL_EPS)
-                        {
-                            printf("result incorrect on %d,%d at %d,%d,%d: FFT5D:%f reference:%f\n",
-                                   coor[0], coor[1], x, y, z, a, b);
-                        }
-                        /*                        assert(fabs(a-b)<2*NG[0]*NG[1]*NG[2]*GMX_REAL_EPS);*/
-                    }
-                }
-                if (plan->flags & FFT5D_DEBUG)
-                {
-                    printf(",");
-                }
-            }
-            if (plan->flags & FFT5D_DEBUG)
-            {
-                printf("\n");
-            }
-        }
-    }
+    std::free(plan);
 }

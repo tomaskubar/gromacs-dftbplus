@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2018- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \libinternal \file
  *
@@ -40,8 +39,8 @@
  * \inlibraryapi
  * \ingroup module_testutils
  */
-#ifndef GMX_TESTUTILS__SIMULATIONDATABASE_H
-#define GMX_TESTUTILS__SIMULATIONDATABASE_H
+#ifndef GMX_TESTUTILS_SIMULATIONDATABASE_H
+#define GMX_TESTUTILS_SIMULATIONDATABASE_H
 
 #include <map>
 #include <string>
@@ -65,6 +64,16 @@ std::string reportNumbersOfPpRanksSupported(const std::string& simulationName);
 
 //! Helper typedef
 using MdpFieldValues = std::map<std::string, std::string>;
+
+//! Strong type denoting mdp parameters needed to test specific algorithms
+enum class MdpParameterDatabase
+{
+    Default,
+    Pull,
+    Awh,
+    ExpandedEnsemble,
+    Count
+};
 
 /*! \brief Set up values for an .mdp file that permits a highly
  * reproducible simulation.
@@ -92,24 +101,27 @@ using MdpFieldValues = std::map<std::string, std::string>;
  * volume over the handful of MD steps that will be run. A
  * single temperature-coupling group is used.
  *
- * \param[in]    simulationName   The name of the simulation, which indexes the database
- * \param[in]    integrator       The integrator to use
- * \param[in]    tcoupl           The temperature-coupling algorithm to use
- * \param[in]    pcoupl           The pressure-coupling algorithm to use
- * \return                        Mdp file values
+ * \param[in]  simulationName           The name of the simulation, which indexes the database
+ * \param[in]  integrator               The integrator to use
+ * \param[in]  tcoupl                   The temperature-coupling algorithm to use
+ * \param[in]  pcoupl                   The pressure-coupling algorithm to use
+ * \param[in]  additionalMdpParameters  Additional mdp parameters to be added
+ * \return                              Mdp file values
  *
  * \throws  std::bad_alloc     if out of memory
- *          std::out_of_range  if \c simulationName is not in the database */
+ * \throws  std::out_of_range  if \c simulationName is not in the database */
 MdpFieldValues prepareMdpFieldValues(const std::string& simulationName,
                                      const std::string& integrator,
                                      const std::string& tcoupl,
-                                     const std::string& pcoupl);
+                                     const std::string& pcoupl,
+                                     MdpParameterDatabase additionalMdpParameters = MdpParameterDatabase::Default);
 
 //! \copydoc prepareMdpFieldValues()
 MdpFieldValues prepareMdpFieldValues(const char* simulationName,
                                      const char* integrator,
                                      const char* tcoupl,
-                                     const char* pcoupl);
+                                     const char* pcoupl,
+                                     MdpParameterDatabase additionalMdpParameters = MdpParameterDatabase::Default);
 
 /*! \brief Make a string containing an .mdp file from the \c mdpFieldValues.
  *

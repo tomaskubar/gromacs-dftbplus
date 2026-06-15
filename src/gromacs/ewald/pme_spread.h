@@ -1,12 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
- * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2017,2019, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 1991- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -20,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -29,25 +26,34 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 #ifndef GMX_EWALD_PME_SPREAD_H
 #define GMX_EWALD_PME_SPREAD_H
 
 #include "gromacs/utility/real.h"
 
-#include "pme_internal.h"
+struct gmx_pme_t;
+struct PmeAndFftGrids;
+class PmeAtomComm;
 
-void spread_on_grid(const gmx_pme_t*  pme,
-                    PmeAtomComm*      atc,
-                    const pmegrids_t* grids,
-                    gmx_bool          bCalcSplines,
-                    gmx_bool          bSpread,
-                    real*             fftgrid,
-                    gmx_bool          bDoSplines,
-                    int               grid_index);
+/*! \brief Spread coefficients on the grid
+ *
+ * \param[in]     pme    PME data
+ * \param[in,out] atc    Local and/or communicated atom to spread and their spline data
+ * \param[in,out] grids  The grids
+ * \param[in]     calculateSplines  Whether to calculate the splines
+ * \param[in]     doSpreading       Whether to spead on the grid
+ * \param[in]     computeAllSplineCoefficients  When false, only compute spline coefficients for atoms with non-zero coefficient
+ */
+void spread_on_grid(const gmx_pme_t* pme,
+                    PmeAtomComm*     atc,
+                    PmeAndFftGrids*  grids,
+                    bool             calculateSplines,
+                    bool             doSpreading,
+                    bool             computeAllSplineCoefficients);
 
 #endif

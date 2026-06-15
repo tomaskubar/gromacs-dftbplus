@@ -1,11 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2012,2013,2014,2015,2016, by the GROMACS development team.
- * Copyright (c) 2017,2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2012- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -19,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -28,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \libinternal \file
  *  \brief Declares functions to manage GPU resources.
@@ -52,15 +50,35 @@
 #ifndef GMX_HARDWARE_DEVICE_MANAGEMENT_H
 #define GMX_HARDWARE_DEVICE_MANAGEMENT_H
 
+#include <cstddef>
+
+#include <array>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
 #include "gromacs/utility/basedefinitions.h"
-#include "gromacs/utility/iserializer.h"
 
 struct DeviceInformation;
 enum class DeviceVendor : int;
+
+namespace gmx
+{
+enum class GpuAwareMpiStatus : int;
+template<typename>
+class ArrayRef;
+class ISerializer;
+class MDLogger;
+} // namespace gmx
+
+/*! \brief Warn to the logger when the detected device was not one of
+ * the targets selected at configure time for compilation.
+ *
+ * \param[in] mdlog       Logger
+ * \param[in] deviceInfo  The device to potentially warn about
+ */
+void warnWhenDeviceNotTargeted(const gmx::MDLogger& mdlog, const DeviceInformation& deviceInfo);
 
 /*! \brief Return whether GPUs can be detected.
  *
@@ -110,6 +128,32 @@ bool isDeviceDetectionFunctional(std::string* errorMessage);
  */
 DeviceVendor getDeviceVendor(const char* vendorName);
 
+/*! \brief Get the factor to divide the number of compute units by.
+ *
+ * OpenCL and SYCL can report the number of Compute Units (CUs) a device has, see
+ * \c CL_DEVICE_MAX_COMPUTE_UNITS and \c info::device::max_compute_units.
+ * But "CU" is only vaguely defined by the standard, and on different vendors the same
+ * API call returns different things.
+ *
+ * On NVIDIA, that is the number of SMs.
+ *
+ * On AMD, that is the number of Compute Units, which are similar to CUDA's SM.
+ * Except on RDNA, where the number of Dual Compute Units is returned (https://stackoverflow.com/a/63976796/929437).
+ *
+ * On Intel, that is the number of EUs (XVEs), which are similar to CUDA core. The concept similar
+ * to CUDA SM is called sub-slice (Xe Core, XC), and it contains 16 EUs (Gen9-Gen11, Xe).
+ *
+ * This function uses CUDA SM as a reference. To get the number of SM-like units on a device,
+ * divide the result of \c CL_DEVICE_MAX_COMPUTE_UNITS / \c info::device::max_compute_units API
+ * call by the value returned by this function.
+ *
+ * \todo: Handled AMD RDNA?
+ *
+ * \param[in] deviceInfo Device information.
+ * \return how many CUs are there in a single SM-like entity.
+ */
+int getDeviceComputeUnitFactor(const DeviceInformation& deviceInfo);
+
 /*! \brief Find all GPUs in the system.
  *
  *  Will detect every GPU supported by the device driver in use.
@@ -153,7 +197,7 @@ getCompatibleDevices(const std::vector<std::unique_ptr<DeviceInformation>>& devi
  *
  * \return  Vector of compatible GPU ids.
  */
-std::vector<int> getCompatibleDeviceIds(const std::vector<std::unique_ptr<DeviceInformation>>& deviceInfoList);
+std::vector<int> getCompatibleDeviceIds(gmx::ArrayRef<const std::unique_ptr<DeviceInformation>> deviceInfoList);
 
 /*! \brief Return whether \p deviceId is found in \p deviceInfoList and is compatible
  *
@@ -167,8 +211,16 @@ std::vector<int> getCompatibleDeviceIds(const std::vector<std::unique_ptr<Device
  *
  * \return  Whether \c deviceId is compatible.
  */
-bool deviceIdIsCompatible(const std::vector<std::unique_ptr<DeviceInformation>>& deviceInfoList,
-                          int                                                    deviceId);
+bool deviceIdIsCompatible(gmx::ArrayRef<const std::unique_ptr<DeviceInformation>> deviceInfoList,
+                          int                                                     deviceId);
+
+/*! \brief Return whether all compatible devices in \p deviceInfoList support GPU-aware MPI.
+ *
+ * \return  Whether all compatible devices in the list support GPU-aware MPI
+ *          (both full support and forced support counts).
+ */
+gmx::GpuAwareMpiStatus getMinimalSupportedGpuAwareMpiStatus(
+        gmx::ArrayRef<const std::unique_ptr<DeviceInformation>> deviceInfoList);
 
 /*! \brief Set the active GPU.
  *
@@ -183,23 +235,19 @@ bool deviceIdIsCompatible(const std::vector<std::unique_ptr<DeviceInformation>>&
  */
 void setActiveDevice(const DeviceInformation& deviceInfo);
 
-/*! \brief Releases the GPU device used by the active context at the time of calling (CUDA only).
+/*! \brief Releases the GPU device used by the active context at the time of calling.
  *
- * If \c deviceInfo is nullptr, then it is understood that no device
- * was selected so no context is active to be freed. Otherwise, the
- * context is explicitly destroyed and therefore all data uploaded to
+ * With CUDA, the device is reset and therefore all data uploaded to
  * the GPU is lost. This must only be called when none of this data is
  * required anymore, because subsequent attempts to free memory
  * associated with the context will otherwise fail.
- *
  * Calls \c gmx_warning upon errors.
  *
- * \todo This should go through all the devices, not only the one currently active.
- *       Reseting only one device will not work, e.g. in CUDA tests.
+ * With other GPU SDKs, does nothing.
  *
- * \param[in] deviceInfo Information on the device to be released.
+ * Should only be called after \c setActiveDevice was called.
  */
-void releaseDevice(DeviceInformation* deviceInfo);
+void releaseDevice();
 
 /*! \brief Formats and returns a device information string for a given GPU.
  *
@@ -219,7 +267,7 @@ std::string getDeviceInformationString(const DeviceInformation& deviceInfo);
  * \param[in] deviceId       An index of the device to check
  * \returns                  A string describing the compatibility status, useful for error messages.
  */
-std::string getDeviceCompatibilityDescription(const std::vector<std::unique_ptr<DeviceInformation>>& deviceInfoList,
+std::string getDeviceCompatibilityDescription(gmx::ArrayRef<const std::unique_ptr<DeviceInformation>> deviceInfoList,
                                               int deviceId);
 
 /*! \brief Serialization of information on devices for MPI broadcasting.
@@ -228,7 +276,7 @@ std::string getDeviceCompatibilityDescription(const std::vector<std::unique_ptr<
  * \param[in] serializer      Serializing object.
  */
 void serializeDeviceInformations(const std::vector<std::unique_ptr<DeviceInformation>>& deviceInfoList,
-                                 gmx::ISerializer*                                      serializer);
+                                 gmx::ISerializer* serializer);
 
 /*! \brief Deserialization of information on devices after MPI broadcasting.
  *
@@ -237,5 +285,28 @@ void serializeDeviceInformations(const std::vector<std::unique_ptr<DeviceInforma
  * \return deviceInfoList   Deserialized vector with device informations.
  */
 std::vector<std::unique_ptr<DeviceInformation>> deserializeDeviceInformations(gmx::ISerializer* serializer);
+
+/*! \brief Return an ID (non-negative integer) for the described GPU that may be unique.
+ *
+ * If a UUID is available, returns its hash.
+ * Otherwise, returns \c DeviceInformation::id field.
+ *
+ * Note that the value used on different ranks may or
+ * may not be a reliable indicator of whether the ranks share devices,
+ * depending how that id was constructed, perhaps depending on what
+ * devices were visible to different ranks.
+ */
+int uniqueDeviceId(const DeviceInformation& deviceInfo);
+
+//! Return the optional UUID detected for the indicated device
+std::optional<std::array<std::byte, 16>> uuidForDevice(const DeviceInformation& deviceInfo);
+
+/*! Run a possible check that GPU-aware MPI will work on \c deviceInfo
+ *
+ * \throw InvalidInputError if the user's choices would lead to a crash */
+void doubleCheckGpuAwareMpiWillWork(const DeviceInformation& deviceInfo);
+
+//! Get maximum grid size if backend supports it.
+int maximumGridSize(const DeviceInformation& deviceInfo);
 
 #endif // GMX_HARDWARE_DEVICE_MANAGEMENT_H

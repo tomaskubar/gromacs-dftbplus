@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2016,2017,2019, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2016- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,15 +26,16 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 #include "gmxpre.h"
 
 #include "gromacs/utility/keyvaluetreetransform.h"
 
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -51,6 +51,10 @@
 #include "testutils/refdata.h"
 #include "testutils/testasserts.h"
 
+namespace gmx
+{
+namespace test
+{
 namespace
 {
 
@@ -66,8 +70,8 @@ public:
         gmx::test::TestReferenceChecker checker(data.rootChecker());
         checker.checkKeyValueTreeObject(input, "Input");
         auto mappedPaths = transform.mappedPaths();
-        checker.checkSequence(mappedPaths.begin(), mappedPaths.end(), "MappedPaths",
-                              &TreeValueTransformTest::checkMappedPath);
+        checker.checkSequence(
+                mappedPaths.begin(), mappedPaths.end(), "MappedPaths", &TreeValueTransformTest::checkMappedPath);
         checker.checkKeyValueTreeObject(object, "Tree");
         checkBackMapping(&checker, object, result.backMapping());
     }
@@ -165,10 +169,11 @@ TEST_F(TreeValueTransformTest, ObjectFromString)
 
     gmx::KeyValueTreeTransformer transform;
     transform.rules()->addRule().from<std::string>("/a").toObject("/foo").transformWith(
-            [](gmx::KeyValueTreeObjectBuilder* builder, const std::string& value) {
+            [](gmx::KeyValueTreeObjectBuilder* objectBuilder, const std::string& value)
+            {
                 std::vector<std::string> values = gmx::splitString(value);
-                builder->addValue<int>("a", gmx::fromString<int>(values[0]));
-                builder->addValue<int>("b", gmx::fromString<int>(values[1]));
+                objectBuilder->addValue<int>("a", gmx::fromString<int>(values[0]));
+                objectBuilder->addValue<int>("b", gmx::fromString<int>(values[1]));
             });
 
     testTransform(input, transform);
@@ -185,10 +190,11 @@ TEST_F(TreeValueTransformTest, ObjectFromMultipleStrings)
     transform.rules()->addRule().from<std::string>("/a").to<int>("/foo/a").transformWith(
             &gmx::fromStdString<int>);
     transform.rules()->addRule().from<std::string>("/b").toObject("/foo").transformWith(
-            [](gmx::KeyValueTreeObjectBuilder* builder, const std::string& value) {
+            [](gmx::KeyValueTreeObjectBuilder* objectBuilder, const std::string& value)
+            {
                 std::vector<std::string> values = gmx::splitString(value);
-                builder->addValue<int>("b", gmx::fromString<int>(values[0]));
-                builder->addValue<int>("c", gmx::fromString<int>(values[1]));
+                objectBuilder->addValue<int>("b", gmx::fromString<int>(values[0]));
+                objectBuilder->addValue<int>("c", gmx::fromString<int>(values[1]));
             });
 
     testTransform(input, transform);
@@ -206,6 +212,39 @@ TEST_F(TreeValueTransformTest, ScopedTransformRules)
     scope.rules()->addRule().from<std::string>("/a").to<int>("/i").transformWith(&gmx::fromStdString<int>);
     scope.rules()->addRule().from<std::string>("/b").to<int>("/j").transformWith(&gmx::fromStdString<int>);
 
+    testTransform(input, transform);
+}
+
+TEST_F(TreeValueTransformTest, CanAssignUserMultiValue)
+{
+    gmx::KeyValueTreeBuilder builder;
+    builder.rootObject().addValue<std::string>("numValues", "3");
+    auto arrayBuilder = builder.rootObject().addObjectArray("values");
+    for (int i = 0; i < 3; ++i)
+    {
+        auto valueABuilder = arrayBuilder.addObject();
+        auto valueBBuilder = arrayBuilder.addObject();
+        auto keyA          = gmx::formatString("TestA-%d", i);
+        auto keyB          = gmx::formatString("TestB-%d", i);
+        valueABuilder.addValue<std::string>(keyA, std::to_string(i + 1));
+        valueBBuilder.addValue<std::string>(keyB, std::to_string(i + 2));
+    }
+    auto input = builder.build();
+
+    gmx::KeyValueTreeTransformer transform;
+    transform.rules()->addRule().keyMatchType("/", gmx::StringCompareType::CaseAndDashInsensitive);
+    transform.rules()->addRule().from<std::string>("/numValues").to<int>("/i").transformWith(&gmx::fromStdString<int>);
+    for (int i = 0; i < 3; ++i)
+    {
+        auto keyA    = gmx::formatString("/TestA-%d", i);
+        auto keyB    = gmx::formatString("/TestB-%d", i);
+        auto resultA = gmx::formatString("/j-%d", i);
+        auto resultB = gmx::formatString("/j-%d", i + 2);
+        transform.rules()->addRule().from<std::string>(keyA).to<int>(resultA).transformWith(
+                &gmx::fromStdString<int>);
+        transform.rules()->addRule().from<std::string>(keyB).to<int>(resultB).transformWith(
+                &gmx::fromStdString<int>);
+    }
     testTransform(input, transform);
 }
 
@@ -227,3 +266,5 @@ TEST(TreeValueTransformErrorTest, ConversionError)
 }
 
 } // namespace
+} // namespace test
+} // namespace gmx

@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2019, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2019- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \internal \file
  * \brief
@@ -43,8 +42,14 @@
 
 #include "gromacs/trajectoryanalysis/modules/extract_cluster.h"
 
+#include <array>
+#include <filesystem>
+#include <string>
+
 #include <gtest/gtest.h>
 
+#include "gromacs/trajectoryanalysis/analysismodule.h"
+#include "gromacs/utility/arrayref.h"
 #include "gromacs/utility/path.h"
 #include "gromacs/utility/stringutil.h"
 
@@ -103,7 +108,7 @@ private:
 
 ExtractClusterModuleTest::ExtractClusterModuleTest()
 {
-    std::string outputFilepath = gmx::Path::getWorkingDirectory();
+    auto outputFilepath = std::filesystem::current_path();
 
     fileManager().setOutputTempDirectory(outputFilepath);
     // Those are for cleaning up the files generated during testing.
@@ -116,10 +121,11 @@ ExtractClusterModuleTest::ExtractClusterModuleTest()
     int fileNumber = 1;
     for (auto& generatedFile : generatedFiles)
     {
-        generatedFile.filename = gmx::Path::concatenateBeforeExtension(
-                "test.g96", gmx::formatString("_Cluster_000%d", fileNumber));
-        generatedFile.matcher      = TextFileMatch(ExactTextMatch()).createFileMatcher();
-        generatedFile.fullFilepath = fileManager().getTemporaryFilePath(generatedFile.filename);
+        generatedFile.filename = gmx::concatenateBeforeExtension(
+                                         "test.g96", gmx::formatString("_Cluster_000%d", fileNumber))
+                                         .string();
+        generatedFile.matcher = TextFileMatch(ExactTextMatch()).createFileMatcher();
+        generatedFile.fullFilepath = fileManager().getTemporaryFilePath(generatedFile.filename).string();
         fileNumber++;
     }
 }
@@ -136,7 +142,7 @@ void ExtractClusterModuleTest::compareFiles()
 
 TEST_F(ExtractClusterModuleTest, WorksWithAllAtoms)
 {
-    std::string       realFileName = TestFileManager::getTestSpecificFileName("test.g96");
+    std::string       realFileName = TestFileManager::getTestSpecificFileName("test.g96").string();
     const char* const cmdline[]    = { "extract-cluster", "-o", realFileName.c_str() };
 
     runTest(CommandLine(cmdline));
@@ -145,9 +151,10 @@ TEST_F(ExtractClusterModuleTest, WorksWithAllAtoms)
 
 TEST_F(ExtractClusterModuleTest, WorksWithAtomSubset)
 {
-    std::string       realFileName = TestFileManager::getTestSpecificFileName("test.g96");
-    const char* const cmdline[]    = { "extract-cluster", "-o", realFileName.c_str(), "-select",
-                                    "atomnr 1 2" };
+    std::string       realFileName = TestFileManager::getTestSpecificFileName("test.g96").string();
+    const char* const cmdline[]    = {
+        "extract-cluster", "-o", realFileName.c_str(), "-select", "atomnr 1 2"
+    };
 
     runTest(CommandLine(cmdline));
     compareFiles();

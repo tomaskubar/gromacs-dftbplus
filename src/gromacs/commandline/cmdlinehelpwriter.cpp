@@ -1,11 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2010-2018, The GROMACS development team.
- * Copyright (c) 2019, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2010- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -19,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -28,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \internal \file
  * \brief
@@ -48,15 +46,18 @@
 
 #include <algorithm>
 #include <string>
+#include <vector>
 
 #include "gromacs/commandline/cmdlinehelpcontext.h"
 #include "gromacs/onlinehelp/helpwritercontext.h"
+#include "gromacs/options/abstractoption.h"
 #include "gromacs/options/basicoptions.h"
 #include "gromacs/options/filenameoption.h"
 #include "gromacs/options/options.h"
 #include "gromacs/options/optionsvisitor.h"
 #include "gromacs/options/timeunitmanager.h"
 #include "gromacs/utility/arrayref.h"
+#include "gromacs/utility/classhelpers.h"
 #include "gromacs/utility/exceptions.h"
 #include "gromacs/utility/stringutil.h"
 #include "gromacs/utility/textwriter.h"
@@ -65,6 +66,7 @@
 
 namespace gmx
 {
+class OptionSectionInfo;
 
 namespace
 {
@@ -198,9 +200,9 @@ void OptionsFilter::visitOption(const OptionInfo& option)
 class CommonFormatterData
 {
 public:
-    explicit CommonFormatterData(const char* timeUnit) : timeUnit(timeUnit) {}
+    explicit CommonFormatterData(const char* timeUnit) : timeUnit_(timeUnit) {}
 
-    const char* timeUnit;
+    const char* timeUnit_;
 };
 
 /********************************************************************
@@ -269,7 +271,7 @@ std::string descriptionWithOptionDetails(const CommonFormatterData& common, cons
         || (doubleOption != nullptr && doubleOption->isTime()))
     {
         // TODO: It could be nicer to have this in basicoptions.cpp.
-        description = replaceAll(description, "%t", common.timeUnit);
+        description = replaceAll(description, "%t", common.timeUnit_);
     }
 
     return description;
@@ -287,11 +289,7 @@ class SynopsisFormatter : public IOptionsFormatter
 public:
     //! Creates a helper object for formatting the synopsis.
     explicit SynopsisFormatter(const HelpWriterContext& context) :
-        context_(context),
-        bFormatted_(false),
-        lineLength_(0),
-        indent_(0),
-        currentLength_(0)
+        context_(context), bFormatted_(false), lineLength_(0), indent_(0), currentLength_(0)
     {
     }
 
@@ -347,7 +345,7 @@ void SynopsisFormatter::formatOption(const OptionInfo& option)
 {
     std::string name, value;
     formatOptionNameAndValue(option, &name, &value);
-    int         totalLength    = name.length() + 4;
+    int totalLength = name.length() + 4;
     std::string fullOptionText = formatString(" [%s-%s", bFormatted_ ? ":strong:`" : "", name.c_str());
     if (!value.empty())
     {
@@ -430,11 +428,7 @@ private:
 OptionsListFormatter::OptionsListFormatter(const HelpWriterContext&   context,
                                            const CommonFormatterData& common,
                                            const char*                title) :
-    context_(context),
-    common_(common),
-    title_(title),
-    header_(nullptr),
-    bDidOutput_(false)
+    context_(context), common_(common), title_(title), header_(nullptr), bDidOutput_(false)
 {
 }
 
@@ -548,8 +542,8 @@ void CommandLineHelpWriter::writeHelp(const CommandLineHelpContext& context)
         SynopsisFormatter synopsisFormatter(writerContext);
         synopsisFormatter.start(context.moduleDisplayName());
         filter.formatSelected(OptionsFilter::eSelectInputFileOptions, &synopsisFormatter, impl_->options_);
-        filter.formatSelected(OptionsFilter::eSelectInputOutputFileOptions, &synopsisFormatter,
-                              impl_->options_);
+        filter.formatSelected(
+                OptionsFilter::eSelectInputOutputFileOptions, &synopsisFormatter, impl_->options_);
         filter.formatSelected(OptionsFilter::eSelectOutputFileOptions, &synopsisFormatter, impl_->options_);
         filter.formatSelected(OptionsFilter::eSelectOtherOptions, &synopsisFormatter, impl_->options_);
         synopsisFormatter.finish();

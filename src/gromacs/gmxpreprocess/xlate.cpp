@@ -1,13 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
- * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2017,2018 by the GROMACS development team.
- * Copyright (c) 2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 1991- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -21,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -30,16 +26,17 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 #include "gmxpre.h"
 
 #include "xlate.h"
 
 #include <cctype>
+#include <cstdio>
 #include <cstring>
 
 #include <string>
@@ -47,13 +44,18 @@
 
 #include "gromacs/gmxpreprocess/fflibutil.h"
 #include "gromacs/gmxpreprocess/grompp_impl.h"
+#include "gromacs/topology/atoms.h"
 #include "gromacs/topology/residuetypes.h"
 #include "gromacs/topology/symtab.h"
+#include "gromacs/utility/arrayref.h"
+#include "gromacs/utility/basedefinitions.h"
 #include "gromacs/utility/cstringutil.h"
 #include "gromacs/utility/fatalerror.h"
+#include "gromacs/utility/fileptr.h"
 #include "gromacs/utility/futil.h"
 #include "gromacs/utility/smalloc.h"
 #include "gromacs/utility/strdb.h"
+#include "gromacs/utility/stringutil.h"
 
 #include "hackblock.h"
 
@@ -65,16 +67,15 @@ typedef struct
     char* replace;
 } t_xlate_atom;
 
-static void get_xlatoms(const std::string& filename, FILE* fp, int* nptr, t_xlate_atom** xlptr)
+static void get_xlatoms(const std::filesystem::path& filename, FILE* fp, int* nptr, t_xlate_atom** xlptr)
 {
-    char          filebase[STRLEN];
     char          line[STRLEN];
     char          abuf[1024], rbuf[1024], repbuf[1024], dumbuf[1024];
     char*         _ptr;
     int           n, na, idum;
     t_xlate_atom* xl;
 
-    fflib_filename_base(filename.c_str(), filebase, STRLEN);
+    auto filebase = fflib_filename_base(filename);
 
     n  = *nptr;
     xl = *xlptr;
@@ -91,15 +92,17 @@ static void get_xlatoms(const std::string& filename, FILE* fp, int* nptr, t_xlat
         }
         if (na != 3)
         {
-            gmx_fatal(FARGS, "Expected a residue name and two atom names in file '%s', not '%s'",
-                      filename.c_str(), line);
+            gmx_fatal(FARGS,
+                      "Expected a residue name and two atom names in file '%s', not '%s'",
+                      filename.string().c_str(),
+                      line);
         }
 
         srenew(xl, n + 1);
-        xl[n].filebase = gmx_strdup(filebase);
+        xl[n].filebase = gmx_strdup(filebase.string().c_str());
 
         /* Use wildcards... */
-        if (strcmp(rbuf, "*") != 0)
+        if (std::strcmp(rbuf, "*") != 0)
         {
             xl[n].res = gmx_strdup(rbuf);
         }
@@ -109,7 +112,7 @@ static void get_xlatoms(const std::string& filename, FILE* fp, int* nptr, t_xlat
         }
 
         /* Replace underscores in the string by spaces */
-        while ((_ptr = strchr(abuf, '_')) != nullptr)
+        while ((_ptr = std::strchr(abuf, '_')) != nullptr)
         {
             *_ptr = ' ';
         }
@@ -140,13 +143,13 @@ static void done_xlatom(int nxlate, t_xlate_atom* xlatom)
     sfree(xlatom);
 }
 
-void rename_atoms(const char*                            xlfile,
-                  const char*                            ffdir,
+void rename_atoms(const std::filesystem::path&           xlfile,
+                  const std::filesystem::path&           ffdir,
                   t_atoms*                               atoms,
                   t_symtab*                              symtab,
                   gmx::ArrayRef<const PreprocessResidue> localPpResidue,
                   bool                                   bResname,
-                  ResidueType*                           rt,
+                  const ResidueTypeMap&                  rt,
                   bool                                   bReorderNum,
                   bool                                   bVerbose)
 {
@@ -158,14 +161,14 @@ void rename_atoms(const char*                            xlfile,
 
     nxlate = 0;
     xlatom = nullptr;
-    if (xlfile != nullptr)
+    if (!xlfile.empty())
     {
         gmx::FilePtr fp = gmx::openLibraryFile(xlfile);
         get_xlatoms(xlfile, fp.get(), &nxlate, &xlatom);
     }
     else
     {
-        std::vector<std::string> fns = fflib_search_file_end(ffdir, ".arn", FALSE);
+        auto fns = fflib_search_file_end(ffdir, ".arn", FALSE);
         for (const auto& filename : fns)
         {
             FILE* fp = fflib_open(filename);
@@ -191,14 +194,14 @@ void rename_atoms(const char*                            xlfile,
             rnm = *(atoms->resinfo[resind].rtp);
         }
 
-        strcpy(atombuf, *(atoms->atomname[a]));
+        std::strcpy(atombuf, *(atoms->atomname[a]));
         bReorderedNum = FALSE;
         if (bReorderNum)
         {
-            if (isdigit(atombuf[0]))
+            if (std::isdigit(atombuf[0]))
             {
                 c = atombuf[0];
-                for (i = 0; (static_cast<size_t>(i) < strlen(atombuf) - 1); i++)
+                for (i = 0; (static_cast<size_t>(i) < std::strlen(atombuf) - 1); i++)
                 {
                     atombuf[i] = atombuf[i + 1];
                 }
@@ -216,15 +219,15 @@ void rename_atoms(const char*                            xlfile,
                 /* Match the residue name */
                 bMatch = (xlatom[i].res == nullptr
                           || (gmx_strcasecmp("protein-nterm", xlatom[i].res) == 0
-                              && rt->namedResidueHasType(rnm, "Protein") && bStartTerm)
+                              && namedResidueHasType(rt, rnm, "Protein") && bStartTerm)
                           || (gmx_strcasecmp("protein-cterm", xlatom[i].res) == 0
-                              && rt->namedResidueHasType(rnm, "Protein") && bEndTerm)
+                              && namedResidueHasType(rt, rnm, "Protein") && bEndTerm)
                           || (gmx_strcasecmp("protein", xlatom[i].res) == 0
-                              && rt->namedResidueHasType(rnm, "Protein"))
+                              && namedResidueHasType(rt, rnm, "Protein"))
                           || (gmx_strcasecmp("DNA", xlatom[i].res) == 0
-                              && rt->namedResidueHasType(rnm, "DNA"))
+                              && namedResidueHasType(rt, rnm, "DNA"))
                           || (gmx_strcasecmp("RNA", xlatom[i].res) == 0
-                              && rt->namedResidueHasType(rnm, "RNA")));
+                              && namedResidueHasType(rt, rnm, "RNA")));
                 if (!bMatch)
                 {
                     const char* ptr0 = rnm;
@@ -236,7 +239,7 @@ void rename_atoms(const char*                            xlfile,
                     }
                     bMatch = (ptr0[0] == '\0' && ptr1[0] == '\0');
                 }
-                if (bMatch && strcmp(atombuf, xlatom[i].atom) == 0)
+                if (bMatch && std::strcmp(atombuf, xlatom[i].atom) == 0)
                 {
                     /* We have a match. */
                     /* Don't free the old atomname,
@@ -245,8 +248,11 @@ void rename_atoms(const char*                            xlfile,
                     const char* ptr0 = xlatom[i].replace;
                     if (bVerbose)
                     {
-                        printf("Renaming atom '%s' in residue %d %s to '%s'\n", *atoms->atomname[a],
-                               atoms->resinfo[resind].nr, *atoms->resinfo[resind].name, ptr0);
+                        printf("Renaming atom '%s' in residue %d %s to '%s'\n",
+                               *atoms->atomname[a],
+                               atoms->resinfo[resind].nr,
+                               *atoms->resinfo[resind].name,
+                               ptr0);
                     }
                     atoms->atomname[a] = put_symtab(symtab, ptr0);
                     bRenamed           = TRUE;

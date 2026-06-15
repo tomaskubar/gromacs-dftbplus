@@ -1,13 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
- * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2016,2017 by the GROMACS development team.
- * Copyright (c) 2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 1991- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -21,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -30,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 #include "gmxpre.h"
 
@@ -52,17 +48,20 @@
 #include "gromacs/utility/exceptions.h"
 #include "gromacs/utility/fatalerror.h"
 #include "gromacs/utility/gmxassert.h"
-#include "gromacs/utility/smalloc.h"
 
 #include "pme_grid.h"
 #include "pme_internal.h"
 #include "pme_simd.h"
 #include "pme_spline_work.h"
-#include "spline_vectors.h"
 
 /* TODO consider split of pme-spline from this file */
 
-static void calc_interpolation_idx(const gmx_pme_t* pme, PmeAtomComm* atc, int start, int grid_index, int end, int thread)
+static void calc_interpolation_idx(const gmx_pme_t*  pme,
+                                   PmeAtomComm*      atc,
+                                   int               start,
+                                   const pmegrids_t& pmeGrids,
+                                   int               end,
+                                   int               thread)
 {
     int         i;
     int *       idxptr, tix, tiy, tiz;
@@ -70,7 +69,6 @@ static void calc_interpolation_idx(const gmx_pme_t* pme, PmeAtomComm* atc, int s
     real *      fptr, tx, ty, tz;
     real        rxx, ryx, ryy, rzx, rzy, rzz;
     int         nx, ny, nz;
-    int *       g2tx, *g2ty, *g2tz;
     gmx_bool    bThreads;
     int*        thread_idx = nullptr;
     int*        tpl_n      = nullptr;
@@ -87,9 +85,9 @@ static void calc_interpolation_idx(const gmx_pme_t* pme, PmeAtomComm* atc, int s
     rzy = pme->recipbox[ZZ][YY];
     rzz = pme->recipbox[ZZ][ZZ];
 
-    g2tx = pme->pmegrid[grid_index].g2t[XX];
-    g2ty = pme->pmegrid[grid_index].g2t[YY];
-    g2tz = pme->pmegrid[grid_index].g2t[ZZ];
+    const int* g2tx = pmeGrids.g2t[XX].data();
+    const int* g2ty = pmeGrids.g2t[YY].data();
+    const int* g2tz = pmeGrids.g2t[ZZ].data();
 
     bThreads = (atc->nthread > 1);
     if (bThreads)
@@ -217,62 +215,63 @@ static void make_thread_local_ind(const PmeAtomComm* atc, int thread, splinedata
 /* Macro to force loop unrolling by fixing order.
  * This gives a significant performance gain.
  */
-#define CALC_SPLINE(order)                                                                               \
-    {                                                                                                    \
-        for (int j = 0; (j < DIM); j++)                                                                  \
-        {                                                                                                \
-            real dr, div;                                                                                \
-            real data[PME_ORDER_MAX];                                                                    \
-                                                                                                         \
-            dr = xptr[j];                                                                                \
-                                                                                                         \
-            /* dr is relative offset from lower cell limit */                                            \
-            data[(order)-1] = 0;                                                                         \
-            data[1]         = dr;                                                                        \
-            data[0]         = 1 - dr;                                                                    \
-                                                                                                         \
-            for (int k = 3; (k < (order)); k++)                                                          \
-            {                                                                                            \
-                div         = 1.0 / (k - 1.0);                                                           \
-                data[k - 1] = div * dr * data[k - 2];                                                    \
-                for (int l = 1; (l < (k - 1)); l++)                                                      \
-                {                                                                                        \
-                    data[k - l - 1] =                                                                    \
-                            div * ((dr + l) * data[k - l - 2] + (k - l - dr) * data[k - l - 1]);         \
-                }                                                                                        \
-                data[0] = div * (1 - dr) * data[0];                                                      \
-            }                                                                                            \
-            /* differentiate */                                                                          \
-            dtheta[j][i * (order) + 0] = -data[0];                                                       \
-            for (int k = 1; (k < (order)); k++)                                                          \
-            {                                                                                            \
-                dtheta[j][i * (order) + k] = data[k - 1] - data[k];                                      \
-            }                                                                                            \
-                                                                                                         \
-            div             = 1.0 / ((order)-1);                                                         \
-            data[(order)-1] = div * dr * data[(order)-2];                                                \
-            for (int l = 1; (l < ((order)-1)); l++)                                                      \
-            {                                                                                            \
-                data[(order)-l - 1] =                                                                    \
-                        div * ((dr + l) * data[(order)-l - 2] + ((order)-l - dr) * data[(order)-l - 1]); \
-            }                                                                                            \
-            data[0] = div * (1 - dr) * data[0];                                                          \
-                                                                                                         \
-            for (int k = 0; k < (order); k++)                                                            \
-            {                                                                                            \
-                theta[j][i * (order) + k] = data[k];                                                     \
-            }                                                                                            \
-        }                                                                                                \
+#define CALC_SPLINE(order)                                                                       \
+    {                                                                                            \
+        for (int j = 0; (j < DIM); j++)                                                          \
+        {                                                                                        \
+            real dr, div;                                                                        \
+            real data[PME_ORDER_MAX];                                                            \
+                                                                                                 \
+            dr = xptr[j];                                                                        \
+                                                                                                 \
+            /* dr is relative offset from lower cell limit */                                    \
+            data[(order) - 1] = 0;                                                               \
+            data[1]           = dr;                                                              \
+            data[0]           = 1 - dr;                                                          \
+                                                                                                 \
+            for (int k = 3; (k < (order)); k++)                                                  \
+            {                                                                                    \
+                div         = 1.0 / (k - 1.0);                                                   \
+                data[k - 1] = div * dr * data[k - 2];                                            \
+                for (int l = 1; (l < (k - 1)); l++)                                              \
+                {                                                                                \
+                    data[k - l - 1] =                                                            \
+                            div * ((dr + l) * data[k - l - 2] + (k - l - dr) * data[k - l - 1]); \
+                }                                                                                \
+                data[0] = div * (1 - dr) * data[0];                                              \
+            }                                                                                    \
+            /* differentiate */                                                                  \
+            dtheta[j][i * (order) + 0] = -data[0];                                               \
+            for (int k = 1; (k < (order)); k++)                                                  \
+            {                                                                                    \
+                dtheta[j][i * (order) + k] = data[k - 1] - data[k];                              \
+            }                                                                                    \
+                                                                                                 \
+            div               = 1.0 / ((order) - 1);                                             \
+            data[(order) - 1] = div * dr * data[(order) - 2];                                    \
+            for (int l = 1; (l < ((order) - 1)); l++)                                            \
+            {                                                                                    \
+                data[(order) - l - 1] = div                                                      \
+                                        * ((dr + l) * data[(order) - l - 2]                      \
+                                           + ((order) - l - dr) * data[(order) - l - 1]);        \
+            }                                                                                    \
+            data[0] = div * (1 - dr) * data[0];                                                  \
+                                                                                                 \
+            for (int k = 0; k < (order); k++)                                                    \
+            {                                                                                    \
+                theta[j][i * (order) + k] = data[k];                                             \
+            }                                                                                    \
+        }                                                                                        \
     }
 
-static void make_bsplines(splinevec  theta,
-                          splinevec  dtheta,
-                          int        order,
-                          rvec       fractx[],
-                          int        nr,
-                          const int  ind[],
-                          const real coefficient[],
-                          gmx_bool   bDoSplines)
+static void make_bsplines(gmx::ArrayRef<real*> theta,
+                          gmx::ArrayRef<real*> dtheta,
+                          int                  order,
+                          rvec                 fractx[],
+                          int                  nr,
+                          const int            ind[],
+                          const real           coefficient[],
+                          const bool           computeAllSplineCoefficients)
 {
     /* construct splines for local atoms */
     int   i, ii;
@@ -285,7 +284,7 @@ static void make_bsplines(splinevec  theta,
          * twice, since usually more than half the particles have non-zero coefficients.
          */
         ii = ind[i];
-        if (bDoSplines || coefficient[ii] != 0.0)
+        if (computeAllSplineCoefficients || coefficient[ii] != 0.0)
         {
             xptr = fractx[ii];
             assert(order >= 3 && order <= PME_ORDER_MAX);
@@ -322,19 +321,17 @@ static void make_bsplines(splinevec  theta,
     }
 
 
-static void spread_coefficients_bsplines_thread(const pmegrid_t*       pmegrid,
-                                                const PmeAtomComm*     atc,
-                                                splinedata_t*          spline,
-                                                struct pme_spline_work gmx_unused* work)
+static void spread_coefficients_bsplines_thread(pmegrid_t*                        pmegrid,
+                                                const PmeAtomComm*                atc,
+                                                splinedata_t*                     spline,
+                                                const pme_spline_work gmx_unused& work)
 {
 
     /* spread coefficients from home atoms to local grid */
-    real*      grid;
     int        i, nn, n, ithx, ithy, ithz, i0, j0, k0;
     const int* idxptr;
     int        order, norder, index_x, index_xy, index_xyz;
     real       valx, valxy, coefficient;
-    real *     thx, *thy, *thz;
     int        pnx, pny, pnz, ndatatot;
     int        offx, offy, offz;
 
@@ -351,7 +348,9 @@ static void spread_coefficients_bsplines_thread(const pmegrid_t*       pmegrid,
     offz = pmegrid->offset[ZZ];
 
     ndatatot = pnx * pny * pnz;
-    grid     = pmegrid->grid;
+
+    real* gmx_restrict grid = pmegrid->grid().data();
+
     for (i = 0; i < ndatatot; i++)
     {
         grid[i] = 0;
@@ -373,9 +372,9 @@ static void spread_coefficients_bsplines_thread(const pmegrid_t*       pmegrid,
             j0 = idxptr[YY] - offy;
             k0 = idxptr[ZZ] - offz;
 
-            thx = spline->theta.coefficients[XX] + norder;
-            thy = spline->theta.coefficients[YY] + norder;
-            thz = spline->theta.coefficients[ZZ] + norder;
+            const real* thx = spline->theta.coefficients[XX] + norder;
+            const real* thy = spline->theta.coefficients[YY] + norder;
+            const real* thz = spline->theta.coefficients[ZZ] + norder;
 
             switch (order)
             {
@@ -407,18 +406,20 @@ static void spread_coefficients_bsplines_thread(const pmegrid_t*       pmegrid,
     }
 }
 
-static void copy_local_grid(const gmx_pme_t* pme, const pmegrids_t* pmegrids, int grid_index, int thread, real* fftgrid)
+static void copy_local_grid(PmeAndFftGrids* grids, const int thread)
 {
-    ivec  local_fft_ndata, local_fft_offset, local_fft_size;
-    int   fft_my, fft_mz;
-    int   nsy, nsz;
-    ivec  nf;
-    int   offx, offy, offz, x, y, z, i0, i0t;
-    int   d;
-    real* grid_th;
+    const pmegrids_t*  pmegrids = &grids->pmeGrids;
+    real* gmx_restrict fftgrid  = grids->fftgrid;
 
-    gmx_parallel_3dfft_real_limits(pme->pfft_setup[grid_index], local_fft_ndata, local_fft_offset,
-                                   local_fft_size);
+    ivec local_fft_ndata, local_fft_offset, local_fft_size;
+    int  fft_my, fft_mz;
+    int  nsy, nsz;
+    ivec nf;
+    int  offx, offy, offz, x, y, z, i0, i0t;
+    int  d;
+
+    gmx_parallel_3dfft_real_limits(
+            grids->pfft_setup.get(), local_fft_ndata, local_fft_offset, local_fft_size);
     fft_my = local_fft_size[YY];
     fft_mz = local_fft_size[ZZ];
 
@@ -439,7 +440,7 @@ static void copy_local_grid(const gmx_pme_t* pme, const pmegrids_t* pmegrids, in
     /* Directly copy the non-overlapping parts of the local grids.
      * This also initializes the full grid.
      */
-    grid_th = pmegrid->grid;
+    const real* gmx_restrict grid_th = pmegrid->grid().data();
     for (x = 0; x < nf[XX]; x++)
     {
         for (y = 0; y < nf[YY]; y++)
@@ -454,14 +455,15 @@ static void copy_local_grid(const gmx_pme_t* pme, const pmegrids_t* pmegrids, in
     }
 }
 
-static void reduce_threadgrid_overlap(const gmx_pme_t*  pme,
-                                      const pmegrids_t* pmegrids,
-                                      int               thread,
-                                      real*             fftgrid,
-                                      real*             commbuf_x,
-                                      real*             commbuf_y,
-                                      int               grid_index)
+static void reduce_threadgrid_overlap(const gmx_pme_t* pme,
+                                      PmeAndFftGrids*  grids,
+                                      int              thread,
+                                      real*            commbuf_x,
+                                      real*            commbuf_y)
 {
+    const pmegrids_t*  pmegrids = &grids->pmeGrids;
+    real* gmx_restrict fftgrid  = grids->fftgrid;
+
     ivec             local_fft_ndata, local_fft_offset, local_fft_size;
     int              fft_nx, fft_ny, fft_nz;
     int              fft_my, fft_mz;
@@ -478,8 +480,8 @@ static void reduce_threadgrid_overlap(const gmx_pme_t*  pme,
     const real*      grid_th;
     real*            commbuf = nullptr;
 
-    gmx_parallel_3dfft_real_limits(pme->pfft_setup[grid_index], local_fft_ndata, local_fft_offset,
-                                   local_fft_size);
+    gmx_parallel_3dfft_real_limits(
+            grids->pfft_setup.get(), local_fft_ndata, local_fft_offset, local_fft_size);
     fft_nx = local_fft_ndata[XX];
     fft_ny = local_fft_ndata[YY];
     fft_nz = local_fft_ndata[ZZ];
@@ -600,7 +602,7 @@ static void reduce_threadgrid_overlap(const gmx_pme_t*  pme,
 
                 pmegrid_f = &pmegrids->grid_th[thread_f];
 
-                grid_th = pmegrid_f->grid;
+                grid_th = pmegrid_f->grid().data();
 
                 nsy = pmegrid_f->s[YY];
                 nsz = pmegrid_f->s[ZZ];
@@ -608,9 +610,27 @@ static void reduce_threadgrid_overlap(const gmx_pme_t*  pme,
 #ifdef DEBUG_PME_REDUCE
                 printf("n%d t%d add %d  %2d %2d %2d  %2d %2d %2d  %2d-%2d %2d-%2d, %2d-%2d "
                        "%2d-%2d, %2d-%2d %2d-%2d\n",
-                       pme->nodeid, thread, thread_f, pme->pmegrid_start_ix, pme->pmegrid_start_iy,
-                       pme->pmegrid_start_iz, sx, sy, sz, offx - ox, tx1 - ox, offx, tx1, offy - oy,
-                       ty1 - oy, offy, ty1, offz - oz, tz1 - oz, offz, tz1);
+                       pme->nodeid,
+                       thread,
+                       thread_f,
+                       pme->pmegrid_start_ix,
+                       pme->pmegrid_start_iy,
+                       pme->pmegrid_start_iz,
+                       sx,
+                       sy,
+                       sz,
+                       offx - ox,
+                       tx1 - ox,
+                       offx,
+                       tx1,
+                       offy - oy,
+                       ty1 - oy,
+                       offy,
+                       ty1,
+                       offz - oz,
+                       tz1 - oz,
+                       offz,
+                       tz1);
 #endif
 
                 if (!(bCommX || bCommY))
@@ -697,8 +717,10 @@ static void reduce_threadgrid_overlap(const gmx_pme_t*  pme,
 }
 
 
-static void sum_fftgrid_dd(const gmx_pme_t* pme, real* fftgrid, int grid_index)
+static void sum_fftgrid_dd(const gmx_pme_t* pme, PmeAndFftGrids* grids)
 {
+    real* fftgrid = grids->fftgrid;
+
     ivec local_fft_ndata, local_fft_offset, local_fft_size;
     int  send_index0, send_nindex;
     int  recv_nindex;
@@ -716,8 +738,8 @@ static void sum_fftgrid_dd(const gmx_pme_t* pme, real* fftgrid, int grid_index)
      * communication setup.
      */
 
-    gmx_parallel_3dfft_real_limits(pme->pfft_setup[grid_index], local_fft_ndata, local_fft_offset,
-                                   local_fft_size);
+    gmx_parallel_3dfft_real_limits(
+            grids->pfft_setup.get(), local_fft_ndata, local_fft_offset, local_fft_size);
 
     if (pme->nnodes_minor > 1)
     {
@@ -752,15 +774,28 @@ static void sum_fftgrid_dd(const gmx_pme_t* pme, real* fftgrid, int grid_index)
 
             if (debug != nullptr)
             {
-                fprintf(debug, "PME fftgrid comm y %2d x %2d x %2d\n", local_fft_ndata[XX],
-                        send_nindex, local_fft_ndata[ZZ]);
+                fprintf(debug,
+                        "PME fftgrid comm y %2d x %2d x %2d\n",
+                        local_fft_ndata[XX],
+                        send_nindex,
+                        local_fft_ndata[ZZ]);
             }
 
 #if GMX_MPI
             int send_id = overlap->comm_data[ipulse].send_id;
             int recv_id = overlap->comm_data[ipulse].recv_id;
-            MPI_Sendrecv(sendptr, send_size_y * datasize, GMX_MPI_REAL, send_id, ipulse, recvptr,
-                         recv_size_y * datasize, GMX_MPI_REAL, recv_id, ipulse, overlap->mpi_comm, &stat);
+            MPI_Sendrecv(sendptr,
+                         send_size_y * datasize,
+                         GMX_MPI_REAL,
+                         send_id,
+                         ipulse,
+                         recvptr,
+                         recv_size_y * datasize,
+                         GMX_MPI_REAL,
+                         recv_id,
+                         ipulse,
+                         overlap->mpi_comm,
+                         &stat);
 #endif
 
             for (x = 0; x < local_fft_ndata[XX]; x++)
@@ -813,18 +848,31 @@ static void sum_fftgrid_dd(const gmx_pme_t* pme, real* fftgrid, int grid_index)
 
         if (debug != nullptr)
         {
-            fprintf(debug, "PME fftgrid comm x %2d x %2d x %2d\n", send_nindex, local_fft_ndata[YY],
+            fprintf(debug,
+                    "PME fftgrid comm x %2d x %2d x %2d\n",
+                    send_nindex,
+                    local_fft_ndata[YY],
                     local_fft_ndata[ZZ]);
         }
 
 #if GMX_MPI
-        int   datasize = local_fft_ndata[YY] * local_fft_ndata[ZZ];
-        int   send_id  = overlap->comm_data[ipulse].send_id;
-        int   recv_id  = overlap->comm_data[ipulse].recv_id;
-        auto* sendptr  = const_cast<real*>(overlap->sendbuf.data());
-        auto* recvptr  = const_cast<real*>(overlap->recvbuf.data());
-        MPI_Sendrecv(sendptr, send_nindex * datasize, GMX_MPI_REAL, send_id, ipulse, recvptr,
-                     recv_nindex * datasize, GMX_MPI_REAL, recv_id, ipulse, overlap->mpi_comm, &stat);
+        int         datasize = local_fft_ndata[YY] * local_fft_ndata[ZZ];
+        int         send_id  = overlap->comm_data[ipulse].send_id;
+        int         recv_id  = overlap->comm_data[ipulse].recv_id;
+        const auto* sendptr  = overlap->sendbuf.data();
+        auto*       recvptr  = const_cast<real*>(overlap->recvbuf.data());
+        MPI_Sendrecv(sendptr,
+                     send_nindex * datasize,
+                     GMX_MPI_REAL,
+                     send_id,
+                     ipulse,
+                     recvptr,
+                     recv_nindex * datasize,
+                     GMX_MPI_REAL,
+                     recv_id,
+                     ipulse,
+                     overlap->mpi_comm,
+                     &stat);
 #endif
 
         for (x = 0; x < recv_nindex; x++)
@@ -842,14 +890,12 @@ static void sum_fftgrid_dd(const gmx_pme_t* pme, real* fftgrid, int grid_index)
     }
 }
 
-void spread_on_grid(const gmx_pme_t*  pme,
-                    PmeAtomComm*      atc,
-                    const pmegrids_t* grids,
-                    gmx_bool          bCalcSplines,
-                    gmx_bool          bSpread,
-                    real*             fftgrid,
-                    gmx_bool          bDoSplines,
-                    int               grid_index)
+void spread_on_grid(const gmx_pme_t* pme,
+                    PmeAtomComm*     atc,
+                    PmeAndFftGrids*  grids,
+                    const bool       calculateSplines,
+                    const bool       doSpreading,
+                    const bool       computeAllSplineCoefficients)
 {
 #ifdef PME_TIME_THREADS
     gmx_cycles_t  c1, c2, c3, ct1a, ct1b, ct1c;
@@ -860,12 +906,12 @@ void spread_on_grid(const gmx_pme_t*  pme,
 
     const int nthread = pme->nthread;
     assert(nthread > 0);
-    GMX_ASSERT(grids != nullptr || !bSpread, "If there's no grid, we cannot be spreading");
+    GMX_ASSERT(grids != nullptr || !doSpreading, "If there's no grid, we cannot be spreading");
 
 #ifdef PME_TIME_THREADS
     c1 = omp_cyc_start();
 #endif
-    if (bCalcSplines)
+    if (calculateSplines)
     {
 #pragma omp parallel for num_threads(nthread) schedule(static)
         for (int thread = 0; thread < nthread; thread++)
@@ -880,7 +926,7 @@ void spread_on_grid(const gmx_pme_t*  pme,
                 /* Compute fftgrid index for all atoms,
                  * with help of some extra variables.
                  */
-                calc_interpolation_idx(pme, atc, start, grid_index, end, thread);
+                calc_interpolation_idx(pme, atc, start, grids->pmeGrids, end, thread);
             }
             GMX_CATCH_ALL_AND_EXIT_WITH_FATAL_ERROR
         }
@@ -911,7 +957,7 @@ void spread_on_grid(const gmx_pme_t*  pme,
             {
                 spline = &atc->spline[thread];
 
-                if (grids->nthread == 1)
+                if (grids->pmeGrids.nthread == 1)
                 {
                     /* One thread, we operate on all coefficients */
                     spline->n = atc->numAtoms();
@@ -923,27 +969,34 @@ void spread_on_grid(const gmx_pme_t*  pme,
                 }
             }
 
-            if (bCalcSplines)
+            if (calculateSplines)
             {
-                make_bsplines(spline->theta.coefficients, spline->dtheta.coefficients,
-                              pme->pme_order, as_rvec_array(atc->fractx.data()), spline->n,
-                              spline->ind.data(), atc->coefficient.data(), bDoSplines);
+                make_bsplines(spline->theta.coefficients,
+                              spline->dtheta.coefficients,
+                              pme->pme_order,
+                              as_rvec_array(atc->fractx.data()),
+                              spline->n,
+                              spline->ind.data(),
+                              atc->coefficient.data(),
+                              computeAllSplineCoefficients);
                 /* With QM/MM, create splines also on QM atoms - which carry no charge. */
+                /* TODO - the last argument was formerly bDoSplines -- check if the meaning has remained or changed */
             }
 
-            if (bSpread)
+            if (doSpreading)
             {
                 /* put local atoms on grid. */
-                const pmegrid_t* grid = pme->bUseThreads ? &grids->grid_th[thread] : &grids->grid;
+                pmegrid_t& grid =
+                        pme->bUseThreads ? grids->pmeGrids.grid_th[thread] : grids->pmeGrids.grid;
 
 #ifdef PME_TIME_SPREAD
                 ct1a = omp_cyc_start();
 #endif
-                spread_coefficients_bsplines_thread(grid, atc, spline, pme->spline_work);
+                spread_coefficients_bsplines_thread(&grid, atc, spline, *pme->spline_work);
 
                 if (pme->bUseThreads)
                 {
-                    copy_local_grid(pme, grids, grid_index, thread, fftgrid);
+                    copy_local_grid(grids, thread);
                 }
 #ifdef PME_TIME_SPREAD
                 ct1a = omp_cyc_end(ct1a);
@@ -958,19 +1011,21 @@ void spread_on_grid(const gmx_pme_t*  pme,
     cs2 += (double)c2;
 #endif
 
-    if (bSpread && pme->bUseThreads)
+    if (doSpreading && pme->bUseThreads)
     {
 #ifdef PME_TIME_THREADS
         c3 = omp_cyc_start();
 #endif
-#pragma omp parallel for num_threads(grids->nthread) schedule(static)
-        for (int thread = 0; thread < grids->nthread; thread++)
+#pragma omp parallel for num_threads(grids->pmeGrids.nthread) schedule(static)
+        for (int thread = 0; thread < grids->pmeGrids.nthread; thread++)
         {
             try
             {
-                reduce_threadgrid_overlap(pme, grids, thread, fftgrid,
+                reduce_threadgrid_overlap(pme,
+                                          grids,
+                                          thread,
                                           const_cast<real*>(pme->overlap[0].sendbuf.data()),
-                                          const_cast<real*>(pme->overlap[1].sendbuf.data()), grid_index);
+                                          const_cast<real*>(pme->overlap[1].sendbuf.data()));
             }
             GMX_CATCH_ALL_AND_EXIT_WITH_FATAL_ERROR
         }
@@ -985,7 +1040,7 @@ void spread_on_grid(const gmx_pme_t*  pme,
              * For this communication call we need to check pme->bUseThreads
              * to have all ranks communicate here, regardless of pme->nthread.
              */
-            sum_fftgrid_dd(pme, fftgrid, grid_index);
+            sum_fftgrid_dd(pme, grids);
         }
     }
 
@@ -1004,4 +1059,3 @@ void spread_on_grid(const gmx_pme_t*  pme,
     }
 #endif
 }
-

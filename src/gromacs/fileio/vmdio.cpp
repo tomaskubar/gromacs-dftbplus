@@ -1,11 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2009-2018, The GROMACS development team.
- * Copyright (c) 2019, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2009- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -19,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -28,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 #include "gmxpre.h"
 
@@ -111,13 +109,13 @@
 #endif
 
 #include "gromacs/fileio/gmxfio.h"
-#include "gromacs/math/vec.h"
 #include "gromacs/pbcutil/pbc.h"
 #include "gromacs/trajectory/trajectoryframe.h"
 #include "gromacs/utility/basedefinitions.h"
 #include "gromacs/utility/fatalerror.h"
 #include "gromacs/utility/futil.h"
 #include "gromacs/utility/smalloc.h"
+#include "gromacs/utility/vec.h"
 
 
 typedef int (*initfunc)();
@@ -130,7 +128,7 @@ static int register_cb(void* v, vmdplugin_t* p)
     const char*      key       = p->name;
     gmx_vmdplugin_t* vmdplugin = static_cast<gmx_vmdplugin_t*>(v);
 
-    if (strcmp(key, vmdplugin->filetype) == 0)
+    if (std::strcmp(key, vmdplugin->filetype.string().c_str()) == 0)
     {
         vmdplugin->api = reinterpret_cast<molfile_plugin_t*>(p);
     }
@@ -146,8 +144,7 @@ static int load_sharedlibrary_plugins(const char* fullpath, gmx_vmdplugin_t* vmd
     {
         if (debug)
         {
-            fprintf(debug, "\nUnable to open dynamic library %s.\n%s\n", fullpath,
-                    vmddlerror()); /*only to debug because of stdc++ erros */
+            fprintf(debug, "\nUnable to open dynamic library %s.\n%s\n", fullpath, vmddlerror()); /*only to debug because of stdc++ erros */
         }
         return 0;
     }
@@ -270,40 +267,42 @@ gmx_bool read_next_vmd_frame(gmx_vmdplugin_t* vmdplugin, t_trxframe* fr)
     return true;
 }
 
-static int load_vmd_library(const char* fn, gmx_vmdplugin_t* vmdplugin)
+static int load_vmd_library(const std::filesystem::path& fn, gmx_vmdplugin_t* vmdplugin)
 {
     const char* err;
     int         ret = 0;
 #if !GMX_NATIVE_WINDOWS
-    glob_t            globbuf;
-    const std::string defpath_suffix = "/plugins/*/molfile";
-    const std::string defpathenv     = GMX_VMD_PLUGIN_PATH;
+    glob_t                      globbuf;
+    const std::string           defpath_suffix = "/plugins/*/molfile";
+    const std::filesystem::path defpathenv     = GMX_VMD_PLUGIN_PATH;
 #else
-    WIN32_FIND_DATA ffd;
-    HANDLE          hFind = INVALID_HANDLE_VALUE;
-    char            progfolder[GMX_PATH_MAX];
-    std::string     defpath_suffix = "\\plugins\\WIN32\\molfile";
+    WIN32_FIND_DATA       ffd;
+    HANDLE                hFind = INVALID_HANDLE_VALUE;
+    char                  progfolder[GMX_PATH_MAX];
+    std::filesystem::path defpath_suffix = "\\plugins\\WIN32\\molfile";
     SHGetFolderPath(NULL, CSIDL_PROGRAM_FILES, NULL, SHGFP_TYPE_CURRENT, progfolder);
-    std::string defpathenv =
-            gmx::formatString("%s\\University of Illinois\\VMD\\plugins\\WIN32\\molfile", progfolder);
+    std::filesystem::path defpathenv =
+            progfolder / "University of Illinois" / "VMD" / "plugins" / "WIN32" / "molfile";
 #endif
 
     vmdplugin->api      = nullptr;
-    vmdplugin->filetype = strrchr(fn, '.');
-    if (!vmdplugin->filetype)
+    vmdplugin->filetype = fn.extension();
+    if (!fn.has_extension())
     {
         return 0;
     }
-    vmdplugin->filetype++;
+    vmdplugin->filetype = vmdplugin->filetype.string().substr(1);
 
     /* First look for an explicit path given at run time for the
      * plugins, then an implicit run-time path, and finally for one
      * given at configure time. This last might be hard-coded to the
      * default for VMD installs. */
-    std::string pathenv = getenv("VMD_PLUGIN_PATH");
+    const char*           pathEnvChar = std::getenv("VMD_PLUGIN_PATH");
+    std::filesystem::path pathenv     = pathEnvChar != nullptr ? pathEnvChar : "";
+    std::filesystem::path fallBackPathEnv;
     if (pathenv.empty())
     {
-        pathenv = getenv("VMDDIR");
+        pathenv = std::getenv("VMDDIR");
         if (pathenv.empty())
         {
             printf("\nNeither VMD_PLUGIN_PATH or VMDDIR set. ");
@@ -313,12 +312,13 @@ static int load_vmd_library(const char* fn, gmx_vmdplugin_t* vmdplugin)
         else
         {
             printf("\nVMD_PLUGIN_PATH no set, but VMDDIR is set. ");
-            pathenv = gmx::Path::join(pathenv, defpath_suffix);
+            fallBackPathEnv = pathenv / defpath_suffix;
+            pathenv         = fallBackPathEnv;
             printf("Using semi-default location:\n%s\n", pathenv.c_str());
         }
     }
 #if !GMX_NATIVE_WINDOWS
-    std::string pathname = gmx::Path::join(pathenv, "/*.so");
+    auto pathname = pathenv / "/*.so";
     glob(pathname.c_str(), 0, nullptr, &globbuf);
     if (globbuf.gl_pathc == 0)
     {
@@ -332,15 +332,15 @@ static int load_vmd_library(const char* fn, gmx_vmdplugin_t* vmdplugin)
     {
         /* FIXME: Undefined which plugin is chosen if more than one plugin
            can read a certain file ending. Requires some additional command
-           line option or enviroment variable to specify which plugin should
+           line option or environment variable to specify which plugin should
            be picked.
          */
         ret |= load_sharedlibrary_plugins(globbuf.gl_pathv[i], vmdplugin);
     }
     globfree(&globbuf);
 #else
-    std::string pathname = gmx::Path::join(pathenv, "\\*.so");
-    hFind                = FindFirstFile(pathname.c_str(), &ffd);
+    auto pathname = pathenv / "*.so";
+    hFind         = FindFirstFile(pathname.c_str(), &ffd);
     if (INVALID_HANDLE_VALUE == hFind)
     {
         printf("\nNo VMD Plugins found\n");
@@ -348,7 +348,7 @@ static int load_vmd_library(const char* fn, gmx_vmdplugin_t* vmdplugin)
     }
     do
     {
-        std::string filename = gmx::Path::join(pathenv, ffd.cFileName);
+        auto filename = pathenv / ffd.cFileName;
         ret |= load_sharedlibrary_plugins(filename.c_str(), vmdplugin);
     } while (FindNextFile(hFind, &ffd) != 0 && vmdplugin->api == NULL);
     FindClose(hFind);
@@ -371,7 +371,7 @@ static int load_vmd_library(const char* fn, gmx_vmdplugin_t* vmdplugin)
 
     if (vmdplugin->api == nullptr)
     {
-        printf("\nNo plugin for %s found\n", vmdplugin->filetype);
+        printf("\nNo plugin for %s found\n", vmdplugin->filetype.c_str());
         return 0;
     }
 
@@ -386,39 +386,43 @@ static int load_vmd_library(const char* fn, gmx_vmdplugin_t* vmdplugin)
     return 1;
 }
 
-int read_first_vmd_frame(const char* fn, gmx_vmdplugin_t** vmdpluginp, t_trxframe* fr)
+int read_first_vmd_frame(const std::filesystem::path& fn, gmx_vmdplugin_t** vmdpluginp, t_trxframe* fr)
 {
     molfile_timestep_metadata_t* metadata = nullptr;
     gmx_vmdplugin_t*             vmdplugin;
 
-    snew(vmdplugin, 1);
+    vmdplugin   = new gmx_vmdplugin_t;
     *vmdpluginp = vmdplugin;
     if (!load_vmd_library(fn, vmdplugin))
     {
         return 0;
     }
 
-    vmdplugin->handle = vmdplugin->api->open_file_read(fn, vmdplugin->filetype, &fr->natoms);
+    vmdplugin->handle =
+            vmdplugin->api->open_file_read(fn.c_str(), vmdplugin->filetype.c_str(), &fr->natoms);
 
     if (!vmdplugin->handle)
     {
-        fprintf(stderr, "\nError: could not open file '%s' for reading.\n", fn);
+        fprintf(stderr, "\nError: could not open file '%s' for reading.\n", fn.c_str());
         return 0;
     }
 
     if (fr->natoms == MOLFILE_NUMATOMS_UNKNOWN)
     {
-        fprintf(stderr, "\nFormat of file %s does not record number of atoms.\n", fn);
+        fprintf(stderr, "\nFormat of file %s does not record number of atoms.\n", fn.c_str());
         return 0;
     }
     else if (fr->natoms == MOLFILE_NUMATOMS_NONE)
     {
-        fprintf(stderr, "\nNo atoms found by VMD plugin in file %s.\n", fn);
+        fprintf(stderr, "\nNo atoms found by VMD plugin in file %s.\n", fn.c_str());
         return 0;
     }
     else if (fr->natoms < 1) /*should not be reached*/
     {
-        fprintf(stderr, "\nUnknown number of atoms %d for VMD plugin opening file %s.\n", fr->natoms, fn);
+        fprintf(stderr,
+                "\nUnknown number of atoms %d for VMD plugin opening file %s.\n",
+                fr->natoms,
+                fn.c_str());
         return 0;
     }
 

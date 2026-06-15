@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2019, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2019- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \internal \file
  * \brief
@@ -44,7 +43,13 @@
 
 #include "gromacs/gmxpreprocess/genion.h"
 
+#include <filesystem>
+#include <string>
+
+#include <gtest/gtest.h>
+
 #include "gromacs/gmxpreprocess/grompp.h"
+#include "gromacs/utility/arrayref.h"
 #include "gromacs/utility/futil.h"
 #include "gromacs/utility/textreader.h"
 #include "gromacs/utility/textwriter.h"
@@ -71,13 +76,13 @@ public:
     {
         CommandLine caller = commandLine();
 
-        const std::string mdpInputFileName(fileManager().getTemporaryFilePath("input.mdp"));
+        const std::string mdpInputFileName(fileManager().getTemporaryFilePath("input.mdp").string());
         TextWriter::writeFileFromString(
                 mdpInputFileName,
                 "verlet-buffer-tolerance =-1\nrcoulomb=0.5\nrvdw = 0.5\nrlist = 0.5\n");
         caller.addOption("-f", mdpInputFileName);
-        caller.addOption("-c", TestFileManager::getInputFilePath("spc216_with_methane.gro"));
-        caller.addOption("-p", TestFileManager::getInputFilePath("spc216_with_methane.top"));
+        caller.addOption("-c", TestFileManager::getInputFilePath("spc216_with_methane.gro").string());
+        caller.addOption("-p", TestFileManager::getInputFilePath("spc216_with_methane.top").string());
         caller.addOption("-o", tprFileName_);
 
         gmx_grompp(caller.argc(), caller.argv());
@@ -99,7 +104,8 @@ public:
     }
 
 private:
-    const std::string tprFileName_ = fileManager().getTemporaryFilePath("spc216_with_methane.tpr");
+    const std::string tprFileName_ =
+            fileManager().getTemporaryFilePath("spc216_with_methane.tpr").string();
 };
 
 TEST_F(GenionTest, HighConcentrationIonPlacement)

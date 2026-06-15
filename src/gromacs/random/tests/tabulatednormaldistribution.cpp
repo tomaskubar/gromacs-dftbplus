@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2015,2016,2018,2019, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2015- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \internal \file
  * \brief Tests for GROMACS tabulated normal distribution
@@ -42,16 +41,26 @@
 
 #include "gromacs/random/tabulatednormaldistribution.h"
 
+#include <cmath>
+#include <cstddef>
+
+#include <array>
+#include <string>
+#include <vector>
+
 #include <gtest/gtest.h>
 
+#include "gromacs/random/seed.h"
 #include "gromacs/random/threefry.h"
+#include "gromacs/utility/real.h"
 
 #include "testutils/refdata.h"
 #include "testutils/testasserts.h"
 
 namespace gmx
 {
-
+namespace test
+{
 namespace
 {
 
@@ -164,20 +173,25 @@ TEST(TabulatedNormalDistributionTableTest, HasValidProperties)
     double sumOfSquares = 0.0;
     // accept errors of a few ULP since the exact value of the summation
     // below will depend on whether the compiler issues FMA instructions
-    auto tolerance = gmx::test::ulpTolerance(10);
+    const auto elementTolerance = gmx::test::ulpTolerance(10);
     for (size_t i = 0, iFromEnd = table.size() - 1; i < halfSize; ++i, --iFromEnd)
     {
-        EXPECT_REAL_EQ_TOL(table.at(i), -table.at(iFromEnd), tolerance)
+        EXPECT_REAL_EQ_TOL(table.at(i), -table.at(iFromEnd), elementTolerance)
                 << "Table is not an odd-valued function for entries " << i << " and " << iFromEnd;
         // Add up the squares of the table values in order of ascending
         // magnitude (to minimize accumulation of round-off error).
         sumOfSquares += table.at(i) * table.at(i) + table.at(iFromEnd) * table.at(iFromEnd);
     }
 
-    double variance = sumOfSquares / table.size();
-    EXPECT_REAL_EQ_TOL(1.0, variance, tolerance) << "Table should have unit variance";
+    /* We calculate the sum of N = table.size() positive values in ascending order.
+     * On average, we have N / 2 single-bit differences. Up- and down errors will cancel,
+     * reducing the error by a factor on sqrt(N), leading to the tolerance of sqrt(N)/2.
+     * See analysis by Erik Lindahl in #4700. */
+    const auto   varianceTolerance = gmx::test::ulpTolerance(std::sqrt(table.size()) / 2);
+    const double variance          = sumOfSquares / table.size();
+    EXPECT_REAL_EQ_TOL(1.0, variance, varianceTolerance) << "Table should have unit variance";
 }
 
 } // namespace
-
+} // namespace test
 } // namespace gmx

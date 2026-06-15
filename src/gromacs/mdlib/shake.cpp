@@ -1,13 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
- * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2017,2018 by the GROMACS development team.
- * Copyright (c) 2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 1991- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -21,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -30,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \internal \file
  * \brief Defines SHAKE code.
@@ -51,18 +47,26 @@
 #include <cstdlib>
 
 #include <algorithm>
+#include <array>
+#include <filesystem>
+#include <string>
 
 #include "gromacs/gmxlib/nrnb.h"
 #include "gromacs/math/functions.h"
-#include "gromacs/math/vec.h"
 #include "gromacs/mdlib/constr.h"
 #include "gromacs/mdlib/splitter.h"
 #include "gromacs/mdtypes/inputrec.h"
 #include "gromacs/mdtypes/md_enums.h"
 #include "gromacs/pbcutil/pbc.h"
+#include "gromacs/topology/idef.h"
+#include "gromacs/topology/ifunc.h"
 #include "gromacs/topology/invblock.h"
+#include "gromacs/utility/arrayref.h"
+#include "gromacs/utility/basedefinitions.h"
 #include "gromacs/utility/fatalerror.h"
-#include "gromacs/utility/smalloc.h"
+#include "gromacs/utility/gmxassert.h"
+#include "gromacs/utility/listoflists.h"
+#include "gromacs/utility/vec.h"
 
 namespace gmx
 {
@@ -104,15 +108,18 @@ static int pcomp(const void* p1, const void* p2)
 }
 
 //! Prints sortblocks
-static void pr_sortblock(FILE* fp, const char* title, int nsb, t_sortblock sb[])
+static void pr_sortblock(FILE* fp, const char* title, gmx::ArrayRef<const t_sortblock> sb)
 {
-    int i;
-
     fprintf(fp, "%s\n", title);
-    for (i = 0; (i < nsb); i++)
+    for (gmx::Index i = 0; i < sb.ssize(); i++)
     {
-        fprintf(fp, "i: %5d, iatom: (%5d %5d %5d), blocknr: %5d\n", i, sb[i].iatom[0],
-                sb[i].iatom[1], sb[i].iatom[2], sb[i].blocknr);
+        fprintf(fp,
+                "i: %5td, iatom: (%5d %5d %5d), blocknr: %5d\n",
+                i,
+                sb[i].iatom[0],
+                sb[i].iatom[1],
+                sb[i].iatom[2],
+                sb[i].blocknr);
     }
 }
 
@@ -124,20 +131,14 @@ static void resizeLagrangianData(shakedata* shaked, int ncons)
 
 void make_shake_sblock_serial(shakedata* shaked, InteractionDefinitions* idef, const int numAtoms)
 {
-    int          i, m, ncons;
-    int          bstart, bnr;
-    t_blocka     sblocks;
-    t_sortblock* sb;
-    int*         inv_sblock;
+    int bstart, bnr;
 
     /* Since we are processing the local topology,
-     * the F_CONSTRNC ilist has been concatenated to the F_CONSTR ilist.
+     * the InteractionFunction::ConstraintsNoCoupling ilist has been concatenated to the InteractionFunction::Constraints ilist.
      */
-    ncons = idef->il[F_CONSTR].size() / 3;
+    const int ncons = idef->il[InteractionFunction::Constraints].size() / 3;
 
-    init_blocka(&sblocks);
-    sfree(sblocks.index); // To solve memory leak
-    gen_sblocks(nullptr, numAtoms, *idef, &sblocks, FALSE);
+    gmx::ListOfLists<int> sblocks = gen_sblocks(nullptr, numAtoms, *idef, false);
 
     /*
        bstart=(idef->nodeid > 0) ? blocks->multinr[idef->nodeid-1] : 0;
@@ -146,55 +147,52 @@ void make_shake_sblock_serial(shakedata* shaked, InteractionDefinitions* idef, c
     bstart = 0;
     if (debug)
     {
-        fprintf(debug, "ncons: %d, bstart: %d, nblocks: %d\n", ncons, bstart, sblocks.nr);
+        fprintf(debug, "ncons: %d, bstart: %d, nblocks: %td\n", ncons, bstart, sblocks.ssize());
     }
 
     /* Calculate block number for each atom */
-    inv_sblock = make_invblocka(&sblocks, numAtoms);
-
-    done_blocka(&sblocks);
+    std::vector<int> inv_sblock = make_invblock(sblocks, numAtoms);
 
     /* Store the block number in temp array and
      * sort the constraints in order of the sblock number
      * and the atom numbers, really sorting a segment of the array!
      */
-    int* iatom = idef->il[F_CONSTR].iatoms.data();
-    snew(sb, ncons);
-    for (i = 0; (i < ncons); i++, iatom += 3)
+    gmx::ArrayRef<int>       iatom = idef->il[InteractionFunction::Constraints].iatoms;
+    std::vector<t_sortblock> sb(ncons);
+    for (int i = 0; i < ncons; i++)
     {
-        for (m = 0; (m < 3); m++)
+        for (int m = 0; m < 3; m++)
         {
-            sb[i].iatom[m] = iatom[m];
+            sb[i].iatom[m] = iatom[i * 3 + m];
         }
-        sb[i].blocknr = inv_sblock[iatom[1]];
+        sb[i].blocknr = inv_sblock[iatom[i * 3 + 1]];
     }
 
     /* Now sort the blocks */
     if (debug)
     {
-        pr_sortblock(debug, "Before sorting", ncons, sb);
+        pr_sortblock(debug, "Before sorting", sb);
         fprintf(debug, "Going to sort constraints\n");
     }
 
-    std::qsort(sb, ncons, sizeof(*sb), pcomp);
+    std::qsort(sb.data(), gmx::ssize(sb), sizeof(sb[0]), pcomp);
 
     if (debug)
     {
-        pr_sortblock(debug, "After sorting", ncons, sb);
+        pr_sortblock(debug, "After sorting", sb);
     }
 
-    iatom = idef->il[F_CONSTR].iatoms.data();
-    for (i = 0; (i < ncons); i++, iatom += 3)
+    for (int i = 0; i < ncons; i++)
     {
-        for (m = 0; (m < 3); m++)
+        for (int m = 0; m < 3; m++)
         {
-            iatom[m] = sb[i].iatom[m];
+            iatom[i * 3 + m] = sb[i].iatom[m];
         }
     }
 
     shaked->sblock.clear();
     bnr = -2;
-    for (i = 0; (i < ncons); i++)
+    for (int i = 0; i < ncons; i++)
     {
         if (sb[i].blocknr != bnr)
         {
@@ -205,8 +203,6 @@ void make_shake_sblock_serial(shakedata* shaked, InteractionDefinitions* idef, c
     /* Last block... */
     shaked->sblock.push_back(3 * ncons);
 
-    sfree(sb);
-    sfree(inv_sblock);
     resizeLagrangianData(shaked, ncons);
 }
 
@@ -277,7 +273,7 @@ void cshake(const int            iatom[],
             ArrayRef<const RVec> initial_displacements,
             ArrayRef<const real> half_of_reduced_mass,
             real                 omega,
-            const real           invmass[],
+            ArrayRef<const real> invmass,
             ArrayRef<const real> distance_squared_tolerance,
             ArrayRef<real>       scaled_lagrange_multiplier,
             int*                 nerror)
@@ -366,7 +362,7 @@ static void crattle(const int            iatom[],
                     ArrayRef<const RVec> rij,
                     ArrayRef<const real> m2,
                     real                 omega,
-                    const real           invmass[],
+                    ArrayRef<const real> invmass,
                     ArrayRef<const real> distance_squared_tolerance,
                     ArrayRef<real>       scaled_lagrange_multiplier,
                     int*                 nerror,
@@ -404,7 +400,7 @@ static void crattle(const int            iatom[],
             const real constraint_distance_squared_ll = constraint_distance_squared[ll];
 
             /* iconv is zero when the error is smaller than a bound */
-            const real iconvf = fabs(vpijd) * (distance_squared_tolerance[ll] / invdt);
+            const real iconvf = std::fabs(vpijd) * (distance_squared_tolerance[ll] / invdt);
 
             if (iconvf > 1.0_real)
             {
@@ -435,7 +431,7 @@ static void crattle(const int            iatom[],
 //! Applies SHAKE
 static int vec_shakef(FILE*                     fplog,
                       shakedata*                shaked,
-                      const real                invmass[],
+                      ArrayRef<const real>      invmass,
                       int                       ncon,
                       ArrayRef<const t_iparams> ip,
                       const int*                iatom,
@@ -502,14 +498,36 @@ static int vec_shakef(FILE*                     fplog,
     switch (econq)
     {
         case ConstraintVariable::Positions:
-            cshake(iatom, ncon, &nit, maxnit, constraint_distance_squared, prime, pbc, rij,
-                   half_of_reduced_mass, omega, invmass, distance_squared_tolerance,
-                   scaled_lagrange_multiplier, &error);
+            cshake(iatom,
+                   ncon,
+                   &nit,
+                   maxnit,
+                   constraint_distance_squared,
+                   prime,
+                   pbc,
+                   rij,
+                   half_of_reduced_mass,
+                   omega,
+                   invmass,
+                   distance_squared_tolerance,
+                   scaled_lagrange_multiplier,
+                   &error);
             break;
         case ConstraintVariable::Velocities:
-            crattle(iatom, ncon, &nit, maxnit, constraint_distance_squared, prime, rij,
-                    half_of_reduced_mass, omega, invmass, distance_squared_tolerance,
-                    scaled_lagrange_multiplier, &error, invdt);
+            crattle(iatom,
+                    ncon,
+                    &nit,
+                    maxnit,
+                    constraint_distance_squared,
+                    prime,
+                    rij,
+                    half_of_reduced_mass,
+                    omega,
+                    invmass,
+                    distance_squared_tolerance,
+                    scaled_lagrange_multiplier,
+                    &error,
+                    invdt);
             break;
         default: gmx_incons("Unknown constraint quantity for SHAKE");
     }
@@ -530,12 +548,16 @@ static int vec_shakef(FILE*                     fplog,
             fprintf(fplog,
                     "Inner product between old and new vector <= 0.0!\n"
                     "constraint #%d atoms %d and %d\n",
-                    error - 1, iatom[3 * (error - 1) + 1] + 1, iatom[3 * (error - 1) + 2] + 1);
+                    error - 1,
+                    iatom[3 * (error - 1) + 1] + 1,
+                    iatom[3 * (error - 1) + 2] + 1);
         }
         fprintf(stderr,
                 "Inner product between old and new vector <= 0.0!\n"
                 "constraint #%d atoms %d and %d\n",
-                error - 1, iatom[3 * (error - 1) + 1] + 1, iatom[3 * (error - 1) + 2] + 1);
+                error - 1,
+                iatom[3 * (error - 1) + 1] + 1,
+                iatom[3 * (error - 1) + 2] + 1);
         nit = 0;
     }
 
@@ -605,7 +627,7 @@ static void check_cons(FILE*                     log,
                        const t_pbc*              pbc,
                        ArrayRef<const t_iparams> ip,
                        const int*                iatom,
-                       const real                invmass[],
+                       ArrayRef<const real>      invmass,
                        ConstraintVariable        econq)
 {
     int  ai, aj;
@@ -635,16 +657,30 @@ static void check_cons(FILE*                     log,
                     rvec_sub(prime[ai], prime[aj], dx);
                 }
                 dp = norm(dx);
-                fprintf(log, "%5d  %5.2f  %5d  %5.2f  %10.5f  %10.5f  %10.5f\n", ai + 1,
-                        1.0 / invmass[ai], aj + 1, 1.0 / invmass[aj], d, dp, ip[ia[0]].constr.dA);
+                fprintf(log,
+                        "%5d  %5.2f  %5d  %5.2f  %10.5f  %10.5f  %10.5f\n",
+                        ai + 1,
+                        1.0 / invmass[ai],
+                        aj + 1,
+                        1.0 / invmass[aj],
+                        d,
+                        dp,
+                        ip[ia[0]].constr.dA);
                 break;
             case ConstraintVariable::Velocities:
                 rvec_sub(v[ai], v[aj], dv);
                 d = iprod(dx, dv);
                 rvec_sub(prime[ai], prime[aj], dv);
                 dp = iprod(dx, dv);
-                fprintf(log, "%5d  %5.2f  %5d  %5.2f  %10.5f  %10.5f  %10.5f\n", ai + 1,
-                        1.0 / invmass[ai], aj + 1, 1.0 / invmass[aj], d, dp, 0.);
+                fprintf(log,
+                        "%5d  %5.2f  %5d  %5.2f  %10.5f  %10.5f  %10.5f\n",
+                        ai + 1,
+                        1.0 / invmass[ai],
+                        aj + 1,
+                        1.0 / invmass[aj],
+                        d,
+                        dp,
+                        0.);
                 break;
             default: gmx_incons("Unknown constraint quantity for SHAKE");
         }
@@ -654,7 +690,7 @@ static void check_cons(FILE*                     log,
 //! Applies SHAKE.
 static bool bshakef(FILE*                         log,
                     shakedata*                    shaked,
-                    const real                    invmass[],
+                    ArrayRef<const real>          invmass,
                     const InteractionDefinitions& idef,
                     const t_inputrec&             ir,
                     ArrayRef<const RVec>          x_s,
@@ -674,7 +710,7 @@ static bool bshakef(FILE*                         log,
     int  i, n0, ncon, blen, type, ll;
     int  tnit = 0, trij = 0;
 
-    ncon = idef.il[F_CONSTR].size() / 3;
+    ncon = idef.il[InteractionFunction::Constraints].size() / 3;
 
     for (ll = 0; ll < ncon; ll++)
     {
@@ -684,15 +720,31 @@ static bool bshakef(FILE*                         log,
     // TODO Rewrite this block so that it is obvious that i, iatoms
     // and lam are all iteration variables. Is this easier if the
     // sblock data structure is organized differently?
-    const int*     iatoms = &(idef.il[F_CONSTR].iatoms[shaked->sblock[0]]);
+    const int*     iatoms = &(idef.il[InteractionFunction::Constraints].iatoms[shaked->sblock[0]]);
     ArrayRef<real> lam    = shaked->scaled_lagrange_multiplier;
     for (i = 0; (i < shaked->numShakeBlocks());)
     {
         blen = (shaked->sblock[i + 1] - shaked->sblock[i]);
         blen /= 3;
-        n0 = vec_shakef(log, shaked, invmass, blen, idef.iparams, iatoms, ir.shake_tol, x_s, prime,
-                        pbc, shaked->omega, ir.efep != efepNO, lambda, lam, invdt, v, bCalcVir,
-                        vir_r_m_dr, econq);
+        n0 = vec_shakef(log,
+                        shaked,
+                        invmass,
+                        blen,
+                        idef.iparams,
+                        iatoms,
+                        ir.shake_tol,
+                        x_s,
+                        prime,
+                        pbc,
+                        shaked->omega,
+                        ir.efep != FreeEnergyPerturbationType::No,
+                        lambda,
+                        lam,
+                        invdt,
+                        v,
+                        bCalcVir,
+                        vir_r_m_dr,
+                        econq);
 
         if (n0 == 0)
         {
@@ -713,7 +765,7 @@ static bool bshakef(FILE*                         log,
     /* only for position part? */
     if (econq == ConstraintVariable::Positions)
     {
-        if (ir.efep != efepNO)
+        if (ir.efep != FreeEnergyPerturbationType::No)
         {
             ArrayRef<const t_iparams> iparams = idef.iparams;
 
@@ -722,7 +774,7 @@ static bool bshakef(FILE*                         log,
             dvdl = 0;
             for (ll = 0; ll < ncon; ll++)
             {
-                type = idef.il[F_CONSTR].iatoms[3 * ll];
+                type = idef.il[InteractionFunction::Constraints].iatoms[3 * ll];
 
                 /* Per equations in the manual, dv/dl = -2 \sum_ll lagrangian_ll * r_ll * (d_B - d_A) */
                 /* The vector scaled_lagrange_multiplier[ll] contains the value -2 r_ll eta_ll
@@ -760,7 +812,7 @@ static bool bshakef(FILE*                         log,
 
 bool constrain_shake(FILE*                         log,
                      shakedata*                    shaked,
-                     const real                    invmass[],
+                     ArrayRef<const real>          invmass,
                      const InteractionDefinitions& idef,
                      const t_inputrec&             ir,
                      ArrayRef<const RVec>          x_s,
@@ -785,12 +837,27 @@ bool constrain_shake(FILE*                         log,
     switch (econq)
     {
         case (ConstraintVariable::Positions):
-            bOK = bshakef(log, shaked, invmass, idef, ir, x_s, xprime, pbc, nrnb, lambda, dvdlambda,
-                          invdt, v, bCalcVir, vir_r_m_dr, bDumpOnError, econq);
+            bOK = bshakef(
+                    log, shaked, invmass, idef, ir, x_s, xprime, pbc, nrnb, lambda, dvdlambda, invdt, v, bCalcVir, vir_r_m_dr, bDumpOnError, econq);
             break;
         case (ConstraintVariable::Velocities):
-            bOK = bshakef(log, shaked, invmass, idef, ir, x_s, vprime, pbc, nrnb, lambda, dvdlambda,
-                          invdt, {}, bCalcVir, vir_r_m_dr, bDumpOnError, econq);
+            bOK = bshakef(log,
+                          shaked,
+                          invmass,
+                          idef,
+                          ir,
+                          x_s,
+                          vprime,
+                          pbc,
+                          nrnb,
+                          lambda,
+                          dvdlambda,
+                          invdt,
+                          {},
+                          bCalcVir,
+                          vir_r_m_dr,
+                          bDumpOnError,
+                          econq);
             break;
         default:
             gmx_fatal(FARGS,

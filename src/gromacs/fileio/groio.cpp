@@ -1,13 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
- * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2016,2017 by the GROMACS development team.
- * Copyright (c) 2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 1991- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -21,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -30,15 +26,16 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 #include "gmxpre.h"
 
 #include "groio.h"
 
+#include <cinttypes>
 #include <cstdio>
 #include <cstring>
 
@@ -47,6 +44,7 @@
 
 #include "gromacs/fileio/gmxfio.h"
 #include "gromacs/topology/atoms.h"
+#include "gromacs/topology/mtop_atomloops.h"
 #include "gromacs/topology/mtop_util.h"
 #include "gromacs/topology/symtab.h"
 #include "gromacs/topology/topology.h"
@@ -69,7 +67,7 @@ static void get_coordnum_fp(FILE* in, char* title, int* natoms)
     }
 }
 
-void get_coordnum(const char* infile, int* natoms)
+void get_coordnum(const std::filesystem::path& infile, int* natoms)
 {
     FILE* in;
     char  title[STRLEN];
@@ -84,15 +82,15 @@ void get_coordnum(const char* infile, int* natoms)
  * We have removed writing of variable precision to avoid compatibility
  * issues with other software packages.
  */
-static gmx_bool get_w_conf(FILE*       in,
-                           const char* infile,
-                           char*       title,
-                           t_symtab*   symtab,
-                           t_atoms*    atoms,
-                           int*        ndec,
-                           rvec        x[],
-                           rvec*       v,
-                           matrix      box)
+static gmx_bool get_w_conf(FILE*                        in,
+                           const std::filesystem::path& infile,
+                           char*                        title,
+                           t_symtab*                    symtab,
+                           t_atoms*                     atoms,
+                           int*                         ndec,
+                           rvec                         x[],
+                           rvec*                        v,
+                           matrix                       box)
 {
     char     name[6];
     char     resname[6], oldresname[6];
@@ -121,7 +119,8 @@ static gmx_bool get_w_conf(FILE*       in,
         fprintf(stderr,
                 "Warning: gro file contains less atoms (%d) than expected"
                 " (%d)\n",
-                natoms, atoms->nr);
+                natoms,
+                atoms->nr);
     }
 
     atoms->haveMass    = FALSE;
@@ -142,11 +141,11 @@ static gmx_bool get_w_conf(FILE*       in,
     {
         if ((fgets2(line, STRLEN, in)) == nullptr)
         {
-            gmx_fatal(FARGS, "Unexpected end of file in file %s at line %d", infile, i + 2);
+            gmx_fatal(FARGS, "Unexpected end of file in file %s at line %d", infile.string().c_str(), i + 2);
         }
-        if (strlen(line) < 39)
+        if (std::strlen(line) < 39)
         {
-            gmx_fatal(FARGS, "Invalid line in %s for atom %d:\n%s", infile, i + 1, line);
+            gmx_fatal(FARGS, "Invalid line in %s for atom %d:\n%s", infile.string().c_str(), i + 1, line);
         }
 
         /* determine read precision from distance between periods
@@ -154,23 +153,23 @@ static gmx_bool get_w_conf(FILE*       in,
         if (bFirst)
         {
             bFirst = FALSE;
-            p1     = strchr(line, '.');
+            p1     = std::strchr(line, '.');
             if (p1 == nullptr)
             {
-                gmx_fatal(FARGS, "A coordinate in file %s does not contain a '.'", infile);
+                gmx_fatal(FARGS, "A coordinate in file %s does not contain a '.'", infile.string().c_str());
             }
-            p2 = strchr(&p1[1], '.');
+            p2 = std::strchr(&p1[1], '.');
             if (p2 == nullptr)
             {
-                gmx_fatal(FARGS, "A coordinate in file %s does not contain a '.'", infile);
+                gmx_fatal(FARGS, "A coordinate in file %s does not contain a '.'", infile.string().c_str());
             }
             ddist = p2 - p1;
             *ndec = ddist - 5;
 
-            p3 = strchr(&p2[1], '.');
+            p3 = std::strchr(&p2[1], '.');
             if (p3 == nullptr)
             {
-                gmx_fatal(FARGS, "A coordinate in file %s does not contain a '.'", infile);
+                gmx_fatal(FARGS, "A coordinate in file %s does not contain a '.'", infile.string().c_str());
             }
 
             if (p3 - p2 != ddist)
@@ -178,24 +177,25 @@ static gmx_bool get_w_conf(FILE*       in,
                 gmx_fatal(FARGS,
                           "The spacing of the decimal points in file %s is not consistent for x, y "
                           "and z",
-                          infile);
+                          infile.string().c_str());
             }
         }
 
         /* residue number*/
-        memcpy(name, line, 5);
+        std::memcpy(name, line, 5);
         name[5] = '\0';
-        sscanf(name, "%d", &resnr);
+        resnr   = strtol(name, nullptr, 10);
         sscanf(line + 5, "%5s", resname);
 
-        if (!oldResFirst || oldres != resnr || strncmp(resname, oldresname, sizeof(resname)) != 0)
+
+        if (!oldResFirst || oldres != resnr || std::strncmp(resname, oldresname, sizeof(resname)) != 0)
         {
             oldres      = resnr;
             oldResFirst = TRUE;
             newres++;
             if (newres >= natoms)
             {
-                gmx_fatal(FARGS, "More residues than atoms in %s (natoms = %d)", infile, natoms);
+                gmx_fatal(FARGS, "More residues than atoms in %s (natoms = %d)", infile.string().c_str(), natoms);
             }
             atoms->atom[i].resind = newres;
             t_atoms_set_resinfo(atoms, i, symtab, resname, resnr, ' ', 0, ' ');
@@ -225,12 +225,16 @@ static gmx_bool get_w_conf(FILE*       in,
                 ptr++;
             }
             buf[c] = '\0';
-            if (sscanf(buf, "%lf %lf", &x1, &x2) != 1)
+            char *x1end, *x2end;
+            x1 = strtod(buf, &x1end);
+            x2 = strtod(x1end, &x2end);
+            // We need exactly one value in buf; otherwise, the file is malformed
+            if (x1end == buf || x2end != x1end) // first conversion failed or the second one succeeded
             {
                 gmx_fatal(FARGS,
                           "Something is wrong in the coordinate formatting of file %s. Note that "
                           "gro is fixed format (see the manual)",
-                          infile);
+                          infile.string().c_str());
             }
             else
             {
@@ -250,7 +254,9 @@ static gmx_bool get_w_conf(FILE*       in,
                     ptr++;
                 }
                 buf[c] = '\0';
-                if (sscanf(buf, "%lf", &x1) != 1)
+                char* x1end;
+                x1 = strtod(buf, &x1end);
+                if (x1end == buf) // conversion failed
                 {
                     v[i][m] = 0;
                 }
@@ -268,7 +274,7 @@ static gmx_bool get_w_conf(FILE*       in,
     fgets2(line, STRLEN, in);
     if (sscanf(line, "%lf%lf%lf", &x1, &y1, &z1) != 3)
     {
-        gmx_warning("Bad box in file %s", infile);
+        gmx_warning("Bad box in file %s", infile.string().c_str());
 
         /* Generate a cubic box */
         for (m = 0; (m < DIM); m++)
@@ -294,8 +300,7 @@ static gmx_bool get_w_conf(FILE*       in,
         {
             box[m][m] = (xmax[m] - xmin[m]);
         }
-        fprintf(stderr, "Generated a cubic box %8.3f x %8.3f x %8.3f\n", box[XX][XX], box[YY][YY],
-                box[ZZ][ZZ]);
+        fprintf(stderr, "Generated a cubic box %8.3f x %8.3f x %8.3f\n", box[XX][XX], box[YY][YY], box[ZZ][ZZ]);
     }
     else
     {
@@ -318,7 +323,13 @@ static gmx_bool get_w_conf(FILE*       in,
     return bVel;
 }
 
-void gmx_gro_read_conf(const char* infile, t_symtab* symtab, char** name, t_atoms* atoms, rvec x[], rvec* v, matrix box)
+void gmx_gro_read_conf(const std::filesystem::path& infile,
+                       t_symtab*                    symtab,
+                       char**                       name,
+                       t_atoms*                     atoms,
+                       rvec                         x[],
+                       rvec*                        v,
+                       matrix                       box)
 {
     FILE* in = gmx_fio_fopen(infile, "r");
     int   ndec;
@@ -334,7 +345,7 @@ void gmx_gro_read_conf(const char* infile, t_symtab* symtab, char** name, t_atom
 static gmx_bool gmx_one_before_eof(FILE* fp)
 {
     char     data[4];
-    gmx_bool beof = fread(data, 1, 1, fp) != 1;
+    gmx_bool beof = std::fread(data, 1, 1, fp) != 1;
 
     if (!beof)
     {
@@ -363,7 +374,8 @@ gmx_bool gro_next_x_or_v(FILE* status, t_trxframe* fr)
     snew(atoms.resinfo, fr->natoms);
     snew(atoms.atomname, fr->natoms);
 
-    fr->bV    = get_w_conf(status, title, title, &symtab, &atoms, &ndec, fr->x, fr->v, fr->box);
+    const std::filesystem::path fakePath{ "unknown_file" }; // get_w_conf needs a filename for error messages
+    fr->bV    = get_w_conf(status, fakePath, title, &symtab, &atoms, &ndec, fr->x, fr->v, fr->box);
     fr->bPrec = TRUE;
     fr->prec  = 1;
     /* prec = 10^ndec: */
@@ -379,7 +391,7 @@ gmx_bool gro_next_x_or_v(FILE* status, t_trxframe* fr)
     sfree(atoms.atomname);
     done_symtab(&symtab);
 
-    if ((p = strstr(title, "t=")) != nullptr)
+    if ((p = std::strstr(title, "t=")) != nullptr)
     {
         p += 2;
         if (sscanf(p, "%lf", &tt) == 1)
@@ -406,7 +418,8 @@ gmx_bool gro_next_x_or_v(FILE* status, t_trxframe* fr)
         gmx_fatal(FARGS,
                   "Number of atoms in gro frame (%d) doesn't match the number in the previous "
                   "frame (%d)",
-                  atoms.nr, fr->natoms);
+                  atoms.nr,
+                  fr->natoms);
     }
 
     return TRUE;
@@ -450,9 +463,17 @@ static void write_hconf_box(FILE* out, const matrix box)
     if ((box[XX][YY] != 0.0F) || (box[XX][ZZ] != 0.0F) || (box[YY][XX] != 0.0F)
         || (box[YY][ZZ] != 0.0F) || (box[ZZ][XX] != 0.0F) || (box[ZZ][YY] != 0.0F))
     {
-        fprintf(out, "%10.5f %9.5f %9.5f %9.5f %9.5f %9.5f %9.5f %9.5f %9.5f\n", box[XX][XX],
-                box[YY][YY], box[ZZ][ZZ], box[XX][YY], box[XX][ZZ], box[YY][XX], box[YY][ZZ],
-                box[ZZ][XX], box[ZZ][YY]);
+        fprintf(out,
+                "%10.5f %9.5f %9.5f %9.5f %9.5f %9.5f %9.5f %9.5f %9.5f\n",
+                box[XX][XX],
+                box[YY][YY],
+                box[ZZ][ZZ],
+                box[XX][YY],
+                box[XX][ZZ],
+                box[YY][XX],
+                box[YY][ZZ],
+                box[ZZ][XX],
+                box[ZZ][YY]);
     }
     else
     {
@@ -517,17 +538,17 @@ void write_hconf_indexed_p(FILE*          out,
 
     write_hconf_box(out, box);
 
-    fflush(out);
+    std::fflush(out);
 }
 
-void write_hconf_mtop(FILE* out, const char* title, const gmx_mtop_t* mtop, const rvec* x, const rvec* v, const matrix box)
+void write_hconf_mtop(FILE* out, const char* title, const gmx_mtop_t& mtop, const rvec* x, const rvec* v, const matrix box)
 {
     fprintf(out, "%s\n", (title && title[0]) ? title : gmx::bromacs().c_str());
-    fprintf(out, "%5d\n", mtop->natoms);
+    fprintf(out, "%5d\n", mtop.natoms);
 
     const char* format = get_hconf_format(v != nullptr);
 
-    for (const AtomProxy atomP : AtomRange(*mtop))
+    for (const AtomProxy atomP : AtomRange(mtop))
     {
         int         i             = atomP.globalAtomNumber();
         int         residueNumber = atomP.residueNumber();
@@ -548,7 +569,7 @@ void write_hconf_mtop(FILE* out, const char* title, const gmx_mtop_t* mtop, cons
 
     write_hconf_box(out, box);
 
-    fflush(out);
+    std::fflush(out);
 }
 
 void write_hconf_p(FILE* out, const char* title, const t_atoms* atoms, const rvec* x, const rvec* v, const matrix box)
@@ -565,12 +586,12 @@ void write_hconf_p(FILE* out, const char* title, const t_atoms* atoms, const rve
     sfree(aa);
 }
 
-void write_conf_p(const char*    outfile,
-                  const char*    title,
-                  const t_atoms* atoms,
-                  const rvec*    x,
-                  const rvec*    v,
-                  const matrix   box)
+void write_conf_p(const std::filesystem::path& outfile,
+                  const char*                  title,
+                  const t_atoms*               atoms,
+                  const rvec*                  x,
+                  const rvec*                  v,
+                  const matrix                 box)
 {
     FILE* out;
 

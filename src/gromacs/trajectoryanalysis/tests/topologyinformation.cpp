@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2018- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \internal \file
  * \brief
@@ -43,20 +42,25 @@
 
 #include "gromacs/trajectoryanalysis/topologyinformation.h"
 
+#include <filesystem>
+#include <memory>
+#include <string>
+
 #include <gtest/gtest.h>
 
 #include "gromacs/gmxpreprocess/grompp.h"
-#include "gromacs/math/vectypes.h"
+#include "gromacs/mdtypes/md_enums.h"
 #include "gromacs/pbcutil/pbc.h"
+#include "gromacs/topology/atoms.h"
 #include "gromacs/topology/topology.h"
 #include "gromacs/utility/arrayref.h"
 #include "gromacs/utility/exceptions.h"
 #include "gromacs/utility/textwriter.h"
+#include "gromacs/utility/vectypes.h"
 
 #include "testutils/cmdlinetest.h"
 #include "testutils/testfilemanager.h"
 
-#include "moduletest.h"
 
 namespace gmx
 {
@@ -109,7 +113,7 @@ void runCommonTests(const TopologyInformation& topInfo, const int numAtoms)
     EXPECT_TRUE(atoms2);
     // Must be different pointer to a deep copy.
     EXPECT_NE(atoms1.get(), atoms2.get());
-    auto atoms = topInfo.atoms();
+    const auto* atoms = topInfo.atoms();
     // Must be a pointer to a different instance.
     EXPECT_NE(atoms1.get(), atoms);
     EXPECT_NE(atoms2.get(), atoms);
@@ -133,7 +137,7 @@ TEST(TopologyInformation, WorksWithGroFile)
 {
     const int           numAtoms = 156;
     TopologyInformation topInfo;
-    topInfo.fillFromInputFile(TestFileManager::getInputFilePath("lysozyme.gro"));
+    topInfo.fillFromInputFile(TestFileManager::getInputFilePath("lysozyme.gro").string());
     EXPECT_FALSE(topInfo.hasFullTopology());
     runCommonTests(topInfo, numAtoms);
     EXPECT_EQ(PbcType::Unset, topInfo.pbcType());
@@ -165,7 +169,7 @@ TEST(TopologyInformation, WorksWithPdbFile)
 {
     const int           numAtoms = 156;
     TopologyInformation topInfo;
-    topInfo.fillFromInputFile(TestFileManager::getInputFilePath("lysozyme.pdb"));
+    topInfo.fillFromInputFile(TestFileManager::getInputFilePath("lysozyme.pdb").string());
     EXPECT_FALSE(topInfo.hasFullTopology());
     runCommonTests(topInfo, numAtoms);
     // TODO why does this differ from .gro?
@@ -200,17 +204,17 @@ TEST(TopologyInformation, WorksWithTprFromPdbFile)
 
     // Make the tpr file to use
     std::string       name             = "lysozyme";
-    const std::string mdpInputFileName = fileManager.getTemporaryFilePath(name + ".mdp");
+    const std::string mdpInputFileName = fileManager.getTemporaryFilePath(name + ".mdp").string();
     // Ensure the seeds have a value so that the resulting .tpr dump
     // is reproducible.
     TextWriter::writeFileFromString(mdpInputFileName, "");
-    std::string tprName = fileManager.getTemporaryFilePath(name + ".tpr");
+    std::string tprName = fileManager.getTemporaryFilePath(name + ".tpr").string();
     {
         CommandLine caller;
         caller.append("grompp");
         caller.addOption("-f", mdpInputFileName);
-        caller.addOption("-p", TestFileManager::getInputFilePath(name));
-        caller.addOption("-c", TestFileManager::getInputFilePath(name + ".pdb"));
+        caller.addOption("-p", TestFileManager::getInputFilePath(name + ".top").string());
+        caller.addOption("-c", TestFileManager::getInputFilePath(name + ".pdb").string());
         caller.addOption("-o", tprName);
         ASSERT_EQ(0, gmx_grompp(caller.argc(), caller.argv()));
     }

@@ -9,7 +9,7 @@ Many possible use cases are facilitated by the flexibility that NB-LIB allows.
 These include customized update rules, defining custom forces, or orchestrating swarms of simulations.
 NB-LIB also allows for writing conventional MD simulations and analysis.
 
-This document goes over the steps to write MD programs using the API in NB-LIB that exposes features that are a part of the GROMACS package.
+This document goes over the steps to write MD programs using the API in NB-LIB that exposes features that are a part of the |Gromacs| package.
 
 Global Definitions
 ------------------
@@ -281,9 +281,6 @@ The following table describes the possible options that can be set.
 | ``nbnxmSimd``        | Enum | Kernel SIMD type                      |
 |                      |      | (``SimdAuto``/``SimdNo``/``Simd4XM``/ |
 |                      |      | ``Simd2XMM``)                         |
-+----------------------+------+---------------------------------------+
-| ``ljCombination      | Enum | Lennard-Jones combination rule        |
-| Rule``               |      | (``Geometric``/``LorentzBerthelot``)  |
 +----------------------+------+---------------------------------------+
 | ``useHalfLJOptimizat | Bool | Enable i-cluster half-LJ optimization |
 | ion``                | ean  |                                       |

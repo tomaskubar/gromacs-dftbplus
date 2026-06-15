@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2019- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \internal \file
  * \brief
@@ -42,13 +41,20 @@
 #ifndef GMX_APPLIED_FORCES_DENSITYFITTINGFORCEPROVIDER_H
 #define GMX_APPLIED_FORCES_DENSITYFITTINGFORCEPROVIDER_H
 
+#include <cstdint>
+
 #include <memory>
+#include <string>
+#include <string_view>
 
 #include "gromacs/fileio/checkpoint.h"
 #include "gromacs/math/exponentialmovingaverage.h"
+#include "gromacs/mdrunutility/mdmodulesnotifiers.h"
 #include "gromacs/mdspan/extensions.h"
+#include "gromacs/mdspan/mdspan.h"
 #include "gromacs/mdtypes/iforceprovider.h"
-#include "gromacs/utility/classhelpers.h"
+#include "gromacs/utility/gmxmpi.h"
+#include "gromacs/utility/real.h"
 
 enum class PbcType : int;
 
@@ -58,6 +64,8 @@ namespace gmx
 class LocalAtomSet;
 class TranslateAndScale;
 struct DensityFittingParameters;
+class KeyValueTreeObject;
+class KeyValueTreeObjectBuilder;
 
 /*! \internal
  * \brief Parameters defining the internal density fitting force provider state.
@@ -69,20 +77,20 @@ struct DensityFittingForceProviderState
      */
     std::int64_t stepsSinceLastCalculation_ = 0;
     /*! \brief String naming variable holding the steps since last calculation.
-     * \note Changing this name will break backwards compability for checkpoint file writing.
+     * \note Changing this name will break backwards compatibility for checkpoint file writing.
      */
     static const std::string stepsSinceLastCalculationName_;
     //! The state of the exponential moving average of the similarity measure
     ExponentialMovingAverageState exponentialMovingAverageState_ = {};
     /*! \brief String naming variable holding the exponential moving average.
-     * \note Changing this name will break backwards compability for checkpoint file writing.
+     * \note Changing this name will break backwards compatibility for checkpoint file writing.
      */
     static const std::string exponentialMovingAverageStateName_;
 
     //! An additional factor scaling the force for adaptive force scaling
     real adaptiveForceConstantScale_ = 1.0_real;
     /*! \brief String naming variable holding the adaptive force constant scale.
-     * \note Changing this name will break backwards compability for checkpoint file writing.
+     * \note Changing this name will break backwards compatibility for checkpoint file writing.
      */
     static const std::string adaptiveForceConstantScaleName_;
 
@@ -95,13 +103,13 @@ struct DensityFittingForceProviderState
      *
      * \param[in] identifier denotes the module that is checkpointing the data
      */
-    void writeState(KeyValueTreeObjectBuilder kvtBuilder, const std::string& identifier) const;
+    void writeState(KeyValueTreeObjectBuilder kvtBuilder, std::string_view identifier) const;
 
-    /*! \brief Read the internal parameters from the checkpoint file on master
+    /*! \brief Read the internal parameters from the checkpoint file on main
      * \param[in] kvtData holding the checkpoint information
      * \param[in] identifier identifies the data in a key-value-tree
      */
-    void readState(const KeyValueTreeObject& kvtData, const std::string& identifier);
+    void readState(const KeyValueTreeObject& kvtData, std::string_view identifier);
 
     /*! \brief Broadcast the internal parameters.
      *
@@ -143,11 +151,11 @@ public:
      * \note The provided state to checkpoint has to change if checkpointing
      *       is moved before the force provider call in the MD-loop.
      */
-    void writeCheckpointData(MdModulesWriteCheckpointData checkpointWriting, const std::string& moduleName);
+    void writeCheckpointData(MDModulesWriteCheckpointData checkpointWriting, std::string_view moduleName);
 
 private:
     class Impl;
-    PrivateImplPointer<Impl> impl_;
+    std::unique_ptr<Impl> impl_;
 };
 
 } // namespace gmx

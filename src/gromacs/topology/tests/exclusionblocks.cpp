@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2019, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2019- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \internal \file
  * \brief
@@ -43,11 +42,16 @@
 
 #include "gromacs/topology/exclusionblocks.h"
 
+#include <string>
+#include <vector>
+
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
 #include "gromacs/topology/block.h"
 #include "gromacs/utility/arrayref.h"
+#include "gromacs/utility/basedefinitions.h"
+#include "gromacs/utility/gmxassert.h"
 #include "gromacs/utility/listoflists.h"
 #include "gromacs/utility/smalloc.h"
 
@@ -65,7 +69,7 @@ void addGroupToBlocka(t_blocka* b, gmx::ArrayRef<const int> indices)
 {
     srenew(b->index, b->nr + 2);
     srenew(b->a, b->nra + indices.size());
-    for (index i = 0; i < indices.ssize(); i++)
+    for (Index i = 0; i < indices.ssize(); i++)
     {
         b->a[b->nra++] = indices[i];
     }
@@ -78,7 +82,7 @@ int fillExclusionBlock(gmx::ArrayRef<ExclusionBlock> b)
 {
     std::vector<std::vector<int>> indices = { { 0, 4, 7 }, { 1, 5, 8, 10 }, { 2, 6, 9, 11, 12 } };
     int                           nra     = 0;
-    for (index i = 0; i < b.ssize(); i++)
+    for (Index i = 0; i < b.ssize(); i++)
     {
         b[i].atomNumber.clear();
         for (const auto& j : indices[i])
@@ -132,7 +136,7 @@ public:
 
     void compareBlocks()
     {
-        for (index i = 0; i < ssize(b_); i++)
+        for (Index i = 0; i < gmx::ssize(b_); i++)
         {
             int index = ba_.index[i];
             for (int j = 0; j < b_[i].nra(); j++)
@@ -146,8 +150,8 @@ public:
 
     void compareBlocksAndList()
     {
-        GMX_RELEASE_ASSERT(ssize(b_) == list_.ssize(), "The list counts should match");
-        for (index i = 0; i < ssize(b_); i++)
+        GMX_RELEASE_ASSERT(gmx::ssize(b_) == list_.ssize(), "The list counts should match");
+        for (Index i = 0; i < gmx::ssize(b_); i++)
         {
             gmx::ArrayRef<const int> jList = list_[i];
             ASSERT_EQ(b_[i].nra(), jList.ssize()) << "Block size mismatch at " << i << ".";

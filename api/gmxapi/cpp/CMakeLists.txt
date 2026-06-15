@@ -1,10 +1,9 @@
 #
 # This file is part of the GROMACS molecular simulation package.
 #
-# Copyright (c) 2018,2019,2020, by the GROMACS development team, led by
-# Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
-# and including many others, as listed in the AUTHORS file in the
-# top-level source directory and at http://www.gromacs.org.
+# Copyright 2018- The GROMACS Authors
+# and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+# Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
 #
 # GROMACS is free software; you can redistribute it and/or
 # modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
 #
 # You should have received a copy of the GNU Lesser General Public
 # License along with GROMACS; if not, see
-# http://www.gnu.org/licenses, or write to the Free Software Foundation,
+# https://www.gnu.org/licenses, or write to the Free Software Foundation,
 # Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
 #
 # If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
 # consider code for inclusion in the official distribution, but
 # derived work must not be called official GROMACS. Details are found
 # in the README & COPYING files - if they are missing, get the
-# official version at http://www.gromacs.org.
+# official version at https://www.gromacs.org.
 #
 # To help us fund GROMACS development, we humbly ask that you cite
-# the research papers on the package. Check out http://www.gromacs.org.
+# the research papers on the package. Check out https://www.gromacs.org.
 
 # This list file provides the Gromacs::gmxapi cmake target.
 
@@ -53,6 +52,7 @@ set_target_properties(gmxapi PROPERTIES POSITION_INDEPENDENT_CODE ON)
 gmx_target_compile_options(gmxapi)
 target_compile_definitions(gmxapi PRIVATE HAVE_CONFIG_H)
 target_include_directories(gmxapi SYSTEM BEFORE PRIVATE ${PROJECT_SOURCE_DIR}/src/external/thread_mpi/include)
+target_compile_definitions(gmxapi PRIVATE TMPI_USE_VISIBILITY)
 # Should be possible to change this when resolving #3290
 target_include_directories(gmxapi SYSTEM PRIVATE ${PROJECT_SOURCE_DIR}/src/external)
 
@@ -85,8 +85,9 @@ set_target_properties(gmxapi PROPERTIES
 
 target_link_libraries(gmxapi PRIVATE libgromacs)
 target_link_libraries(gmxapi PRIVATE common)
-# TODO: Explicitly link specific modules: mdlib, mdtypes, utility, commandline
+# TODO: Remove `legacy_modules` once specific modules are explicitly linked.
 target_link_libraries(gmxapi PRIVATE legacy_modules)
+target_link_libraries(gmxapi PRIVATE math utility)
 
 
 ################################################
@@ -108,19 +109,36 @@ install(TARGETS gmxapi
 install(EXPORT gmxapi
         NAMESPACE Gromacs::
         DESTINATION share/cmake/gmxapi/
+        # If we use components for clients to ask for an MPI-aware version,
+        # we might want to export the MPI-related details they need to help
+        # with compatibility.
+        # EXPORT_LINK_INTERFACE_LIBRARIES
         )
 add_library(Gromacs::gmxapi ALIAS gmxapi )
 
 include(CMakePackageConfigHelpers)
 
+# WARNING: A hard-coded dependency on a specific gromacs configuration
+# will likely be incompatible with a solution to #4334, but is a necessary
+# workaround for #4563.
+if(${CMAKE_VERSION} VERSION_EQUAL "3.24.0")
+    set(
+        _gmxapi_find_dependencies
+        "set(gromacs${GMX_LIBS_SUFFIX}_ROOT \${PACKAGE_PREFIX_DIR})
+find_dependency(gromacs${GMX_LIBS_SUFFIX} ${GMX_VERSION} CONFIG)"
+    )
+endif()
 get_target_property(_mpi Gromacs::gmxapi MPI)
+# TODO(#4334): Rename to gmxapiConfig.cmake to avoid globbing conflict when <name>.cmake includes <name>-*.cmake.
 configure_package_config_file(
     cmake/gmxapi-config.cmake.in
     "${CMAKE_CURRENT_BINARY_DIR}/cmake/gmxapi-config.cmake"
     INSTALL_DESTINATION share/cmake/gmxapi/
 )
 unset(_mpi)
+unset(_gmxapi_find_dependencies)
 get_target_property(GMXAPI_RELEASE gmxapi RELEASE)
+# TODO(#4334): Rename to gmxapiConfigVersion.cmake to avoid globbing conflict when <name>.cmake includes <name>-*.cmake.
 write_basic_package_version_file(
     ${CMAKE_CURRENT_BINARY_DIR}/cmake/gmxapi-config-version.cmake
     VERSION ${GMXAPI_RELEASE}
@@ -139,3 +157,8 @@ install(
 add_library(gmxapi-detail INTERFACE)
 target_include_directories(gmxapi-detail
                            INTERFACE ${CMAKE_CURRENT_SOURCE_DIR})
+
+if (BUILD_TESTING AND GMX_BUILD_UNITTESTS)
+    add_subdirectory(tests)
+    add_subdirectory(workflow/tests)
+endif()

@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2017,2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2017- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \internal \file
  * \brief
@@ -49,12 +48,16 @@
  */
 #include "gmxpre.h"
 
-#include "taskassignment.h"
+#include "gromacs/taskassignment/taskassignment.h"
 
 #include "config.h"
 
+#include <cstddef>
+
 #include <algorithm>
 #include <exception>
+#include <filesystem>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -64,7 +67,9 @@
 #include "gromacs/hardware/hw_info.h"
 #include "gromacs/mdrunutility/multisim.h"
 #include "gromacs/mdtypes/commrec.h"
+#include "gromacs/mdtypes/simulation_workload.h"
 #include "gromacs/taskassignment/usergpuids.h"
+#include "gromacs/utility/arrayref.h"
 #include "gromacs/utility/cstringutil.h"
 #include "gromacs/utility/exceptions.h"
 #include "gromacs/utility/fatalerror.h"
@@ -78,19 +83,26 @@
 #include "findallgputasks.h"
 #include "reportgpuusage.h"
 
+enum class PmeRunMode;
+struct DeviceInformation;
+
 namespace gmx
 {
+enum class TaskTarget;
 
 namespace
 {
 
-/*! \brief Build data structure of types of GPU tasks on a rank,
- * together with the mapped GPU device IDs, for all GPU tasks on all
- * the ranks of this node.
+/*! \brief Build the GPU task assignment for the ranks of this node.
  *
  * \param[in]   gpuTasksOnRanksOfThisNode  For each rank on this node, the set of tasks
  *                                         that are eligible to run on GPUs.
- * \param[in]   gpuIds                     The user-supplied GPU IDs.
+ * \param[in]   gpuIds                     The GPU IDs for the tasks on this node, supplied
+ *                                         either by the user or the automatic assignment.
+ * \return      A vector with elements for each rank on this node that
+ *              describes the GPU tasks and the assigned device ID.
+ *
+ * \throws InvalidInputError  when the user GPU assignment requests multiple devices on a rank
  */
 std::vector<GpuTaskAssignment> buildTaskAssignment(const GpuTasksOnRanks& gpuTasksOnRanksOfThisNode,
                                                    ArrayRef<const int>    gpuIds)
@@ -106,16 +118,32 @@ std::vector<GpuTaskAssignment> buildTaskAssignment(const GpuTasksOnRanks& gpuTas
     auto gpuTaskAssignmentOnRank = gpuTaskAssignmentOnRanksOfThisNode.begin();
     for (const auto& gpuTasksOnRank : gpuTasksOnRanksOfThisNode)
     {
+        if (gpuTasksOnRank.empty())
+        {
+            ++gpuTaskAssignmentOnRank;
+            continue;
+        }
         gpuTaskAssignmentOnRank->reserve(gpuTasksOnRank.size());
+        // Keep a copy of the first GPU ID for this rank so we can
+        // check that it is the only GPU ID used on this rank.
+        const int gpuIdOnRank = *currentGpuId;
         for (const auto& gpuTaskType : gpuTasksOnRank)
         {
             GMX_RELEASE_ASSERT(currentGpuId != gpuIds.end(), "Indexing out of range for GPU tasks");
-            gpuTaskAssignmentOnRank->push_back({ gpuTaskType, *currentGpuId });
+            gpuTaskAssignmentOnRank->push_back({ gpuTaskType, gpuIdOnRank });
+            if (*currentGpuId != gpuIdOnRank)
+            {
+                const char* message =
+                        "The GPU task assignment requested mdrun to use more than one GPU device "
+                        "on a rank, which is not supported. Request only one GPU device per rank.";
+                GMX_THROW(InvalidInputError(message));
+            }
             ++currentGpuId;
         }
         GMX_RELEASE_ASSERT(gpuTaskAssignmentOnRank->size() == gpuTasksOnRank.size(),
                            "Mismatch in number of GPU tasks on a rank with the number of elements "
                            "in the resulting task assignment");
+
         ++gpuTaskAssignmentOnRank;
     }
 
@@ -154,9 +182,9 @@ bool isAnyGpuSharedBetweenRanks(ArrayRef<const GpuTaskAssignment> gpuTaskAssignm
 
 } // namespace
 
-void GpuTaskAssignments::logPerformanceHints(const MDLogger& mdlog, size_t numCompatibleGpusOnThisNode)
+void GpuTaskAssignments::logPerformanceHints(const MDLogger& mdlog, size_t numAvailableDevicesOnThisNode)
 {
-    if (numCompatibleGpusOnThisNode > numGpuTasksOnThisNode_)
+    if (numAvailableDevicesOnThisNode > numGpuTasksOnThisNode_)
     {
         /* TODO In principle, this warning could be warranted only on
          * some nodes, but we lack the infrastructure to do a good job
@@ -230,35 +258,55 @@ void barrierOverAllRanks(MPI_Comm comm)
 #endif
 }
 
+/*! \brief Flag for controlling error behaviour in cases where
+ * performance might be low.
+ *
+ * See docs for \c setThrowForPerformanceProblems(const bool) for details. */
+bool g_throwForPerformanceProblems = true;
+
 } // namespace
+
+void setThrowForPerformanceProblems(const bool newValue)
+{
+    g_throwForPerformanceProblems = newValue;
+}
 
 GpuTaskAssignmentsBuilder::GpuTaskAssignmentsBuilder() = default;
 
-GpuTaskAssignments GpuTaskAssignmentsBuilder::build(const std::vector<int>& gpuIdsToUse,
-                                                    const std::vector<int>& userGpuTaskAssignment,
-                                                    const gmx_hw_info_t&    hardwareInfo,
-                                                    MPI_Comm                gromacsWorldComm,
+GpuTaskAssignments GpuTaskAssignmentsBuilder::build(const gmx::ArrayRef<const int> availableDevices,
+                                                    const gmx::ArrayRef<const int> userGpuTaskAssignment,
+                                                    const gmx_hw_info_t& hardwareInfo,
+                                                    MPI_Comm             gromacsWorldComm,
                                                     const PhysicalNodeCommunicator& physicalNodeComm,
-                                                    const TaskTarget                nonbondedTarget,
-                                                    const TaskTarget                pmeTarget,
-                                                    const TaskTarget                bondedTarget,
-                                                    const TaskTarget                updateTarget,
-                                                    const bool useGpuForNonbonded,
-                                                    const bool useGpuForPme,
-                                                    bool       rankHasPpTask,
-                                                    bool       rankHasPmeTask)
+                                                    const TaskTarget nonbondedTarget,
+                                                    const TaskTarget nonbondedFeTarget,
+                                                    const TaskTarget pmeTarget,
+                                                    const TaskTarget bondedTarget,
+                                                    const TaskTarget updateTarget,
+                                                    const bool       useGpuForNonbonded,
+                                                    const bool       useGpuForPme,
+                                                    bool             rankHasPpTask,
+                                                    bool             rankHasPmeTask)
 {
     size_t               numRanksOnThisNode = physicalNodeComm.size_;
-    std::vector<GpuTask> gpuTasksOnThisRank = findGpuTasksOnThisRank(
-            !gpuIdsToUse.empty(), nonbondedTarget, pmeTarget, bondedTarget, updateTarget,
-            useGpuForNonbonded, useGpuForPme, rankHasPpTask, rankHasPmeTask);
+    std::vector<GpuTask> gpuTasksOnThisRank = findGpuTasksOnThisRank(!availableDevices.empty(),
+                                                                     nonbondedTarget,
+                                                                     nonbondedFeTarget,
+                                                                     pmeTarget,
+                                                                     bondedTarget,
+                                                                     updateTarget,
+                                                                     useGpuForNonbonded,
+                                                                     useGpuForPme,
+                                                                     rankHasPpTask,
+                                                                     rankHasPmeTask);
     /* Communicate among ranks on this node to find each task that can
      * be executed on a GPU, on each rank. */
     auto gpuTasksOnRanksOfThisNode = findAllGpuTasksOnThisNode(gpuTasksOnThisRank, physicalNodeComm);
-    size_t numGpuTasksOnThisNode   = countGpuTasksOnThisNode(gpuTasksOnRanksOfThisNode);
+    size_t numGpuTasksOnThisNode = countGpuTasksOnThisNode(gpuTasksOnRanksOfThisNode);
 
     std::exception_ptr             exceptionPtr;
     std::vector<GpuTaskAssignment> taskAssignmentOnRanksOfThisNode;
+    std::vector<int>               deviceIdAssignment;
     try
     {
         // Use the GPU IDs from the user if they supplied
@@ -277,16 +325,24 @@ GpuTaskAssignments GpuTaskAssignmentsBuilder::build(const std::vector<int>& gpuI
         // runtime, and subject to environment modification such as
         // with CUDA_VISIBLE_DEVICES) that will be used for the
         // GPU-suitable tasks on all of the ranks of that node.
-        ArrayRef<const int> gpuIdsForTaskAssignment;
-        std::vector<int>    generatedGpuIds;
+        std::vector<int> generatedGpuIds;
         if (userGpuTaskAssignment.empty())
         {
-            ArrayRef<const int> compatibleGpusToUse = gpuIdsToUse;
+            ArrayRef<const int> compatibleGpusToUse = availableDevices;
 
-            // enforce the single device/rank restriction
-            if (numRanksOnThisNode == 1 && !compatibleGpusToUse.empty())
+            // Enforce the single device per rank restriction by ensuring
+            // that there are only at most as many devices used as ranks.
+            //
+            // This means that with a single rank with NB and PME
+            // offloaded we assign both tasks to the same GPU
+            // regardless of how many GPUs are detected. Similarly,
+            // with N combined PP-PME ranks (ie. with NB and PME
+            // offloaded and PME decomposition active) we assign both
+            // tasks on each rank to the same GPU even when more than
+            // N GPUs are detected.
+            if (numRanksOnThisNode < compatibleGpusToUse.size())
             {
-                compatibleGpusToUse = compatibleGpusToUse.subArray(0, 1);
+                compatibleGpusToUse = compatibleGpusToUse.subArray(0, numRanksOnThisNode);
             }
 
             // When doing automated assignment of GPU tasks to GPU
@@ -295,24 +351,39 @@ GpuTaskAssignments GpuTaskAssignmentsBuilder::build(const std::vector<int>& gpuI
             // but we don't have any way to do a better job reliably.
             generatedGpuIds = makeGpuIds(compatibleGpusToUse, numGpuTasksOnThisNode);
 
-            if ((numGpuTasksOnThisNode > gpuIdsToUse.size())
-                && (numGpuTasksOnThisNode % gpuIdsToUse.size() != 0))
+            // Be vocal about inefficient task assignments
+            if ((numGpuTasksOnThisNode > availableDevices.size())
+                && (numGpuTasksOnThisNode % availableDevices.size() != 0))
             {
                 // TODO Decorating the message with hostname should be
                 // the job of an error-reporting module.
                 char host[STRLEN];
                 gmx_gethostname(host, STRLEN);
 
-                GMX_THROW(InconsistentInputError(formatString(
+                const auto message = formatString(
                         "There were %zu GPU tasks found on node %s, but %zu GPUs were "
                         "available. If the GPUs are equivalent, then it is usually best "
                         "to have a number of tasks that is a multiple of the number of GPUs. "
                         "You should reconsider your GPU task assignment, "
                         "number of ranks, or your use of the -nb, -pme, and -npme options, "
                         "perhaps after measuring the performance you can get.",
-                        numGpuTasksOnThisNode, host, gpuIdsToUse.size())));
+                        numGpuTasksOnThisNode,
+                        host,
+                        availableDevices.size());
+                if (g_throwForPerformanceProblems)
+                {
+                    GMX_THROW(InconsistentInputError(message));
+                }
+                else
+                {
+                    // Provide non-fatal acknowledgement of the
+                    // potential issue.  No need to plumb MDLogger in
+                    // here for a code path we only intend to take in
+                    // tests.
+                    std::fputs(message.c_str(), stderr);
+                }
             }
-            gpuIdsForTaskAssignment = generatedGpuIds;
+            deviceIdAssignment = generatedGpuIds;
         }
         else
         {
@@ -327,15 +398,17 @@ GpuTaskAssignments GpuTaskAssignmentsBuilder::build(const std::vector<int>& gpuI
                         "There were %zu GPU tasks assigned on node %s, but %zu GPU tasks were "
                         "identified, and these must match. Reconsider your GPU task assignment, "
                         "number of ranks, or your use of the -nb, -pme, and -npme options.",
-                        userGpuTaskAssignment.size(), host, numGpuTasksOnThisNode)));
+                        userGpuTaskAssignment.size(),
+                        host,
+                        numGpuTasksOnThisNode)));
             }
             // Did the user choose compatible GPUs?
-            checkUserGpuIds(hardwareInfo.deviceInfoList, gpuIdsToUse, userGpuTaskAssignment);
+            checkUserGpuIds(hardwareInfo.deviceInfoList, availableDevices, userGpuTaskAssignment);
 
-            gpuIdsForTaskAssignment = userGpuTaskAssignment;
+            deviceIdAssignment = gmx::copyOf(userGpuTaskAssignment);
         }
         taskAssignmentOnRanksOfThisNode =
-                buildTaskAssignment(gpuTasksOnRanksOfThisNode, gpuIdsForTaskAssignment);
+                buildTaskAssignment(gpuTasksOnRanksOfThisNode, deviceIdAssignment);
     }
     catch (...)
     {
@@ -382,6 +455,11 @@ GpuTaskAssignments GpuTaskAssignmentsBuilder::build(const std::vector<int>& gpuI
     gpuTaskAssignments.indexOfThisRank_                 = physicalNodeComm.rank_;
     gpuTaskAssignments.numGpuTasksOnThisNode_           = numGpuTasksOnThisNode;
     gpuTaskAssignments.numRanksOnThisNode_              = numRanksOnThisNode;
+    gpuTaskAssignments.deviceIdsAssigned_               = deviceIdAssignment;
+    std::sort(gpuTaskAssignments.deviceIdsAssigned_.begin(), gpuTaskAssignments.deviceIdsAssigned_.end());
+    gpuTaskAssignments.deviceIdsAssigned_.erase(unique(gpuTaskAssignments.deviceIdsAssigned_.begin(),
+                                                       gpuTaskAssignments.deviceIdsAssigned_.end()),
+                                                gpuTaskAssignments.deviceIdsAssigned_.end());
     return gpuTaskAssignments;
 }
 
@@ -390,14 +468,18 @@ GpuTaskAssignments::GpuTaskAssignments(const gmx_hw_info_t& hardwareInfo) :
 {
 }
 
-void GpuTaskAssignments::reportGpuUsage(const MDLogger& mdlog,
-                                        bool            printHostName,
-                                        bool            useGpuForBonded,
-                                        PmeRunMode      pmeRunMode,
-                                        bool            useGpuForUpdate)
+void GpuTaskAssignments::reportGpuUsage(const MDLogger&           mdlog,
+                                        bool                      printHostName,
+                                        PmeRunMode                pmeRunMode,
+                                        const SimulationWorkload& simulationWork)
 {
-    gmx::reportGpuUsage(mdlog, assignmentForAllRanksOnThisNode_, numGpuTasksOnThisNode_,
-                        numRanksOnThisNode_, printHostName, useGpuForBonded, pmeRunMode, useGpuForUpdate);
+    gmx::reportGpuUsage(mdlog,
+                        assignmentForAllRanksOnThisNode_,
+                        numGpuTasksOnThisNode_,
+                        numRanksOnThisNode_,
+                        printHostName,
+                        pmeRunMode,
+                        simulationWork);
 }
 
 /*! \brief Function for whether the task of \c mapping has value \c TaskType.
@@ -421,30 +503,28 @@ static bool hasPmeOrNonbondedTask(const GpuTaskMapping& mapping)
     return hasTaskType<GpuTask::Pme>(mapping) || hasTaskType<GpuTask::Nonbonded>(mapping);
 }
 
-DeviceInformation* GpuTaskAssignments::initDevice(int* deviceId) const
+DeviceInformation* GpuTaskAssignments::initDevice() const
 {
-    DeviceInformation*       deviceInfo        = nullptr;
     const GpuTaskAssignment& gpuTaskAssignment = assignmentForAllRanksOnThisNode_[indexOfThisRank_];
-
-    // This works because only one task of each type per rank is currently permitted.
+    // This works because only one task of each type per rank is
+    // currently permitted and if there are multiple tasks, they must
+    // use the same device.
     auto gpuTaskMapping =
             std::find_if(gpuTaskAssignment.begin(), gpuTaskAssignment.end(), hasPmeOrNonbondedTask);
 
     if (gpuTaskMapping != gpuTaskAssignment.end())
     {
-        *deviceId  = gpuTaskMapping->deviceId_;
-        deviceInfo = hardwareInfo_.deviceInfoList[*deviceId].get();
-        setActiveDevice(*deviceInfo);
+        return hardwareInfo_.deviceInfoList[gpuTaskMapping->deviceId_].get();
     }
-    return deviceInfo;
+    return nullptr;
 }
 
 bool GpuTaskAssignments::thisRankHasPmeGpuTask() const
 {
     const GpuTaskAssignment& gpuTaskAssignment = assignmentForAllRanksOnThisNode_[indexOfThisRank_];
 
-    auto       pmeGpuTaskMapping = std::find_if(gpuTaskAssignment.begin(), gpuTaskAssignment.end(),
-                                          hasTaskType<GpuTask::Pme>);
+    auto pmeGpuTaskMapping = std::find_if(
+            gpuTaskAssignment.begin(), gpuTaskAssignment.end(), hasTaskType<GpuTask::Pme>);
     const bool thisRankHasPmeGpuTask = (pmeGpuTaskMapping != gpuTaskAssignment.end());
 
     return thisRankHasPmeGpuTask;

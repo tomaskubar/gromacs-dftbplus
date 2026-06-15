@@ -1,11 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2012,2013,2014,2015,2016 by the GROMACS development team.
- * Copyright (c) 2017,2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2012- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -19,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -28,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \internal \file
  *  \brief Define infrastructure for OpenCL JIT compilation for Gromacs
@@ -51,6 +49,7 @@
 #include <cstdio>
 
 #include <algorithm>
+#include <filesystem>
 #include <string>
 #include <vector>
 
@@ -76,11 +75,11 @@ namespace ocl
  *
  *  Currently caching is disabled by default unless the env var override
  *  is used until we resolve concurrency issues. */
-static bool useBuildCache = getenv("GMX_OCL_GENCACHE") != nullptr;
+static bool useBuildCache = std::getenv("GMX_OCL_GENCACHE") != nullptr;
 
 /*! \brief Handles writing the OpenCL JIT compilation log to \c fplog.
  *
- * If \c fplog is non-null and either the GMX_OCL_DUMP_LOG environment
+ * If \c fplog is non-null and either the \c GMX_OCL_DUMP_LOG environment
  * variable is set or the compilation failed, then the OpenCL
  * compilation log is written.
  *
@@ -89,7 +88,8 @@ static bool useBuildCache = getenv("GMX_OCL_GENCACHE") != nullptr;
  * \param deviceId            Id of the device for which compilation took place
  * \param kernelFilename      File name containing the kernel
  * \param preprocessorOptions String containing the preprocessor command-line options used for the
- * build \param buildFailed         Whether the OpenCL build succeeded
+ *                            build
+ * \param buildFailed         Whether the OpenCL build succeeded
  *
  * \throws std::bad_alloc if out of memory */
 static void writeOclBuildLog(FILE*              fplog,
@@ -99,7 +99,8 @@ static void writeOclBuildLog(FILE*              fplog,
                              const std::string& preprocessorOptions,
                              bool               buildFailed)
 {
-    bool writeOutput = ((fplog != nullptr) && (buildFailed || (getenv("GMX_OCL_DUMP_LOG") != nullptr)));
+    bool writeOutput =
+            ((fplog != nullptr) && (buildFailed || (std::getenv("GMX_OCL_DUMP_LOG") != nullptr)));
 
     if (!writeOutput)
     {
@@ -126,8 +127,8 @@ static void writeOclBuildLog(FILE*              fplog,
         buildLogGuard.reset(buildLog);
 
         /* Get the actual compilation log */
-        cl_error = clGetProgramBuildInfo(program, deviceId, CL_PROGRAM_BUILD_LOG, buildLogSize,
-                                         buildLog, nullptr);
+        cl_error = clGetProgramBuildInfo(
+                program, deviceId, CL_PROGRAM_BUILD_LOG, buildLogSize, buildLog, nullptr);
         if (cl_error != CL_SUCCESS)
         {
             GMX_THROW(InternalError("Could not get OpenCL program build log, error was "
@@ -150,7 +151,7 @@ static void writeOclBuildLog(FILE*              fplog,
     message += "---------------LOG END----------------\n";
     ;
 
-    fputs(message.c_str(), fplog);
+    std::fputs(message.c_str(), fplog);
 }
 
 /*! \brief Construct compiler options string
@@ -163,13 +164,14 @@ static std::string selectCompilerOptions(DeviceVendor deviceVendor)
 {
     std::string compilerOptions;
 
-    if (getenv("GMX_OCL_NOOPT"))
+    if (std::getenv("GMX_OCL_NOOPT"))
     {
         compilerOptions += " -cl-opt-disable";
     }
 
-    /* Fastmath imprves performance on all supported arch */
-    if (getenv("GMX_OCL_DISABLE_FASTMATH") == nullptr)
+    /* Fastmath improves performance on all supported arch,
+     * but is tends to cause problems on Intel (Issue #3898) */
+    if ((deviceVendor != DeviceVendor::Intel) && (std::getenv("GMX_OCL_DISABLE_FASTMATH") == nullptr))
     {
         compilerOptions += " -cl-fast-relaxed-math";
 
@@ -179,12 +181,12 @@ static std::string selectCompilerOptions(DeviceVendor deviceVendor)
         compilerOptions += " -cl-denorms-are-zero";
     }
 
-    if ((deviceVendor == DeviceVendor::Nvidia) && getenv("GMX_OCL_VERBOSE"))
+    if ((deviceVendor == DeviceVendor::Nvidia) && std::getenv("GMX_OCL_VERBOSE"))
     {
         compilerOptions += " -cl-nv-verbose";
     }
 
-    if ((deviceVendor == DeviceVendor::Amd) && getenv("GMX_OCL_DUMP_INTERM_FILES"))
+    if ((deviceVendor == DeviceVendor::Amd) && std::getenv("GMX_OCL_DUMP_INTERM_FILES"))
     {
         /* To dump OpenCL build intermediate files, caching must be off */
         if (!useBuildCache)
@@ -193,9 +195,14 @@ static std::string selectCompilerOptions(DeviceVendor deviceVendor)
         }
     }
 
-    if (getenv("GMX_OCL_DEBUG"))
+    if (std::getenv("GMX_OCL_DEBUG"))
     {
         compilerOptions += " -g";
+    }
+
+    if (deviceVendor == DeviceVendor::Amd && std::getenv("GMX_OCL_FORCE_AMD_WAVEFRONT64"))
+    {
+        compilerOptions += " -Wf,-mwavefrontsize64";
     }
 
     return compilerOptions;
@@ -215,42 +222,42 @@ static std::string selectCompilerOptions(DeviceVendor deviceVendor)
  * \throws std::bad_alloc    if out of memory.
  *         FileIOError  if GMX_OCL_FILE_PATH does not specify a readable path
  */
-static std::string getSourceRootPath(const std::string& sourceRelativePath)
+static std::filesystem::path getSourceRootPath(const std::string& sourceRelativePath)
 {
-    std::string sourceRootPath;
+    std::filesystem::path sourceRootPath;
     /* Use GMX_OCL_FILE_PATH if the user has defined it */
-    const char* gmxOclFilePath = getenv("GMX_OCL_FILE_PATH");
+    const char* gmxOclFilePath = std::getenv("GMX_OCL_FILE_PATH");
 
     if (gmxOclFilePath == nullptr)
     {
         /* Normal way of getting ocl_root_dir. First get the right
            root path from the path to the binary that is running. */
-        InstallationPrefixInfo info           = getProgramContext().installationPrefix();
-        std::string            dataPathSuffix = (info.bSourceLayout ? "src" : GMX_INSTALL_OCLDIR);
-        sourceRootPath = Path::join(info.path, dataPathSuffix, sourceRelativePath);
+        InstallationPrefixInfo info = getProgramContext().installationPrefix();
+        std::string dataPathSuffix  = (info.sourceLayoutTreeLike_ ? "src" : GMX_INSTALL_OCLDIR);
+        sourceRootPath =
+                std::filesystem::path(info.path_).append(dataPathSuffix).append(sourceRelativePath);
     }
     else
     {
-        if (!Directory::exists(gmxOclFilePath))
+        if (!std::filesystem::is_directory(gmxOclFilePath))
         {
             GMX_THROW(FileIOError(
                     formatString("GMX_OCL_FILE_PATH must point to the directory where OpenCL"
                                  "kernels are found, but '%s' does not exist",
                                  gmxOclFilePath)));
         }
-        sourceRootPath = Path::join(gmxOclFilePath, sourceRelativePath);
+        sourceRootPath = std::filesystem::path(gmxOclFilePath).append(sourceRelativePath);
     }
 
     // Make sure we return an OS-correct path format
-    return Path::normalize(sourceRootPath);
+    return sourceRootPath.make_preferred();
 }
 
 size_t getKernelWarpSize(cl_kernel kernel, cl_device_id deviceId)
 {
     size_t warpSize = 0;
-    cl_int cl_error =
-            clGetKernelWorkGroupInfo(kernel, deviceId, CL_KERNEL_PREFERRED_WORK_GROUP_SIZE_MULTIPLE,
-                                     sizeof(warpSize), &warpSize, nullptr);
+    cl_int cl_error = clGetKernelWorkGroupInfo(
+            kernel, deviceId, CL_KERNEL_PREFERRED_WORK_GROUP_SIZE_MULTIPLE, sizeof(warpSize), &warpSize, nullptr);
     if (cl_error != CL_SUCCESS)
     {
         GMX_THROW(InternalError("Could not query OpenCL preferred workgroup size, error was "
@@ -320,6 +327,7 @@ static std::string makeVendorFlavorChoice(DeviceVendor deviceVendor)
         case DeviceVendor::Amd: return "-D_AMD_SOURCE_";
         case DeviceVendor::Nvidia: return "-D_NVIDIA_SOURCE_";
         case DeviceVendor::Intel: return "-D_INTEL_SOURCE_";
+        case DeviceVendor::Apple: return "-D_APPLE_SOURCE_";
         default: return "";
     }
 }
@@ -367,19 +375,21 @@ static std::string makeKernelIncludePathOption(const std::string& unescapedKerne
 static void removeExtraSpaces(std::string* str)
 {
     GMX_RELEASE_ASSERT(str != nullptr, "A pointer to an actual string must be provided");
-    std::string::iterator newEnd = std::unique(
-            str->begin(), str->end(), [=](char a, char b) { return isspace(a) != 0 && (a == b); });
+    std::string::iterator newEnd =
+            std::unique(str->begin(),
+                        str->end(),
+                        [=](char a, char b) { return std::isspace(a) != 0 && (a == b); });
     str->erase(newEnd, str->end());
 }
 
 /*! \brief Builds a string with build options for the OpenCL kernels
  *
  * \throws std::bad_alloc  if out of memory. */
-static std::string makePreprocessorOptions(const std::string& kernelRootPath,
-                                           const std::string& includeRootPath,
-                                           size_t             warpSize,
-                                           DeviceVendor       deviceVendor,
-                                           const std::string& extraDefines)
+static std::string makePreprocessorOptions(const std::filesystem::path& kernelRootPath,
+                                           const std::filesystem::path& includeRootPath,
+                                           size_t                       warpSize,
+                                           DeviceVendor                 deviceVendor,
+                                           const std::string&           extraDefines)
 {
     std::string preprocessorOptions;
 
@@ -392,9 +402,9 @@ static std::string makePreprocessorOptions(const std::string& kernelRootPath,
     preprocessorOptions += ' ';
     preprocessorOptions += selectCompilerOptions(deviceVendor);
     preprocessorOptions += ' ';
-    preprocessorOptions += makeKernelIncludePathOption(kernelRootPath);
+    preprocessorOptions += makeKernelIncludePathOption(kernelRootPath.generic_string());
     preprocessorOptions += ' ';
-    preprocessorOptions += makeKernelIncludePathOption(includeRootPath);
+    preprocessorOptions += makeKernelIncludePathOption(includeRootPath.generic_string());
 
     // Mac OS (and maybe some other implementations) does not accept double spaces in options
     removeExtraSpaces(&preprocessorOptions);
@@ -412,14 +422,14 @@ cl_program compileProgram(FILE*              fplog,
 {
     cl_int cl_error;
     // Let the kernel find include files from its module.
-    std::string kernelRootPath = getSourceRootPath(kernelRelativePath);
+    auto kernelRootPath = getSourceRootPath(kernelRelativePath);
     // Let the kernel find include files from other modules.
-    std::string rootPath = getSourceRootPath("");
+    auto rootPath = getSourceRootPath("");
 
     GMX_RELEASE_ASSERT(fplog != nullptr, "Need a valid log file for building OpenCL programs");
 
     /* Load OpenCL source files */
-    std::string kernelFilename = Path::join(kernelRootPath, kernelBaseFilename);
+    auto kernelFilename = std::filesystem::path(kernelRootPath).append(kernelBaseFilename);
 
     /* Make the build options */
     std::string preprocessorOptions = makePreprocessorOptions(
@@ -450,7 +460,8 @@ cl_program compileProgram(FILE*              fplog,
                 // Failing to read from the cache is not a critical error
                 formatExceptionMessageToFile(fplog, e);
             }
-            fprintf(fplog, "OpenCL binary cache file %s is present, will load kernels.\n",
+            fprintf(fplog,
+                    "OpenCL binary cache file %s is present, will load kernels.\n",
                     cacheFilename.c_str());
         }
         else
@@ -464,10 +475,11 @@ cl_program compileProgram(FILE*              fplog,
     if (program == nullptr)
     {
         // Compile OpenCL program from source
-        std::string kernelSource = TextReader::readFileToString(kernelFilename);
+        std::string kernelSource = TextReader::readFileToString(kernelFilename.string());
         if (kernelSource.empty())
         {
-            GMX_THROW(FileIOError("Error loading OpenCL code " + kernelFilename));
+            GMX_THROW(FileIOError(gmx::formatString("Error loading OpenCL code %s",
+                                                    kernelFilename.string().c_str())));
         }
         const char* kernelSourcePtr  = kernelSource.c_str();
         size_t      kernelSourceSize = kernelSource.size();
@@ -487,8 +499,8 @@ cl_program compileProgram(FILE*              fplog,
 
     /* Write log first, and then throw exception that the user know what is
        the issue even if the build fails. */
-    writeOclBuildLog(fplog, program, deviceId, kernelFilename, preprocessorOptions,
-                     buildStatus != CL_SUCCESS);
+    writeOclBuildLog(
+            fplog, program, deviceId, kernelFilename.string(), preprocessorOptions, buildStatus != CL_SUCCESS);
 
     if (buildStatus != CL_SUCCESS)
     {
@@ -513,7 +525,7 @@ cl_program compileProgram(FILE*              fplog,
             }
         }
     }
-    if ((deviceVendor == DeviceVendor::Nvidia) && getenv("GMX_OCL_DUMP_INTERM_FILES"))
+    if ((deviceVendor == DeviceVendor::Nvidia) && std::getenv("GMX_OCL_DUMP_INTERM_FILES"))
     {
         /* If dumping intermediate files has been requested and this is an NVIDIA card
            => write PTX to file */

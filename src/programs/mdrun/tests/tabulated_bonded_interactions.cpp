@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2016,2018,2019, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2016- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 
 /*! \internal \file
@@ -42,12 +41,16 @@
  */
 #include "gmxpre.h"
 
+#include <filesystem>
+#include <string>
+
 #include <gtest/gtest.h>
 
 #include "gromacs/utility/stringutil.h"
 #include "gromacs/utility/textwriter.h"
 
 #include "testutils/cmdlinetest.h"
+#include "testutils/testfilemanager.h"
 
 #include "moduletest.h"
 
@@ -97,11 +100,11 @@ public:
     //! Execute the trajectory writing test
     void setupGrompp(const char* interaction)
     {
-        runner_.topFileName_ = fileManager_.getTemporaryFilePath("butane1.top");
+        runner_.topFileName_ = fileManager_.getTemporaryFilePath("butane1.top").string();
         TextWriter::writeFileFromString(runner_.topFileName_,
                                         formatString(g_butaneTopFileFormatString, interaction));
-        runner_.groFileName_ = gmx::test::TestFileManager::getInputFilePath("butane1.gro");
-        runner_.ndxFileName_ = gmx::test::TestFileManager::getInputFilePath("butane1.ndx");
+        runner_.groFileName_ = gmx::test::TestFileManager::getInputFilePath("butane1.gro").string();
+        runner_.ndxFileName_ = gmx::test::TestFileManager::getInputFilePath("butane1.ndx").string();
         runner_.useEmptyMdpFile();
     }
     //! Prepare an mdrun caller
@@ -143,8 +146,8 @@ TEST_F(BondedInteractionsTest, TabulatedBondWorks)
     1     2     8  0  1000");
     EXPECT_EQ(0, runner_.callGrompp());
 
-    test::CommandLine rerunCaller   = setupMdrun();
-    std::string       tableFileName = gmx::test::TestFileManager::getInputFilePath("butane_b0.xvg");
+    test::CommandLine rerunCaller = setupMdrun();
+    std::string tableFileName = gmx::test::TestFileManager::getInputFilePath("butane_b0.xvg").string();
     rerunCaller.addOption("-tableb", tableFileName);
     ASSERT_EQ(0, runner_.callMdrun(rerunCaller));
     checkMdrun();
@@ -173,8 +176,8 @@ TEST_F(BondedInteractionsTest, TabulatedAngleWorks)
     1     2     3     8  0  1000");
     EXPECT_EQ(0, runner_.callGrompp());
 
-    test::CommandLine rerunCaller   = setupMdrun();
-    std::string       tableFileName = gmx::test::TestFileManager::getInputFilePath("butane_a0.xvg");
+    test::CommandLine rerunCaller = setupMdrun();
+    std::string tableFileName = gmx::test::TestFileManager::getInputFilePath("butane_a0.xvg").string();
     rerunCaller.addOption("-tableb", tableFileName);
     ASSERT_EQ(0, runner_.callMdrun(rerunCaller));
     checkMdrun();
@@ -203,8 +206,8 @@ TEST_F(BondedInteractionsTest, TabulatedDihedralWorks)
     1     2     3     4     8   0  1000");
     EXPECT_EQ(0, runner_.callGrompp());
 
-    test::CommandLine rerunCaller   = setupMdrun();
-    std::string       tableFileName = gmx::test::TestFileManager::getInputFilePath("butane_d0.xvg");
+    test::CommandLine rerunCaller = setupMdrun();
+    std::string tableFileName = gmx::test::TestFileManager::getInputFilePath("butane_d0.xvg").string();
     rerunCaller.addOption("-tableb", tableFileName);
     ASSERT_EQ(0, runner_.callMdrun(rerunCaller));
     checkMdrun();

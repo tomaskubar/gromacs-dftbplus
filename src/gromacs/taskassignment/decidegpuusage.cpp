@@ -1,11 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2015,2016,2017,2018,2019 by the GROMACS development team.
- * Copyright (c) 2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2015- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -19,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -28,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \internal \file
  * \brief Defines functionality for deciding whether tasks will run on GPUs.
@@ -42,7 +40,7 @@
 
 #include "gmxpre.h"
 
-#include "decidegpuusage.h"
+#include "gromacs/taskassignment/decidegpuusage.h"
 
 #include "config.h"
 
@@ -50,29 +48,41 @@
 #include <cstring>
 
 #include <algorithm>
+#include <memory>
 #include <string>
+#include <vector>
 
 #include "gromacs/ewald/pme.h"
+#include "gromacs/gpu_utils/capabilities.h"
 #include "gromacs/hardware/cpuinfo.h"
 #include "gromacs/hardware/detecthardware.h"
 #include "gromacs/hardware/hardwaretopology.h"
 #include "gromacs/hardware/hw_info.h"
-#include "gromacs/listed_forces/gpubonded.h"
+#include "gromacs/listed_forces/listed_forces_gpu.h"
+#include "gromacs/mdlib/constr.h"
 #include "gromacs/mdlib/gmx_omp_nthreads.h"
 #include "gromacs/mdlib/update_constrain_gpu.h"
 #include "gromacs/mdtypes/commrec.h"
 #include "gromacs/mdtypes/inputrec.h"
 #include "gromacs/mdtypes/md_enums.h"
 #include "gromacs/mdtypes/mdrunoptions.h"
+#include "gromacs/mdtypes/multipletimestepping.h"
+#include "gromacs/mdtypes/pull_params.h"
 #include "gromacs/pulling/pull.h"
 #include "gromacs/taskassignment/taskassignment.h"
+#include "gromacs/topology/ifunc.h"
 #include "gromacs/topology/mtop_util.h"
 #include "gromacs/topology/topology.h"
+#include "gromacs/topology/topology_enums.h"
+#include "gromacs/utility/basedefinitions.h"
 #include "gromacs/utility/baseversion.h"
+#include "gromacs/utility/enumerationhelpers.h"
 #include "gromacs/utility/exceptions.h"
 #include "gromacs/utility/fatalerror.h"
 #include "gromacs/utility/gmxassert.h"
 #include "gromacs/utility/logger.h"
+#include "gromacs/utility/message_string_collector.h"
+#include "gromacs/utility/mpiinfo.h"
 #include "gromacs/utility/stringutil.h"
 
 
@@ -83,7 +93,7 @@ namespace
 {
 
 //! Helper variable to localise the text of an often repeated message.
-const char* g_specifyEverythingFormatString =
+const char* const g_specifyEverythingFormatString =
         "When you use mdrun -gputasks, %s must be set to non-default "
         "values, so that the device IDs can be interpreted correctly."
 #if GMX_GPU
@@ -96,11 +106,23 @@ const char* g_specifyEverythingFormatString =
         // OpenCL standard, but the only current relevant case for GROMACS
         // is AMD OpenCL, which offers this variable.
         "GPU_DEVICE_ORDINAL"
-#    elif GMX_GPU_SYCL
-        // As with OpenCL, there are no portable way to do it.
-        // Intel reference: https://github.com/intel/llvm/blob/sycl/sycl/doc/EnvironmentVariables.md
-        // While SYCL_DEVICE_FILTER is a better option, as of 2021.1-beta10 it is not yet supported.
-        "SYCL_DEVICE_ALLOWLIST"
+#    elif GMX_GPU_SYCL && GMX_SYCL_DPCPP
+        // https://github.com/intel/llvm/blob/sycl/sycl/doc/EnvironmentVariables.md
+        "ONEAPI_DEVICE_SELECTOR"
+#    elif GMX_GPU_SYCL && GMX_SYCL_ACPP && GMX_ACPP_HAVE_HIP_TARGET || GMX_GPU_HIP
+        // https://rocm.docs.amd.com/en/latest/conceptual/gpu-isolation.html
+        "ROCR_VISIBLE_DEVICES"
+#    elif GMX_GPU_SYCL && GMX_SYCL_ACPP && GMX_ACPP_HAVE_CUDA_TARGET
+        "CUDA_VISIBLE_DEVIES"
+#    elif GMX_ACPP_HAVE_GENERIC_TARGET
+        // https://github.com/AdaptiveCpp/AdaptiveCpp/blob/develop/doc/env_variables.md
+        // In case of generic target multiple backends might be active.
+        // This variable whitelists the selected backends.
+        // For controlling device visibility in general the respective
+        // backend method should be used.
+        // For instance selecting the AMD GPU with ID 0:
+        // ACPP_VISIBILITY_MASK=hip ROCR_VISIBLE_DEVICES=0
+        "ACPP_VISIBILITY_MASK"
 #    else
 #        error "Unreachable branch"
 #    endif
@@ -112,16 +134,16 @@ const char* g_specifyEverythingFormatString =
 } // namespace
 
 bool decideWhetherToUseGpusForNonbondedWithThreadMpi(const TaskTarget        nonbondedTarget,
-                                                     const int               numDevicesToUse,
+                                                     const bool              haveAvailableDevices,
                                                      const std::vector<int>& userGpuTaskAssignment,
                                                      const EmulateGpuNonbonded emulateGpuNonbonded,
-                                                     const bool buildSupportsNonbondedOnGpu,
-                                                     const bool nonbondedOnGpuIsUseful,
+                                                     const bool                canUseNonbondedOnGpu,
+                                                     const bool binaryReproducibilityRequested,
                                                      const int  numRanksPerSimulation)
 {
     // First, exclude all cases where we can't run NB on GPUs.
     if (nonbondedTarget == TaskTarget::Cpu || emulateGpuNonbonded == EmulateGpuNonbonded::Yes
-        || !nonbondedOnGpuIsUseful || !buildSupportsNonbondedOnGpu)
+        || binaryReproducibilityRequested || !canUseNonbondedOnGpu)
     {
         // If the user required NB on GPUs, we issue an error later.
         return false;
@@ -134,8 +156,8 @@ bool decideWhetherToUseGpusForNonbondedWithThreadMpi(const TaskTarget        non
         // Specifying -gputasks requires specifying everything.
         if (nonbondedTarget == TaskTarget::Auto || numRanksPerSimulation < 1)
         {
-            GMX_THROW(InconsistentInputError(
-                    formatString(g_specifyEverythingFormatString, "-nb and -ntmpi")));
+            GMX_THROW(InconsistentInputError(formatString(
+                    g_specifyEverythingFormatString, GMX_THREAD_MPI ? "-nb and -ntmpi" : "-nb")));
         }
         return true;
     }
@@ -149,28 +171,148 @@ bool decideWhetherToUseGpusForNonbondedWithThreadMpi(const TaskTarget        non
     // all potential ranks can use, and can use that in a global
     // decision that will later be consistent.
     // If we get here, then the user permitted or required GPUs.
-    return (numDevicesToUse > 0);
+    return haveAvailableDevices;
+}
+
+static bool decideWhetherToUseGpusForPmeFft(const TaskTarget pmeFftTarget)
+{
+    const bool useCpuFft = (pmeFftTarget == TaskTarget::Cpu)
+                           || (pmeFftTarget == TaskTarget::Auto && !GpuConfigurationCapabilities::Fft);
+    return !useCpuFft;
+}
+
+bool canUseGpusForNonbonded(const t_inputrec& ir, const bool doRerun, std::string* error)
+{
+    MessageStringCollector errorReasons;
+    // Before changing the prefix string, make sure that it is not searched for in regression tests.
+    errorReasons.startContext("Nonbonded interactions on GPUs are not supported:");
+    errorReasons.appendIf(!GMX_GPU, "Non-GPU build of GROMACS.");
+    if (ir.opts.ngener - ir.nwall > 1)
+    {
+        std::string errorMessage = "Multiple energy groups is not implemented for GPUs.";
+        if (!doRerun)
+        {
+            // Add advice
+            errorMessage +=
+                    " For better performance, run on the GPU without energy groups and then do gmx "
+                    "mdrun -rerun option on the trajectory with an energy group .tpr file.";
+        }
+        errorReasons.append(errorMessage);
+    }
+    {
+        MtsLevel mtsLevelOnlyPme;
+        mtsLevelOnlyPme.forceGroups.set(static_cast<int>(MtsForceGroups::LongrangeNonbonded));
+        if (ir.useMts
+            && !(ir.mtsLevels.size() == 2 && ir.mtsLevels[1].forceGroups == mtsLevelOnlyPme.forceGroups))
+        {
+            errorReasons.append(gmx::formatString(
+                    "Multiple time stepping is only supported with GPUs when MTS is only applied "
+                    "to %s forces.",
+                    mtsForceGroupNames[MtsForceGroups::LongrangeNonbonded].c_str()));
+        }
+    }
+    errorReasons.appendIf(EI_TPI(ir.eI), "TPI is not implemented for GPUs.");
+    errorReasons.finishContext();
+    if (error != nullptr)
+    {
+        *error = errorReasons.toString();
+    }
+    return errorReasons.isEmpty();
+}
+
+bool canUseGpusForNonbondedFe(const t_inputrec& ir, std::string* error)
+{
+    MessageStringCollector errorReasons;
+    // Before changing the prefix string, make sure that it is not searched for in regression tests.
+    errorReasons.startContext("Nonbonded free energy interactions on GPUs are not supported:");
+    errorReasons.appendIf(!GMX_GPU, "Non-GPU build of GROMACS.");
+    errorReasons.appendIf(!GpuConfigurationCapabilities::NonbondedFE,
+                          "Only CUDA GPU backend supported.");
+    if (ir.fepvals->softcoreFunction != SoftcoreType::Beutler)
+    {
+        errorReasons.append("Only Beutler softcore function supported.");
+    }
+
+    if (ir.efep == FreeEnergyPerturbationType::Expanded)
+    {
+        errorReasons.append("Expanded-ensemble simulation is not supported.");
+    }
+
+    errorReasons.finishContext();
+    if (error != nullptr)
+    {
+        *error = errorReasons.toString();
+    }
+    return errorReasons.isEmpty();
+}
+
+static bool canUseGpusForPme(const bool        useGpuForNonbonded,
+                             const TaskTarget  pmeTarget,
+                             const TaskTarget  pmeFftTarget,
+                             const t_inputrec& inputrec,
+                             std::string*      errorMessage)
+{
+    if (pmeTarget == TaskTarget::Cpu)
+    {
+        return false;
+    }
+
+    std::string                 tempString;
+    gmx::MessageStringCollector errorReasons;
+    // Before changing the prefix string, make sure that it is not searched for in regression tests.
+    errorReasons.startContext("Cannot compute PME interactions on a GPU, because:");
+    errorReasons.appendIf(!useGpuForNonbonded, "Nonbonded interactions must also run on GPUs.");
+    errorReasons.appendIf(!pme_gpu_supports_build(&tempString), tempString);
+    errorReasons.appendIf(!pme_gpu_supports_input(inputrec, &tempString), tempString);
+    if (!decideWhetherToUseGpusForPmeFft(pmeFftTarget))
+    {
+        // We need to do FFT on CPU, so we check whether we are able to use PME Mixed mode.
+        errorReasons.appendIf(!pme_gpu_mixed_mode_supports_input(inputrec, &tempString), tempString);
+    }
+    errorReasons.finishContext();
+
+    if (errorReasons.isEmpty())
+    {
+        return true;
+    }
+    else
+    {
+        if (pmeTarget == TaskTarget::Gpu && errorMessage != nullptr)
+        {
+            *errorMessage = errorReasons.toString();
+        }
+        return false;
+    }
 }
 
 bool decideWhetherToUseGpusForPmeWithThreadMpi(const bool              useGpuForNonbonded,
                                                const TaskTarget        pmeTarget,
+                                               const TaskTarget        pmeFftTarget,
                                                const int               numDevicesToUse,
                                                const std::vector<int>& userGpuTaskAssignment,
-                                               const gmx_hw_info_t&    hardwareInfo,
                                                const t_inputrec&       inputrec,
                                                const int               numRanksPerSimulation,
                                                const int               numPmeRanksPerSimulation)
 {
     // First, exclude all cases where we can't run PME on GPUs.
-    if ((pmeTarget == TaskTarget::Cpu) || !useGpuForNonbonded || !pme_gpu_supports_build(nullptr)
-        || !pme_gpu_supports_hardware(hardwareInfo, nullptr) || !pme_gpu_supports_input(inputrec, nullptr))
+    if (!canUseGpusForPme(useGpuForNonbonded, pmeTarget, pmeFftTarget, inputrec, nullptr))
     {
-        // PME can't run on a GPU. If the user required that, we issue
-        // an error later.
+        // PME can't run on a GPU. If the user required that, we issue an error later.
         return false;
     }
 
     // We now know that PME on GPUs might make sense, if we have any.
+
+    if (pmeTarget == TaskTarget::Gpu)
+    {
+        if ((numRanksPerSimulation > 1) && (numPmeRanksPerSimulation < 0))
+        {
+            GMX_THROW(NotImplementedError(
+                    "PME tasks were required to run on GPUs with multiple ranks "
+                    "but the -npme option was not specified. "
+                    "A non-negative value must be specified for -npme."));
+        }
+    }
 
     if (!userGpuTaskAssignment.empty())
     {
@@ -226,6 +368,12 @@ bool decideWhetherToUseGpusForPmeWithThreadMpi(const bool              useGpuFor
         return numDevicesToUse > 0;
     }
 
+    if (numPmeRanksPerSimulation == 1)
+    {
+        // We have a single separate PME rank, that can use a GPU
+        return numDevicesToUse > 0;
+    }
+
     if (numRanksPerSimulation < 1)
     {
         // Full automated mode for thread-MPI (the default). PME can
@@ -241,8 +389,8 @@ bool decideWhetherToUseGpusForPmeWithThreadMpi(const bool              useGpuFor
 bool decideWhetherToUseGpusForNonbonded(const TaskTarget          nonbondedTarget,
                                         const std::vector<int>&   userGpuTaskAssignment,
                                         const EmulateGpuNonbonded emulateGpuNonbonded,
-                                        const bool                buildSupportsNonbondedOnGpu,
-                                        const bool                nonbondedOnGpuIsUseful,
+                                        const bool                canUseNonbondedOnGpu,
+                                        const bool                binaryReproducibilityRequested,
                                         const bool                gpusWereDetected)
 {
     if (nonbondedTarget == TaskTarget::Cpu)
@@ -257,7 +405,7 @@ bool decideWhetherToUseGpusForNonbonded(const TaskTarget          nonbondedTarge
         return false;
     }
 
-    if (!buildSupportsNonbondedOnGpu && nonbondedTarget == TaskTarget::Gpu)
+    if (!GMX_GPU && nonbondedTarget == TaskTarget::Gpu)
     {
         GMX_THROW(InconsistentInputError(
                 "Nonbonded interactions on the GPU were requested with -nb gpu, "
@@ -287,7 +435,7 @@ bool decideWhetherToUseGpusForNonbonded(const TaskTarget          nonbondedTarge
         return false;
     }
 
-    if (!nonbondedOnGpuIsUseful)
+    if (!canUseNonbondedOnGpu)
     {
         if (nonbondedTarget == TaskTarget::Gpu)
         {
@@ -299,13 +447,25 @@ bool decideWhetherToUseGpusForNonbonded(const TaskTarget          nonbondedTarge
         return false;
     }
 
+    if (binaryReproducibilityRequested)
+    {
+        if (nonbondedTarget == TaskTarget::Gpu)
+        {
+            GMX_THROW(InconsistentInputError(
+                    "Nonbonded interactions on the GPU and binary reproducibility were required. "
+                    "These requirements are not compatible."));
+        }
+
+        return false;
+    }
+
     if (!userGpuTaskAssignment.empty())
     {
         // Specifying -gputasks requires specifying everything.
         if (nonbondedTarget == TaskTarget::Auto)
         {
-            GMX_THROW(InconsistentInputError(
-                    formatString(g_specifyEverythingFormatString, "-nb and -ntmpi")));
+            GMX_THROW(InconsistentInputError(formatString(
+                    g_specifyEverythingFormatString, GMX_THREAD_MPI ? "-nb and -ntmpi" : "-nb")));
         }
 
         return true;
@@ -322,55 +482,62 @@ bool decideWhetherToUseGpusForNonbonded(const TaskTarget          nonbondedTarge
 
     // If we get here, then the user permitted GPUs, which we should
     // use for nonbonded interactions.
-    return buildSupportsNonbondedOnGpu && gpusWereDetected;
+    return gpusWereDetected;
 }
 
-bool decideWhetherToUseGpusForPme(const bool              useGpuForNonbonded,
-                                  const TaskTarget        pmeTarget,
-                                  const std::vector<int>& userGpuTaskAssignment,
-                                  const gmx_hw_info_t&    hardwareInfo,
-                                  const t_inputrec&       inputrec,
-                                  const int               numRanksPerSimulation,
-                                  const int               numPmeRanksPerSimulation,
-                                  const bool              gpusWereDetected)
+bool decideWhetherToUseGpusForNonbondedFE(const bool        useGpuForNonbonded,
+                                          TaskTarget        nonBondedFeTarget,
+                                          const t_inputrec& inputrec)
 {
-    if (pmeTarget == TaskTarget::Cpu)
+    if (nonBondedFeTarget == TaskTarget::Cpu)
     {
         return false;
     }
 
     if (!useGpuForNonbonded)
     {
-        if (pmeTarget == TaskTarget::Gpu)
+        if (nonBondedFeTarget == TaskTarget::Gpu)
         {
-            GMX_THROW(NotImplementedError(
-                    "PME on GPUs is only supported when nonbonded interactions run on GPUs also."));
+            GMX_THROW(InconsistentInputError(
+                    "Nonbonded FE interactions on the GPU were required, but this requires that "
+                    "short-ranged non-bonded interactions are also run on the GPU. Change "
+                    "your settings, or do not require using GPUs."));
         }
+
         return false;
     }
 
     std::string message;
-    if (!pme_gpu_supports_build(&message))
+    if (!canUseGpusForNonbondedFe(inputrec, &message))
     {
-        if (pmeTarget == TaskTarget::Gpu)
+        if (!message.empty() && nonBondedFeTarget == TaskTarget::Gpu)
         {
-            GMX_THROW(NotImplementedError("Cannot compute PME interactions on a GPU, because " + message));
+            GMX_THROW(InconsistentInputError(message));
         }
         return false;
     }
-    if (!pme_gpu_supports_hardware(hardwareInfo, &message))
+
+    // This feature is pending validation, so require the
+    // user to explicitly opt in. Once validated, return
+    // true so that mdrun can put FE on GPU in auto mode.
+    return (nonBondedFeTarget == TaskTarget::Gpu);
+}
+
+bool decideWhetherToUseGpusForPme(const bool              useGpuForNonbonded,
+                                  const TaskTarget        pmeTarget,
+                                  const TaskTarget        pmeFftTarget,
+                                  const std::vector<int>& userGpuTaskAssignment,
+                                  const t_inputrec&       inputrec,
+                                  const int               numRanksPerSimulation,
+                                  const int               numPmeRanksPerSimulation,
+                                  const bool              gpusWereDetected)
+{
+    std::string message;
+    if (!canUseGpusForPme(useGpuForNonbonded, pmeTarget, pmeFftTarget, inputrec, &message))
     {
-        if (pmeTarget == TaskTarget::Gpu)
+        if (!message.empty())
         {
-            GMX_THROW(NotImplementedError("Cannot compute PME interactions on a GPU, because " + message));
-        }
-        return false;
-    }
-    if (!pme_gpu_supports_input(inputrec, &message))
-    {
-        if (pmeTarget == TaskTarget::Gpu)
-        {
-            GMX_THROW(NotImplementedError("Cannot compute PME interactions on a GPU, because " + message));
+            GMX_THROW(InconsistentInputError(message));
         }
         return false;
     }
@@ -387,13 +554,25 @@ bool decideWhetherToUseGpusForPme(const bool              useGpuForNonbonded,
         return false;
     }
 
+    if (pmeTarget == TaskTarget::Gpu)
+    {
+        if ((numRanksPerSimulation > 1) && (numPmeRanksPerSimulation < 0))
+        {
+            GMX_THROW(NotImplementedError(
+                    "PME tasks were required to run on GPUs with multiple ranks "
+                    "but the -npme option was not specified. "
+                    "A non-negative value must be specified for -npme."));
+        }
+    }
+
     if (!userGpuTaskAssignment.empty())
     {
         // Specifying -gputasks requires specifying everything.
         if (pmeTarget == TaskTarget::Auto)
         {
-            GMX_THROW(InconsistentInputError(formatString(
-                    g_specifyEverythingFormatString, "all of -nb, -pme, and -ntmpi"))); // TODO ntmpi?
+            GMX_THROW(InconsistentInputError(
+                    formatString(g_specifyEverythingFormatString,
+                                 GMX_THREAD_MPI ? "all of -nb, -pme, and -ntmpi" : "-nb and -pme")));
         }
 
         return true;
@@ -406,14 +585,6 @@ bool decideWhetherToUseGpusForPme(const bool              useGpuForNonbonded,
 
     if (pmeTarget == TaskTarget::Gpu)
     {
-        if (((numRanksPerSimulation > 1) && (numPmeRanksPerSimulation == 0))
-            || (numPmeRanksPerSimulation > 1))
-        {
-            GMX_THROW(NotImplementedError(
-                    "PME tasks were required to run on GPUs, but that is not implemented with "
-                    "more than one PME rank. Use a single rank simulation, or a separate PME rank, "
-                    "or permit PME tasks to be assigned to the CPU."));
-        }
         return true;
     }
 
@@ -426,6 +597,12 @@ bool decideWhetherToUseGpusForPme(const bool              useGpuForNonbonded,
         return gpusWereDetected;
     }
 
+    if (numPmeRanksPerSimulation == 1)
+    {
+        // We have a single separate PME rank, that can use a GPU
+        return gpusWereDetected;
+    }
+
     // Not enough support for PME on GPUs for anything else
     return false;
 }
@@ -433,14 +610,21 @@ bool decideWhetherToUseGpusForPme(const bool              useGpuForNonbonded,
 
 PmeRunMode determinePmeRunMode(const bool useGpuForPme, const TaskTarget& pmeFftTarget, const t_inputrec& inputrec)
 {
-    if (!EEL_PME(inputrec.coulombtype))
+    if (!usingPme(inputrec.coulombtype) && !usingLJPme(inputrec.vdwtype))
     {
         return PmeRunMode::None;
     }
 
     if (useGpuForPme)
     {
-        if (pmeFftTarget == TaskTarget::Cpu)
+        if (!GpuConfigurationCapabilities::Fft && pmeFftTarget == TaskTarget::Gpu)
+        {
+            GMX_THROW(
+                    NotImplementedError("GROMACS is built without compatible GPU FFT library. "
+                                        "Please do not use -pmefft "
+                                        "gpu."));
+        }
+        if (!decideWhetherToUseGpusForPmeFft(pmeFftTarget))
         {
             return PmeRunMode::Mixed;
         }
@@ -453,9 +637,9 @@ PmeRunMode determinePmeRunMode(const bool useGpuForPme, const TaskTarget& pmeFft
     {
         if (pmeFftTarget == TaskTarget::Gpu)
         {
-            gmx_fatal(FARGS,
-                      "Assigning FFTs to GPU requires PME to be assigned to GPU as well. With PME "
-                      "on CPU you should not be using -pmefft.");
+            GMX_THROW(InconsistentInputError(
+                    "Assigning FFTs to GPU requires PME to be assigned to GPU as well. With PME "
+                    "on CPU you should not be using -pmefft."));
         }
         return PmeRunMode::CPU;
     }
@@ -476,21 +660,21 @@ bool decideWhetherToUseGpusForBonded(bool              useGpuForNonbonded,
 
     std::string errorMessage;
 
-    if (!buildSupportsGpuBondeds(&errorMessage))
+    if (!buildSupportsListedForcesGpu(&errorMessage))
     {
         if (bondedTarget == TaskTarget::Gpu)
         {
-            GMX_THROW(InconsistentInputError(errorMessage.c_str()));
+            GMX_THROW(InconsistentInputError(errorMessage));
         }
 
         return false;
     }
 
-    if (!inputSupportsGpuBondeds(inputrec, mtop, &errorMessage))
+    if (!inputSupportsListedForcesGpu(inputrec, mtop, &errorMessage))
     {
         if (bondedTarget == TaskTarget::Gpu)
         {
-            GMX_THROW(InconsistentInputError(errorMessage.c_str()));
+            GMX_THROW(InconsistentInputError(errorMessage));
         }
 
         return false;
@@ -524,203 +708,334 @@ bool decideWhetherToUseGpusForBonded(bool              useGpuForNonbonded,
     // is busy, for which we currently only check PME or Ewald.
     // (It would be better to dynamically assign bondeds based on timings)
     // Note that here we assume that the auto setting of PME ranks will not
-    // choose seperate PME ranks when nonBonded are assigned to the GPU.
-    bool usingOurCpuForPmeOrEwald =
-            (EVDW_PME(inputrec.vdwtype)
-             || (EEL_PME_EWALD(inputrec.coulombtype) && !useGpuForPme && numPmeRanksPerSimulation <= 0));
+    // choose separate PME ranks when nonBonded are assigned to the GPU.
+    bool usingOurCpuForPmeOrEwald = (usingLJPme(inputrec.vdwtype)
+                                     || (usingPmeOrEwald(inputrec.coulombtype) && !useGpuForPme
+                                         && numPmeRanksPerSimulation <= 0));
 
     return gpusWereDetected && usingOurCpuForPmeOrEwald;
 }
 
-bool decideWhetherToUseGpuForUpdate(const bool                     isDomainDecomposition,
-                                    const bool                     useUpdateGroups,
-                                    const PmeRunMode               pmeRunMode,
-                                    const bool                     havePmeOnlyRank,
-                                    const bool                     useGpuForNonbonded,
-                                    const TaskTarget               updateTarget,
-                                    const bool                     gpusWereDetected,
-                                    const t_inputrec&              inputrec,
-                                    const gmx_mtop_t&              mtop,
-                                    const bool                     useEssentialDynamics,
-                                    const bool                     doOrientationRestraints,
-                                    const bool                     useReplicaExchange,
-                                    const bool                     doRerun,
-                                    const DevelopmentFeatureFlags& devFlags,
-                                    const gmx::MDLogger&           mdlog)
+bool decideWhetherToUseGpuForUpdate(const bool           isDomainDecomposition,
+                                    const bool           useUpdateGroups,
+                                    const PmeRunMode     pmeRunMode,
+                                    const bool           havePmeOnlyRank,
+                                    const bool           useGpuForNonbonded,
+                                    const TaskTarget     updateTarget,
+                                    const bool           gpusWereDetected,
+                                    const t_inputrec&    inputrec,
+                                    const gmx_mtop_t&    mtop,
+                                    const bool           useEssentialDynamics,
+                                    const bool           doOrientationRestraints,
+                                    const bool           haveFrozenAtoms,
+                                    const bool           useModularSimulator,
+                                    const bool           doRerun,
+                                    const gmx::MDLogger& mdlog)
 {
 
     // '-update cpu' overrides the environment variable, '-update auto' does not
-    if (updateTarget == TaskTarget::Cpu
-        || (updateTarget == TaskTarget::Auto && !devFlags.forceGpuUpdateDefault))
+    const bool forceCpuUpdateDefault = std::getenv("GMX_FORCE_UPDATE_DEFAULT_CPU") != nullptr;
+
+    if (forceCpuUpdateDefault)
+    {
+        GMX_LOG(mdlog.warning)
+                .asParagraph()
+                .appendTextFormatted(
+                        "This run will default to '-update cpu' as requested by the "
+                        "GMX_FORCE_UPDATE_CPU environment variable.");
+    }
+
+
+    if (updateTarget == TaskTarget::Cpu || (updateTarget == TaskTarget::Auto && forceCpuUpdateDefault))
     {
         return false;
     }
 
-    const bool hasAnyConstraints = gmx_mtop_interaction_count(mtop, IF_CONSTRAINT) > 0;
-    const bool pmeUsesCpu = (pmeRunMode == PmeRunMode::CPU || pmeRunMode == PmeRunMode::Mixed);
+    const bool hasAnyConstraints      = gmx_mtop_interaction_count(mtop, IF_CONSTRAINT) > 0;
+    const bool pmeSpreadGatherUsesCpu = (pmeRunMode == PmeRunMode::CPU);
 
-    std::string errorMessage;
+    gmx::MessageStringCollector errorReasons;
+    errorReasons.startContext(
+            "Update task can not run on the GPU, because the following "
+            "condition(s) were not satisfied:");
+
+    // Flag to set if we do not want to log the error with `-update auto` (e.g., for non-GPU build)
+    bool silenceWarningMessageWithUpdateAuto = forceCpuUpdateDefault;
 
     if (isDomainDecomposition)
     {
-        if (hasAnyConstraints && !useUpdateGroups)
-        {
-            errorMessage +=
-                    "Domain decomposition is only supported with constraints when update "
-                    "groups "
-                    "are used. This means constraining all bonds is not supported, except for "
-                    "small molecules, and box sizes close to half the pair-list cutoff are not "
-                    "supported.\n ";
-        }
-
-        if (pmeUsesCpu)
-        {
-            errorMessage += "With domain decomposition, PME must run fully on the GPU.\n";
-        }
+        errorReasons.appendIf(
+                (hasAnyConstraints && !useUpdateGroups),
+                "Domain decomposition is only supported with constraints when update "
+                "groups "
+                "are used. This means constraining all bonds is not supported, except for "
+                "small molecules, and box sizes close to half the pair-list cutoff are not "
+                "supported.");
     }
 
     if (havePmeOnlyRank)
     {
-        if (pmeUsesCpu)
-        {
-            errorMessage += "With separate PME rank(s), PME must run fully on the GPU.\n";
-        }
+        errorReasons.appendIf(pmeSpreadGatherUsesCpu,
+                              "With separate PME rank(s), PME must run on the GPU.");
     }
 
-    if (inputrec.useMts)
-    {
-        errorMessage += "Multiple time stepping is not supported.\n";
-    }
+    errorReasons.appendIf(inputrec.useMts, "Multiple time stepping is not supported.");
 
-    if (inputrec.eConstrAlg == econtSHAKE && hasAnyConstraints && gmx_mtop_ftype_count(mtop, F_CONSTR) > 0)
-    {
-        errorMessage += "SHAKE constraints are not supported.\n";
-    }
+    errorReasons.appendIf((inputrec.eConstrAlg == ConstraintAlgorithm::Shake && hasAnyConstraints
+                           && gmx_mtop_ftype_count(mtop, InteractionFunction::Constraints) > 0),
+                          "SHAKE constraints are not supported.");
     // Using the GPU-version of update if:
     // 1. PME is on the GPU (there should be a copy of coordinates on GPU for PME spread) or inactive, or
     // 2. Non-bonded interactions are on the GPU.
     if ((pmeRunMode == PmeRunMode::CPU || pmeRunMode == PmeRunMode::None) && !useGpuForNonbonded)
     {
-        errorMessage +=
-                "Either PME or short-ranged non-bonded interaction tasks must run on the GPU.\n";
+        errorReasons.append(
+                "Either PME or short-ranged non-bonded interaction tasks must run on the GPU.");
+        silenceWarningMessageWithUpdateAuto = true;
     }
-
     if (!gpusWereDetected)
     {
-        errorMessage += "Compatible GPUs must have been found.\n";
+        errorReasons.append("Compatible GPUs must have been found.");
+        silenceWarningMessageWithUpdateAuto = true;
     }
-    if (!GMX_GPU_CUDA)
+    if (!GpuConfigurationCapabilities::Update)
     {
-        errorMessage += "Only a CUDA build is supported.\n";
+        errorReasons.append("Backend doesn't support GPU update+constraints.");
+        // Silence clang-analyzer deadcode.DeadStores warning about ignoring the previous assignments
+        GMX_UNUSED_VALUE(silenceWarningMessageWithUpdateAuto);
+        silenceWarningMessageWithUpdateAuto = true;
     }
-    if (inputrec.eI != eiMD)
-    {
-        errorMessage += "Only the md integrator is supported.\n";
-    }
-    if (inputrec.etc == etcNOSEHOOVER)
-    {
-        errorMessage += "Nose-Hoover temperature coupling is not supported.\n";
-    }
-    if (!(inputrec.epc == epcNO || inputrec.epc == epcPARRINELLORAHMAN
-          || inputrec.epc == epcBERENDSEN || inputrec.epc == epcCRESCALE))
-    {
-        errorMessage +=
-                "Only Parrinello-Rahman, Berendsen, and C-rescale pressure coupling are "
-                "supported.\n";
-    }
-    if (EEL_PME_EWALD(inputrec.coulombtype) && inputrec.epsilon_surface != 0)
-    {
-        // The graph is needed, but not supported
-        errorMessage += "Ewald surface correction is not supported.\n";
-    }
-    if (gmx_mtop_interaction_count(mtop, IF_VSITE) > 0)
-    {
-        errorMessage += "Virtual sites are not supported.\n";
-    }
-    if (useEssentialDynamics)
-    {
-        errorMessage += "Essential dynamics is not supported.\n";
-    }
-    if (inputrec.bPull && pull_have_constraint(*inputrec.pull))
-    {
-        errorMessage += "Constraints pulling is not supported.\n";
-    }
-    if (doOrientationRestraints)
-    {
-        // The graph is needed, but not supported
-        errorMessage += "Orientation restraints are not supported.\n";
-    }
-    if (inputrec.efep != efepNO && (haveFepPerturbedMasses(mtop) || havePerturbedConstraints(mtop)))
-    {
-        errorMessage += "Free energy perturbation for mass and constraints are not supported.\n";
-    }
+    errorReasons.appendIf((inputrec.eI != IntegrationAlgorithm::MD),
+                          "Only the md integrator is supported.");
+    errorReasons.appendIf((inputrec.etc == TemperatureCoupling::NoseHoover),
+                          "Nose-Hoover temperature coupling is not supported.");
+    errorReasons.appendIf((!(inputrec.pressureCouplingOptions.epc == PressureCoupling::No
+                             || inputrec.pressureCouplingOptions.epc == PressureCoupling::ParrinelloRahman
+                             || inputrec.pressureCouplingOptions.epc == PressureCoupling::Berendsen
+                             || inputrec.pressureCouplingOptions.epc == PressureCoupling::CRescale)),
+
+                          "Only Parrinello-Rahman, Berendsen, and C-rescale pressure coupling are "
+                          "supported.");
+    errorReasons.appendIf((inputrec.cos_accel != 0 || inputrec.useConstantAcceleration),
+                          "Acceleration is not supported.");
+    errorReasons.appendIf(ir_haveBoxDeformation(inputrec), "Box deformation is not supported.");
+    errorReasons.appendIf((usingPmeOrEwald(inputrec.coulombtype) && inputrec.epsilon_surface != 0),
+                          // The graph is needed, but not supported
+                          "Ewald surface correction is not supported.");
+    errorReasons.appendIf((gmx_mtop_interaction_count(mtop, IF_VSITE) > 0),
+                          "Virtual sites are not supported.");
+    errorReasons.appendIf(useEssentialDynamics, "Essential dynamics is not supported.");
+    errorReasons.appendIf((inputrec.bPull && pull_have_constraint(*inputrec.pull)),
+                          "Constraints pulling is not supported.");
+    errorReasons.appendIf(doOrientationRestraints,
+                          // The graph is needed, but not supported
+                          "Orientation restraints are not supported.");
+    errorReasons.appendIf((inputrec.efep != FreeEnergyPerturbationType::No
+                           && (haveFepPerturbedMasses(mtop) || havePerturbedConstraints(mtop))),
+                          "Free energy perturbation for mass and constraints are not supported.");
     const auto particleTypes = gmx_mtop_particletype_count(mtop);
-    if (particleTypes[eptShell] > 0)
-    {
-        errorMessage += "Shells are not supported.\n";
-    }
-    if (useReplicaExchange)
-    {
-        errorMessage += "Replica exchange simulations are not supported.\n";
-    }
-    if (inputrec.eSwapCoords != eswapNO)
-    {
-        errorMessage += "Swapping the coordinates is not supported.\n";
-    }
-    if (doRerun)
-    {
-        errorMessage += "Re-run is not supported.\n";
-    }
+    errorReasons.appendIf((particleTypes[ParticleType::Shell] > 0), "Shells are not supported.");
+    errorReasons.appendIf(gmx_mtop_flexible_constraint_count(mtop) > 0,
+                          "Flexible constraints are not supported.");
+    errorReasons.appendIf(inputrec.eSwapCoords != SwapType::No,
+                          "Swapping the coordinates is not supported.");
+    errorReasons.appendIf(useModularSimulator, "The modular simulator is not supported.");
+    errorReasons.appendIf(doRerun, "Re-run is not supported.");
 
-    // TODO: F_CONSTRNC is only unsupported, because isNumCoupledConstraintsSupported()
+    // TODO: InteractionFunction::ConstraintsNoCoupling is only unsupported, because isNumCoupledConstraintsSupported()
     // does not support it, the actual CUDA LINCS code does support it
-    if (gmx_mtop_ftype_count(mtop, F_CONSTRNC) > 0)
-    {
-        errorMessage += "Non-connecting constraints are not supported\n";
-    }
-    if (!UpdateConstrainGpu::isNumCoupledConstraintsSupported(mtop))
-    {
-        errorMessage +=
-                "The number of coupled constraints is higher than supported in the GPU LINCS "
-                "code.\n";
-    }
+    errorReasons.appendIf((gmx_mtop_ftype_count(mtop, InteractionFunction::ConstraintsNoCoupling) > 0),
+                          "Non-connecting constraints are not supported");
+    errorReasons.appendIf(
+            !UpdateConstrainGpu::isNumCoupledConstraintsSupported(mtop),
+            "The number of coupled constraints is higher than supported in the GPU LINCS "
+            "code.");
+    errorReasons.appendIf((hasAnyConstraints && !UpdateConstrainGpu::areConstraintsSupported()),
+                          "Chosen GPU implementation does not support constraints.");
+    errorReasons.appendIf(haveFrozenAtoms,
+                          // There is a known bug with frozen atoms and GPU update, see Issue #3920.
+                          "Frozen atoms not supported.");
+    errorReasons.appendIf(hasAnyConstraints
+                                  && hasTriangleConstraints(
+                                          mtop, flexibleConstraintTreatment(EI_DYNAMICS(inputrec.eI))),
+                          "Triangle constraints are not supported.");
+    errorReasons.finishContext();
 
-    if (!errorMessage.empty())
+    if (!errorReasons.isEmpty())
     {
-        if (updateTarget == TaskTarget::Auto && devFlags.forceGpuUpdateDefault)
+        if (updateTarget == TaskTarget::Auto && !silenceWarningMessageWithUpdateAuto)
         {
-            GMX_LOG(mdlog.warning)
-                    .asParagraph()
-                    .appendText(
-                            "Update task on the GPU was required, by the "
-                            "GMX_FORCE_UPDATE_DEFAULT_GPU environment variable, but the following "
-                            "condition(s) were not satisfied:");
-            GMX_LOG(mdlog.warning).asParagraph().appendText(errorMessage.c_str());
-            GMX_LOG(mdlog.warning).asParagraph().appendText("Will use CPU version of update.");
+            GMX_LOG(mdlog.info).asParagraph().appendText(errorReasons.toString());
         }
         else if (updateTarget == TaskTarget::Gpu)
         {
-            std::string prefix = gmx::formatString(
-                    "Update task on the GPU was required,\n"
-                    "but the following condition(s) were not satisfied:\n");
-            GMX_THROW(InconsistentInputError((prefix + errorMessage).c_str()));
+            GMX_THROW(InconsistentInputError(errorReasons.toString()));
         }
         return false;
     }
 
     return (updateTarget == TaskTarget::Gpu
-            || (updateTarget == TaskTarget::Auto && devFlags.forceGpuUpdateDefault));
+            || (updateTarget == TaskTarget::Auto && !forceCpuUpdateDefault));
 }
 
-bool decideWhetherToUseGpuForHalo(const DevelopmentFeatureFlags& devFlags,
-                                  bool                           havePPDomainDecomposition,
-                                  bool                           useGpuForNonbonded,
-                                  bool                           useModularSimulator,
-                                  bool                           doRerun,
-                                  bool                           haveEnergyMinimization)
+bool decideWhetherDirectGpuCommunicationCanBeUsed(gmx::GpuAwareMpiStatus gpuAwareMpiStatus,
+                                                  bool                   haveMts,
+                                                  bool                   useReplicaExchange,
+                                                  bool                   haveSwapCoords,
+                                                  bool                   gpusWereDetected,
+                                                  const gmx::MDLogger&   mdlog)
 {
-    return havePPDomainDecomposition && devFlags.enableGpuHaloExchange && useGpuForNonbonded
-           && !useModularSimulator && !doRerun && !haveEnergyMinimization;
+    // Decide if we have either a supported library MPI build or thread-MPI build
+    const bool isSupportedLibMpiBuild = GMX_LIB_MPI && GpuConfigurationCapabilities::LibraryMpiDirectComm;
+    const bool isSupportedThreadMpiBuild =
+            GMX_THREAD_MPI && GpuConfigurationCapabilities::ThreadMpiDirectComm;
+    // Direct GPU communication is used by default in supported configurations.
+    const bool isSupportedByBuild = isSupportedLibMpiBuild || isSupportedThreadMpiBuild;
+
+    // If the build does not support using the feature, no point in continuing down any further.
+    if (!isSupportedByBuild)
+    {
+        return false;
+    }
+    if (!gpusWereDetected)
+    {
+        return false;
+    }
+
+    // We disable the GPU direct communication if the user requests it
+    const bool isDisabledByUser = std::getenv("GMX_DISABLE_DIRECT_GPU_COMM") != nullptr;
+    if (isDisabledByUser)
+    {
+        GMX_LOG(mdlog.warning)
+                .asParagraph()
+                .appendText("GPU-direct communication has been disabled by user request.");
+        return false;
+    }
+
+    // Direct GPU comm path is being used with GPU-aware MPI
+    // make sure underlying MPI implementation is GPU-aware
+    // A compatible THREAD MPI build (checked above) is always GPU-aware.
+    bool isSupportedInMpiLibrary = isSupportedThreadMpiBuild;
+
+    if (isSupportedLibMpiBuild)
+    {
+        // Allow overriding the detection for GPU-aware MPI
+        if (getenv("GMX_FORCE_CUDA_AWARE_MPI") != nullptr)
+        {
+            GMX_LOG(mdlog.warning)
+                    .asParagraph()
+                    .appendText(
+                            "GMX_FORCE_CUDA_AWARE_MPI environment variable is inactive. "
+                            "Please use GMX_FORCE_GPU_AWARE_MPI instead.");
+        }
+
+        isSupportedInMpiLibrary = (gpuAwareMpiStatus == gmx::GpuAwareMpiStatus::Supported
+                                   || gpuAwareMpiStatus == gmx::GpuAwareMpiStatus::Forced);
+
+        if (gpuAwareMpiStatus == gmx::GpuAwareMpiStatus::Forced)
+        {
+            // GPU-aware support not detected in MPI library but, user has forced its use
+            GMX_LOG(mdlog.warning)
+                    .asParagraph()
+                    .appendText(
+                            "This run has forced use of 'GPU-aware MPI'. "
+                            "However, GROMACS cannot determine if underlying MPI is GPU-aware. "
+                            "Check the GROMACS install guide for recommendations for GPU-aware "
+                            "support. If you observe failures at runtime, try unsetting the "
+                            "GMX_FORCE_GPU_AWARE_MPI environment variable.");
+        }
+
+        if (isSupportedInMpiLibrary)
+        {
+            GMX_LOG(mdlog.info)
+                    .asParagraph()
+                    .appendText(
+                            "GPU-aware MPI detected, enabling direct GPU communication. "
+                            "If GROMACS crashes at the beginning of the run, try fixing "
+                            "your MPI installation, or set the GMX_DISABLE_DIRECT_GPU_COMM "
+                            "environment variable as a workaround.");
+        }
+        else
+        {
+            GMX_LOG(mdlog.warning)
+                    .asParagraph()
+                    .appendText(
+                            "GPU-aware MPI was not detected, will not use direct GPU "
+                            "communication. Check the GROMACS install guide for "
+                            "recommendations "
+                            "for GPU-aware support. If you are certain about GPU-aware support "
+                            "in your MPI library, you can force its use by setting the "
+                            "GMX_FORCE_GPU_AWARE_MPI environment variable.");
+        }
+    }
+    else
+    {
+        if (getenv("GMX_FORCE_GPU_AWARE_MPI") != nullptr)
+        {
+            // Cannot force use of GPU-aware MPI in this build configuration
+            GMX_LOG(mdlog.info)
+                    .asParagraph()
+                    .appendText(
+                            "A CUDA or SYCL build with an external MPI library is required in "
+                            "order to benefit from GMX_FORCE_GPU_AWARE_MPI. That environment "
+                            "variable is being ignored because such a build is not in use.");
+        }
+    }
+
+    // No point in checking if run is compatible if MPI library is not.
+    if (!isSupportedInMpiLibrary)
+    {
+        return false;
+    }
+
+    // Now check those flags that may cause, from the user perspective, an unexpected
+    // fallback to CPU halo, and report accordingly
+    gmx::MessageStringCollector errorReasons;
+    errorReasons.startContext("Direct GPU communication cannot be activated because:");
+    errorReasons.appendIf(haveMts, "MTS is not supported.");
+    errorReasons.appendIf(useReplicaExchange, "Replica exchange is not supported.");
+    errorReasons.appendIf(haveSwapCoords, "Swap-coords is not supported.");
+    errorReasons.finishContext();
+
+    if (!errorReasons.isEmpty())
+    {
+        GMX_LOG(mdlog.warning).asParagraph().appendText(errorReasons.toString());
+    }
+
+    return errorReasons.isEmpty();
+}
+
+bool decideWhetherToUseGpuForHalo(bool                 havePPDomainDecomposition,
+                                  bool                 useGpuForNonbonded,
+                                  bool                 canUseDirectGpuComm,
+                                  bool                 useModularSimulator,
+                                  bool                 doRerun,
+                                  bool                 haveEnergyMinimization,
+                                  const gmx::MDLogger& mdlog)
+{
+    if (!canUseDirectGpuComm || !havePPDomainDecomposition || !useGpuForNonbonded)
+    {
+        // return false without warning
+        return false;
+    }
+
+    // Now check those flags that may cause, from the user perspective, an unexpected
+    // fallback to CPU halo, and report accordingly
+    gmx::MessageStringCollector errorReasons;
+    errorReasons.startContext("GPU halo exchange will not be activated because:");
+    errorReasons.appendIf(!GpuConfigurationCapabilities::HaloExchangeDirectComm,
+                          "Configuration does not support GPU halo exchange");
+    errorReasons.appendIf(useModularSimulator, "Modular simulator runs are not supported.");
+    errorReasons.appendIf(doRerun, "Re-runs are not supported.");
+    errorReasons.appendIf(haveEnergyMinimization, "Energy minimization is not supported.");
+    errorReasons.finishContext();
+
+    if (!errorReasons.isEmpty())
+    {
+        GMX_LOG(mdlog.warning).asParagraph().appendText(errorReasons.toString());
+    }
+
+    return errorReasons.isEmpty();
 }
 
 } // namespace gmx

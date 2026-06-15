@@ -1,12 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
- * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2011-2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 1991- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -20,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -29,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \defgroup module_mdrun Implementation of mdrun
  * \ingroup group_mdrun
@@ -55,20 +52,35 @@
 #include "config.h"
 
 #include <memory>
+#include <string>
+#include <tuple>
+#include <utility>
+#include <vector>
 
+#include "external/scope_guard/scope_guard.h"
+
+#include "gromacs/commandline/filenm.h"
 #include "gromacs/commandline/pargs.h"
+#include "gromacs/compat/pointers.h"
 #include "gromacs/domdec/options.h"
 #include "gromacs/fileio/gmxfio.h"
 #include "gromacs/hardware/detecthardware.h"
+#include "gromacs/hardware/hw_info.h"
 #include "gromacs/mdrun/legacymdrunoptions.h"
+#include "gromacs/mdrun/mdmodules.h"
 #include "gromacs/mdrun/runner.h"
 #include "gromacs/mdrun/simulationcontext.h"
+#include "gromacs/mdrun/simulationinputhandle.h"
 #include "gromacs/mdrunutility/handlerestart.h"
 #include "gromacs/mdrunutility/logging.h"
 #include "gromacs/mdrunutility/multisim.h"
+#include "gromacs/mdtypes/mdrunoptions.h"
 #include "gromacs/utility/arrayref.h"
+#include "gromacs/utility/basedefinitions.h"
 #include "gromacs/utility/basenetwork.h"
+#include "gromacs/utility/fatalerror.h"
 #include "gromacs/utility/physicalnodecommunicator.h"
+#include "gromacs/utility/unique_cptr.h"
 
 #include "mdrun_main.h"
 
@@ -81,7 +93,7 @@ int gmx_mdrun(int argc, char* argv[])
     // SimulationContext).
     MPI_Comm                 communicator = GMX_LIB_MPI ? MPI_COMM_WORLD : MPI_COMM_NULL;
     PhysicalNodeCommunicator physicalNodeCommunicator(communicator, gmx_physicalnode_id_hash());
-    std::unique_ptr<gmx_hw_info_t> hwinfo = gmx_detect_hardware(physicalNodeCommunicator);
+    std::unique_ptr<gmx_hw_info_t> hwinfo = gmx_detect_hardware(physicalNodeCommunicator, communicator);
     return gmx_mdrun(communicator, *hwinfo, argc, argv);
 }
 
@@ -224,7 +236,7 @@ int gmx_mdrun(MPI_Comm communicator, const gmx_hw_info_t& hwinfo, int argc, char
     }
 
     ArrayRef<const std::string> multiSimDirectoryNames =
-            opt2fnsIfOptionSet("-multidir", ssize(options.filenames), options.filenames.data());
+            opt2fnsIfOptionSet("-multidir", gmx::ssize(options.filenames), options.filenames.data());
 
     // The SimulationContext is necessary with gmxapi so that
     // resources owned by the client code can have suitable
@@ -233,12 +245,25 @@ int gmx_mdrun(MPI_Comm communicator, const gmx_hw_info_t& hwinfo, int argc, char
     // wrapper binary.
     SimulationContext simulationContext(communicator, multiSimDirectoryNames);
 
-    StartingBehavior startingBehavior        = StartingBehavior::NewSimulation;
-    LogFilePtr       logFileGuard            = nullptr;
-    gmx_multisim_t*  ms                      = simulationContext.multiSimulation_.get();
-    std::tie(startingBehavior, logFileGuard) = handleRestart(
-            findIsSimulationMasterRank(ms, communicator), communicator, ms,
-            options.mdrunOptions.appendingBehavior, ssize(options.filenames), options.filenames.data());
+    StartingBehavior startingBehavior = StartingBehavior::NewSimulation;
+    LogFilePtr       logFileGuard     = nullptr;
+    gmx_multisim_t*  ms               = simulationContext.multiSimulation_.get();
+    std::tie(startingBehavior, logFileGuard) = handleRestart(findIsSimulationMainRank(ms, communicator),
+                                                             communicator,
+                                                             ms,
+                                                             options.mdrunOptions.appendingBehavior,
+                                                             gmx::ssize(options.filenames),
+                                                             options.filenames.data());
+    if (startingBehavior != StartingBehavior::RestartWithAppending && logFileGuard)
+    {
+        // Provide the log file handle to the fatal error handler
+        FILE* fplog = gmx_fio_getfp(logFileGuard.get());
+        gmx_fatal_set_log_file(fplog);
+    }
+    // Set up a scope guard that clears the log file held by the fatal
+    // error handler. This is OK even if no log file is ever set with
+    // the handler.
+    auto fatalErrorLogFileGuard = sg::make_scope_guard([]() { gmx_fatal_set_log_file(nullptr); });
 
     /* The named components for the builder exposed here are descriptive of the
      * state of mdrun at implementation and are not intended to be prescriptive
@@ -258,6 +283,7 @@ int gmx_mdrun(MPI_Comm communicator, const gmx_hw_info_t& hwinfo, int argc, char
     builder.addDomainDecomposition(options.domdecOptions);
     // \todo pass by value
     builder.addNonBonded(options.nbpu_opt_choices[0]);
+    builder.addNonBondedFETaskAssignment(options.nbfe_opt_choices[0]);
     // \todo pass by value
     builder.addElectrostatics(options.pme_opt_choices[0], options.pme_fft_opt_choices[0]);
     builder.addBondedTaskAssignment(options.bonded_opt_choices[0]);

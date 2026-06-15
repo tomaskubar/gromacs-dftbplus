@@ -1,11 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2012-2018, The GROMACS development team.
- * Copyright (c) 2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2012- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -19,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -28,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 
 /*! \internal \file
@@ -90,6 +88,7 @@
 
 #include <algorithm>
 #include <fstream>
+#include <initializer_list>
 #include <map>
 #include <set>
 #include <sstream>
@@ -102,6 +101,11 @@
 #endif
 
 #include "architecture.h"
+
+//! Convenience macro to help us avoid ifdefs each time we use sysconf
+#if !defined(_SC_NPROCESSORS_ONLN) && defined(_SC_NPROC_ONLN)
+#    define _SC_NPROCESSORS_ONLN _SC_NPROC_ONLN
+#endif
 
 namespace gmx
 {
@@ -462,95 +466,91 @@ void detectX86Features(std::string* brand, int* family, int* model, int* steppin
     }
 }
 
+/*! \brief internal structure to return os logical cpu id together with APIC info for it */
+struct ApicInfo
+{
+    int          osId;   //!< OS index of logical cpu/processor
+    unsigned int apicId; //!< APIC id obtained from cpuid when running on the osId processor
+};
 
-/*! \brief Return a vector with x86 APIC IDs for all threads
+/*! \brief Return a vector with x86 APIC info for all processing units
  *
  *  \param haveX2Apic  True if the processors supports x2APIC, otherwise vanilla APIC.
  *
- *  \returns A new std::vector of unsigned integer APIC IDs, one for each
- *           logical processor in the system.
+ *  \returns A new vector with os-provided logical cpu id and corresponding hardware APIC id.
  */
-std::vector<unsigned int> detectX86ApicIDs(bool gmx_unused haveX2Apic)
+std::vector<ApicInfo> detectX86ApicInfo(bool gmx_unused haveX2Apic)
 {
-    std::vector<unsigned int> apicID;
+    std::vector<ApicInfo> apicInfo;
 
     // We cannot just ask for all APIC IDs, but must force execution on each
     // hardware thread and extract the APIC id there.
+    // Since the thread might have been pinned, we cannot use the present
+    // CPU set, but must try all possible CPUs and check the return code
+    // if we were allowed to run on that CPU, and eventually restore
+    // the original cpu set.
 #if HAVE_SCHED_AFFINITY && defined HAVE_SYSCONF
     unsigned int eax, ebx, ecx, edx;
     unsigned int nApic = sysconf(_SC_NPROCESSORS_ONLN);
     cpu_set_t    saveCpuSet;
-    cpu_set_t    cpuSet;
     sched_getaffinity(0, sizeof(cpu_set_t), &saveCpuSet);
-    CPU_ZERO(&cpuSet);
+    // We only test threads up to the number of CPUs in the system, not the
+    // (much larger) max value of the data structures.
     for (unsigned int i = 0; i < nApic; i++)
     {
+        cpu_set_t cpuSet;
+        CPU_ZERO(&cpuSet);
         CPU_SET(i, &cpuSet);
-        sched_setaffinity(0, sizeof(cpu_set_t), &cpuSet);
-        if (haveX2Apic)
+        if (sched_setaffinity(0, sizeof(cpu_set_t), &cpuSet) == 0)
         {
-            executeX86CpuID(0xb, 0, &eax, &ebx, &ecx, &edx);
-            apicID.push_back(edx);
+            // 0 means the affinity could be set
+            if (haveX2Apic)
+            {
+                executeX86CpuID(0xb, 0, &eax, &ebx, &ecx, &edx);
+                apicInfo.push_back({ static_cast<int>(i), edx });
+            }
+            else
+            {
+                executeX86CpuID(0x1, 0, &eax, &ebx, &ecx, &edx);
+                apicInfo.push_back({ static_cast<int>(i), ebx >> 24 });
+            }
         }
-        else
-        {
-            executeX86CpuID(0x1, 0, &eax, &ebx, &ecx, &edx);
-            apicID.push_back(ebx >> 24);
-        }
-        CPU_CLR(i, &cpuSet);
     }
     sched_setaffinity(0, sizeof(cpu_set_t), &saveCpuSet);
 #elif GMX_NATIVE_WINDOWS
     unsigned int eax, ebx, ecx, edx;
-    SYSTEM_INFO sysinfo;
+    SYSTEM_INFO  sysinfo;
     GetSystemInfo(&sysinfo);
-    unsigned int nApic = sysinfo.dwNumberOfProcessors;
-    unsigned int saveAffinity = SetThreadAffinityMask(GetCurrentThread(), 1);
-    for (DWORD_PTR i = 0; i < nApic; i++)
+
+    // calling SetThreadAffinityMask returns the current affinity mask if it succeeds,
+    // otherwise zero - so try all processors until we are successful with one so
+    // we can save the original affinity mask.
+    unsigned int saveThreadAffinity = 0;
+    for (DWORD_PTR i = 0; i < sysinfo.dwNumberOfProcessors && saveThreadAffinity == 0; i++)
     {
-        SetThreadAffinityMask(GetCurrentThread(), (((DWORD_PTR)1) << i));
-        Sleep(0);
-        if (haveX2Apic)
+        saveThreadAffinity = SetThreadAffinityMask(GetCurrentThread(), (((DWORD_PTR)1) << i));
+    }
+
+    for (DWORD_PTR i = 0; i < sysinfo.dwNumberOfProcessors; i++)
+    {
+        if (SetThreadAffinityMask(GetCurrentThread(), (((DWORD_PTR)1) << i)) != 0)
         {
-            executeX86CpuID(0xb, 0, &eax, &ebx, &ecx, &edx);
-            apicID.push_back(edx);
-        }
-        else
-        {
-            executeX86CpuID(0x1, 0, &eax, &ebx, &ecx, &edx);
-            apicID.push_back(ebx >> 24);
+            // On windows, the call will have returned the old mask (non-zero) if it succeeded
+            if (haveX2Apic)
+            {
+                executeX86CpuID(0xb, 0, &eax, &ebx, &ecx, &edx);
+                apicInfo.push_back({ static_cast<int>(i), edx });
+            }
+            else
+            {
+                executeX86CpuID(0x1, 0, &eax, &ebx, &ecx, &edx);
+                apicInfo.push_back({ static_cast<int>(i), ebx >> 24 });
+            }
         }
     }
-    SetThreadAffinityMask(GetCurrentThread(), saveAffinity);
+    SetThreadAffinityMask(GetCurrentThread(), saveThreadAffinity);
 #endif
-    return apicID;
-}
-
-
-/*! \brief Utility to renumber indices extracted from APIC IDs
- *
- * \param v  Vector with unsigned integer indices
- *
- * This routine returns the number of unique different elements found in the vector,
- * and renumbers these starting from 0. For example, the vector {0,1,2,8,9,10,8,9,10,0,1,2}
- * will be rewritten to {0,1,2,3,4,5,3,4,5,0,1,2}, and it returns 6 for the
- * number of unique elements.
- */
-void renumberIndex(std::vector<unsigned int>* v)
-{
-    std::vector<unsigned int> sortedV(*v);
-    std::sort(sortedV.begin(), sortedV.end());
-
-    std::vector<unsigned int> uniqueSortedV(sortedV);
-    auto                      it = std::unique(uniqueSortedV.begin(), uniqueSortedV.end());
-    uniqueSortedV.resize(std::distance(uniqueSortedV.begin(), it));
-
-    for (std::size_t i = 0; i < uniqueSortedV.size(); i++)
-    {
-        unsigned int val = uniqueSortedV[i];
-        std::replace_if(v->begin(), v->end(), [val](unsigned int& c) -> bool { return c == val; },
-                        static_cast<unsigned int>(i));
-    }
+    return apicInfo;
 }
 
 /*! \brief The layout of the bits in the APIC ID */
@@ -630,7 +630,7 @@ ApicIdLayout detectAmdApicIdLayout(unsigned int maxExtLevel)
  *  If x2APIC support is present, this is our first choice, otherwise we
  *  attempt to use old vanilla APIC.
  *
- *  \return A new vector of entries with socket, core, hwthread information
+ *  \return A new vector of entries with package, core, processing unit information
  *          for each logical processor.
  */
 std::vector<CpuInfo::LogicalProcessor> detectX86LogicalProcessors()
@@ -692,46 +692,25 @@ std::vector<CpuInfo::LogicalProcessor> detectX86LogicalProcessors()
             }
         }
 
-        std::vector<unsigned int> apicID = detectX86ApicIDs(haveX2Apic);
-
-        if (!apicID.empty())
+        std::vector<ApicInfo> apicInfo = detectX86ApicInfo(haveX2Apic);
+        if (!apicInfo.empty())
         {
             // APIC IDs can be buggy, and it is always a mess. Typically more bits are
             // reserved than needed, and the numbers might not increment by 1 even in
-            // a single socket or core. Extract, renumber, and check that things make sense.
-            unsigned int              hwThreadMask = (1 << layout.hwThreadBits) - 1;
-            unsigned int              coreMask     = (1 << layout.coreBits) - 1;
-            std::vector<unsigned int> hwThreadRanks;
-            std::vector<unsigned int> coreRanks;
-            std::vector<unsigned int> socketRanks;
+            // a single package or core.
+            // We sheepishly avoid dealing with that here, but just extract the information
+            // and leave the renumbering to the hardware topology.
+            unsigned int hwThreadMask = (1 << layout.hwThreadBits) - 1;
+            unsigned int coreMask     = (1 << layout.coreBits) - 1;
 
-            for (auto a : apicID)
+            for (const auto& a : apicInfo)
             {
-                hwThreadRanks.push_back(static_cast<int>(a & hwThreadMask));
-                coreRanks.push_back(static_cast<int>((a >> layout.hwThreadBits) & coreMask));
-                socketRanks.push_back(static_cast<int>(a >> (layout.coreBits + layout.hwThreadBits)));
-            }
-
-            renumberIndex(&hwThreadRanks);
-            renumberIndex(&coreRanks);
-            renumberIndex(&socketRanks);
-
-            unsigned int hwThreadRankSize =
-                    1 + *std::max_element(hwThreadRanks.begin(), hwThreadRanks.end());
-            unsigned int coreRankSize = 1 + *std::max_element(coreRanks.begin(), coreRanks.end());
-            unsigned int socketRankSize = 1 + *std::max_element(socketRanks.begin(), socketRanks.end());
-
-            if (socketRankSize * coreRankSize * hwThreadRankSize == apicID.size())
-            {
-                // Alright, everything looks consistent, so put it in the result
-                for (std::size_t i = 0; i < apicID.size(); i++)
-                {
-                    // While the internal APIC IDs are always unsigned integers, we also cast to
-                    // plain integers for the externally exposed vectors, since that will make
-                    // it possible to use '-1' for invalid entries in the future.
-                    logicalProcessors.push_back(
-                            { int(socketRanks[i]), int(coreRanks[i]), int(hwThreadRanks[i]) });
-                }
+                // Note that these labels are arbitrary and local to the package/core;
+                // they will in general NOT correspond to what we later have in the hardware topology
+                int packageId = a.apicId >> (layout.coreBits + layout.hwThreadBits);
+                int coreId    = (a.apicId >> layout.hwThreadBits) & coreMask;
+                int puId      = a.apicId & hwThreadMask;
+                logicalProcessors.push_back({ packageId, coreId, puId, a.osId });
             }
         }
     }
@@ -804,26 +783,35 @@ CpuInfo::Vendor detectProcCpuInfoVendor(const std::map<std::string, std::string>
         { "Oracle", CpuInfo::Vendor::Oracle },
         { "HygonGenuine", CpuInfo::Vendor::Hygon },
         { "Hygon", CpuInfo::Vendor::Hygon },
+        { "riscv64", CpuInfo::Vendor::RiscV64 },
+        { "riscv32", CpuInfo::Vendor::RiscV32 },
+        { "riscv", CpuInfo::Vendor::RiscV32 }, // Must come after riscv64 to avoid misidentification
+        { "Loongson", CpuInfo::Vendor::Loongson },
+        { "loongarch64", CpuInfo::Vendor::Loongson },
+        { "loong64", CpuInfo::Vendor::Loongson },
     };
 
     // For each label in /proc/cpuinfo, compare the value to the name in the
     // testNames map above, and if it's a match return the vendor.
-    for (auto& l : { "vendor_id", "vendor", "manufacture", "model", "processor", "cpu" })
+    for (const auto& l :
+         { "vendor_id", "vendor", "manufacture", "model", "processor", "cpu", "Architecture" })
     {
         if (cpuInfo.count(l) != 0U)
         {
             // there was a line with this left-hand side in /proc/cpuinfo
             const std::string& s1 = cpuInfo.at(l);
 
-            for (auto& t : testVendors)
+            for (const auto& t : testVendors)
             {
                 const std::string& s2 = t.first;
 
                 // If the entire name we are testing (s2) matches the first part of
                 // the string after the colon in /proc/cpuinfo (s1) we found our vendor
-                if (std::equal(s2.begin(), s2.end(), s1.begin(), [](const char& x, const char& y) -> bool {
-                        return tolower(x) == tolower(y);
-                    }))
+                if (std::equal(s2.begin(),
+                               s2.end(),
+                               s1.begin(),
+                               [](const char& x, const char& y) -> bool
+                               { return std::tolower(x) == std::tolower(y); }))
                 {
                     return t.second;
                 }
@@ -863,7 +851,7 @@ void detectProcCpuInfoIbm(const std::map<std::string, std::string>& cpuInfo,
         features->insert(CpuInfo::Feature::Ibm_Qpx);
     }
 
-    for (auto& l : { "model name", "model", "Processor", "cpu" })
+    for (const auto& l : { "model name", "model", "Processor", "cpu" })
     {
         if (cpuInfo.count(l) != 0U)
         {
@@ -910,6 +898,12 @@ void detectProcCpuInfoArm(const std::map<std::string, std::string>& cpuInfo,
     else if (cpuInfo.count("model name") != 0U)
     {
         *brand = cpuInfo.at("model name");
+    }
+    else if (cpuInfo.count("CPU part") != 0U)
+    {
+        // If all else fails, at least print the hexadecimal CPU part code.
+        // Mapping can be found at https://github.com/torvalds/linux/blob/master/arch/arm64/include/asm/cputype.h
+        *brand = cpuInfo.at("CPU part");
     }
 
     if (cpuInfo.count("CPU architecture") != 0U)
@@ -1027,8 +1021,8 @@ CpuInfo CpuInfo::detect()
         {
             result.features_.insert(CpuInfo::Feature::X86_Hygon);
         }
-        detectX86Features(&result.brandString_, &result.family_, &result.model_, &result.stepping_,
-                          &result.features_);
+        detectX86Features(
+                &result.brandString_, &result.family_, &result.model_, &result.stepping_, &result.features_);
         result.logicalProcessors_ = detectX86LogicalProcessors();
     }
     else
@@ -1041,6 +1035,18 @@ CpuInfo CpuInfo::detect()
         else if (c_architecture == Architecture::PowerPC)
         {
             result.vendor_ = CpuInfo::Vendor::Ibm;
+        }
+        else if (c_architecture == Architecture::RiscV32)
+        {
+            result.vendor_ = CpuInfo::Vendor::RiscV32;
+        }
+        else if (c_architecture == Architecture::RiscV64)
+        {
+            result.vendor_ = CpuInfo::Vendor::RiscV64;
+        }
+        else if (c_architecture == Architecture::Loongarch64)
+        {
+            result.vendor_ = CpuInfo::Vendor::Loongson;
         }
 
 #if defined __aarch64__ || (defined _M_ARM && _M_ARM >= 8)
@@ -1057,8 +1063,12 @@ CpuInfo CpuInfo::detect()
 
         // On Linux we might be able to find information in /proc/cpuinfo. If vendor or brand
         // is set to a known value this routine will not overwrite it.
-        detectProcCpuInfo(&result.vendor_, &result.brandString_, &result.family_, &result.model_,
-                          &result.stepping_, &result.features_);
+        detectProcCpuInfo(&result.vendor_,
+                          &result.brandString_,
+                          &result.family_,
+                          &result.model_,
+                          &result.stepping_,
+                          &result.features_);
     }
 
     if (!result.logicalProcessors_.empty())
@@ -1083,20 +1093,24 @@ CpuInfo CpuInfo::detect()
 }
 
 CpuInfo::CpuInfo() :
-    vendor_(CpuInfo::Vendor::Unknown),
-    brandString_("Unknown CPU brand"),
-    family_(0),
-    model_(0),
-    stepping_(0)
+    vendor_(CpuInfo::Vendor::Unknown), brandString_("Unknown CPU brand"), family_(0), model_(0), stepping_(0)
 {
 }
 
 const std::string& CpuInfo::vendorString() const
 {
     static const std::map<Vendor, std::string> vendorStrings = {
-        { Vendor::Unknown, "Unknown vendor" }, { Vendor::Intel, "Intel" }, { Vendor::Amd, "AMD" },
-        { Vendor::Fujitsu, "Fujitsu" },        { Vendor::Ibm, "IBM" },     { Vendor::Arm, "ARM" },
-        { Vendor::Oracle, "Oracle" },          { Vendor::Hygon, "Hygon" },
+        { Vendor::Unknown, "Unknown vendor" },
+        { Vendor::Intel, "Intel" },
+        { Vendor::Amd, "AMD" },
+        { Vendor::Fujitsu, "Fujitsu" },
+        { Vendor::Ibm, "IBM" },
+        { Vendor::Arm, "ARM" },
+        { Vendor::Oracle, "Oracle" },
+        { Vendor::Hygon, "Hygon" },
+        { Vendor::RiscV32, "RISC-V 32" },
+        { Vendor::RiscV64, "RISC-V 64" },
+        { Vendor::Loongson, "Loongson" },
     };
 
     return vendorStrings.at(vendor_);
@@ -1190,6 +1204,18 @@ bool cpuIsAmdZen1(const CpuInfo& cpuInfo)
            || (cpuInfo.vendor() == CpuInfo::Vendor::Hygon);
 }
 
+bool cpuIsNeoverseV2(const CpuInfo& cpuInfo)
+{
+    /* Neoverse V2 will have part=0xd4f, which we store under brand
+     * See https://github.com/torvalds/linux/blob/master/arch/arm64/include/asm/cputype.h
+     */
+
+    std::string brand = cpuInfo.brandString();
+    std::transform(
+            brand.begin(), brand.end(), brand.begin(), [](const char& c) { return std::tolower(c); });
+    return (cpuInfo.vendor() == CpuInfo::Vendor::Arm && (brand == "neoverse v2" || brand == "0xd4f"));
+}
+
 } // namespace gmx
 
 #ifdef GMX_CPUINFO_STANDALONE
@@ -1207,7 +1233,7 @@ int main(int argc, char** argv)
                 "-stepping      Print CPU stepping version.\n"
                 "-features      Print CPU feature flags.\n",
                 argv[0]);
-        exit(1);
+        std::exit(1);
     }
 
     std::string  arg(argv[1]);
@@ -1239,7 +1265,7 @@ int main(int argc, char** argv)
         // GROMACS cmake code, surrounding whitespace is first
         // stripped by the CPU detection routine, and then added back
         // in the code for making the SIMD suggestion.
-        for (auto& f : cpuInfo.featureSet())
+        for (const auto& f : cpuInfo.featureSet())
         {
             printf("%s ", cpuInfo.featureString(f).c_str());
         }
@@ -1248,10 +1274,14 @@ int main(int argc, char** argv)
     else if (arg == "-topology")
     {
         // Undocumented debug option, usually not present in standalone version
-        for (auto& t : cpuInfo.logicalProcessors())
+        printf("// logical processors we were allowed to run on, mapped to\n"
+               "// packageIdInMachine, coreIdInPackage, and puIdInCore\n"
+               "{\n");
+        for (const auto& t : cpuInfo.logicalProcessors())
         {
-            printf("%3u %3u %3u\n", t.socketRankInMachine, t.coreRankInSocket, t.hwThreadRankInCore);
+            printf("    { %3d , { %3d, %3d, %3d } },\n", t.osId, t.packageIdInMachine, t.coreIdInPackage, t.puIdInCore);
         }
+        printf("};\n");
     }
     return 0;
 }

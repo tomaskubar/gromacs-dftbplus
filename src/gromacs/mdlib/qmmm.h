@@ -159,8 +159,8 @@ private:
     int*    shiftQM;
     int     QMcharge;       // charge of the QM system
     int     multiplicity;   // multipicity (no of unpaired eln)
-    int     QMmethod;       // see enums.h for all methods
-    int     QMbasis;        // see enums.h for all bases
+    QMmethodType     QMmethod;       // see enums.h for all methods
+    QMbasisType      QMbasis;        // see enums.h for all bases
     int     nelectrons;     // total number of elecs in QM region
     int     CASelectrons;   // electron in active space
     int     CASorbitals;    // orbitals in active space
@@ -213,8 +213,8 @@ public:
     int              atomicnumberQM_get(int atom)const;
     int              QMcharge_get()const;
     int              multiplicity_get()const;
-    int              QMmethod_get()const;
-    int              QMbasis_get()const;
+    QMmethodType     QMmethod_get()const;
+    QMbasisType      QMbasis_get()const;
     int              nelectrons_get()const;
     int              CASelectrons_get()const;
     int              CASorbitals_get()const;

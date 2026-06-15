@@ -1,13 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
- * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2016,2017 by the GROMACS development team.
- * Copyright (c) 2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 1991- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -21,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -30,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \internal \file
  * \brief
@@ -44,27 +40,39 @@
  */
 #include "gmxpre.h"
 
-#include "pbc.h"
+#include "gromacs/pbcutil/pbc.h"
 
+#include <cinttypes>
 #include <cmath>
+#include <cstdio>
 
 #include <algorithm>
+#include <filesystem>
+#include <string>
+#include <vector>
 
 #include "gromacs/math/functions.h"
 #include "gromacs/math/units.h"
 #include "gromacs/math/utilities.h"
-#include "gromacs/math/vec.h"
-#include "gromacs/math/vecdump.h"
+#include "gromacs/mdtypes/md_enums.h"
 #include "gromacs/pbcutil/ishift.h"
 #include "gromacs/pbcutil/mshift.h"
 #include "gromacs/topology/topology.h"
+#include "gromacs/utility/arrayref.h"
+#include "gromacs/utility/basedefinitions.h"
+#include "gromacs/utility/enumerationhelpers.h"
 #include "gromacs/utility/exceptions.h"
 #include "gromacs/utility/fatalerror.h"
 #include "gromacs/utility/gmxassert.h"
+#include "gromacs/utility/real.h"
 #include "gromacs/utility/smalloc.h"
+#include "gromacs/utility/vec.h"
+#include "gromacs/utility/vecdump.h"
+#include "gromacs/utility/vectypes.h"
 
-const gmx::EnumerationArray<PbcType, std::string> c_pbcTypeNames = { { "xyz", "no", "xy", "screw",
-                                                                       "unset" } };
+const gmx::EnumerationArray<PbcType, std::string> c_pbcTypeNames = {
+    { "xyz", "no", "xy", "screw", "unset" }
+};
 
 /* Skip 0 so we have more chance of detecting if we forgot to call set_pbc. */
 enum
@@ -81,10 +89,20 @@ enum
     epbcdxUNSUPPORTED
 };
 
-//! Margin factor for error message
-#define BOX_MARGIN 1.0010
-//! Margin correction if the box is too skewed
-#define BOX_MARGIN_CORRECT 1.0005
+//! Margin for correction when the box is too skewed
+static constexpr real sc_skewnessMargin = 1.001;
+/*! \brief Margin factor for warning/error message
+ *
+ * The term 0.004 is just sufficient to not warn for a box that
+ * is deformed with a shear rate of 0.001 ps^-1 over a pairlist
+ * lifetime of 0.2 ps.
+ *
+ * Note that there can be errors in periodic images for atom pairs
+ * close to half the box size. In nearly all cases the cut-off
+ * distance is more then 0.5% shorter than half the minimum periodic
+ * vector length, so there is no issue.
+ */
+static constexpr real sc_boxSkewnessMarginForWarning = sc_skewnessMargin + 0.004;
 
 int numPbcDimensions(PbcType pbcType)
 {
@@ -93,13 +111,14 @@ int numPbcDimensions(PbcType pbcType)
     switch (pbcType)
     {
         case PbcType::Unset:
-            gmx_fatal(FARGS, "Number of PBC dimensions was requested before the PBC type set.");
+            GMX_RELEASE_ASSERT(false,
+                               "Number of PBC dimensions was requested before the PBC type set.");
+            break;
         case PbcType::Xyz: npbcdim = 3; break;
         case PbcType::XY: npbcdim = 2; break;
         case PbcType::Screw: npbcdim = 3; break;
         case PbcType::No: npbcdim = 0; break;
-        default:
-            gmx_fatal(FARGS, "Unknown pbcType=%s in numPbcDimensions", c_pbcTypeNames[pbcType].c_str());
+        default: GMX_RELEASE_ASSERT(false, "Invalid pbcType in numPbcDimensions");
     }
 
     return npbcdim;
@@ -139,7 +158,17 @@ const char* check_box(PbcType pbcType, const matrix box)
         return nullptr;
     }
 
-    if ((box[XX][YY] != 0) || (box[XX][ZZ] != 0) || (box[YY][ZZ] != 0))
+    GMX_ASSERT(box != nullptr, "check_box requires a valid box unless pbcType is No");
+
+    if (pbcType == PbcType::Xyz && box[XX][XX] == 0 && box[YY][YY] == 0 && box[ZZ][ZZ] == 0)
+    {
+        ptr = "Empty diagonal for a 3-dimensional periodic box";
+    }
+    else if (pbcType == PbcType::XY && box[XX][XX] == 0 && box[YY][YY] == 0)
+    {
+        ptr = "Empty diagonal for a 2-dimensional periodic box";
+    }
+    else if ((box[XX][YY] != 0) || (box[XX][ZZ] != 0) || (box[YY][ZZ] != 0))
     {
         ptr = "Only triclinic boxes with the first vector parallel to the x-axis and the second "
               "vector in the xy-plane are supported.";
@@ -148,10 +177,10 @@ const char* check_box(PbcType pbcType, const matrix box)
     {
         ptr = "The unit cell can not have off-diagonal x-components with screw pbc";
     }
-    else if (std::fabs(box[YY][XX]) > BOX_MARGIN * 0.5 * box[XX][XX]
+    else if (std::fabs(box[YY][XX]) > sc_boxSkewnessMarginForWarning * 0.5_real * box[XX][XX]
              || (pbcType != PbcType::XY
-                 && (std::fabs(box[ZZ][XX]) > BOX_MARGIN * 0.5 * box[XX][XX]
-                     || std::fabs(box[ZZ][YY]) > BOX_MARGIN * 0.5 * box[YY][YY])))
+                 && (std::fabs(box[ZZ][XX]) > sc_boxSkewnessMarginForWarning * 0.5_real * box[XX][XX]
+                     || std::fabs(box[ZZ][YY]) > sc_boxSkewnessMarginForWarning * 0.5_real * box[YY][YY])))
     {
         ptr = "Triclinic box is too skewed.";
     }
@@ -166,12 +195,13 @@ const char* check_box(PbcType pbcType, const matrix box)
 void matrix_convert(matrix box, const rvec vec, const rvec angleInDegrees)
 {
     rvec angle;
-    svmul(DEG2RAD, angleInDegrees, angle);
+    svmul(gmx::c_deg2Rad, angleInDegrees, angle);
     box[XX][XX] = vec[XX];
-    box[YY][XX] = vec[YY] * cos(angle[ZZ]);
-    box[YY][YY] = vec[YY] * sin(angle[ZZ]);
-    box[ZZ][XX] = vec[ZZ] * cos(angle[YY]);
-    box[ZZ][YY] = vec[ZZ] * (cos(angle[XX]) - cos(angle[YY]) * cos(angle[ZZ])) / sin(angle[ZZ]);
+    box[YY][XX] = vec[YY] * std::cos(angle[ZZ]);
+    box[YY][YY] = vec[YY] * std::sin(angle[ZZ]);
+    box[ZZ][XX] = vec[ZZ] * std::cos(angle[YY]);
+    box[ZZ][YY] = vec[ZZ] * (std::cos(angle[XX]) - std::cos(angle[YY]) * std::cos(angle[ZZ]))
+                  / std::sin(angle[ZZ]);
     box[ZZ][ZZ] =
             std::sqrt(gmx::square(vec[ZZ]) - box[ZZ][XX] * box[ZZ][XX] - box[ZZ][YY] * box[ZZ][YY]);
 }
@@ -208,11 +238,13 @@ real max_cutoff2(PbcType pbcType, const matrix box)
 }
 
 //! Set to true if warning has been printed
+// NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)
 static gmx_bool bWarnedGuess = FALSE;
 
 PbcType guessPbcType(const matrix box)
 {
     PbcType pbcType;
+    GMX_RELEASE_ASSERT(box != nullptr, "guessPbcType requires a valid box");
 
     if (box[XX][XX] > 0 && box[YY][YY] > 0 && box[ZZ][ZZ] > 0)
     {
@@ -233,7 +265,9 @@ PbcType guessPbcType(const matrix box)
             fprintf(stderr,
                     "WARNING: Unsupported box diagonal %f %f %f, "
                     "will not use periodic boundary conditions\n\n",
-                    box[XX][XX], box[YY][YY], box[ZZ][ZZ]);
+                    box[XX][XX],
+                    box[YY][YY],
+                    box[ZZ][ZZ]);
             bWarnedGuess = TRUE;
         }
         pbcType = PbcType::No;
@@ -248,18 +282,18 @@ PbcType guessPbcType(const matrix box)
 }
 
 //! Check if the box still obeys the restrictions, if not, correct it
-static int correct_box_elem(FILE* fplog, int step, tensor box, int v, int d)
+static int correct_box_elem(FILE* fplog, const int64_t step, matrix box, const int v, const int d)
 {
     int shift, maxshift = 10;
 
     shift = 0;
 
     /* correct elem d of vector v with vector d */
-    while (box[v][d] > BOX_MARGIN_CORRECT * 0.5 * box[d][d])
+    while (box[v][d] > sc_skewnessMargin * 0.5_real * box[d][d])
     {
         if (fplog)
         {
-            fprintf(fplog, "Step %d: correcting invalid box:\n", step);
+            fprintf(fplog, "Step %" PRId64 ": correcting invalid box:\n", step);
             pr_rvecs(fplog, 0, "old box", box, DIM);
         }
         rvec_dec(box[v], box[d]);
@@ -273,11 +307,11 @@ static int correct_box_elem(FILE* fplog, int step, tensor box, int v, int d)
             gmx_fatal(FARGS, "Box was shifted at least %d times. Please see log-file.", maxshift);
         }
     }
-    while (box[v][d] < -BOX_MARGIN_CORRECT * 0.5 * box[d][d])
+    while (box[v][d] < -sc_skewnessMargin * 0.5_real * box[d][d])
     {
         if (fplog)
         {
-            fprintf(fplog, "Step %d: correcting invalid box:\n", step);
+            fprintf(fplog, "Step %" PRId64 ": correcting invalid box:\n", step);
             pr_rvecs(fplog, 0, "old box", box, DIM);
         }
         rvec_inc(box[v], box[d]);
@@ -295,7 +329,7 @@ static int correct_box_elem(FILE* fplog, int step, tensor box, int v, int d)
     return shift;
 }
 
-gmx_bool correct_box(FILE* fplog, int step, tensor box)
+gmx_bool correct_box(FILE* fplog, const int64_t step, matrix box)
 {
     int      zy, zx, yx;
     gmx_bool bCorrected;
@@ -334,7 +368,7 @@ static void low_set_pbc(t_pbc* pbc, PbcType pbcType, const ivec dd_pbc, const ma
     for (int i = 0; (i < DIM); i++)
     {
         pbc->fbox_diag[i]  = box[i][i];
-        pbc->hbox_diag[i]  = pbc->fbox_diag[i] * 0.5;
+        pbc->hbox_diag[i]  = pbc->fbox_diag[i] * 0.5_real;
         pbc->mhbox_diag[i] = -pbc->hbox_diag[i];
     }
 
@@ -447,7 +481,7 @@ static void low_set_pbc(t_pbc* pbc, PbcType pbcType, const ivec dd_pbc, const ma
             if (debug)
             {
                 pr_rvecs(debug, 0, "Box", box, DIM);
-                fprintf(debug, "max cutoff %.3f\n", sqrt(pbc->max_cutoff2));
+                fprintf(debug, "max cutoff %.3f\n", std::sqrt(pbc->max_cutoff2));
             }
             /* We will only need single shifts here */
             for (int kk = 0; kk < 3; kk++)
@@ -471,7 +505,7 @@ static void low_set_pbc(t_pbc* pbc, PbcType pbcType, const ivec dd_pbc, const ma
                         {
                             continue;
                         }
-                        /* A shift is only useful when it is trilinic */
+                        /* A shift is only useful when it is triclinic */
                         if (j != 0 || k != 0)
                         {
                             rvec trial;
@@ -504,7 +538,7 @@ static void low_set_pbc(t_pbc* pbc, PbcType pbcType, const ivec dd_pbc, const ma
                                 d2old += gmx::square(pos[d]);
                                 d2new += gmx::square(pos[d] + trial[d]);
                             }
-                            if (BOX_MARGIN * d2new < d2old)
+                            if (sc_skewnessMargin * d2new < d2old)
                             {
                                 /* Check if shifts with one box vector less do better */
                                 gmx_bool bUse = TRUE;
@@ -518,7 +552,7 @@ static void low_set_pbc(t_pbc* pbc, PbcType pbcType, const ivec dd_pbc, const ma
                                         {
                                             d2new_c += gmx::square(pos[d] + trial[d] - shift * box[dd][d]);
                                         }
-                                        if (d2new_c <= BOX_MARGIN * d2new)
+                                        if (d2new_c <= sc_skewnessMargin * d2new)
                                         {
                                             bUse = FALSE;
                                         }
@@ -550,9 +584,18 @@ static void low_set_pbc(t_pbc* pbc, PbcType pbcType, const ivec dd_pbc, const ma
                                             fprintf(debug,
                                                     "  tricvec %2d = %2d %2d %2d  %5.2f %5.2f  "
                                                     "%5.2f %5.2f %5.2f  %5.2f %5.2f %5.2f\n",
-                                                    pbc->ntric_vec, i, j, k, sqrt(d2old),
-                                                    sqrt(d2new), trial[XX], trial[YY], trial[ZZ],
-                                                    pos[XX], pos[YY], pos[ZZ]);
+                                                    pbc->ntric_vec,
+                                                    i,
+                                                    j,
+                                                    k,
+                                                    std::sqrt(d2old),
+                                                    std::sqrt(d2new),
+                                                    trial[XX],
+                                                    trial[YY],
+                                                    trial[ZZ],
+                                                    pos[XX],
+                                                    pos[YY],
+                                                    pos[ZZ]);
                                         }
                                     }
                                 }
@@ -575,7 +618,7 @@ void set_pbc(t_pbc* pbc, PbcType pbcType, const matrix box)
     low_set_pbc(pbc, pbcType, nullptr, box);
 }
 
-t_pbc* set_pbc_dd(t_pbc* pbc, PbcType pbcType, const ivec domdecCells, gmx_bool bSingleDir, const matrix box)
+t_pbc* set_pbc_dd(t_pbc* pbc, PbcType pbcType, const gmx::IVec* domdecCells, gmx_bool bSingleDir, const matrix box)
 {
     if (pbcType == PbcType::No)
     {
@@ -590,7 +633,7 @@ t_pbc* set_pbc_dd(t_pbc* pbc, PbcType pbcType, const ivec domdecCells, gmx_bool 
     }
     else
     {
-        if (pbcType == PbcType::Screw && domdecCells[XX] > 1)
+        if (pbcType == PbcType::Screw && (*domdecCells)[XX] > 1)
         {
             /* The rotation has been taken care of during coordinate communication */
             pbcType = PbcType::Xyz;
@@ -601,7 +644,7 @@ t_pbc* set_pbc_dd(t_pbc* pbc, PbcType pbcType, const ivec domdecCells, gmx_bool 
         for (int i = 0; i < DIM; i++)
         {
             usePBC[i] = 0;
-            if (domdecCells[i] <= (bSingleDir ? 1 : 2) && !(pbcType == PbcType::XY && i == ZZ))
+            if ((*domdecCells)[i] <= (bSingleDir ? 1 : 2) && !(pbcType == PbcType::XY && i == ZZ))
             {
                 usePBC[i] = 1;
                 npbcdim++;
@@ -1054,10 +1097,10 @@ int pbc_dx_aiuc(const t_pbc* pbc, const rvec x1, const rvec x2, rvec dx)
                       "Internal error in pbc_dx_aiuc, set_pbc_dd or set_pbc has not been called");
     }
 
-    is = IVEC2IS(ishift);
+    is = gmx::ivecToShiftIndex(ishift);
     if (debug)
     {
-        range_check_mesg(is, 0, SHIFTS, "PBC shift vector index range check.");
+        range_check_mesg(is, 0, gmx::c_numShiftVectors, "PBC shift vector index range check.");
     }
 
     return is;
@@ -1184,13 +1227,13 @@ void pbc_dx_d(const t_pbc* pbc, const dvec x1, const dvec x2, dvec dx)
     }
 }
 
-void calc_shifts(const matrix box, rvec shift_vec[])
+void calc_shifts(const matrix box, gmx::ArrayRef<gmx::RVec> shift_vec)
 {
-    for (int n = 0, m = -D_BOX_Z; m <= D_BOX_Z; m++)
+    for (int n = 0, m = -gmx::c_dBoxZ; m <= gmx::c_dBoxZ; m++)
     {
-        for (int l = -D_BOX_Y; l <= D_BOX_Y; l++)
+        for (int l = -gmx::c_dBoxY; l <= gmx::c_dBoxY; l++)
         {
-            for (int k = -D_BOX_X; k <= D_BOX_X; k++, n++)
+            for (int k = -gmx::c_dBoxX; k <= gmx::c_dBoxX; k++, n++)
             {
                 for (int d = 0; d < DIM; d++)
                 {
@@ -1213,14 +1256,14 @@ void calc_box_center(int ecenter, const matrix box, rvec box_center)
             {
                 for (d = 0; d < DIM; d++)
                 {
-                    box_center[d] += 0.5 * box[m][d];
+                    box_center[d] += 0.5_real * box[m][d];
                 }
             }
             break;
         case ecenterRECT:
             for (d = 0; d < DIM; d++)
             {
-                box_center[d] = 0.5 * box[d][d];
+                box_center[d] = 0.5_real * box[d][d];
             }
             break;
         case ecenterZERO: break;
@@ -1386,9 +1429,19 @@ int* compact_unitcell_edges()
     return edge;
 }
 
-void put_atoms_in_box(PbcType pbcType, const matrix box, gmx::ArrayRef<gmx::RVec> x)
+template<bool haveBoxDeformation>
+static void putAtomsInBoxTemplated(PbcType                  pbcType,
+                                   const matrix             box,
+                                   const matrix             boxDeformation,
+                                   gmx::ArrayRef<gmx::RVec> x,
+                                   gmx::ArrayRef<gmx::RVec> v)
 {
-    int npbcdim, m, d;
+    if constexpr (haveBoxDeformation)
+    {
+        GMX_ASSERT(v.size() == x.size(), "Need velocities for box deformation");
+    }
+
+    int npbcdim;
 
     if (pbcType == PbcType::Screw)
     {
@@ -1404,24 +1457,25 @@ void put_atoms_in_box(PbcType pbcType, const matrix box, gmx::ArrayRef<gmx::RVec
         npbcdim = 3;
     }
 
+    gmx::RVec invBox;
+    for (int m = 0; m < npbcdim; ++m)
+    {
+        invBox[m] = 1 / box[m][m];
+    }
+
     if (TRICLINIC(box))
     {
-        for (gmx::index i = 0; (i < x.ssize()); ++i)
+        for (gmx::Index i = 0; i < x.ssize(); i++)
         {
-            for (m = npbcdim - 1; m >= 0; m--)
+            for (int m = npbcdim - 1; m >= 0; m--)
             {
-                while (x[i][m] < 0)
+                const auto boxVectorShift = std::floor(x[i][m] * invBox[m]);
+                for (int d = 0; d <= m; d++)
                 {
-                    for (d = 0; d <= m; d++)
+                    x[i][d] -= boxVectorShift * box[m][d];
+                    if constexpr (haveBoxDeformation)
                     {
-                        x[i][d] += box[m][d];
-                    }
-                }
-                while (x[i][m] >= box[m][m])
-                {
-                    for (d = 0; d <= m; d++)
-                    {
-                        x[i][d] -= box[m][d];
+                        v[i][d] -= boxVectorShift * boxDeformation[m][d];
                     }
                 }
             }
@@ -1429,24 +1483,42 @@ void put_atoms_in_box(PbcType pbcType, const matrix box, gmx::ArrayRef<gmx::RVec
     }
     else
     {
-        for (gmx::index i = 0; (i < x.ssize()); ++i)
+        for (gmx::Index i = 0; i < x.ssize(); i++)
         {
-            for (d = 0; d < npbcdim; d++)
+            for (int d = 0; d < npbcdim; d++)
             {
-                while (x[i][d] < 0)
+                const auto boxVectorShift = std::floor(x[i][d] * invBox[d]);
+                x[i][d] -= boxVectorShift * box[d][d];
+                if constexpr (haveBoxDeformation)
                 {
-                    x[i][d] += box[d][d];
-                }
-                while (x[i][d] >= box[d][d])
-                {
-                    x[i][d] -= box[d][d];
+                    for (int d2 = 0; d2 <= d; d2++)
+                    {
+                        v[i][d2] -= boxVectorShift * boxDeformation[d][d2];
+                    }
                 }
             }
         }
     }
+
+    if constexpr (!haveBoxDeformation)
+    {
+        GMX_UNUSED_VALUE(v);
+    }
 }
 
-void put_atoms_in_box_omp(PbcType pbcType, const matrix box, gmx::ArrayRef<gmx::RVec> x, gmx_unused int nth)
+
+void put_atoms_in_box(PbcType pbcType, const matrix box, gmx::ArrayRef<gmx::RVec> x)
+{
+    putAtomsInBoxTemplated<false>(pbcType, box, nullptr, x, {});
+}
+
+void put_atoms_in_box_omp(PbcType                  pbcType,
+                          const matrix             box,
+                          const bool               haveBoxDeformation,
+                          const matrix             boxDeformation,
+                          gmx::ArrayRef<gmx::RVec> x,
+                          gmx::ArrayRef<gmx::RVec> v,
+                          gmx_unused int           nth)
 {
 #pragma omp parallel for num_threads(nth) schedule(static)
     for (int t = 0; t < nth; t++)
@@ -1456,7 +1528,15 @@ void put_atoms_in_box_omp(PbcType pbcType, const matrix box, gmx::ArrayRef<gmx::
             size_t natoms = x.size();
             size_t offset = (natoms * t) / nth;
             size_t len    = (natoms * (t + 1)) / nth - offset;
-            put_atoms_in_box(pbcType, box, x.subArray(offset, len));
+            if (haveBoxDeformation)
+            {
+                putAtomsInBoxTemplated<true>(
+                        pbcType, box, boxDeformation, x.subArray(offset, len), v.subArray(offset, len));
+            }
+            else
+            {
+                putAtomsInBoxTemplated<false>(pbcType, box, boxDeformation, x.subArray(offset, len), {});
+            }
         }
         GMX_CATCH_ALL_AND_EXIT_WITH_FATAL_ERROR
     }
@@ -1481,14 +1561,14 @@ void put_atoms_in_triclinic_unitcell(int ecenter, const matrix box, gmx::ArrayRe
     {
         rvec_inc(shift_center, box[d]);
     }
-    svmul(0.5, shift_center, shift_center);
+    svmul(0.5_real, shift_center, shift_center);
     rvec_sub(box_center, shift_center, shift_center);
 
     shift_center[0] = shm01 * shift_center[1] + shm02 * shift_center[2];
     shift_center[1] = shm12 * shift_center[2];
     shift_center[2] = 0;
 
-    for (gmx::index i = 0; (i < x.ssize()); ++i)
+    for (gmx::Index i = 0; (i < x.ssize()); ++i)
     {
         for (m = DIM - 1; m >= 0; m--)
         {
@@ -1532,7 +1612,7 @@ void put_atoms_in_compact_unitcell(PbcType pbcType, int ecenter, const matrix bo
     }
 
     calc_box_center(ecenter, box, box_center);
-    for (gmx::index i = 0; (i < x.ssize()); ++i)
+    for (gmx::Index i = 0; (i < x.ssize()); ++i)
     {
         pbc_dx(&pbc, x[i], box_center, dx);
         rvec_add(box_center, dx, x[i]);
@@ -1543,19 +1623,38 @@ void put_atoms_in_compact_unitcell(PbcType pbcType, int ecenter, const matrix bo
  *
  * \param[in]     fplog     Log file
  * \param[in]     pbcType   The PBC type
+ * \param[in]     correctVelocitiesForBoxDeformation  Whether to correct the velocities for
+ *                                                    continuous box deformation
+ * \param[in]     boxDeformation  The box deformation velocity
  * \param[in]     box       The simulation box
  * \param[in]     mtop      System topology definition
  * \param[in,out] x         The coordinates of the atoms
+ * \param[in]     v         The velocities of the atoms
  * \param[in]     bFirst    Specifier for first-time PBC removal
  */
-static void
-low_do_pbc_mtop(FILE* fplog, PbcType pbcType, const matrix box, const gmx_mtop_t* mtop, rvec x[], gmx_bool bFirst)
+static void low_do_pbc_mtop(FILE*                    fplog,
+                            PbcType                  pbcType,
+                            const bool               correctVelocitiesForBoxDeformation,
+                            const matrix             boxDeformation,
+                            const matrix             box,
+                            const gmx_mtop_t*        mtop,
+                            gmx::ArrayRef<gmx::RVec> x,
+                            gmx::ArrayRef<gmx::RVec> v,
+                            gmx_bool                 bFirst)
 {
     int as, mol;
 
     if (bFirst && fplog)
     {
         fprintf(fplog, "Removing pbc first time\n");
+    }
+
+    matrix boxDeformationRate;
+    if (correctVelocitiesForBoxDeformation)
+    {
+        GMX_RELEASE_ASSERT(v.size() == x.size(), "Need velocities with box deformation");
+
+        setBoxDeformationRate(boxDeformation, box, boxDeformationRate);
     }
 
     as = 0;
@@ -1571,15 +1670,34 @@ low_do_pbc_mtop(FILE* fplog, PbcType pbcType, const matrix box, const gmx_mtop_t
         {
             t_graph graph = mk_graph_moltype(moltype);
 
+            std::vector<gmx::RVec> xOrig(correctVelocitiesForBoxDeformation ? moltype.atoms.nr : 0);
+
             for (mol = 0; mol < molb.nmol; mol++)
             {
-                mk_mshift(fplog, &graph, pbcType, box, x + as);
+                auto xMol = x.subArray(as, moltype.atoms.nr);
 
-                shift_self(graph, box, x + as);
+                mk_mshift(fplog, &graph, pbcType, box, as_rvec_array(xMol.data()));
+
+                if (correctVelocitiesForBoxDeformation)
+                {
+                    // Store a copy of the original coordinates, so we can compute displacements
+                    std::copy(xMol.begin(), xMol.end(), xOrig.begin());
+                }
+
+                shift_self(graph, box, as_rvec_array(xMol.data()));
                 /* The molecule is whole now.
                  * We don't need the second mk_mshift call as in do_pbc_first,
                  * since we no longer need this graph.
                  */
+
+                if (correctVelocitiesForBoxDeformation)
+                {
+                    for (int i = 0; i < moltype.atoms.nr; i++)
+                    {
+                        correctVelocityForDisplacement<true>(
+                                boxDeformationRate, v[as + i], xMol[i] - xOrig[i]);
+                    }
+                }
 
                 as += moltype.atoms.nr;
             }
@@ -1587,12 +1705,43 @@ low_do_pbc_mtop(FILE* fplog, PbcType pbcType, const matrix box, const gmx_mtop_t
     }
 }
 
-void do_pbc_first_mtop(FILE* fplog, PbcType pbcType, const matrix box, const gmx_mtop_t* mtop, rvec x[])
+void do_pbc_first_mtop(FILE*                    fplog,
+                       PbcType                  pbcType,
+                       const bool               correctVelocitiesForBoxDeformation,
+                       const matrix             boxDeformation,
+                       const matrix             box,
+                       const gmx_mtop_t*        mtop,
+                       gmx::ArrayRef<gmx::RVec> x,
+                       gmx::ArrayRef<gmx::RVec> v)
 {
-    low_do_pbc_mtop(fplog, pbcType, box, mtop, x, TRUE);
+    low_do_pbc_mtop(
+            fplog, pbcType, correctVelocitiesForBoxDeformation, boxDeformation, box, mtop, x, v, TRUE);
 }
 
 void do_pbc_mtop(PbcType pbcType, const matrix box, const gmx_mtop_t* mtop, rvec x[])
 {
-    low_do_pbc_mtop(nullptr, pbcType, box, mtop, x, FALSE);
+    low_do_pbc_mtop(nullptr,
+                    pbcType,
+                    false,
+                    nullptr,
+                    box,
+                    mtop,
+                    gmx::arrayRefFromArray<gmx::RVec>(reinterpret_cast<gmx::RVec*>(x), mtop->natoms),
+                    {},
+                    FALSE);
+}
+
+void setBoxDeformationRate(const matrix boxDeformation, const matrix box, matrix boxDeformationRate)
+{
+    clear_mat(boxDeformationRate);
+    for (int d1 = 0; d1 < DIM; d1++)
+    {
+        for (int d2 = 0; d2 <= d1; d2++)
+        {
+            if (box[d1][d1] > 0)
+            {
+                boxDeformationRate[d1][d2] = boxDeformation[d1][d2] / box[d1][d1];
+            }
+        }
+    }
 }

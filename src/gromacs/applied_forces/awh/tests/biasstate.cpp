@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2017,2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2017- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 #include "gmxpre.h"
 
@@ -38,18 +37,28 @@
 
 #include <cmath>
 
+#include <filesystem>
 #include <memory>
+#include <string>
 #include <vector>
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
 #include "gromacs/applied_forces/awh/biasgrid.h"
+#include "gromacs/applied_forces/awh/biasparams.h"
+#include "gromacs/applied_forces/awh/correlationgrid.h"
+#include "gromacs/applied_forces/awh/dimparams.h"
 #include "gromacs/applied_forces/awh/pointstate.h"
+#include "gromacs/applied_forces/awh/tests/awh_setup.h"
+#include "gromacs/fileio/xvgr.h"
 #include "gromacs/math/functions.h"
+#include "gromacs/math/multidimarray.h"
+#include "gromacs/mdspan/extensions.h"
 #include "gromacs/mdtypes/awh_params.h"
 #include "gromacs/utility/arrayref.h"
-#include "gromacs/utility/smalloc.h"
+#include "gromacs/utility/basedefinitions.h"
+#include "gromacs/utility/stringutil.h"
 
 #include "testutils/testasserts.h"
 #include "testutils/testfilemanager.h"
@@ -60,98 +69,134 @@ namespace gmx
 namespace test
 {
 
-/*! \internal \brief
- * Struct that gathers all input for setting up and using a Bias
- */
-struct AwhTestParameters
-{
-    double beta; //!< 1/(kB*T)
-
-    AwhDimParams  awhDimParams[2]; //!< Dimension parameters pointed to by \p awhBiasParams
-    AwhBiasParams awhBiasParams;   //!< Bias parameters pointed to by \[ awhParams
-    AwhParams     awhParams;       //!< AWH parameters, this is the struct to actually use
-};
-
-//! Helper function to set up the C-style AWH parameters for the test
-static AwhTestParameters getAwhTestParameters()
-{
-    AwhTestParameters params;
-
-    params.beta = 1.0;
-
-    AwhParams& awhParams = params.awhParams;
-    snew(params.awhParams.awhBiasParams, 1);
-    AwhBiasParams& awhBiasParams = params.awhParams.awhBiasParams[0];
-    snew(awhBiasParams.dimParams, 2);
-
-    AwhDimParams& awhDimParams0 = awhBiasParams.dimParams[0];
-
-    awhDimParams0.period         = 0;
-    awhDimParams0.diffusion      = 0.1;
-    awhDimParams0.origin         = 0.5;
-    awhDimParams0.end            = 1.5;
-    awhDimParams0.coordValueInit = awhDimParams0.origin;
-    awhDimParams0.coverDiameter  = 0;
-    awhDimParams0.eCoordProvider = eawhcoordproviderPULL;
-
-    AwhDimParams& awhDimParams1 = awhBiasParams.dimParams[1];
-
-    awhDimParams1.period         = 0;
-    awhDimParams1.diffusion      = 0.1;
-    awhDimParams1.origin         = 0.8;
-    awhDimParams1.end            = 1.3;
-    awhDimParams1.coordValueInit = awhDimParams1.origin;
-    awhDimParams1.coverDiameter  = 0;
-    awhDimParams1.eCoordProvider = eawhcoordproviderPULL;
-
-    awhBiasParams.ndim                 = 2;
-    awhBiasParams.eTarget              = eawhtargetCONSTANT;
-    awhBiasParams.targetBetaScaling    = 0;
-    awhBiasParams.targetCutoff         = 0;
-    awhBiasParams.eGrowth              = eawhgrowthLINEAR;
-    awhBiasParams.bUserData            = TRUE;
-    awhBiasParams.errorInitial         = 0.5;
-    awhBiasParams.shareGroup           = 0;
-    awhBiasParams.equilibrateHistogram = FALSE;
-
-    awhParams.numBias                    = 1;
-    awhParams.seed                       = 93471803;
-    awhParams.nstOut                     = 0;
-    awhParams.nstSampleCoord             = 1;
-    awhParams.numSamplesUpdateFreeEnergy = 10;
-    awhParams.ePotential                 = eawhpotentialCONVOLVED;
-    awhParams.shareBiasMultisim          = FALSE;
-
-    return params;
-}
-
 /*! \brief Test fixture for testing Bias updates
  */
 class BiasStateTest : public ::testing::TestWithParam<const char*>
 {
+private:
+    std::unique_ptr<AwhTestParameters> params_;
+
 public:
     std::unique_ptr<BiasState> biasState_; //!< The bias state
 
     BiasStateTest()
     {
-        AwhTestParameters      params        = getAwhTestParameters();
-        const AwhParams&       awhParams     = params.awhParams;
-        const AwhBiasParams&   awhBiasParams = awhParams.awhBiasParams[0];
+        std::vector<std::vector<char>> awhDimParameters;
+        AwhCoordinateProviderType      coordinateProvider = AwhCoordinateProviderType::Pull;
+        double                         diffusion          = 0.1;
+        {
+            int    coordIndex = 0;
+            double origin     = 0.5;
+            double end        = 1.5;
+            double period     = 0;
+            awhDimParameters.emplace_back(awhDimParamSerialized(
+                    coordinateProvider, coordIndex, origin, end, period, diffusion));
+        }
+        {
+            int    coordIndex = 1;
+            double origin     = 0.8;
+            double end        = 1.3;
+            double period     = 0;
+            awhDimParameters.emplace_back(awhDimParamSerialized(
+                    coordinateProvider, coordIndex, origin, end, period, diffusion));
+        }
+        params_                          = std::make_unique<AwhTestParameters>(getAwhTestParameters(
+                AwhHistogramGrowthType::Linear, AwhPotentialType::Convolved, awhDimParameters, true, 1.0, false, 0.5, 0));
+        const AwhParams&       awhParams = params_->awhParams;
+        const AwhBiasParams&   awhBiasParams = awhParams.awhBiasParams(0);
         std::vector<DimParams> dimParams;
-        dimParams.push_back(DimParams::pullDimParams(1.0, 15.0, params.beta));
-        dimParams.push_back(DimParams::pullDimParams(1.0, 15.0, params.beta));
-        BiasGrid   grid(dimParams, awhBiasParams.dimParams);
-        BiasParams biasParams(awhParams, awhBiasParams, dimParams, 1.0, 1.0,
-                              BiasParams::DisableUpdateSkips::no, 1, grid.axis(), 0);
-        biasState_ = std::make_unique<BiasState>(awhBiasParams, 1.0, dimParams, grid);
+        dimParams.push_back(DimParams::pullDimParams(1.0, 15.0, params_->beta));
+        dimParams.push_back(DimParams::pullDimParams(1.0, 15.0, params_->beta));
+        BiasGrid   grid(dimParams, awhBiasParams.dimParams());
+        BiasParams biasParams(
+                awhParams, awhBiasParams, dimParams, 1.0, 1.0, BiasParams::DisableUpdateSkips::no, 1, grid.axis(), 0);
+        biasState_ = std::make_unique<BiasState>(awhBiasParams, 1.0, dimParams, grid, nullptr);
+
+        /* We let the correlation init function set its parameters
+         * to something useful for now.
+         */
+        double blockLength = 0;
+        double mdTimeStep  = 0.002;
+        /* Construct the force correlation object. */
+        CorrelationGrid forceCorrelationGrid = CorrelationGrid(biasState_->points().size(),
+                                                               dimParams.size(),
+                                                               blockLength,
+                                                               CorrelationGrid::BlockLengthMeasure::Time,
+                                                               awhParams.nstSampleCoord() * mdTimeStep);
 
         // Here we initialize the grid point state using the input file
-        std::string filename = gmx::test::TestFileManager::getInputFilePath(GetParam());
-        biasState_->initGridPointState(awhBiasParams, dimParams, grid, biasParams, filename,
-                                       params.awhParams.numBias);
+        std::string filename = gmx::test::TestFileManager::getInputFilePath(GetParam()).string();
+        biasState_->initGridPointState(awhBiasParams,
+                                       dimParams,
+                                       grid,
+                                       biasParams,
+                                       forceCorrelationGrid,
+                                       filename,
+                                       params_->awhParams.numBias());
+    }
+};
 
-        sfree(params.awhParams.awhBiasParams[0].dimParams);
-        sfree(params.awhParams.awhBiasParams);
+/*! \brief Test user input data reading
+ */
+class UserInputTest : public ::testing::TestWithParam<const char*>
+{
+private:
+    std::unique_ptr<AwhTestParameters> params_;
+
+public:
+    std::unique_ptr<BiasGrid>                                      grid_;
+    std::vector<int>                                               gridIndexToDataIndex_;
+    gmx::MultiDimArray<std::vector<double>, gmx::dynamicExtents2D> data_;
+    int                                                            numColumns_;
+    int                                                            numRows_;
+    std::filesystem::path                                          filename_;
+
+    UserInputTest()
+    {
+        std::vector<std::vector<char>> awhDimParameters;
+        AwhCoordinateProviderType      coordinateProvider = AwhCoordinateProviderType::Pull;
+        double                         diffusion          = 0.1;
+        {
+            int    coordIndex = 0;
+            double origin     = 0.5;
+            double end        = 1.5;
+            double period     = 0;
+            awhDimParameters.emplace_back(awhDimParamSerialized(
+                    coordinateProvider, coordIndex, origin, end, period, diffusion));
+        }
+        {
+            int    coordIndex = 1;
+            double origin     = 0.8;
+            double end        = 1.3;
+            double period     = 0;
+            awhDimParameters.emplace_back(awhDimParamSerialized(
+                    coordinateProvider, coordIndex, origin, end, period, diffusion));
+        }
+        {
+            int    coordIndex = 2;
+            double origin     = 0.5;
+            double end        = 1.0;
+            double period     = 0;
+            awhDimParameters.emplace_back(awhDimParamSerialized(
+                    coordinateProvider, coordIndex, origin, end, period, diffusion));
+        }
+        params_                          = std::make_unique<AwhTestParameters>(getAwhTestParameters(
+                AwhHistogramGrowthType::Linear, AwhPotentialType::Convolved, awhDimParameters, true, 1.0, false, 0.5, 0));
+        const AwhParams&       awhParams = params_->awhParams;
+        const AwhBiasParams&   awhBiasParams = awhParams.awhBiasParams(0);
+        std::vector<DimParams> dimParams;
+        dimParams.push_back(DimParams::pullDimParams(1.0, 15.0, params_->beta));
+        dimParams.push_back(DimParams::pullDimParams(1.0, 15.0, params_->beta));
+        dimParams.push_back(DimParams::pullDimParams(1.0, 15.0, params_->beta));
+        grid_                 = std::make_unique<BiasGrid>(dimParams, awhBiasParams.dimParams());
+        gridIndexToDataIndex_ = std::vector<int>(grid_->numPoints());
+
+        // Here we read the input file
+        filename_ = gmx::test::TestFileManager::getInputFilePath(GetParam());
+
+        data_       = readXvgData(filename_);
+        numColumns_ = data_.extent(0);
+        numRows_    = data_.extent(1);
     }
 };
 
@@ -164,7 +209,7 @@ TEST_P(BiasStateTest, InitializesFromFile)
      * The target is (index + 1)/120.
      */
     double msdPmf = 0;
-    for (index i = 0; i < points.ssize(); i++)
+    for (Index i = 0; i < points.ssize(); i++)
     {
         msdPmf += gmx::square(points[i].logPmfSum() - points[0].logPmfSum() + 0.5 * i) / points.size();
         EXPECT_DOUBLE_EQ(points[i].target(), (i + 1) / 120.0);
@@ -173,11 +218,25 @@ TEST_P(BiasStateTest, InitializesFromFile)
     EXPECT_NEAR(0.0, msdPmf, 1e-31);
 }
 
+TEST_P(UserInputTest, ParsesUser3DInput)
+{
+    const BiasGrid& grid = *grid_;
+    std::string     correctFormatMessage;
+    /* Get a data point for each AWH grid point so that they all get data. */
+    EXPECT_NO_THROW(mapGridToDataGrid(
+            &gridIndexToDataIndex_, data_, numRows_, filename_.string(), grid, correctFormatMessage));
+    EXPECT_EQ(numRows_, 30);
+    EXPECT_EQ(numColumns_, 8);
+}
+
+
 // Test that Bias initialization open and reads the correct initialization
 // files and the correct PMF and target distribution is set.
-INSTANTIATE_TEST_CASE_P(WithParameters,
-                        BiasStateTest,
-                        ::testing::Values("pmf_target_format0.xvg", "pmf_target_format1.xvg"));
+INSTANTIATE_TEST_SUITE_P(WithParameters,
+                         BiasStateTest,
+                         ::testing::Values("pmf_target_format0.xvg", "pmf_target_format1.xvg"));
+
+INSTANTIATE_TEST_SUITE_P(WithParameters, UserInputTest, ::testing::Values("pmf_target_format2.xvg"));
 
 } // namespace test
 } // namespace gmx

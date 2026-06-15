@@ -1,13 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
- * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2016,2017 by the GROMACS development team.
- * Copyright (c) 2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 1991- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -21,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -30,55 +26,17 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 #ifndef GMX_MATH_UTILITIES_H
 #define GMX_MATH_UTILITIES_H
 
-#include <limits.h>
-
+#include <climits>
 #include <cmath>
-
-#include "gromacs/utility/basedefinitions.h"
-#include "gromacs/utility/real.h"
-
-#ifndef M_PI
-#    define M_PI 3.14159265358979323846
-#endif
-
-#ifndef M_PI_2
-#    define M_PI_2 1.57079632679489661923
-#endif
-
-#ifndef M_2PI
-#    define M_2PI 6.28318530717958647692
-#endif
-
-#ifndef M_SQRT2
-#    define M_SQRT2 sqrt(2.0)
-#endif
-
-#ifndef M_1_PI
-#    define M_1_PI 0.31830988618379067154
-#endif
-
-#ifndef M_FLOAT_1_SQRTPI /* used in GPU kernels */
-/* 1.0 / sqrt(M_PI) */
-#    define M_FLOAT_1_SQRTPI 0.564189583547756f
-#endif
-
-#ifndef M_1_SQRTPI
-/* 1.0 / sqrt(M_PI) */
-#    define M_1_SQRTPI 0.564189583547756
-#endif
-
-#ifndef M_2_SQRTPI
-/* 2.0 / sqrt(M_PI) */
-#    define M_2_SQRTPI 1.128379167095513
-#endif
+#include <cstdint>
 
 /*! \brief Enum to select safe or highly unsafe (faster) math functions.
  *
@@ -139,7 +97,7 @@ bool gmx_numzero(double a);
  *
  * \return False iff overflow occurred
  */
-gmx_bool check_int_multiply_for_overflow(int64_t a, int64_t b, int64_t* result);
+bool check_int_multiply_for_overflow(int64_t a, int64_t b, int64_t* result);
 
 /*! \brief Enable floating-point exceptions if supported on OS
  *
@@ -156,5 +114,20 @@ int gmx_feenableexcept();
  * \returns 0 if successful in disabling exceptions, anything else in case of failure/unsupported OS.
  */
 int gmx_fedisableexcept();
+
+/*! \brief Return true if the current build should enable floating-point exceptions by default.
+ *
+ * Currently, it returns true unless any of the following conditions are met:
+ * - release build,
+ * - SYCL build (Intel IGC, at least 1.0.5964, raises FP exceptions in JIT compilation),
+ * - - See https://github.com/intel/intel-graphics-compiler/issues/164
+ * - compilers with known buggy FP exception support (clang with any optimization)
+ *   or suspected buggy FP exception support (gcc 7.* with optimization).
+ *
+ * Note that this function does not check whether the build/OS supports FP exceptions.
+ *
+ * \returns true if we should enable FP exceptions by default.
+ */
+bool gmxShouldEnableFPExceptions();
 
 #endif

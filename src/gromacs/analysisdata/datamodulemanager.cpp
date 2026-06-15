@@ -1,11 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2010-2018, The GROMACS development team.
- * Copyright (c) 2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2010- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -19,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -28,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \internal \file
  * \brief
@@ -74,13 +72,12 @@ public:
     {
         //! Initializes the module information.
         explicit ModuleInfo(AnalysisDataModulePointer module) :
-            module(std::move(module)),
-            bParallel(false)
+            module_(std::move(module)), bParallel(false)
         {
         }
 
         //! Pointer to the actual module.
-        AnalysisDataModulePointer module;
+        AnalysisDataModulePointer module_;
         //! Whether the module supports parallel processing.
         bool bParallel;
     };
@@ -134,7 +131,7 @@ public:
      * calls the notification functions in \p module as if the module had
      * been registered to the data object when the data was added.
      */
-    void presentData(AbstractAnalysisData* data, IAnalysisDataModule* module);
+    void presentData(AbstractAnalysisData* data, IAnalysisDataModule* module) const;
 
     //! List of modules added to the data.
     ModuleList modules_;
@@ -216,7 +213,7 @@ void AnalysisDataModuleManager::Impl::checkModuleProperties(const IAnalysisDataM
     }
 }
 
-void AnalysisDataModuleManager::Impl::presentData(AbstractAnalysisData* data, IAnalysisDataModule* module)
+void AnalysisDataModuleManager::Impl::presentData(AbstractAnalysisData* data, IAnalysisDataModule* module) const
 {
     if (state_ == eNotStarted)
     {
@@ -226,7 +223,7 @@ void AnalysisDataModuleManager::Impl::presentData(AbstractAnalysisData* data, IA
     module->dataStarted(data);
     const bool bCheckMissing =
             bAllowMissing_ && ((module->flags() & IAnalysisDataModule::efAllowMissing) == 0);
-    for (int i = 0; i < data->frameCount(); ++i)
+    for (size_t i = 0; i < data->frameCount(); ++i)
     {
         AnalysisDataFrameRef frame = data->getDataFrame(i);
         GMX_RELEASE_ASSERT(frame.isValid(), "Invalid data frame returned");
@@ -267,7 +264,7 @@ void AnalysisDataModuleManager::dataPropertyAboutToChange(DataProperty property,
         Impl::ModuleList::const_iterator i;
         for (i = impl_->modules_.begin(); i != impl_->modules_.end(); ++i)
         {
-            impl_->checkModuleProperty(*i->module, property, bSet);
+            impl_->checkModuleProperty(*i->module_, property, bSet);
         }
         impl_->bDataProperty_[property] = bSet;
     }
@@ -310,7 +307,7 @@ void AnalysisDataModuleManager::notifyDataStart(AbstractAnalysisData* data)
 {
     GMX_RELEASE_ASSERT(impl_->state_ == Impl::eNotStarted,
                        "notifyDataStart() called more than once");
-    for (int d = 0; d < data->dataSetCount(); ++d)
+    for (size_t d = 0; d < data->dataSetCount(); ++d)
     {
         GMX_RELEASE_ASSERT(data->columnCount(d) > 0, "Data column count is not set");
     }
@@ -324,8 +321,8 @@ void AnalysisDataModuleManager::notifyDataStart(AbstractAnalysisData* data)
         // This should not fail, since addModule() and
         // dataPropertyAboutToChange() already do the checks, but kept here to
         // catch potential bugs (perhaps it would be best to assert on failure).
-        impl_->checkModuleProperties(*i->module);
-        i->module->dataStarted(data);
+        impl_->checkModuleProperties(*i->module_);
+        i->module_->dataStarted(data);
     }
 }
 
@@ -335,7 +332,7 @@ void AnalysisDataModuleManager::notifyParallelDataStart(AbstractAnalysisData*   
 {
     GMX_RELEASE_ASSERT(impl_->state_ == Impl::eNotStarted,
                        "notifyDataStart() called more than once");
-    for (int d = 0; d < data->dataSetCount(); ++d)
+    for (size_t d = 0; d < data->dataSetCount(); ++d)
     {
         GMX_RELEASE_ASSERT(data->columnCount(d) > 0, "Data column count is not set");
     }
@@ -349,8 +346,8 @@ void AnalysisDataModuleManager::notifyParallelDataStart(AbstractAnalysisData*   
         // This should not fail, since addModule() and
         // dataPropertyAboutToChange() already do the checks, but kept here to
         // catch potential bugs (perhaps it would be best to assert on failure).
-        impl_->checkModuleProperties(*i->module);
-        i->bParallel = i->module->parallelDataStarted(data, options);
+        impl_->checkModuleProperties(*i->module_);
+        i->bParallel = i->module_->parallelDataStarted(data, options);
         if (i->bParallel)
         {
             impl_->bParallelModules_ = true;
@@ -376,7 +373,7 @@ void AnalysisDataModuleManager::notifyFrameStart(const AnalysisDataFrameHeader& 
         {
             if (!i->bParallel)
             {
-                i->module->frameStarted(header);
+                i->module_->frameStarted(header);
             }
         }
     }
@@ -391,7 +388,7 @@ void AnalysisDataModuleManager::notifyParallelFrameStart(const AnalysisDataFrame
         {
             if (i->bParallel)
             {
-                i->module->frameStarted(header);
+                i->module_->frameStarted(header);
             }
         }
     }
@@ -419,7 +416,7 @@ void AnalysisDataModuleManager::notifyPointsAdd(const AnalysisDataPointSetRef& p
         {
             if (!i->bParallel)
             {
-                i->module->pointsAdded(points);
+                i->module_->pointsAdded(points);
             }
         }
     }
@@ -444,7 +441,7 @@ void AnalysisDataModuleManager::notifyParallelPointsAdd(const AnalysisDataPointS
         {
             if (i->bParallel)
             {
-                i->module->pointsAdded(points);
+                i->module_->pointsAdded(points);
             }
         }
     }
@@ -467,14 +464,14 @@ void AnalysisDataModuleManager::notifyFrameFinish(const AnalysisDataFrameHeader&
         {
             if (!i->bParallel)
             {
-                i->module->frameFinished(header);
+                i->module_->frameFinished(header);
             }
         }
     }
     Impl::ModuleList::const_iterator i;
     for (i = impl_->modules_.begin(); i != impl_->modules_.end(); ++i)
     {
-        i->module->frameFinishedSerial(header.index());
+        i->module_->frameFinishedSerial(header.index());
     }
 }
 
@@ -488,7 +485,7 @@ void AnalysisDataModuleManager::notifyParallelFrameFinish(const AnalysisDataFram
         {
             if (i->bParallel)
             {
-                i->module->frameFinished(header);
+                i->module_->frameFinished(header);
             }
         }
     }
@@ -503,7 +500,7 @@ void AnalysisDataModuleManager::notifyDataFinish() const
     Impl::ModuleList::const_iterator i;
     for (i = impl_->modules_.begin(); i != impl_->modules_.end(); ++i)
     {
-        i->module->dataFinished();
+        i->module_->dataFinished();
     }
 }
 

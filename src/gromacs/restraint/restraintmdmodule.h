@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2018- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 
 #ifndef GROMACS_RESTRAINTMDMODULE_H
@@ -45,6 +44,9 @@
  * \ingroup module_restraint
  */
 
+#include <memory>
+#include <vector>
+
 #include "gromacs/mdtypes/imdmodule.h"
 #include "gromacs/restraint/restraintpotential.h"
 
@@ -53,7 +55,10 @@ namespace gmx
 
 // Forward declaration to allow opaque pointer to library internal class.
 class RestraintMDModuleImpl;
-struct MdModulesNotifier;
+struct MDModulesNotifiers;
+class ForceProviders;
+class IMDOutputProvider;
+class IMdpOptionProvider;
 
 /*! \libinternal \ingroup module_restraint
  * \brief MDModule wrapper for Restraint implementations.
@@ -88,6 +93,9 @@ public:
     static std::unique_ptr<RestraintMDModule> create(std::shared_ptr<gmx::IRestraintPotential> restraint,
                                                      const std::vector<int>& sites);
 
+    //! The name of the module
+    static constexpr std::string_view sc_name = "restraint-potential";
+
     /*!
      * \brief Implement IMDModule interface
      *
@@ -115,9 +123,11 @@ public:
     void initForceProviders(ForceProviders* forceProviders) override;
 
     //! Subscribe to simulation setup notifications
-    void subscribeToSimulationSetupNotifications(MdModulesNotifier* notifier) override;
+    void subscribeToSimulationSetupNotifications(MDModulesNotifiers* notifiers) override;
+    //! Subscribe to simulation run notifications
+    void subscribeToSimulationRunNotifications(MDModulesNotifiers* notifiers) override;
     //! Subscribe to pre processing notifications
-    void subscribeToPreProcessingNotifications(MdModulesNotifier* notifier) override;
+    void subscribeToPreProcessingNotifications(MDModulesNotifiers* notifiers) override;
 
 private:
     /*!

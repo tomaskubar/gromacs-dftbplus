@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2014,2015,2018,2019, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2014- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,22 +26,28 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 #include "gmxpre.h"
 
 #include <cmath>
 #include <cstdint>
 
+#include <limits>
+#include <string>
 #include <vector>
 
+#include <gtest/gtest.h>
+
+#include "gromacs/math/units.h"
 #include "gromacs/math/utilities.h"
 #include "gromacs/options/basicoptions.h"
 #include "gromacs/simd/simd.h"
 #include "gromacs/simd/simd_math.h"
+#include "gromacs/utility/real.h"
 
 #include "simd4.h"
 
@@ -89,8 +94,9 @@ TEST_F(Simd4MathTest, invsqrt)
     const real x1 = std::numeric_limits<float>::max();
     const real x2 = M_PI;
 
-    GMX_EXPECT_SIMD4_REAL_NEAR(setSimd4RealFrom3R(1.0 / sqrt(x0), 1.0 / sqrt(x1), 1.0 / sqrt(x2)),
-                               invsqrt(setSimd4RealFrom3R(x0, x1, x2)));
+    GMX_EXPECT_SIMD4_REAL_NEAR(
+            setSimd4RealFrom3R(1.0 / std::sqrt(x0), 1.0 / std::sqrt(x1), 1.0 / std::sqrt(x2)),
+            invsqrt(setSimd4RealFrom3R(x0, x1, x2)));
 }
 
 TEST_F(Simd4MathTest, invsqrtSingleAccuracy)
@@ -102,8 +108,9 @@ TEST_F(Simd4MathTest, invsqrtSingleAccuracy)
     /* Increase the allowed error by the difference between the actual precision and single */
     setUlpTolSingleAccuracy(ulpTol_);
 
-    GMX_EXPECT_SIMD4_REAL_NEAR(setSimd4RealFrom3R(1.0 / sqrt(x0), 1.0 / sqrt(x1), 1.0 / sqrt(x2)),
-                               invsqrtSingleAccuracy(setSimd4RealFrom3R(x0, x1, x2)));
+    GMX_EXPECT_SIMD4_REAL_NEAR(
+            setSimd4RealFrom3R(1.0 / std::sqrt(x0), 1.0 / std::sqrt(x1), 1.0 / std::sqrt(x2)),
+            invsqrtSingleAccuracy(setSimd4RealFrom3R(x0, x1, x2)));
 }
 
 /*! \} */

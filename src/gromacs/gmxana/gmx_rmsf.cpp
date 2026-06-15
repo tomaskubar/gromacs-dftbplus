@@ -1,13 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
- * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2016,2017 by the GROMACS development team.
- * Copyright (c) 2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 1991- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -21,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -30,20 +26,27 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 #include "gmxpre.h"
 
 #include <cassert>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 
+#include <array>
+#include <filesystem>
+#include <string>
+
+#include "gromacs/commandline/filenm.h"
 #include "gromacs/commandline/pargs.h"
 #include "gromacs/commandline/viewit.h"
 #include "gromacs/fileio/confio.h"
+#include "gromacs/fileio/filetypes.h"
 #include "gromacs/fileio/pdbio.h"
 #include "gromacs/fileio/trxio.h"
 #include "gromacs/fileio/xvgr.h"
@@ -52,15 +55,24 @@
 #include "gromacs/linearalgebra/eigensolver.h"
 #include "gromacs/math/do_fit.h"
 #include "gromacs/math/functions.h"
+#include "gromacs/math/units.h"
 #include "gromacs/math/utilities.h"
-#include "gromacs/math/vec.h"
 #include "gromacs/pbcutil/rmpbc.h"
+#include "gromacs/topology/atoms.h"
 #include "gromacs/topology/index.h"
 #include "gromacs/topology/topology.h"
+#include "gromacs/utility/arrayref.h"
 #include "gromacs/utility/arraysize.h"
+#include "gromacs/utility/basedefinitions.h"
 #include "gromacs/utility/cstringutil.h"
 #include "gromacs/utility/futil.h"
+#include "gromacs/utility/real.h"
 #include "gromacs/utility/smalloc.h"
+#include "gromacs/utility/vec.h"
+#include "gromacs/utility/vectypes.h"
+
+enum class PbcType : int;
+struct gmx_output_env_t;
 
 static real find_pdb_bfac(const t_atoms* atoms, t_resinfo* ri, char* atomnm)
 {
@@ -82,7 +94,7 @@ static real find_pdb_bfac(const t_atoms* atoms, t_resinfo* ri, char* atomnm)
     if (i == atoms->nr)
     {
         fprintf(stderr, "\rCan not find %s%d-%s in pdbfile\n", rresnm, ri->nr, atomnm);
-        fflush(stderr);
+        std::fflush(stderr);
         return 0.0;
     }
 
@@ -212,7 +224,7 @@ int gmx_rmsf(int argc, char* argv[])
         "respect to the reference structure is calculated.[PAR]",
         "With the option [TT]-aniso[tt], [THISMODULE] will compute anisotropic",
         "temperature factors and then it will also output average coordinates",
-        "and a [REF].pdb[ref] file with ANISOU records (corresonding to the [TT]-oq[tt]",
+        "and a [REF].pdb[ref] file with ANISOU records (corresponding to the [TT]-oq[tt]",
         "or [TT]-ox[tt] option). Please note that the U values",
         "are orientation-dependent, so before comparison with experimental data",
         "you should verify that you fit to the experimental coordinates.[PAR]",
@@ -227,16 +239,16 @@ int gmx_rmsf(int argc, char* argv[])
     static gmx_bool bRes = FALSE, bAniso = FALSE, bFit = TRUE;
     t_pargs         pargs[] = {
         { "-res", FALSE, etBOOL, { &bRes }, "Calculate averages for each residue" },
-        { "-aniso", FALSE, etBOOL, { &bAniso }, "Compute anisotropic termperature factors" },
+        { "-aniso", FALSE, etBOOL, { &bAniso }, "Compute anisotropic temperature factors" },
         { "-fit",
-          FALSE,
-          etBOOL,
-          { &bFit },
-          "Do a least squares superposition before computing RMSF. Without this you must "
-          "make sure that the reference structure and the trajectory match." }
+                  FALSE,
+                  etBOOL,
+                  { &bFit },
+                  "Do a least squares superposition before computing RMSF. Without this you must "
+                          "make sure that the reference structure and the trajectory match." }
     };
     int  natom;
-    int  i, m, teller = 0;
+    int  i, m;
     real t, *w_rls;
 
     t_topology top;
@@ -269,7 +281,7 @@ int gmx_rmsf(int argc, char* argv[])
 
     gmx_output_env_t* oenv;
 
-    const char* leg[2] = { "MD", "X-Ray" };
+    std::array<std::string, 2> leg = { "MD", "X-Ray" };
 
     t_filenm fnm[] = { { efTRX, "-f", nullptr, ffREAD },     { efTPS, nullptr, nullptr, ffREAD },
                        { efNDX, nullptr, nullptr, ffOPTRD }, { efPDB, "-q", nullptr, ffOPTRD },
@@ -278,8 +290,8 @@ int gmx_rmsf(int argc, char* argv[])
                        { efXVG, "-oc", "correl", ffOPTWR },  { efLOG, "-dir", "rmsf", ffOPTWR } };
 #define NFILE asize(fnm)
 
-    if (!parse_common_args(&argc, argv, PCA_CAN_TIME | PCA_CAN_VIEW, NFILE, fnm, asize(pargs),
-                           pargs, asize(desc), desc, 0, nullptr, &oenv))
+    if (!parse_common_args(
+                &argc, argv, PCA_CAN_TIME | PCA_CAN_VIEW, NFILE, fnm, asize(pargs), pargs, asize(desc), desc, 0, nullptr, &oenv))
     {
         return 0;
     }
@@ -353,13 +365,12 @@ int gmx_rmsf(int argc, char* argv[])
     }
 
     /* Now read the trj again to compute fluctuations */
-    teller = 0;
     do
     {
         if (bFit)
         {
             /* Remove periodic boundary */
-            gmx_rmpbc(gpbc, natom, box, x);
+            gmx_rmpbc_apply(gpbc, natom, box, x);
 
             /* Set center of mass to zero */
             sub_xcm(x, isize, index, top.atoms.atom, xcm, FALSE);
@@ -395,7 +406,6 @@ int gmx_rmsf(int argc, char* argv[])
             }
         }
         count += 1.0;
-        teller++;
     } while (read_next_x(oenv, status, &t, x, box));
     close_trx(status);
 
@@ -485,19 +495,21 @@ int gmx_rmsf(int argc, char* argv[])
     {
         bfac = 8.0 * M_PI * M_PI / 3.0 * 100;
         fp = xvgropen(ftp2fn(efXVG, NFILE, fnm), "B-Factors", label, "(A\\b\\S\\So\\N\\S2\\N)", oenv);
-        xvgr_legend(fp, 2, leg, oenv);
+        xvgrLegend(fp, leg, oenv);
         for (i = 0; (i < isize); i++)
         {
             if (!bRes || i + 1 == isize
                 || top.atoms.atom[index[i]].resind != top.atoms.atom[index[i + 1]].resind)
             {
                 resind   = top.atoms.atom[index[i]].resind;
-                pdb_bfac = find_pdb_bfac(pdbatoms, &top.atoms.resinfo[resind],
-                                         *(top.atoms.atomname[index[i]]));
+                pdb_bfac = find_pdb_bfac(
+                        pdbatoms, &top.atoms.resinfo[resind], *(top.atoms.atomname[index[i]]));
 
-                fprintf(fp, "%5d  %10.5f  %10.5f\n",
+                fprintf(fp,
+                        "%5d  %10.5f  %10.5f\n",
                         bRes ? top.atoms.resinfo[top.atoms.atom[index[i]].resind].nr : index[i] + 1,
-                        rmsf[i] * bfac, pdb_bfac);
+                        rmsf[i] * bfac,
+                        pdb_bfac);
             }
         }
         xvgrclose(fp);
@@ -510,7 +522,8 @@ int gmx_rmsf(int argc, char* argv[])
             if (!bRes || i + 1 == isize
                 || top.atoms.atom[index[i]].resind != top.atoms.atom[index[i + 1]].resind)
             {
-                fprintf(fp, "%5d %8.4f\n",
+                fprintf(fp,
+                        "%5d %8.4f\n",
                         bRes ? top.atoms.resinfo[top.atoms.atom[index[i]].resind].nr : index[i] + 1,
                         std::sqrt(rmsf[i]));
             }
@@ -540,7 +553,8 @@ int gmx_rmsf(int argc, char* argv[])
             if (!bRes || i + 1 == isize
                 || top.atoms.atom[index[i]].resind != top.atoms.atom[index[i + 1]].resind)
             {
-                fprintf(fp, "%5d %8.4f\n",
+                fprintf(fp,
+                        "%5d %8.4f\n",
                         bRes ? top.atoms.resinfo[top.atoms.atom[index[i]].resind].nr : index[i] + 1,
                         std::sqrt(rmsf[i]));
             }
@@ -555,8 +569,8 @@ int gmx_rmsf(int argc, char* argv[])
         {
             rvec_inc(pdbx[index[i]], xcm);
         }
-        write_sto_conf_indexed(opt2fn("-oq", NFILE, fnm), title, pdbatoms, pdbx, nullptr, pbcType,
-                               pdbbox, isize, index);
+        write_sto_conf_indexed(
+                opt2fn("-oq", NFILE, fnm), title, pdbatoms, pdbx, nullptr, pbcType, pdbbox, isize, index);
     }
     if (opt2bSet("-ox", NFILE, fnm))
     {
@@ -570,8 +584,8 @@ int gmx_rmsf(int argc, char* argv[])
             }
         }
         /* Write a .pdb file with B-factors and optionally anisou records */
-        write_sto_conf_indexed(opt2fn("-ox", NFILE, fnm), title, pdbatoms, bFactorX, nullptr,
-                               pbcType, pdbbox, isize, index);
+        write_sto_conf_indexed(
+                opt2fn("-ox", NFILE, fnm), title, pdbatoms, bFactorX, nullptr, pbcType, pdbbox, isize, index);
         sfree(bFactorX);
     }
     if (bAniso)

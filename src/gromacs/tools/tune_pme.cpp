@@ -1,11 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2009-2018, The GROMACS development team.
- * Copyright (c) 2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2009- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -19,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -28,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 #include "gmxpre.h"
 
@@ -39,14 +37,25 @@
 
 #include "config.h"
 
+#include <cinttypes>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
 
 #include <algorithm>
+#include <filesystem>
 #include <numeric>
 #include <string>
+
+#include "gromacs/commandline/filenm.h"
+#include "gromacs/fileio/filetypes.h"
+#include "gromacs/fileio/oenv.h"
+#include "gromacs/math/functions.h"
+#include "gromacs/utility/basedefinitions.h"
+#include "gromacs/utility/real.h"
+#include "gromacs/utility/vectypes.h"
 
 #ifdef HAVE_SYS_TIME_H
 #    include <sys/time.h>
@@ -58,9 +67,7 @@
 #include "gromacs/fileio/checkpoint.h"
 #include "gromacs/fileio/tpxio.h"
 #include "gromacs/math/utilities.h"
-#include "gromacs/math/vec.h"
 #include "gromacs/mdlib/perf_est.h"
-#include "gromacs/mdtypes/commrec.h"
 #include "gromacs/mdtypes/inputrec.h"
 #include "gromacs/mdtypes/md_enums.h"
 #include "gromacs/mdtypes/state.h"
@@ -77,6 +84,9 @@
 #include "gromacs/utility/path.h"
 #include "gromacs/utility/smalloc.h"
 #include "gromacs/utility/stringutil.h"
+#include "gromacs/utility/vec.h"
+
+struct gmx_output_env_t;
 
 /* Enum for situations that can occur during log file parsing, the
  * corresponding string entries can be found in do_the_tests() in
@@ -93,7 +103,6 @@ enum
     eParselogTPXVersion,
     eParselogNotParallel,
     eParselogLargePrimeFactor,
-    eParselogMismatchOfNumberOfPPRanksAndAvailableGPUs,
     eParselogGpuProblem,
     eParselogFatal,
     eParselogNr
@@ -115,7 +124,7 @@ typedef struct
 } t_perf;
 
 
-typedef struct
+struct PmeTuneInputs
 {
     int     nr_inputfiles;  /* The number of tpr and mdp input files */
     int64_t orig_sim_steps; /* Number of steps to be done in the real simulation */
@@ -125,7 +134,7 @@ typedef struct
     real*   rlist;          /* Neighbourlist cutoff radius */
     int *   nkx, *nky, *nkz;
     real *  fsx, *fsy, *fsz; /* Fourierspacing in x,y,z dimension */
-} t_inputinfo;
+};
 
 
 static void sep_line(FILE* fp)
@@ -135,9 +144,9 @@ static void sep_line(FILE* fp)
 
 
 /* Wrapper for system calls */
-static int gmx_system_call(char* command)
+static int gmx_system_call(const char* command)
 {
-    return (system(command));
+    return (std::system(command));
 }
 
 
@@ -161,7 +170,7 @@ static void remove_if_exists(const char* fn)
     if (gmx_fexist(fn))
     {
         fprintf(stdout, "Deleting %s\n", fn);
-        remove(fn);
+        std::remove(fn);
     }
 }
 
@@ -172,14 +181,14 @@ static void finalize(const char* fn_out)
     FILE* fp;
 
 
-    fp = fopen(fn_out, "r");
+    fp = std::fopen(fn_out, "r");
     fprintf(stdout, "\n\n");
 
-    while (fgets(buf, STRLEN - 1, fp) != nullptr)
+    while (std::fgets(buf, STRLEN - 1, fp) != nullptr)
     {
         fprintf(stdout, "%s", buf);
     }
-    fclose(fp);
+    std::fclose(fp);
     fprintf(stdout, "\n\n");
 }
 
@@ -223,7 +232,7 @@ static int parse_logfile(const char* logfile,
         return eParselogNotFound;
     }
 
-    fp                            = fopen(logfile, "r");
+    fp                            = std::fopen(logfile, "r");
     perfdata->PME_f_load[test_nr] = -1.0;
     perfdata->guessPME            = -1;
 
@@ -233,7 +242,7 @@ static int parse_logfile(const char* logfile,
         iFound = eFoundDDStr; /* Skip some case statements */
     }
 
-    while (fgets(line, STRLEN, fp) != nullptr)
+    while (std::fgets(line, STRLEN, fp) != nullptr)
     {
         /* Remove leading spaces */
         ltrim(line);
@@ -241,7 +250,7 @@ static int parse_logfile(const char* logfile,
         /* Check for TERM and INT signals from user: */
         if (std::strstr(line, errSIG) != nullptr)
         {
-            fclose(fp);
+            std::fclose(fp);
             cleandata(perfdata, test_nr);
             return eParselogTerm;
         }
@@ -265,7 +274,8 @@ static int parse_logfile(const char* logfile,
                     fprintf(stderr,
                             "WARNING: Time step counters were reset at step %s,\n"
                             "         though they were supposed to be reset at step %s!\n",
-                            dumstring, dumstring2);
+                            dumstring,
+                            dumstring2);
                 }
             }
         }
@@ -277,8 +287,12 @@ static int parse_logfile(const char* logfile,
                 /* Look for domain decomp grid and separate PME nodes: */
                 if (str_starts(line, matchstrdd))
                 {
-                    sscanf(line, "Domain decomposition grid %d x %d x %d, separate PME ranks %d",
-                           &(perfdata->nx), &(perfdata->ny), &(perfdata->nz), &npme);
+                    sscanf(line,
+                           "Domain decomposition grid %d x %d x %d, separate PME ranks %d",
+                           &(perfdata->nx),
+                           &(perfdata->ny),
+                           &(perfdata->nz),
+                           &npme);
                     if (perfdata->nPMEnodes == -1)
                     {
                         perfdata->guessPME = npme;
@@ -293,36 +307,31 @@ static int parse_logfile(const char* logfile,
                 /* Catch a few errors that might have occurred: */
                 else if (str_starts(line, "There is no domain decomposition for"))
                 {
-                    fclose(fp);
+                    std::fclose(fp);
                     return eParselogNoDDGrid;
                 }
-                else if (str_starts(line, "The number of ranks you selected"))
+                else if (str_starts(line, "The number of ranks selected for particle-particle work"))
                 {
-                    fclose(fp);
+                    std::fclose(fp);
                     return eParselogLargePrimeFactor;
                 }
                 else if (str_starts(line, "reading tpx file"))
                 {
-                    fclose(fp);
+                    std::fclose(fp);
                     return eParselogTPXVersion;
                 }
                 else if (str_starts(line, "The -dd or -npme option request a parallel simulation"))
                 {
-                    fclose(fp);
+                    std::fclose(fp);
                     return eParselogNotParallel;
                 }
                 break;
             case eFoundDDStr:
                 /* Even after the "Domain decomposition grid" string was found,
                  * it could be that mdrun had to quit due to some error. */
-                if (str_starts(line, "Incorrect launch configuration: mismatching number of"))
+                if (str_starts(line, "Some of the requested GPUs do not exist"))
                 {
-                    fclose(fp);
-                    return eParselogMismatchOfNumberOfPPRanksAndAvailableGPUs;
-                }
-                else if (str_starts(line, "Some of the requested GPUs do not exist"))
-                {
-                    fclose(fp);
+                    std::fclose(fp);
                     return eParselogGpuProblem;
                 }
                 /* Look for PME mesh/force balance (not necessarily present, though) */
@@ -351,7 +360,7 @@ static int parse_logfile(const char* logfile,
                     ndum = sscanf(line, "%s %f %f %f %f", dumstring, &dum1, &dum2, &dum3, &dum4);
                     /* (ns/day) is the second last entry, depending on whether GMX_DETAILED_PERF_STATS was set in print_perf(), nrnb.c */
                     perfdata->ns_per_day[test_nr] = (ndum == 5) ? dum3 : dum1;
-                    fclose(fp);
+                    std::fclose(fp);
                     if (bResetChecked || presteps == 0)
                     {
                         return eParselogOK;
@@ -366,30 +375,30 @@ static int parse_logfile(const char* logfile,
     } /* while */
 
     /* Close the log file */
-    fclose(fp);
+    std::fclose(fp);
 
     /* Check why there is no performance data in the log file.
      * Did a fatal errors occur? */
     if (gmx_fexist(errfile))
     {
-        fp = fopen(errfile, "r");
-        while (fgets(line, STRLEN, fp) != nullptr)
+        fp = std::fopen(errfile, "r");
+        while (std::fgets(line, STRLEN, fp) != nullptr)
         {
             if (str_starts(line, "Fatal error:"))
             {
-                if (fgets(line, STRLEN, fp) != nullptr)
+                if (std::fgets(line, STRLEN, fp) != nullptr)
                 {
                     fprintf(stderr,
                             "\nWARNING: An error occurred during this benchmark:\n"
                             "%s\n",
                             line);
                 }
-                fclose(fp);
+                std::fclose(fp);
                 cleandata(perfdata, test_nr);
                 return eParselogFatal;
             }
         }
-        fclose(fp);
+        std::fclose(fp);
     }
     else
     {
@@ -405,16 +414,16 @@ static int parse_logfile(const char* logfile,
 }
 
 
-static gmx_bool analyze_data(FILE*        fp,
-                             const char*  fn,
-                             t_perf**     perfdata,
-                             int          nnodes,
-                             int          ntprs,
-                             int          ntests,
-                             int          nrepeats,
-                             t_inputinfo* info,
-                             int*         index_tpr, /* OUT: Nr of mdp file with best settings */
-                             int*         npme_optimal)      /* OUT: Optimal number of PME nodes */
+static gmx_bool analyze_data(FILE*          fp,
+                             const char*    fn,
+                             t_perf**       perfdata,
+                             int            nnodes,
+                             int            ntprs,
+                             int            ntests,
+                             int            nrepeats,
+                             PmeTuneInputs* info,
+                             int*           index_tpr, /* OUT: Nr of mdp file with best settings */
+                             int*           npme_optimal)        /* OUT: Optimal number of PME nodes */
 {
     int      i, j, k;
     int      line = 0, line_win = -1;
@@ -511,8 +520,16 @@ static gmx_bool analyze_data(FILE*        fp,
                     s /= (nrepeats - 1);
                     s = std::sqrt(s);
 
-                    fprintf(fp, "%4d %3d %4d%s %12.3f %12.3f %12.3f %s", line, k, pd->nPMEnodes,
-                            strbuf, pd->Gcycles_Av, s, pd->ns_per_day_Av, str_PME_f_load);
+                    fprintf(fp,
+                            "%4d %3d %4d%s %12.3f %12.3f %12.3f %s",
+                            line,
+                            k,
+                            pd->nPMEnodes,
+                            strbuf,
+                            pd->Gcycles_Av,
+                            s,
+                            pd->ns_per_day_Av,
+                            str_PME_f_load);
                     if (nnodes > 1)
                     {
                         fprintf(fp, "  %3d %3d %3d", pd->nx, pd->ny, pd->nz);
@@ -582,8 +599,7 @@ static gmx_bool analyze_data(FILE*        fp,
 
     if (bRefinedCoul)
     {
-        fprintf(fp, "   New Coulomb radius: %f nm (was %f nm)\n", info->rcoulomb[k_win],
-                info->rcoulomb[0]);
+        fprintf(fp, "   New Coulomb radius: %f nm (was %f nm)\n", info->rcoulomb[k_win], info->rcoulomb[0]);
     }
 
     if (bRefinedVdW)
@@ -593,8 +609,14 @@ static gmx_bool analyze_data(FILE*        fp,
 
     if (bRefinedGrid)
     {
-        fprintf(fp, "   New Fourier grid xyz: %d %d %d (was %d %d %d)\n", info->nkx[k_win],
-                info->nky[k_win], info->nkz[k_win], info->nkx[0], info->nky[0], info->nkz[0]);
+        fprintf(fp,
+                "   New Fourier grid xyz: %d %d %d (was %d %d %d)\n",
+                info->nkx[k_win],
+                info->nky[k_win],
+                info->nkz[k_win],
+                info->nkx[0],
+                info->nky[0],
+                info->nkz[0]);
     }
 
     if (bCanUseOrigTPR && ntprs > 1)
@@ -602,7 +624,7 @@ static gmx_bool analyze_data(FILE*        fp,
         fprintf(fp, "and original PME settings.\n");
     }
 
-    fflush(fp);
+    std::fflush(fp);
 
     /* Return the index of the mdp file that showed the highest performance
      * and the optimal number of PME nodes */
@@ -624,7 +646,7 @@ static void get_program_paths(gmx_bool bThreads, char* cmd_mpirun[], char* cmd_m
     /* Get the commands we need to set up the runs from environment variables */
     if (!bThreads)
     {
-        if ((cp = getenv("MPIRUN")) != nullptr)
+        if ((cp = std::getenv("MPIRUN")) != nullptr)
         {
             *cmd_mpirun = gmx_strdup(cp);
         }
@@ -643,7 +665,7 @@ static void get_program_paths(gmx_bool bThreads, char* cmd_mpirun[], char* cmd_m
         /* The use of MDRUN is deprecated, but made available in 5.1
            for backward compatibility. It may be removed in a future
            version. */
-        if ((cp = getenv("MDRUN")) != nullptr)
+        if ((cp = std::getenv("MDRUN")) != nullptr)
         {
             *cmd_mdrun = gmx_strdup(cp);
         }
@@ -672,11 +694,12 @@ static void check_mdrun_works(gmx_bool    bThreads,
     FILE*      fp;
     const char filename[] = "benchtest.log";
 
-    /* This string should always be identical to the one in copyrite.c,
-     * gmx_print_version_info() in the GMX_MPI section */
-    const char match_mpi[]     = "MPI library:        MPI";
+    /* This string should always be identical to the one in
+     * utility/binaryinformation.cpp gmx_print_version_info()
+     * in the GMX_MPI section */
+    const char match_mpi[]     = "MPI library:         MPI";
     const char match_mdrun[]   = "Executable: ";
-    const char match_nogpu[]   = "GPU support:        disabled";
+    const char match_nogpu[]   = "GPU support:         disabled";
     gmx_bool   bMdrun          = FALSE;
     gmx_bool   bMPI            = FALSE;
     gmx_bool   bHaveGpuSupport = TRUE;
@@ -690,8 +713,9 @@ static void check_mdrun_works(gmx_bool    bThreads,
     }
     else
     {
-        snew(command, std::strlen(cmd_mpirun) + std::strlen(cmd_np) + std::strlen(cmd_mdrun)
-                              + std::strlen(filename) + 50);
+        snew(command,
+             std::strlen(cmd_mpirun) + std::strlen(cmd_np) + std::strlen(cmd_mdrun)
+                     + std::strlen(filename) + 50);
         sprintf(command, "%s%s%s -version -maxh 0.001 1> %s 2>&1", cmd_mpirun, cmd_np, cmd_mdrun, filename);
     }
     fprintf(stdout, "Trying '%s' ... ", command);
@@ -704,12 +728,12 @@ static void check_mdrun_works(gmx_bool    bThreads,
         gmx_fatal(FARGS, "Output from test run could not be found.");
     }
 
-    fp = fopen(filename, "r");
+    fp = std::fopen(filename, "r");
     /* We need to scan the whole output file, since sometimes the queuing system
      * also writes stuff to stdout/err */
-    while (!feof(fp))
+    while (!std::feof(fp))
     {
-        cp = fgets(line, STRLEN, fp);
+        cp = std::fgets(line, STRLEN, fp);
         if (cp != nullptr)
         {
             if (str_starts(line, match_mdrun))
@@ -726,7 +750,7 @@ static void check_mdrun_works(gmx_bool    bThreads,
             }
         }
     }
-    fclose(fp);
+    std::fclose(fp);
 
     if (bThreads)
     {
@@ -764,7 +788,7 @@ static void check_mdrun_works(gmx_bool    bThreads,
     fprintf(stdout, "passed.\n");
 
     /* Clean up ... */
-    remove(filename);
+    std::remove(filename);
     sfree(command);
 }
 
@@ -800,8 +824,9 @@ static void launch_simulation(gmx_bool    bLaunch,          /* Should the simula
 
     /* Make enough space for the system call command,
      * (200 extra chars for -npme ... etc. options should suffice): */
-    snew(command, std::strlen(cmd_mpirun) + std::strlen(cmd_mdrun) + std::strlen(cmd_np)
-                          + std::strlen(args_for_mdrun) + std::strlen(simulation_tpr) + 200);
+    snew(command,
+         std::strlen(cmd_mpirun) + std::strlen(cmd_mdrun) + std::strlen(cmd_np)
+                 + std::strlen(args_for_mdrun) + std::strlen(simulation_tpr) + 200);
 
     auto cmd_gpu_ids = make_gpu_id_command_line(eligible_gpu_ids);
 
@@ -809,26 +834,38 @@ static void launch_simulation(gmx_bool    bLaunch,          /* Should the simula
      * of the command line string */
     if (bThreads)
     {
-        sprintf(command, "%s%s-npme %d -s %s %s %s", cmd_mdrun, cmd_np, nPMEnodes, simulation_tpr,
-                args_for_mdrun, cmd_gpu_ids.c_str());
+        sprintf(command,
+                "%s%s-npme %d -s %s %s %s",
+                cmd_mdrun,
+                cmd_np,
+                nPMEnodes,
+                simulation_tpr,
+                args_for_mdrun,
+                cmd_gpu_ids.c_str());
     }
     else
     {
-        sprintf(command, "%s%s%s -npme %d -s %s %s %s", cmd_mpirun, cmd_np, cmd_mdrun, nPMEnodes,
-                simulation_tpr, args_for_mdrun, cmd_gpu_ids.c_str());
+        sprintf(command,
+                "%s%s%s -npme %d -s %s %s %s",
+                cmd_mpirun,
+                cmd_np,
+                cmd_mdrun,
+                nPMEnodes,
+                simulation_tpr,
+                args_for_mdrun,
+                cmd_gpu_ids.c_str());
     }
 
-    fprintf(fp, "%s this command line to launch the simulation:\n\n%s",
-            bLaunch ? "Using" : "Please use", command);
+    fprintf(fp, "%s this command line to launch the simulation:\n\n%s", bLaunch ? "Using" : "Please use", command);
     sep_line(fp);
-    fflush(fp);
+    std::fflush(fp);
 
     /* Now the real thing! */
     if (bLaunch)
     {
         fprintf(stdout, "\nLaunching simulation with best parameters now.\nExecuting '%s'", command);
         sep_line(stdout);
-        fflush(stdout);
+        std::fflush(stdout);
         gmx_system_call(command);
     }
 }
@@ -854,16 +891,17 @@ static void modify_PMEsettings(int64_t     simsteps,    /* Set this value as num
     /* Write the tpr file which will be launched */
     sprintf(buf, "Writing optimized simulation file %s with nsteps=%s.\n", fn_sim_tpr, "%" PRId64);
     fprintf(stdout, buf, ir->nsteps);
-    fflush(stdout);
-    write_tpx_state(fn_sim_tpr, ir, &state, &mtop);
+    std::fflush(stdout);
+    write_tpx_state(fn_sim_tpr, ir, &state, mtop);
 }
 
-static gmx_bool can_scale_rvdw(int vdwtype)
+static gmx_bool can_scale_rvdw(VanDerWaalsType vdwtype)
 {
-    return (evdwCUT == vdwtype || evdwPME == vdwtype);
+    return (VanDerWaalsType::Cut == vdwtype || VanDerWaalsType::Pme == vdwtype);
 }
 
-#define EPME_SWITCHED(e) ((e) == eelPMESWITCH || (e) == eelPMEUSERSWITCH)
+#define EPME_SWITCHED(e) \
+    ((e) == CoulombInteractionType::PmeSwitch || (e) == CoulombInteractionType::PmeUserSwitch)
 
 /* Make additional TPR files with more computational load for the
  * direct space processors: */
@@ -874,10 +912,10 @@ static void make_benchmark_tprs(const char* fn_sim_tpr,  /* READ : User-provided
                                 real    rmin,    /* Minimal Coulomb radius                        */
                                 real    rmax,    /* Maximal Coulomb radius                        */
                                 bool bScaleRvdw, /* Scale rvdw along with rcoulomb                */
-                                const int* ntprs,  /* No. of TPRs to write, each with a different
-                                                      rcoulomb and fourierspacing  */
-                                t_inputinfo* info, /* Contains information about mdp file options */
-                                FILE*        fp) /* Write the output here                         */
+                                const int* ntprs,    /* No. of TPRs to write, each with a different
+                                                        rcoulomb and fourierspacing  */
+                                PmeTuneInputs* info, /* Contains information about mdp file options */
+                                FILE* fp) /* Write the output here                         */
 {
     int        i, j, d;
     t_state    state;
@@ -891,8 +929,11 @@ static void make_benchmark_tprs(const char* fn_sim_tpr,  /* READ : User-provided
     real       fourierspacing; /* Basic fourierspacing from tpr          */
 
 
-    sprintf(buf, "Making benchmark tpr file%s with %s time step%s", *ntprs > 1 ? "s" : "",
-            "%" PRId64, benchsteps > 1 ? "s" : "");
+    sprintf(buf,
+            "Making benchmark tpr file%s with %s time step%s",
+            *ntprs > 1 ? "s" : "",
+            "%" PRId64,
+            benchsteps > 1 ? "s" : "");
     fprintf(stdout, buf, benchsteps);
     if (statesteps > 0)
     {
@@ -907,23 +948,31 @@ static void make_benchmark_tprs(const char* fn_sim_tpr,  /* READ : User-provided
     read_tpx_state(fn_sim_tpr, ir, &state, &mtop);
 
     /* Check if some kind of PME was chosen */
-    if (EEL_PME(ir->coulombtype) == FALSE)
+    if (!usingPme(ir->coulombtype))
     {
-        gmx_fatal(FARGS, "Can only do optimizations for simulations with %s electrostatics.",
-                  EELTYPE(eelPME));
+        gmx_fatal(FARGS,
+                  "Can only do optimizations for simulations with %s electrostatics.",
+                  enumValueToString(CoulombInteractionType::Pme));
     }
 
     /* Check if rcoulomb == rlist, which is necessary for plain PME. */
-    if ((ir->cutoff_scheme != ecutsVERLET) && (eelPME == ir->coulombtype) && !(ir->rcoulomb == ir->rlist))
+    if ((ir->cutoff_scheme != CutoffScheme::Verlet)
+        && (CoulombInteractionType::Pme == ir->coulombtype) && !(ir->rcoulomb == ir->rlist))
     {
-        gmx_fatal(FARGS, "%s requires rcoulomb (%f) to be equal to rlist (%f).", EELTYPE(eelPME),
-                  ir->rcoulomb, ir->rlist);
+        gmx_fatal(FARGS,
+                  "%s requires rcoulomb (%f) to be equal to rlist (%f).",
+                  enumValueToString(CoulombInteractionType::Pme),
+                  ir->rcoulomb,
+                  ir->rlist);
     }
     /* For other PME types, rcoulomb is allowed to be smaller than rlist */
     else if (ir->rcoulomb > ir->rlist)
     {
-        gmx_fatal(FARGS, "%s requires rcoulomb (%f) to be equal to or smaller than rlist (%f)",
-                  EELTYPE(ir->coulombtype), ir->rcoulomb, ir->rlist);
+        gmx_fatal(FARGS,
+                  "%s requires rcoulomb (%f) to be equal to or smaller than rlist (%f)",
+                  enumValueToString(ir->coulombtype),
+                  ir->rcoulomb,
+                  ir->rlist);
     }
 
     if (bScaleRvdw && ir->rvdw != ir->rcoulomb)
@@ -980,17 +1029,19 @@ static void make_benchmark_tprs(const char* fn_sim_tpr,  /* READ : User-provided
         fourierspacing = std::max(std::max(info->fsx[0], info->fsy[0]), info->fsz[0]);
     }
 
-    fprintf(stdout, "Calculating PME grid points on the basis of a fourierspacing of %f nm\n",
-            fourierspacing);
+    fprintf(stdout, "Calculating PME grid points on the basis of a fourierspacing of %f nm\n", fourierspacing);
 
     /* For performance comparisons the number of particles is useful to have */
     fprintf(fp, "   Number of particles  : %d\n", mtop.natoms);
 
     /* Print information about settings of which some are potentially modified: */
-    fprintf(fp, "   Coulomb type         : %s\n", EELTYPE(ir->coulombtype));
-    fprintf(fp, "   Grid spacing x y z   : %f %f %f\n", box_size[XX] / ir->nkx,
-            box_size[YY] / ir->nky, box_size[ZZ] / ir->nkz);
-    fprintf(fp, "   Van der Waals type   : %s\n", EVDWTYPE(ir->vdwtype));
+    fprintf(fp, "   Coulomb type         : %s\n", enumValueToString(ir->coulombtype));
+    fprintf(fp,
+            "   Grid spacing x y z   : %f %f %f\n",
+            box_size[XX] / ir->nkx,
+            box_size[YY] / ir->nky,
+            box_size[ZZ] / ir->nkz);
+    fprintf(fp, "   Van der Waals type   : %s\n", enumValueToString(ir->vdwtype));
     if (ir_vdw_switched(ir))
     {
         fprintf(fp, "   rvdw_switch          : %f nm\n", ir->rvdw_switch);
@@ -1044,11 +1095,16 @@ static void make_benchmark_tprs(const char* fn_sim_tpr,  /* READ : User-provided
 
             /* Scale the Fourier grid spacing */
             ir->nkx = ir->nky = ir->nkz = 0;
-            calcFftGrid(nullptr, state.box, fourierspacing * fac, minimalPmeGridSize(ir->pme_order),
-                        &ir->nkx, &ir->nky, &ir->nkz);
+            calcFftGrid(nullptr,
+                        state.box,
+                        fourierspacing * fac,
+                        minimalPmeGridSize(ir->pme_order),
+                        &ir->nkx,
+                        &ir->nky,
+                        &ir->nkz);
 
             /* Adjust other radii since various conditions need to be fulfilled */
-            if (eelPME == ir->coulombtype)
+            if (CoulombInteractionType::Pme == ir->coulombtype)
             {
                 /* plain PME, rcoulomb must be equal to rlist TODO only in the group scheme? */
                 ir->rlist = ir->rcoulomb;
@@ -1061,7 +1117,7 @@ static void make_benchmark_tprs(const char* fn_sim_tpr,  /* READ : User-provided
 
             if (bScaleRvdw && can_scale_rvdw(ir->vdwtype))
             {
-                if (ecutsVERLET == ir->cutoff_scheme || evdwPME == ir->vdwtype)
+                if (CutoffScheme::Verlet == ir->cutoff_scheme || VanDerWaalsType::Pme == ir->vdwtype)
                 {
                     /* With either the Verlet cutoff-scheme or LJ-PME,
                        the van der Waals radius must always equal the
@@ -1089,9 +1145,10 @@ static void make_benchmark_tprs(const char* fn_sim_tpr,  /* READ : User-provided
         info->fsz[j]      = fac * fourierspacing;
 
         /* Write the benchmark tpr file */
-        fn_bench_tprs[j] = gmx_strdup(
-                gmx::Path::concatenateBeforeExtension(fn_sim_tpr, gmx::formatString("_bench%.2d", j))
-                        .c_str());
+        fn_bench_tprs[j] =
+                gmx_strdup(gmx::concatenateBeforeExtension(fn_sim_tpr, gmx::formatString("_bench%.2d", j))
+                                   .string()
+                                   .c_str());
 
         fprintf(stdout, "Writing benchmark tpr %s with nsteps=", fn_bench_tprs[j]);
         fprintf(stdout, "%" PRId64, ir->nsteps);
@@ -1104,7 +1161,7 @@ static void make_benchmark_tprs(const char* fn_sim_tpr,  /* READ : User-provided
             fprintf(stdout, ", unmodified settings\n");
         }
 
-        write_tpx_state(fn_bench_tprs[j], ir, &state, &mtop);
+        write_tpx_state(fn_bench_tprs[j], ir, &state, mtop);
 
         /* Write information about modified tpr settings to log file */
         fprintf(fp, "%4d%10f%10f", j, fac, ir->rcoulomb);
@@ -1134,8 +1191,8 @@ static void make_benchmark_tprs(const char* fn_sim_tpr,  /* READ : User-provided
                 "other input settings were also changed (see table above).\n"
                 "Please check if the modified settings are appropriate.\n");
     }
-    fflush(stdout);
-    fflush(fp);
+    std::fflush(stdout);
+    std::fflush(fp);
 }
 
 
@@ -1146,14 +1203,12 @@ static void cleanup(const t_filenm* fnm, int nfile, int k, int nnodes, int nPMEn
     char        numstring[STRLEN];
     const char* fn = nullptr;
     int         i;
-    const char* opt;
-
 
     fprintf(stdout, "Cleaning up, deleting benchmark temp files ...\n");
 
     for (i = 0; i < nfile; i++)
     {
-        opt = const_cast<char*>(fnm[i].opt);
+        const char* opt = fnm[i].opt;
         if (std::strcmp(opt, "-p") == 0)
         {
             /* do nothing; keep this file */
@@ -1172,7 +1227,7 @@ static void cleanup(const t_filenm* fnm, int nfile, int k, int nnodes, int nPMEn
             {
                 fprintf(stdout, "renaming log file to %s\n", newfilename.c_str());
                 make_backup(newfilename);
-                rename(opt2fn("-bg", nfile, fnm), newfilename.c_str());
+                std::rename(opt2fn("-bg", nfile, fnm), newfilename.c_str());
             }
         }
         else if (std::strcmp(opt, "-err") == 0)
@@ -1193,12 +1248,12 @@ static void cleanup(const t_filenm* fnm, int nfile, int k, int nnodes, int nPMEn
                 {
                     fprintf(stdout, "Saving stderr output in %s\n", newfilename.c_str());
                     make_backup(newfilename);
-                    rename(fn, newfilename.c_str());
+                    std::rename(fn, newfilename.c_str());
                 }
                 else
                 {
                     fprintf(stdout, "Deleting %s\n", fn);
-                    remove(fn);
+                    std::remove(fn);
                 }
             }
         }
@@ -1338,7 +1393,7 @@ static void init_perfdata(t_perf* perfdata[], int ntprs, int datasets, int repea
 
 
 /* Check for errors on mdrun -h */
-static void make_sure_it_runs(char* mdrun_cmd_line, int length, FILE* fp, const t_filenm* fnm, int nfile)
+static void make_sure_it_runs(const char* mdrun_cmd_line, int length, FILE* fp, const t_filenm* fnm, int nfile)
 {
     char *command, *msg;
     int   ret;
@@ -1368,7 +1423,7 @@ static void make_sure_it_runs(char* mdrun_cmd_line, int length, FILE* fp, const 
         sep_line(fp);
         fprintf(fp, "%s", msg);
 
-        exit(ret);
+        std::exit(ret);
     }
     fprintf(stdout, "Benchmarks can be executed!\n");
 
@@ -1430,7 +1485,6 @@ static void do_the_tests(FILE*  fp,                    /* General tune_pme outpu
                                "TPX version conflict!",
                                "mdrun was not started in parallel!",
                                "Number of PP ranks has a prime factor that is too large.",
-                               "The number of PP ranks did not suit the number of GPUs.",
                                "Some GPUs were not detected or are incompatible.",
                                "An error occurred." };
     char        str_PME_f_load[13];
@@ -1471,7 +1525,7 @@ static void do_the_tests(FILE*  fp,                    /* General tune_pme outpu
         fprintf(fp, "\nNo benchmarks done since number of repeats (-r) is 0.\n");
         gmx_ffclose(fp);
         finalize(opt2fn("-p", nfile, fnm));
-        exit(0);
+        std::exit(0);
     }
 
     /* Allocate one dataset for each tpr input file: */
@@ -1501,8 +1555,13 @@ static void do_the_tests(FILE*  fp,                    /* General tune_pme outpu
                  * the -passall (if set) options requires cmd_args_bench to be
                  * at the end of the command line string */
                 snew(pd->mdrun_cmd_line, cmdline_length);
-                sprintf(pd->mdrun_cmd_line, "%s-npme %d -s %s %s %s", cmd_stub, pd->nPMEnodes,
-                        tpr_names[k], cmd_args_bench, cmd_gpu_ids.c_str());
+                sprintf(pd->mdrun_cmd_line,
+                        "%s-npme %d -s %s %s %s",
+                        cmd_stub,
+                        pd->nPMEnodes,
+                        tpr_names[k],
+                        cmd_args_bench,
+                        cmd_gpu_ids.c_str());
 
                 /* To prevent that all benchmarks fail due to a show-stopper argument
                  * on the mdrun command line, we make a quick check first.
@@ -1527,8 +1586,7 @@ static void do_the_tests(FILE*  fp,                    /* General tune_pme outpu
                        do for this check, but it'll be easier to
                        implement that after some refactoring of how
                        the number of MPI ranks is managed. */
-                    sprintf(temporary_cmd_line, "%s-npme 0 -nb cpu -s %s %s", cmd_stub,
-                            tpr_names[k], cmd_args_bench);
+                    sprintf(temporary_cmd_line, "%s-npme 0 -nb cpu -s %s %s", cmd_stub, tpr_names[k], cmd_args_bench);
                     make_sure_it_runs(temporary_cmd_line, cmdline_length, fp, fnm, nfile);
                 }
                 bFirst = FALSE;
@@ -1542,8 +1600,14 @@ static void do_the_tests(FILE*  fp,                    /* General tune_pme outpu
                 {
                     buf[0] = '\0';
                 }
-                fprintf(stdout, "\n=== Progress %2.0f%%, tpr %d/%d, run %d/%d%s:\n",
-                        (100.0 * count) / totaltests, k + 1, nr_tprs, i + 1, *pmeentries, buf);
+                fprintf(stdout,
+                        "\n=== Progress %2.0f%%, tpr %d/%d, run %d/%d%s:\n",
+                        (100.0 * count) / totaltests,
+                        k + 1,
+                        nr_tprs,
+                        i + 1,
+                        *pmeentries,
+                        buf);
                 make_backup(opt2fn("-err", nfile, fnm));
                 sprintf(command, "%s 1> /dev/null 2>%s", pd->mdrun_cmd_line, opt2fn("-err", nfile, fnm));
                 fprintf(stdout, "%s\n", pd->mdrun_cmd_line);
@@ -1551,8 +1615,8 @@ static void do_the_tests(FILE*  fp,                    /* General tune_pme outpu
 
                 /* Collect the performance data from the log file; also check stderr
                  * for fatal errors */
-                ret = parse_logfile(opt2fn("-bg", nfile, fnm), opt2fn("-err", nfile, fnm), pd, nr,
-                                    presteps, cpt_steps, nnodes);
+                ret = parse_logfile(
+                        opt2fn("-bg", nfile, fnm), opt2fn("-err", nfile, fnm), pd, nr, presteps, cpt_steps, nnodes);
                 if ((presteps > 0) && (ret == eParselogResetProblem))
                 {
                     bResetProblem = TRUE;
@@ -1578,14 +1642,20 @@ static void do_the_tests(FILE*  fp,                    /* General tune_pme outpu
                 }
 
                 /* Write the data we got to disk */
-                fprintf(fp, "%4d%s %12.3f %12.3f %s    %s", pd->nPMEnodes, buf, pd->Gcycles[nr],
-                        pd->ns_per_day[nr], str_PME_f_load, ParseLog[ret]);
+                fprintf(fp,
+                        "%4d%s %12.3f %12.3f %s    %s",
+                        pd->nPMEnodes,
+                        buf,
+                        pd->Gcycles[nr],
+                        pd->ns_per_day[nr],
+                        str_PME_f_load,
+                        ParseLog[ret]);
                 if (!(ret == eParselogOK || ret == eParselogNoDDGrid || ret == eParselogNotFound))
                 {
                     fprintf(fp, " Check %s file for problems.", ret == eParselogFatal ? "err" : "log");
                 }
                 fprintf(fp, "\n");
-                fflush(fp);
+                std::fflush(fp);
                 count++;
 
                 /* Do some cleaning up and delete the files we do not need any more */
@@ -1601,8 +1671,8 @@ static void do_the_tests(FILE*  fp,                    /* General tune_pme outpu
                     break;
                 }
             } /* end of repeats loop */
-        }     /* end of -npme loop */
-    }         /* end of tpr file loop */
+        } /* end of -npme loop */
+    } /* end of tpr file loop */
 
     if (bResetProblem)
     {
@@ -1703,7 +1773,9 @@ static void check_input(int             nnodes,
         gmx_fatal(FARGS,
                   "Please choose the Coulomb radii such that rmin <= rmax.\n"
                   "rmin = %g, rmax = %g, actual rcoul from .tpr file = %g\n",
-                  *rmin, *rmax, rcoulomb);
+                  *rmin,
+                  *rmax,
+                  rcoulomb);
     }
     /* Add test scenarios if rmin or rmax were set */
     if (*ntprs <= 2)
@@ -1774,7 +1846,8 @@ static void check_input(int             nnodes,
     {
         fprintf(stderr, "WARNING: steps=");
         fprintf(stderr, "%" PRId64, bench_nsteps);
-        fprintf(stderr, ". Are you sure you want to perform so %s steps for each benchmark?\n",
+        fprintf(stderr,
+                ". Are you sure you want to perform so %s steps for each benchmark?\n",
                 (bench_nsteps < 100) ? "few" : "many");
     }
 
@@ -1805,7 +1878,9 @@ static void check_input(int             nnodes,
             gmx_fatal(FARGS,
                       "Cannot have more than %d PME-only ranks for a total of %d ranks (you chose "
                       "%d).\n",
-                      nnodes / 2, nnodes, npme_fixed);
+                      nnodes / 2,
+                      nnodes,
+                      npme_fixed);
         }
         if ((npme_fixed > 0) && (5 * npme_fixed < nnodes))
         {
@@ -1824,7 +1899,7 @@ static void check_input(int             nnodes,
 
 
 /* Returns TRUE when "opt" is needed at launch time */
-static gmx_bool is_launch_file(char* opt, gmx_bool bSet)
+static gmx_bool is_launch_file(const char* opt, gmx_bool bSet)
 {
     if (0 == std::strncmp(opt, "-swap", 5))
     {
@@ -1844,7 +1919,7 @@ static gmx_bool is_launch_file(char* opt, gmx_bool bSet)
 
 
 /* Returns TRUE when "opt" defines a file which is needed for the benchmarks runs */
-static gmx_bool is_bench_file(char* opt, gmx_bool bSet, gmx_bool bOptional, gmx_bool bIsOutput)
+static gmx_bool is_bench_file(const char* opt, gmx_bool bSet, gmx_bool bOptional, gmx_bool bIsOutput)
 {
     /* Apart from the input .tpr, all files starting with "-b" are for
      * _b_enchmark files exclusively */
@@ -1896,10 +1971,8 @@ create_command_line_snippets(gmx_bool bAppendFiles,
                              char  extra_args[],      /* Add this to the end of the command line */
                              char* deffnm)            /* Default file names, or NULL if not set */
 {
-    int         i;
-    char*       opt;
-    const char* name;
-    char        strbuf[STRLEN];
+    int  i;
+    char strbuf[STRLEN];
 
 
     /* strlen needs at least '\0' as a string: */
@@ -1942,8 +2015,8 @@ create_command_line_snippets(gmx_bool bAppendFiles,
     /********************/
     for (i = 0; i < nfile; i++)
     {
-        opt  = const_cast<char*>(fnm[i].opt);
-        name = opt2fn(opt, nfile, fnm);
+        const char* opt  = fnm[i].opt;
+        const char* name = opt2fn(opt, nfile, fnm);
 
         /* Strbuf contains the options, now let's sort out where we need that */
         sprintf(strbuf, "%s %s ", opt, name);
@@ -2006,9 +2079,9 @@ static float inspect_tpr(int nfile, t_filenm fnm[], real* rcoulomb)
     t_inputrec  irInstance;
     t_inputrec* ir = &irInstance;
     read_tpx_state(opt2fn("-s", nfile, fnm), ir, &state, &mtop);
-    bFree = (efepNO != ir->efep);
-    bNM   = (eiNM == ir->eI);
-    bSwap = (eswapNO != ir->eSwapCoords);
+    bFree = (FreeEnergyPerturbationType::No != ir->efep);
+    bNM   = (IntegrationAlgorithm::NM == ir->eI);
+    bSwap = (SwapType::No != ir->eSwapCoords);
     bTpi  = EI_TPI(ir->eI);
 
     /* Set these output files on the tuning command-line */
@@ -2045,17 +2118,15 @@ static float inspect_tpr(int nfile, t_filenm fnm[], real* rcoulomb)
 
 static void couple_files_options(int nfile, t_filenm fnm[])
 {
-    int      i;
-    gmx_bool bSet, bBench;
-    char*    opt;
-    char     buf[20];
+    int  i;
+    char buf[20];
 
 
     for (i = 0; i < nfile; i++)
     {
-        opt    = const_cast<char*>(fnm[i].opt);
-        bSet   = ((fnm[i].flag & ffSET) != 0);
-        bBench = (0 == std::strncmp(opt, "-b", 2));
+        const char* opt    = fnm[i].opt;
+        const bool  bSet   = ((fnm[i].flag & ffSET) != 0);
+        const bool  bBench = (0 == std::strncmp(opt, "-b", 2));
 
         /* Check optional files */
         /* If e.g. -eo is set, then -beo also needs to be set */
@@ -2089,7 +2160,7 @@ int gmx_tune_pme(int argc, char* argv[])
         "[THISMODULE] needs to call [gmx-mdrun] and so requires that you",
         "specify how to call mdrun with the argument to the [TT]-mdrun[tt]",
         "parameter. Depending how you have built GROMACS, values such as",
-        "'gmx mdrun', 'gmx_d mdrun', or 'mdrun_mpi' might be needed.[PAR]",
+        "'gmx mdrun', 'gmx_d mdrun', or 'gmx_mpi mdrun' might be needed.[PAR]",
         "The program that runs MPI programs can be set in the environment variable",
         "MPIRUN (defaults to 'mpirun'). Note that for certain MPI frameworks,",
         "you need to provide a machine- or hostfile. This can also be passed",
@@ -2178,10 +2249,10 @@ int gmx_tune_pme(int argc, char* argv[])
     /* IDs of GPUs that are eligible for computation */
     char* eligible_gpu_ids = nullptr;
 
-    t_perf**     perfdata = nullptr;
-    t_inputinfo* info;
-    int          i;
-    FILE*        fp;
+    t_perf**       perfdata = nullptr;
+    PmeTuneInputs* info;
+    int            i;
+    FILE*          fp;
 
     /* Print out how long the tuning took */
     double seconds;
@@ -2265,7 +2336,7 @@ int gmx_tune_pme(int argc, char* argv[])
           FALSE,
           etSTR,
           { &cmd_mdrun },
-          "Command line to run a simulation, e.g. 'gmx mdrun' or 'mdrun_mpi'" },
+          "Command line to run a simulation, e.g. 'gmx mdrun' or 'gmx_mpi mdrun'" },
         { "-np",
           FALSE,
           etINT,
@@ -2376,8 +2447,8 @@ int gmx_tune_pme(int argc, char* argv[])
 
     seconds = gmx_gettime();
 
-    if (!parse_common_args(&argc, argv, PCA_NOEXIT_ON_ARGS, NFILE, fnm, asize(pa), pa, asize(desc),
-                           desc, 0, nullptr, &oenv))
+    if (!parse_common_args(
+                &argc, argv, PCA_NOEXIT_ON_ARGS, NFILE, fnm, asize(pa), pa, asize(desc), desc, 0, nullptr, &oenv))
     {
         return 0;
     }
@@ -2438,8 +2509,16 @@ int gmx_tune_pme(int argc, char* argv[])
 
     cmd_np = bbuf;
 
-    create_command_line_snippets(bAppendFiles, bKeepAndNumCPT, bResetCountersHalfWay, presteps,
-                                 NFILE, fnm, &cmd_args_bench, &cmd_args_launch, ExtraArgs, deffnm);
+    create_command_line_snippets(bAppendFiles,
+                                 bKeepAndNumCPT,
+                                 bResetCountersHalfWay,
+                                 presteps,
+                                 NFILE,
+                                 fnm,
+                                 &cmd_args_bench,
+                                 &cmd_args_launch,
+                                 ExtraArgs,
+                                 deffnm);
 
     /* Prepare to use checkpoint file if requested */
     sim_part = 1;
@@ -2460,8 +2539,22 @@ int gmx_tune_pme(int argc, char* argv[])
     fp = gmx_ffopen(opt2fn("-p", NFILE, fnm), "w");
 
     /* Make a quick consistency check of command line parameters */
-    check_input(nnodes, repeats, &ntprs, &rmin, rcoulomb, &rmax, maxPMEfraction, minPMEfraction,
-                npme_fixed, bench_nsteps, fnm, NFILE, sim_part, presteps, asize(pa), pa);
+    check_input(nnodes,
+                repeats,
+                &ntprs,
+                &rmin,
+                rcoulomb,
+                &rmax,
+                maxPMEfraction,
+                minPMEfraction,
+                npme_fixed,
+                bench_nsteps,
+                fnm,
+                NFILE,
+                sim_part,
+                presteps,
+                asize(pa),
+                pa);
 
     /* Determine the maximum and minimum number of PME nodes to test,
      * the actual list of settings is build in do_the_tests(). */
@@ -2597,8 +2690,16 @@ int gmx_tune_pme(int argc, char* argv[])
 
     /* It can be that ntprs is reduced by make_benchmark_tprs if not enough
      * different grids could be found. */
-    make_benchmark_tprs(opt2fn("-s", NFILE, fnm), tpr_names, bench_nsteps + presteps, cpt_steps,
-                        rmin, rmax, bScaleRvdw, &ntprs, info, fp);
+    make_benchmark_tprs(opt2fn("-s", NFILE, fnm),
+                        tpr_names,
+                        bench_nsteps + presteps,
+                        cpt_steps,
+                        rmin,
+                        rmax,
+                        bScaleRvdw,
+                        &ntprs,
+                        info,
+                        fp);
 
     /********************************************************************************/
     /* Main loop over all scenarios we need to test: tpr files, PME nodes, repeats  */
@@ -2608,15 +2709,34 @@ int gmx_tune_pme(int argc, char* argv[])
     {
         GMX_RELEASE_ASSERT(npmevalues_opt[0] != nullptr,
                            "Options inconsistency; npmevalues_opt[0] is NULL");
-        do_the_tests(fp, tpr_names, maxPMEnodes, minPMEnodes, npme_fixed, npmevalues_opt[0], perfdata,
-                     &pmeentries, repeats, nnodes, ntprs, bThreads, cmd_mpirun, cmd_np, cmd_mdrun,
-                     cmd_args_bench, fnm, NFILE, presteps, cpt_steps, bCheck, eligible_gpu_ids);
+        do_the_tests(fp,
+                     tpr_names,
+                     maxPMEnodes,
+                     minPMEnodes,
+                     npme_fixed,
+                     npmevalues_opt[0],
+                     perfdata,
+                     &pmeentries,
+                     repeats,
+                     nnodes,
+                     ntprs,
+                     bThreads,
+                     cmd_mpirun,
+                     cmd_np,
+                     cmd_mdrun,
+                     cmd_args_bench,
+                     fnm,
+                     NFILE,
+                     presteps,
+                     cpt_steps,
+                     bCheck,
+                     eligible_gpu_ids);
 
         fprintf(fp, "\nTuning took%8.1f minutes.\n", (gmx_gettime() - seconds) / 60.0);
 
         /* Analyse the results and give a suggestion for optimal settings: */
-        bKeepTPR = analyze_data(fp, opt2fn("-p", NFILE, fnm), perfdata, nnodes, ntprs, pmeentries,
-                                repeats, info, &best_tpr, &best_npme);
+        bKeepTPR = analyze_data(
+                fp, opt2fn("-p", NFILE, fnm), perfdata, nnodes, ntprs, pmeentries, repeats, info, &best_tpr, &best_npme);
 
         /* Take the best-performing tpr file and enlarge nsteps to original value */
         if (bKeepTPR && !bOverwrite)
@@ -2627,19 +2747,21 @@ int gmx_tune_pme(int argc, char* argv[])
         {
             simulation_tpr = opt2fn("-so", NFILE, fnm);
             modify_PMEsettings(bOverwrite ? (new_sim_nsteps + cpt_steps) : info->orig_sim_steps,
-                               info->orig_init_step, tpr_names[best_tpr], simulation_tpr);
+                               info->orig_init_step,
+                               tpr_names[best_tpr],
+                               simulation_tpr);
         }
 
         /* Let's get rid of the temporary benchmark input files */
         for (i = 0; i < ntprs; i++)
         {
             fprintf(stdout, "Deleting temporary benchmark input file %s\n", tpr_names[i]);
-            remove(tpr_names[i]);
+            std::remove(tpr_names[i]);
         }
 
         /* Now start the real simulation if the user requested it ... */
-        launch_simulation(bLaunch, fp, bThreads, cmd_mpirun, cmd_np, cmd_mdrun, cmd_args_launch,
-                          simulation_tpr, best_npme, eligible_gpu_ids);
+        launch_simulation(
+                bLaunch, fp, bThreads, cmd_mpirun, cmd_np, cmd_mdrun, cmd_args_launch, simulation_tpr, best_npme, eligible_gpu_ids);
     }
     gmx_ffclose(fp);
 

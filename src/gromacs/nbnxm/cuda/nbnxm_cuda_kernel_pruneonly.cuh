@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2016,2017,2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2016- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 
 /*! \internal \file
@@ -47,11 +46,16 @@
 #include "gmxpre.h"
 
 #include "gromacs/gpu_utils/cuda_arch_utils.cuh"
+#include "gromacs/gpu_utils/typecasts_cuda_hip.h"
 #include "gromacs/math/utilities.h"
+#include "gromacs/nbnxm/gpu_types_common.h"
 #include "gromacs/pbcutil/ishift.h"
 
 #include "nbnxm_cuda_kernel_utils.cuh"
 #include "nbnxm_cuda_types.h"
+
+namespace gmx
+{
 
 /* Note that floating-point constants in CUDA code should be suffixed
  * with f (e.g. 0.5f), to stop the compiler producing intermediate
@@ -81,8 +85,8 @@
  *     are not split (much), but the rolling chunks are small;
  *   - with large inputs NTHREAD_Z=1 is 2-3% faster (on CC>=5.0)
  */
-#define NTHREAD_Z (GMX_NBNXN_PRUNE_KERNEL_J4_CONCURRENCY)
-#define THREADS_PER_BLOCK (c_clSize * c_clSize * NTHREAD_Z)
+#define NTHREAD_Z (GMX_NBNXN_PRUNE_KERNEL_JPACKED_CONCURRENCY)
+#define THREADS_PER_BLOCK (c_clusterSize * c_clusterSize * NTHREAD_Z)
 // we want 100% occupancy, so max threads/block
 #define MIN_BLOCKS_PER_MP (GMX_CUDA_MAX_THREADS_PER_MP / THREADS_PER_BLOCK)
 /**@}*/
@@ -96,35 +100,49 @@
  *
  *  Kernel launch parameters:
  *   - #blocks   = #pair lists, blockId = pair list Id
- *   - #threads  = NTHREAD_Z * c_clSize^2
+ *   - #threads  = NTHREAD_Z * c_clusterSize^2
  *   - shmem     = see nbnxn_cuda.cu:calc_shmem_required_prune()
  *
  *   Each thread calculates an i-j atom distance..
  */
 template<bool haveFreshList>
 __launch_bounds__(THREADS_PER_BLOCK, MIN_BLOCKS_PER_MP) __global__
-        void nbnxn_kernel_prune_cuda(const cu_atomdata_t    atdat,
-                                     const NBParamGpu       nbparam,
-                                     const Nbnxm::gpu_plist plist,
-                                     int                    numParts,
-                                     int                    part)
+        void nbnxn_kernel_prune_cuda(NBAtomDataGpu atdat, NBParamGpu nbparam, GpuPairlist plist, int numParts)
 #ifdef FUNCTION_DECLARATION_ONLY
                 ; /* Only do function declaration, omit the function body. */
 
 // Add extern declarations so each translation unit understands that
 // there will be a definition provided.
 extern template __global__ void
-nbnxn_kernel_prune_cuda<true>(const cu_atomdata_t, const NBParamGpu, const Nbnxm::gpu_plist, int, int);
+nbnxn_kernel_prune_cuda<true>(const NBAtomDataGpu, const NBParamGpu, const GpuPairlist, int);
 extern template __global__ void
-nbnxn_kernel_prune_cuda<false>(const cu_atomdata_t, const NBParamGpu, const Nbnxm::gpu_plist, int, int);
+nbnxn_kernel_prune_cuda<false>(const NBAtomDataGpu, const NBParamGpu, const GpuPairlist, int);
 #else
 {
 
+    // Get part for this kernel from global memory. Each block has its own copy to allow asynchronous incrementation.
+    int part = plist.d_rollingPruningPart[blockIdx.x];
+    __syncthreads();
+
+    // Single thread per block increments the block's copy of the part index
+    if (threadIdx.x == 0 && threadIdx.y == 0 && threadIdx.z == 0)
+    {
+        plist.d_rollingPruningPart[blockIdx.x] = (part + 1) % numParts;
+    }
+
+    // Kernel has been launched with max number of blocks across all passes,
+    // but some passes will require 1 less block, so extra block should return early.
+    size_t numSciInPart = (plist.numSci - part + numParts - 1) / numParts;
+    if (blockIdx.x >= numSciInPart)
+    {
+        return;
+    }
+
     /* convenience variables */
-    const nbnxn_sci_t* pl_sci    = plist.sci;
-    nbnxn_cj4_t*       pl_cj4    = plist.cj4;
-    const float4*      xq        = atdat.xq;
-    const float3*      shift_vec = atdat.shift_vec;
+    const nbnxn_sci_t* pl_sci      = haveFreshList ? plist.sci : plist.sorting.sciSorted;
+    nbnxn_cj_packed_t* pl_cjPacked = plist.cjPacked;
+    const float4*      xq          = atdat.xq;
+    const float3*      shift_vec   = asFloat3(atdat.shiftVec);
 
     float rlistOuter_sq = nbparam.rlistOuter_sq;
     float rlistInner_sq = nbparam.rlistInner_sq;
@@ -137,8 +155,15 @@ nbnxn_kernel_prune_cuda<false>(const cu_atomdata_t, const NBParamGpu, const Nbnx
 #    else
     unsigned int tidxz = threadIdx.z;
 #    endif
-    unsigned int bidx  = blockIdx.x;
-    unsigned int widx  = (threadIdx.y * c_clSize) / warp_size; /* warp index */
+    unsigned int tidx       = tidxi + c_clusterSize * tidxj;
+    unsigned int bidx       = blockIdx.x;
+    unsigned int widx       = (threadIdx.y * c_clusterSize) / warp_size; /* warp index */
+    unsigned int tidxInWarp = tidx & (warp_size - 1);
+
+    // cj preload is off in the following cases:
+    // - sm_70 (V100), sm_8x (A100, GA100), sm_75 (TU102)
+    // - for future arch (> 8.6 at the time of writing) we assume it is better to keep it off
+    constexpr bool c_preloadCj = (GMX_PTX_ARCH < 700);
 
     /*********************************************************************
      * Set up shared memory pointers.
@@ -147,53 +172,66 @@ nbnxn_kernel_prune_cuda<false>(const cu_atomdata_t, const NBParamGpu, const Nbnx
      */
     extern __shared__ char sm_dynamicShmem[];
     char*                  sm_nextSlotPtr = sm_dynamicShmem;
-    static_assert(sizeof(char) == 1,
-                  "The shared memory offset calculation assumes that char is 1 byte");
 
     /* shmem buffer for i x+q pre-loading */
-    float4* xib = (float4*)sm_nextSlotPtr;
-    sm_nextSlotPtr += (c_nbnxnGpuNumClusterPerSupercluster * c_clSize * sizeof(*xib));
+    float4* xib = reinterpret_cast<float4*>(sm_nextSlotPtr);
+    sm_nextSlotPtr += (c_superClusterSize * c_clusterSize * sizeof(*xib));
 
     /* shmem buffer for cj, for each warp separately */
-    int* cjs = (int*)(sm_nextSlotPtr);
-    /* the cjs buffer's use expects a base pointer offset for pairs of warps in the j-concurrent execution */
-    cjs += tidxz * c_nbnxnGpuClusterpairSplit * c_nbnxnGpuJgroupSize;
-    sm_nextSlotPtr += (NTHREAD_Z * c_nbnxnGpuClusterpairSplit * c_nbnxnGpuJgroupSize * sizeof(*cjs));
+    int* cjs = reinterpret_cast<int*>(sm_nextSlotPtr);
+    if (c_preloadCj)
+    {
+        /* the cjs buffer's use expects a base pointer offset for pairs of warps in the j-concurrent execution */
+        cjs += tidxz * c_clusterSplitSize * c_jGroupSize;
+        sm_nextSlotPtr += (NTHREAD_Z * c_clusterSplitSize * c_jGroupSize * sizeof(*cjs));
+    }
     /*********************************************************************/
 
 
     nbnxn_sci_t nb_sci =
             pl_sci[bidx * numParts + part]; /* my i super-cluster's index = sciOffset + current bidx * numParts + part */
-    int sci        = nb_sci.sci;           /* super-cluster */
-    int cij4_start = nb_sci.cj4_ind_start; /* first ...*/
-    int cij4_end   = nb_sci.cj4_ind_end;   /* and last index of j clusters */
+    int sci            = nb_sci.sci;           /* super-cluster */
+    int cijPackedBegin = nb_sci.cjPackedBegin; /* first ...*/
+    int cijPackedEnd   = nb_sci.cjPackedEnd;   /* and last index of j clusters */
 
-    if (tidxz == 0)
+    // We may need only a subset of threads active for preloading i-atoms
+    // depending on the super-cluster and cluster / thread-block size.
+    constexpr bool c_loadUsingAllXYThreads = (c_clusterSize == c_superClusterSize);
+    if (tidxz == 0 && (c_loadUsingAllXYThreads || tidxj < c_superClusterSize))
     {
         /* Pre-load i-atom x and q into shared memory */
-        int ci = sci * c_nbnxnGpuNumClusterPerSupercluster + tidxj;
-        int ai = ci * c_clSize + tidxi;
+        int ci = sci * c_superClusterSize + tidxj;
+        int ai = ci * c_clusterSize + tidxi;
 
         /* We don't need q, but using float4 in shmem avoids bank conflicts.
            (but it also wastes L2 bandwidth). */
-        float4 tmp                    = xq[ai];
-        float4 xi                     = tmp + shift_vec[nb_sci.shift];
-        xib[tidxj * c_clSize + tidxi] = xi;
+        float4 tmp                         = xq[ai];
+        float4 xi                          = tmp + shift_vec[nb_sci.shift];
+        xib[tidxj * c_clusterSize + tidxi] = xi;
     }
+    /* Initialise one int for reducing prunedPairCount over warps */
+    int* sm_prunedPairCount = reinterpret_cast<int*>(sm_nextSlotPtr);
+    sm_nextSlotPtr += sizeof(*sm_prunedPairCount);
+    if (tidx == 0 && tidxz == 0)
+    {
+        *sm_prunedPairCount = 0;
+    }
+
     __syncthreads();
 
+    int prunedPairCount = 0;
     /* loop over the j clusters = seen by any of the atoms in the current super-cluster;
      * The loop stride NTHREAD_Z ensures that consecutive warps-pairs are assigned
-     * consecutive j4's entries.
+     * consecutive jPacked's entries.
      */
-    for (int j4 = cij4_start + tidxz; j4 < cij4_end; j4 += NTHREAD_Z)
+    for (int jPacked = cijPackedBegin + tidxz; jPacked < cijPackedEnd; jPacked += NTHREAD_Z)
     {
         unsigned int imaskFull, imaskCheck, imaskNew;
 
         if (haveFreshList)
         {
             /* Read the mask from the list transferred from the CPU */
-            imaskFull = pl_cj4[j4].imei[widx].imask;
+            imaskFull = pl_cjPacked[jPacked].imei[widx].imask;
             /* We attempt to prune all pairs present in the original list */
             imaskCheck = imaskFull;
             imaskNew   = 0;
@@ -201,48 +239,51 @@ nbnxn_kernel_prune_cuda<false>(const cu_atomdata_t, const NBParamGpu, const Nbnx
         else
         {
             /* Read the mask from the "warp-pruned" by rlistOuter mask array */
-            imaskFull = plist.imask[j4 * c_nbnxnGpuClusterpairSplit + widx];
+            imaskFull = plist.imask[jPacked * c_clusterSplitSize + widx];
             /* Read the old rolling pruned mask, use as a base for new */
-            imaskNew = pl_cj4[j4].imei[widx].imask;
+            imaskNew = pl_cjPacked[jPacked].imei[widx].imask;
             /* We only need to check pairs with different mask */
             imaskCheck = (imaskNew ^ imaskFull);
         }
 
         if (imaskCheck)
         {
-            /* Pre-load cj into shared memory on both warps separately */
-            if ((tidxj == 0 || tidxj == 4) && tidxi < c_nbnxnGpuJgroupSize)
+            if (c_preloadCj)
             {
-                cjs[tidxi + tidxj * c_nbnxnGpuJgroupSize / c_splitClSize] = pl_cj4[j4].cj[tidxi];
-            }
-            __syncwarp(c_fullWarpMask);
-
-#    pragma unroll 4
-            for (int jm = 0; jm < c_nbnxnGpuJgroupSize; jm++)
-            {
-                if (imaskCheck & (superClInteractionMask << (jm * c_nbnxnGpuNumClusterPerSupercluster)))
+                /* Pre-load cj into shared memory on both warps separately */
+                if ((tidxj == 0 || tidxj == 4) && tidxi < c_jGroupSize)
                 {
-                    unsigned int mask_ji = (1U << (jm * c_nbnxnGpuNumClusterPerSupercluster));
+                    cjs[tidxi + tidxj * c_jGroupSize / c_splitClSize] = pl_cjPacked[jPacked].cj[tidxi];
+                }
+                __syncwarp(c_fullWarpMask);
+            }
 
-                    int cj = cjs[jm + (tidxj & 4) * c_nbnxnGpuJgroupSize / c_splitClSize];
-                    int aj = cj * c_clSize + tidxj;
+#    pragma unroll c_jGroupSize
+            for (int jm = 0; jm < c_jGroupSize; jm++)
+            {
+                if (imaskCheck & (superClInteractionMask << (jm * c_superClusterSize)))
+                {
+                    unsigned int mask_ji = (1U << (jm * c_superClusterSize));
+                    int cj = c_preloadCj ? cjs[jm + (tidxj & 4) * c_jGroupSize / c_splitClSize]
+                                         : pl_cjPacked[jPacked].cj[jm];
+                    int aj = cj * c_clusterSize + tidxj;
 
                     /* load j atom data */
                     float4 tmp = xq[aj];
                     float3 xj  = make_float3(tmp.x, tmp.y, tmp.z);
 
-#    pragma unroll 8
-                    for (int i = 0; i < c_nbnxnGpuNumClusterPerSupercluster; i++)
+#    pragma unroll c_superClusterSize
+                    for (int i = 0; i < c_superClusterSize; i++)
                     {
                         if (imaskCheck & mask_ji)
                         {
                             /* load i-cluster coordinates from shmem */
-                            float4 xi = xib[i * c_clSize + tidxi];
+                            float4 xi = xib[i * c_clusterSize + tidxi];
 
 
                             /* distance between i and j atoms */
                             float3 rv = make_float3(xi.x, xi.y, xi.z) - xj;
-                            float  r2 = norm2(rv);
+                            float  r2 = gmxDeviceNorm2(rv);
 
                             /* If _none_ of the atoms pairs are in rlistOuter
                                range, the bit corresponding to the current
@@ -268,13 +309,39 @@ nbnxn_kernel_prune_cuda<false>(const cu_atomdata_t, const NBParamGpu, const Nbnx
             if (haveFreshList)
             {
                 /* copy the list pruned to rlistOuter to a separate buffer */
-                plist.imask[j4 * c_nbnxnGpuClusterpairSplit + widx] = imaskFull;
+                plist.imask[jPacked * c_clusterSplitSize + widx] = imaskFull;
+                /* add to neighbour count, to be used in bucket sci sort */
+                prunedPairCount += __popc(imaskNew);
             }
             /* update the imask with only the pairs up to rlistInner */
-            plist.cj4[j4].imei[widx].imask = imaskNew;
+            plist.cjPacked[jPacked].imei[widx].imask = imaskNew;
         }
-        // avoid shared memory WAR hazards between loop iterations
-        __syncwarp(c_fullWarpMask);
+        if (c_preloadCj)
+        {
+            // avoid shared memory WAR hazards on sm_cjs between loop iterations
+            __syncwarp(c_fullWarpMask);
+        }
+    }
+
+    /* aggregate neighbour counts, to be used in bucket sci sort */
+    if (haveFreshList)
+    {
+        /* One thread in each warp contributes the count for that warp as soon as it reaches here.
+         * Masks are calculated per warp in a warp synchronising operation, so no syncthreads
+         * required here. */
+        if (tidxInWarp == 0)
+        {
+            atomicAdd(sm_prunedPairCount, prunedPairCount);
+        }
+        __syncthreads();
+        prunedPairCount = *sm_prunedPairCount;
+    }
+    if (haveFreshList && tidxi == 0 && tidxj == 0 && tidxz == 0)
+    {
+        /* one thread in the block writes the final count for this sci */
+        int index = max(c_sciHistogramSize - prunedPairCount - 1, 0);
+        atomicAdd(plist.sorting.sciHistogram + index, 1);
+        plist.sorting.sciCount[bidx * numParts + part] = index;
     }
 }
 #endif /* FUNCTION_DECLARATION_ONLY */
@@ -282,3 +349,5 @@ nbnxn_kernel_prune_cuda<false>(const cu_atomdata_t, const NBParamGpu, const Nbnx
 #undef NTHREAD_Z
 #undef MIN_BLOCKS_PER_MP
 #undef THREADS_PER_BLOCK
+
+} // namespace gmx

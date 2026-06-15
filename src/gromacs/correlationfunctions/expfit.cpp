@@ -1,12 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
- * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013-2019, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 1991- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -20,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -29,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \internal
  * \file
@@ -46,18 +43,23 @@
 
 #include "expfit.h"
 
+#include <cmath>
+#include <cstdio>
 #include <cstring>
 
 #include <algorithm>
+#include <filesystem>
+#include <string>
 
 #include "gromacs/correlationfunctions/integrate.h"
 #include "gromacs/fileio/xvgr.h"
-#include "gromacs/math/vec.h"
+#include "gromacs/math/functions.h"
 #include "gromacs/utility/fatalerror.h"
 #include "gromacs/utility/futil.h"
 #include "gromacs/utility/gmxassert.h"
 #include "gromacs/utility/real.h"
 #include "gromacs/utility/smalloc.h"
+#include "gromacs/utility/vec.h"
 
 #include "gmx_lmcurve.h"
 
@@ -69,13 +71,14 @@ static const int nfp_ffn[effnNR] = { 0, 1, 2, 3, 5, 7, 9, 2, 4, 3, 6 };
  * hence there are many more NULL field (which have to be at the end of
  * the array).
  */
+// NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)
 const char* s_ffn[effnNR + 2] = { nullptr, "none",  "exp",   "aexp",  "exp_exp", "exp5", "exp7",
                                   "exp9",  nullptr, nullptr, nullptr, nullptr,   nullptr };
 
 // clang-format off
 // needed because clang-format wants to break the lines below
 /*! \brief Long description for each fitting function type */
-static const char* longs_ffn[effnNR]
+static const char* const longs_ffn[effnNR]
         = { "no fit",
             "y = exp(-x/|a0|)",
             "y = a1 exp(-x/|a0|)",
@@ -120,7 +123,7 @@ int sffn2effn(const char** sffn)
     eFitFn = 0;
     for (i = 0; i < effnNR; i++)
     {
-        if (sffn[i + 1] && strcmp(sffn[0], sffn[i + 1]) == 0)
+        if (sffn[i + 1] && std::strcmp(sffn[0], sffn[i + 1]) == 0)
         {
             eFitFn = i;
         }
@@ -136,7 +139,7 @@ static double myexp(double x, double A, double tau)
     {
         return 0;
     }
-    return A * exp(-x / tau);
+    return A * std::exp(-x / tau);
 }
 
 /*! \brief Compute y=(a0+a1)/2-(a0-a1)/2*erf((x-a2)/a3^2) */
@@ -172,15 +175,15 @@ static double safe_exp(double x)
     double exp_min = -exp_max;
     if (x <= exp_min)
     {
-        return exp(exp_min);
+        return std::exp(exp_min);
     }
     else if (x >= exp_max)
     {
-        return exp(exp_max);
+        return std::exp(exp_max);
     }
     else
     {
-        return exp(x);
+        return std::exp(x);
     }
 }
 
@@ -195,7 +198,7 @@ static double safe_expm1(double x)
     }
     else if (x >= exp_max)
     {
-        return exp(exp_max);
+        return std::exp(exp_max);
     }
     else
     {
@@ -206,13 +209,13 @@ static double safe_expm1(double x)
 /*! \brief Compute y = exp(-x/|a0|) */
 static double lmc_exp_one_parm(double x, const double* a)
 {
-    return safe_exp(-x / fabs(a[0]));
+    return safe_exp(-x / std::fabs(a[0]));
 }
 
 /*! \brief Compute y = a1 exp(-x/|a0|) */
 static double lmc_exp_two_parm(double x, const double* a)
 {
-    return a[1] * safe_exp(-x / fabs(a[0]));
+    return a[1] * safe_exp(-x / std::fabs(a[0]));
 }
 
 /*! \brief Compute y = a1 exp(-x/|a0|) + (1-a1) exp(-x/|a2|) */
@@ -220,8 +223,8 @@ static double lmc_exp_exp(double x, const double* a)
 {
     double e1, e2;
 
-    e1 = safe_exp(-x / fabs(a[0]));
-    e2 = safe_exp(-x / (fabs(a[0]) + fabs(a[2])));
+    e1 = safe_exp(-x / std::fabs(a[0]));
+    e2 = safe_exp(-x / (std::fabs(a[0]) + std::fabs(a[2])));
     return a[1] * e1 + (1 - a[1]) * e2;
 }
 
@@ -230,8 +233,8 @@ static double lmc_exp_5_parm(double x, const double* a)
 {
     double e1, e2;
 
-    e1 = safe_exp(-x / fabs(a[1]));
-    e2 = safe_exp(-x / (fabs(a[1]) + fabs(a[3])));
+    e1 = safe_exp(-x / std::fabs(a[1]));
+    e2 = safe_exp(-x / (std::fabs(a[1]) + std::fabs(a[3])));
     return a[0] * e1 + a[2] * e2 + a[4];
 }
 
@@ -245,9 +248,9 @@ static double lmc_exp_7_parm(double x, const double* a)
     double e1, e2, e3;
     double fa1, fa3, fa5;
 
-    fa1 = fabs(a[1]);
-    fa3 = fa1 + fabs(a[3]);
-    fa5 = fa3 + fabs(a[5]);
+    fa1 = std::fabs(a[1]);
+    fa3 = fa1 + std::fabs(a[3]);
+    fa5 = fa3 + std::fabs(a[5]);
     e1  = safe_exp(-x / fa1);
     e2  = safe_exp(-x / fa3);
     e3  = safe_exp(-x / fa5);
@@ -264,10 +267,10 @@ static double lmc_exp_9_parm(double x, const double* a)
     double e1, e2, e3, e4;
     double fa1, fa3, fa5, fa7;
 
-    fa1 = fabs(a[1]);
-    fa3 = fa1 + fabs(a[3]);
-    fa5 = fa3 + fabs(a[5]);
-    fa7 = fa5 + fabs(a[7]);
+    fa1 = std::fabs(a[1]);
+    fa3 = fa1 + std::fabs(a[3]);
+    fa5 = fa3 + std::fabs(a[5]);
+    fa7 = fa5 + std::fabs(a[7]);
 
     e1 = safe_exp(-x / fa1);
     e2 = safe_exp(-x / fa3);
@@ -285,16 +288,16 @@ static double lmc_pres_6_parm(double x, const double* a)
     term3 = 0;
     if ((a[4] != 0) && (a[0] != 0))
     {
-        double power = std::min(fabs(a[5]), pow_max);
-        term3        = a[0] * safe_exp(-pow((x / fabs(a[4])), power));
+        double power = std::min(std::fabs(a[5]), pow_max);
+        term3        = a[0] * safe_exp(-std::pow((x / std::fabs(a[4])), power));
     }
 
     term1 = 1 - a[0];
     term2 = 0;
     if ((term1 != 0) && (a[2] != 0))
     {
-        double power = std::min(fabs(a[3]), pow_max);
-        term2        = safe_exp(-pow((x / fabs(a[2])), power)) * cos(x * fabs(a[1]));
+        double power = std::min(std::fabs(a[3]), pow_max);
+        term2 = safe_exp(-std::pow((x / std::fabs(a[2])), power)) * std::cos(x * std::fabs(a[1]));
     }
 
     return term1 * term2 + term3;
@@ -321,12 +324,12 @@ static double lmc_vac_2_parm(double x, const double* a)
     double y, v, det, omega, wv, em, ec, es;
     double wv_max = 100;
 
-    v   = x / (2 * fabs(a[0]));
+    v   = x / (2 * std::fabs(a[0]));
     det = 1 - a[1];
     em  = safe_exp(-v);
     if (det != 0)
     {
-        omega = sqrt(fabs(det));
+        omega = std::sqrt(std::fabs(det));
         wv    = std::min(omega * v, wv_max);
 
         if (det > 0)
@@ -336,8 +339,8 @@ static double lmc_vac_2_parm(double x, const double* a)
         }
         else
         {
-            ec = em * cos(wv);
-            es = em * sin(wv) / omega;
+            ec = em * std::cos(wv);
+            es = em * std::sin(wv) / omega;
         }
         y = ec + es;
     }
@@ -352,9 +355,9 @@ static double lmc_vac_2_parm(double x, const double* a)
 static double lmc_errest_3_parm(double x, const double* a)
 {
     double e1, e2, v1, v2;
-    double fa0 = fabs(a[0]);
+    double fa0 = std::fabs(a[0]);
     double fa1;
-    double fa2 = fa0 + fabs(a[2]);
+    double fa2 = fa0 + std::fabs(a[2]);
 
     if (a[0] != 0)
     {
@@ -389,6 +392,7 @@ static double lmc_errest_3_parm(double x, const double* a)
 }
 
 /*! \brief array of fitting functions corresponding to the pre-defined types */
+// NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)
 t_lmcurve lmcurves[effnNR + 1] = { lmc_exp_one_parm,  lmc_exp_one_parm, lmc_exp_two_parm,
                                    lmc_exp_exp,       lmc_exp_5_parm,   lmc_exp_7_parm,
                                    lmc_exp_9_parm,    lmc_vac_2_parm,   lmc_erffit,
@@ -437,29 +441,29 @@ static void initiate_fit_params(int eFitFn, double params[])
                  * params[2]-params[0] and in the add add in params[0]
                  * again.
                  */
-                params[2] = std::max(fabs(params[2]) - params[0], params[0]);
+                params[2] = std::max(std::fabs(params[2]) - params[0], params[0]);
             }
             break;
         case effnEXP5:
         case effnEXP7:
         case effnEXP9:
             GMX_ASSERT(params[1] >= 0, "parameters should be >= 0");
-            params[1] = fabs(params[1]);
+            params[1] = std::fabs(params[1]);
             if (nparm > 3)
             {
                 GMX_ASSERT(params[3] >= 0, "parameters should be >= 0");
                 /* See comment under effnEXPEXP */
-                params[3] = std::max(fabs(params[3]) - params[1], params[1]);
+                params[3] = std::max(std::fabs(params[3]) - params[1], params[1]);
                 if (nparm > 5)
                 {
                     GMX_ASSERT(params[5] >= 0, "parameters should be >= 0");
                     /* See comment under effnEXPEXP */
-                    params[5] = std::max(fabs(params[5]) - params[3], params[3]);
+                    params[5] = std::max(std::fabs(params[5]) - params[3], params[3]);
                     if (nparm > 7)
                     {
                         GMX_ASSERT(params[7] >= 0, "parameters should be >= 0");
                         /* See comment under effnEXPEXP */
-                        params[7] = std::max(fabs(params[7]) - params[5], params[5]);
+                        params[7] = std::max(std::fabs(params[7]) - params[5], params[5]);
                     }
                 }
             }
@@ -469,7 +473,7 @@ static void initiate_fit_params(int eFitFn, double params[])
             GMX_ASSERT(params[1] >= 0 && params[1] <= 1, "parameter 1 should in 0 .. 1");
             GMX_ASSERT(params[2] >= 0, "parameters should be >= 0");
             /* See comment under effnEXPEXP */
-            params[2] = fabs(params[2]) - params[0];
+            params[2] = std::fabs(params[2]) - params[0];
             break;
         case effnPRES:
             for (i = 1; (i < nparm); i++)
@@ -493,41 +497,41 @@ static void extract_fit_params(int eFitFn, double params[])
 
     switch (eFitFn)
     {
-        case effnVAC: params[0] = fabs(params[0]); break;
+        case effnVAC: params[0] = std::fabs(params[0]); break;
         case effnEXP1:
         case effnEXP2:
         case effnEXPEXP:
-            params[0] = fabs(params[0]);
+            params[0] = std::fabs(params[0]);
             if (nparm > 2)
             {
                 /* Back conversion of parameters from the fitted difference
                  * to the absolute value.
                  */
-                params[2] = fabs(params[2]) + params[0];
+                params[2] = std::fabs(params[2]) + params[0];
             }
             break;
         case effnEXP5:
         case effnEXP7:
         case effnEXP9:
-            params[1] = fabs(params[1]);
+            params[1] = std::fabs(params[1]);
             if (nparm > 3)
             {
                 /* See comment under effnEXPEXP */
-                params[3] = fabs(params[3]) + params[1];
+                params[3] = std::fabs(params[3]) + params[1];
                 if (nparm > 5)
                 {
                     /* See comment under effnEXPEXP */
-                    params[5] = fabs(params[5]) + params[3];
+                    params[5] = std::fabs(params[5]) + params[3];
                     if (nparm > 7)
                     {
                         /* See comment under effnEXPEXP */
-                        params[7] = fabs(params[7]) + params[5];
+                        params[7] = std::fabs(params[7]) + params[5];
                     }
                 }
             }
             break;
         case effnERREST:
-            params[0] = fabs(params[0]);
+            params[0] = std::fabs(params[0]);
             if (params[1] < 0)
             {
                 params[1] = 0;
@@ -537,12 +541,12 @@ static void extract_fit_params(int eFitFn, double params[])
                 params[1] = 1;
             }
             /* See comment under effnEXPEXP */
-            params[2] = params[0] + fabs(params[2]);
+            params[2] = params[0] + std::fabs(params[2]);
             break;
         case effnPRES:
             for (i = 1; (i < nparm); i++)
             {
-                params[i] = fabs(params[i]);
+                params[i] = std::fabs(params[i]);
             }
             break;
         default: break;
@@ -566,8 +570,12 @@ static void print_chi2_params(FILE*        fp,
         double yfit = lmcurves[eFitFn](x[i], fitparms);
         chi2 += gmx::square(y[i] - yfit);
     }
-    fprintf(fp, "There are %d data points, %d parameters, %s chi2 = %g\nparams:", nfitpnts,
-            effnNparams(eFitFn), label, chi2);
+    fprintf(fp,
+            "There are %d data points, %d parameters, %s chi2 = %g\nparams:",
+            nfitpnts,
+            effnNparams(eFitFn),
+            label,
+            chi2);
     for (i = 0; (i < effnNparams(eFitFn)); i++)
     {
         fprintf(fp, "  %10g", fitparms[i]);
@@ -591,7 +599,7 @@ real do_lmfit(int                     ndata,
 {
     FILE*   fp;
     int     i, j, nfitpnts;
-    double  integral, ttt;
+    double  integral;
     double *x, *y, *dy;
 
     if (0 != fix)
@@ -601,8 +609,7 @@ real do_lmfit(int                     ndata,
     if (debug)
     {
         fprintf(debug, "There are %d points to fit %d vars!\n", ndata, effnNparams(eFitFn));
-        fprintf(debug, "Fit to function %d from %g through %g, dt=%g\n", eFitFn, begintimefit,
-                endtimefit, dt);
+        fprintf(debug, "Fit to function %d from %g through %g, dt=%g\n", eFitFn, begintimefit, endtimefit, dt);
     }
 
     snew(x, ndata);
@@ -611,7 +618,7 @@ real do_lmfit(int                     ndata,
     j = 0;
     for (i = 0; i < ndata; i++)
     {
-        ttt = x0 ? x0[i] : dt * i;
+        double ttt = x0 ? x0[i] : dt * i;
         if (ttt >= begintimefit && ttt <= endtimefit)
         {
             x[j] = ttt;
@@ -761,19 +768,24 @@ real fit_acf(int                     ncorr,
 
     if (bPrint)
     {
-        printf("COR: Correlation time (plain integral from %6.3f to %6.3f ps) = %8.5f ps\n", 0.0,
-               dt * nf_int, sum);
+        printf("COR: Correlation time (plain integral from %6.3f to %6.3f ps) = %8.5f ps\n", 0.0, dt * nf_int, sum);
         printf("COR: Relaxation times are computed as fit to an exponential:\n");
         printf("COR:   %s\n", effnDescription(fitfn));
         printf("COR: Fit to correlation function from %6.3f ps to %6.3f ps, results in a\n",
-               tbeginfit, std::min(ncorr * dt, tendfit));
+               tbeginfit,
+               std::min(ncorr * dt, tendfit));
     }
 
     tStart = 0;
     if (bPrint)
     {
-        printf("COR:%11s%11s%11s%11s%11s%11s%11s\n", "Fit from", "Integral", "Tail Value",
-               "Sum (ps)", " a1 (ps)", (effnNparams(fitfn) >= 2) ? " a2 ()" : "",
+        printf("COR:%11s%11s%11s%11s%11s%11s%11s\n",
+               "Fit from",
+               "Integral",
+               "Tail Value",
+               "Sum (ps)",
+               " a1 (ps)",
+               (effnNparams(fitfn) >= 2) ? " a2 ()" : "",
                (effnNparams(fitfn) >= 3) ? " a3 (ps)" : "");
     }
 
@@ -838,14 +850,14 @@ real fit_acf(int                     ncorr,
         /* Generate more or less appropriate sigma's */
         for (i = 0; i < ncorr; i++)
         {
-            sig[i] = sqrt(ct_estimate + dt * i);
+            sig[i] = std::sqrt(ct_estimate + dt * i);
         }
 
         nf_int    = std::min(ncorr, static_cast<int>((tStart + 1e-4) / dt));
         sum       = print_and_integrate(debug, nf_int, dt, c1, nullptr, 1);
-        tail_corr = do_lmfit(ncorr, c1, sig, dt, nullptr, tStart, tendfit, oenv, bDebugMode(),
-                             fitfn, fitparm, 0, nullptr);
-        sumtot    = sum + tail_corr;
+        tail_corr = do_lmfit(
+                ncorr, c1, sig, dt, nullptr, tStart, tendfit, oenv, bDebugMode(), fitfn, fitparm, 0, nullptr);
+        sumtot = sum + tail_corr;
         if (fit && ((jmax == 1) || (j == 1)))
         {
             double mfp[3];

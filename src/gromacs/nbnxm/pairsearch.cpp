@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2019- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 
 /*! \internal \file
@@ -45,17 +44,25 @@
 
 #include "pairsearch.h"
 
-#include "gromacs/mdtypes/nblist.h"
-#include "gromacs/utility/smalloc.h"
+#include <cstdlib>
 
+#include "atompairlist.h"
 #include "pairlist.h"
 
+enum class PbcType : int;
+namespace gmx
+{
+enum class PairlistType;
+enum class PinningPolicy : int;
 
-void SearchCycleCounting::printCycles(FILE* fp, gmx::ArrayRef<const PairsearchWork> work) const
+void SearchCycleCounting::printCycles(FILE* fp, ArrayRef<const PairsearchWork> work) const
 {
     fprintf(fp, "\n");
-    fprintf(fp, "ns %4d grid %4.1f search %4.1f", cc_[enbsCCgrid].count(),
-            cc_[enbsCCgrid].averageMCycles(), cc_[enbsCCsearch].averageMCycles());
+    fprintf(fp,
+            "ns %4d grid %4.1f search %4.1f",
+            cc_[enbsCCgrid].count(),
+            cc_[enbsCCgrid].averageMCycles(),
+            cc_[enbsCCsearch].averageMCycles());
 
     if (work.size() > 1)
     {
@@ -72,41 +79,49 @@ void SearchCycleCounting::printCycles(FILE* fp, gmx::ArrayRef<const PairsearchWo
     fprintf(fp, "\n");
 }
 
-/*! \brief Frees the contents of a legacy t_nblist struct */
-static void free_nblist(t_nblist* nl)
-{
-    sfree(nl->iinr);
-    sfree(nl->gid);
-    sfree(nl->shift);
-    sfree(nl->jindex);
-    sfree(nl->jjnr);
-    sfree(nl->excl_fep);
-}
-
 #ifndef DOXYGEN
 
-PairsearchWork::PairsearchWork() : cp0({ { 0 } }), ndistc(0), nbl_fep(new t_nblist), cp1({ { 0 } })
+PairsearchWork::PairsearchWork() :
+    cp0({ { 0 } }), ndistc(0), nbl_fep(std::make_unique<AtomPairlist>()), cp1({ { 0 } })
 {
-    nbnxn_init_pairlist_fep(nbl_fep.get());
 }
 
 #endif // !DOXYGEN
 
-PairsearchWork::~PairsearchWork()
-{
-    free_nblist(nbl_fep.get());
-}
+PairsearchWork::~PairsearchWork() = default;
 
-PairSearch::PairSearch(const PbcType             pbcType,
-                       const bool                doTestParticleInsertion,
-                       const ivec*               numDDCells,
-                       const gmx_domdec_zones_t* ddZones,
-                       const PairlistType        pairlistType,
-                       const bool                haveFep,
-                       const int                 maxNumThreads,
-                       gmx::PinningPolicy        pinningPolicy) :
-    gridSet_(pbcType, doTestParticleInsertion, numDDCells, ddZones, pairlistType, haveFep, maxNumThreads, pinningPolicy),
+PairSearch::PairSearch(const PbcType      pbcType,
+                       const bool         doTestParticleInsertion,
+                       const IVec*        numDDCells,
+                       const DomdecZones* ddZones,
+                       const PairlistType pairlistType,
+                       const bool         haveFep,
+                       const bool         localAtomOrderMatchesNbnxmOrder,
+                       const int          maxNumThreads,
+                       PinningPolicy      pinningPolicy) :
+    gridSet_(pbcType,
+             doTestParticleInsertion,
+             numDDCells,
+             ddZones,
+             pairlistType,
+             haveFep,
+             localAtomOrderMatchesNbnxmOrder,
+             maxNumThreads,
+             pinningPolicy),
     work_(maxNumThreads)
 {
-    cycleCounting_.recordCycles_ = (getenv("GMX_NBNXN_CYCLE") != nullptr);
+    cycleCounting_.recordCycles_ = (std::getenv("GMX_NBNXN_CYCLE") != nullptr);
 }
+
+void PairSearch::setNonLocalGrid(const int                           gridIndex,
+                                 const int                           ddZone,
+                                 const GridDimensions&               gridDimensions,
+                                 ArrayRef<const std::pair<int, int>> columns,
+                                 ArrayRef<const int32_t>             atomInfo,
+                                 ArrayRef<const RVec>                x,
+                                 nbnxn_atomdata_t*                   nbat)
+{
+    gridSet_.setNonLocalGrid(gridIndex, ddZone, gridDimensions, columns, atomInfo, x, nbat);
+}
+
+} // namespace gmx

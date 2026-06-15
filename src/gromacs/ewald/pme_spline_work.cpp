@@ -1,13 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
- * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2017,2018 by the GROMACS development team.
- * Copyright (c) 2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 1991- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -21,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -30,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 
 #include "gmxpre.h"
@@ -41,26 +37,20 @@
 #include "pme_spline_work.h"
 
 #include "gromacs/simd/simd.h"
-#include "gromacs/utility/alignedallocator.h"
 #include "gromacs/utility/basedefinitions.h"
 #include "gromacs/utility/real.h"
-#include "gromacs/utility/smalloc.h"
 
 #include "pme_simd.h"
 
 using namespace gmx; // TODO: Remove when this file is moved into gmx namespace
 
-pme_spline_work* make_pme_spline_work(int gmx_unused order)
+pme_spline_work::pme_spline_work(int gmx_unused order)
 {
-    pme_spline_work* work;
-
 #ifdef PME_SIMD4_SPREAD_GATHER
     alignas(GMX_SIMD_ALIGNMENT) real tmp[GMX_SIMD4_WIDTH * 2];
     Simd4Real                        zero_S;
     Simd4Real                        real_mask_S0, real_mask_S1;
     int                              of, i;
-
-    work = new (gmx::AlignedAllocationPolicy::malloc(sizeof(pme_spline_work))) pme_spline_work;
 
     zero_S = setZero();
 
@@ -74,22 +64,10 @@ pme_spline_work* make_pme_spline_work(int gmx_unused order)
         {
             tmp[i] = (i >= of && i < of + order ? -1.0 : 1.0);
         }
-        real_mask_S0      = load4(tmp);
-        real_mask_S1      = load4(tmp + GMX_SIMD4_WIDTH);
-        work->mask_S0[of] = (real_mask_S0 < zero_S);
-        work->mask_S1[of] = (real_mask_S1 < zero_S);
+        real_mask_S0 = load4(tmp);
+        real_mask_S1 = load4(tmp + GMX_SIMD4_WIDTH);
+        mask_S0[of]  = (real_mask_S0 < zero_S);
+        mask_S1[of]  = (real_mask_S1 < zero_S);
     }
-#else
-    work = nullptr;
 #endif
-
-    return work;
-}
-
-void destroy_pme_spline_work(pme_spline_work* work)
-{
-    if (work != nullptr)
-    {
-        gmx::AlignedAllocationPolicy::free(work);
-    }
 }

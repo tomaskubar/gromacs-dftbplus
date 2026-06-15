@@ -1,11 +1,10 @@
-#!/bin/bash
+#!/usr/bin/env bash
 #
 # This file is part of the GROMACS molecular simulation package.
 #
-# Copyright (c) 2020, by the GROMACS development team, led by
-# Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
-# and including many others, as listed in the AUTHORS file in the
-# top-level source directory and at http://www.gromacs.org.
+# Copyright 2020- The GROMACS Authors
+# and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+# Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
 #
 # GROMACS is free software; you can redistribute it and/or
 # modify it under the terms of the GNU Lesser General Public License
@@ -19,7 +18,7 @@
 #
 # You should have received a copy of the GNU Lesser General Public
 # License along with GROMACS; if not, see
-# http://www.gnu.org/licenses, or write to the Free Software Foundation,
+# https://www.gnu.org/licenses, or write to the Free Software Foundation,
 # Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
 #
 # If you want to redistribute modifications to GROMACS, please
@@ -28,10 +27,10 @@
 # consider code for inclusion in the official distribution, but
 # derived work must not be called official GROMACS. Details are found
 # in the README & COPYING files - if they are missing, get the
-# official version at http://www.gromacs.org.
+# official version at https://www.gromacs.org.
 #
 # To help us fund GROMACS development, we humbly ask that you cite
-# the research papers on the package. Check out http://www.gromacs.org.
+# the research papers on the package. Check out https://www.gromacs.org.
 
 # This script runs clang tidy checks on modified files and
 # reports/applies the necessary changes.
@@ -105,14 +104,14 @@ then
     if [ -z "$RUN_CLANG_TIDY" ]
     then
         echo "Please set the path to run-clang-tidy using the git hook"
-        echo "git config hooks.runclangtidypath /path/to/run-clang-tidy-9.py"
+        echo "git config hooks.runclangtidypath /path/to/run-clang-tidy-18.py"
         echo "or by setting an environment variable, e.g."
-        echo "RUN_CLANG_TIDY=/path/to/run-clang-tidy-9.py"
+        echo "RUN_CLANG_TIDY=/path/to/run-clang-tidy-18.py"
         exit 2
     fi
     if ! which "$RUN_CLANG_TIDY" 1>/dev/null
     then
-        echo "run-clang-tidy-9.py not found: $RUN_CLANG_TIDY"
+        echo "run-clang-tidy-18.py not found: $RUN_CLANG_TIDY"
         exit 2
     fi
 fi
@@ -172,7 +171,7 @@ touch $tmpdir/messages
 # Can only perform clang-tidy on a non-empty list of files
 cd $tmpdir/new
 if [[ $tidy_mode != "off" &&  -s $tmpdir/filelist_clangtidy ]] ; then
-    $RUN_CLANG_TIDY `cat $tmpdir/filelist_clangtidy` -header-filter=.* -j $concurrency -fix -quiet -extra-arg=--cuda-host-only -extra-arg=-nocudainc>$tmpdir/clang-tidy.out 2>&1
+    $RUN_CLANG_TIDY `cat $tmpdir/filelist_clangtidy` -j $concurrency -fix -quiet -extra-arg=--cuda-host-only -extra-arg=-nocudainc>$tmpdir/clang-tidy.out 2>&1
     awk '/warning/,/clang-tidy|^$/' $tmpdir/clang-tidy.out | grep -v "warnings generated." | grep -v "Suppressed .* warnings" | grep -v "clang-analyzer"  | grep -v "to display errors from all non" | sed '/^\s*$/d' > $tmpdir/clang-tidy-warnings.out
     grep '\berror:' $tmpdir/clang-tidy.out > $tmpdir/clang-tidy-errors.out || true
     if [ -s $tmpdir/clang-tidy-errors.out ]; then

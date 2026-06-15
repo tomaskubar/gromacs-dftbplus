@@ -1,11 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2014,2015,2016,2017,2018 by the GROMACS development team.
- * Copyright (c) 2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2014- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -19,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -28,19 +26,33 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /* TODO find out what this file should be called */
 #ifndef GMX_EWALD_PME_GRID_H
 #define GMX_EWALD_PME_GRID_H
 
+#include <tuple>
+#include <vector>
+
+#include "gromacs/utility/alignedallocator.h"
 #include "gromacs/utility/basedefinitions.h"
 #include "gromacs/utility/real.h"
 
 struct gmx_pme_t;
+struct PmeAndFftGrids;
+
+namespace gmx
+{
+template<typename>
+class ArrayRef;
+}
+
+template<typename T>
+using AlignedVector = std::vector<T, gmx::AlignedAllocator<T>>;
 
 /*! \brief
  * We allow coordinates to be out the unit-cell by up to 2 box lengths,
@@ -57,47 +69,38 @@ constexpr int c_pmeNeighborUnitcellCount = 2 * c_pmeMaxUnitcellShift + 1;
 struct pmegrid_t;
 struct pmegrids_t;
 
-void gmx_sum_qgrid_dd(gmx_pme_t* pme, real* grid, int direction);
+void gmx_sum_qgrid_dd(gmx_pme_t* pme, gmx::ArrayRef<real> grid, int direction);
 
-int copy_pmegrid_to_fftgrid(const gmx_pme_t* pme, const real* pmegrid, real* fftgrid, int grid_index);
+int copy_pmegrid_to_fftgrid(const gmx_pme_t* pme, PmeAndFftGrids* grids);
 
-int copy_fftgrid_to_pmegrid(gmx_pme_t* pme, const real* fftgrid, real* pmegrid, int grid_index, int nthread, int thread);
+int copy_fftgrid_to_pmegrid(const gmx_pme_t* pme, PmeAndFftGrids* grids, int nthread, int thread);
 
-void wrap_periodic_pmegrid(const gmx_pme_t* pme, real* pmegrid);
+void wrap_periodic_pmegrid(const gmx_pme_t* pme, gmx::ArrayRef<real> pmegrid);
 
-void unwrap_periodic_pmegrid(gmx_pme_t* pme, real* pmegrid);
+void unwrap_periodic_pmegrid(gmx_pme_t* pme, gmx::ArrayRef<real> pmegrid);
 
-void pmegrid_init(pmegrid_t* grid,
-                  int        cx,
-                  int        cy,
-                  int        cz,
-                  int        x0,
-                  int        y0,
-                  int        z0,
-                  int        x1,
-                  int        y1,
-                  int        z1,
-                  gmx_bool   set_alignment,
-                  int        pme_order,
-                  real*      ptr);
+/*! \brief Initialized a PME grid struct
+ *
+ * The actual storage for the grids is passed through \p gridsStorage. This should have
+ * size 1 when a single thread is used and 1+nthread with OpenMP threading.
+ * When the vectors are empty, they are allocated. When they are not empty the are used
+ * and sufficient size is asserted upon.
+ */
+void pmegrids_init(pmegrids_t*                        grids,
+                   int                                nx,
+                   int                                ny,
+                   int                                nz,
+                   int                                nz_base,
+                   int                                pme_order,
+                   gmx_bool                           bUseThreads,
+                   int                                nthread,
+                   int                                overlap_x,
+                   int                                overlap_y,
+                   gmx::ArrayRef<AlignedVector<real>> gridsStorage);
 
-void pmegrids_init(pmegrids_t* grids,
-                   int         nx,
-                   int         ny,
-                   int         nz,
-                   int         nz_base,
-                   int         pme_order,
-                   gmx_bool    bUseThreads,
-                   int         nthread,
-                   int         overlap_x,
-                   int         overlap_y);
-
-void pmegrids_destroy(pmegrids_t* grids);
-
-void make_gridindex_to_localindex(int n, int local_start, int local_range, int** global_to_local, real** fraction_shift);
+std::tuple<std::vector<int>, std::vector<real>>
+make_gridindex_to_localindex(int n, int local_start, int local_range, bool checkRoundingAtBoundary);
 
 void set_grid_alignment(int* pmegrid_nz, int pme_order);
-
-void reuse_pmegrids(const pmegrids_t* oldgrid, pmegrids_t* newgrid);
 
 #endif

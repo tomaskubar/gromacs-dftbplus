@@ -1,11 +1,9 @@
 #
 # This file is part of the GROMACS molecular simulation package.
 #
-# Copyright (c) 2011,2012,2013,2014,2015 by the GROMACS development team.
-# Copyright (c) 2016,2017,2018,2019,2020, by the GROMACS development team, led by
-# Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
-# and including many others, as listed in the AUTHORS file in the
-# top-level source directory and at http://www.gromacs.org.
+# Copyright 2011- The GROMACS Authors
+# and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+# Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
 #
 # GROMACS is free software; you can redistribute it and/or
 # modify it under the terms of the GNU Lesser General Public License
@@ -19,7 +17,7 @@
 #
 # You should have received a copy of the GNU Lesser General Public
 # License along with GROMACS; if not, see
-# http://www.gnu.org/licenses, or write to the Free Software Foundation,
+# https://www.gnu.org/licenses, or write to the Free Software Foundation,
 # Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
 #
 # If you want to redistribute modifications to GROMACS, please
@@ -28,10 +26,10 @@
 # consider code for inclusion in the official distribution, but
 # derived work must not be called official GROMACS. Details are found
 # in the README & COPYING files - if they are missing, get the
-# official version at http://www.gromacs.org.
+# official version at https://www.gromacs.org.
 #
 # To help us fund GROMACS development, we humbly ask that you cite
-# the research papers on the package. Check out http://www.gromacs.org.
+# the research papers on the package. Check out https://www.gromacs.org.
 
 if (NOT GMX_BUILD_UNITTESTS)
     gmx_add_missing_tests_notice("Unit tests have not been run. You need to set GMX_BUILD_UNITTESTS=ON if you want to build and run them.")
@@ -39,18 +37,27 @@ if (NOT GMX_BUILD_UNITTESTS)
 endif()
 
 if (GMX_GPU_CUDA)
-    # Work around FindCUDA that prevents using target_link_libraries()
-    # with keywords otherwise...
-    set(CUDA_LIBRARIES PRIVATE ${CUDA_LIBRARIES})
-    if (NOT GMX_CLANG_CUDA)
-        gmx_cuda_add_library(testutils)
+    add_library(testutils)
+
+    #we cannot link with both cufftmp and cufft
+    if(GMX_USE_cuFFTMp)
+        target_link_libraries(testutils PRIVATE ${cuFFTMp_LIBRARY})
     else()
-        set_source_files_properties(test_device.cpp PROPERTIES CUDA_SOURCE_PROPERTY_FORMAT OBJ)
-        gmx_compile_cuda_file_with_clang(test_device.cpp)
-        add_library(testutils STATIC ${TESTUTILS_SOURCES})
-        target_link_libraries(testutils PRIVATE ${GMX_CUDA_CLANG_LINK_LIBS})
+        target_link_libraries(testutils PRIVATE CUDA::cufft)
     endif()
-    target_link_libraries(testutils PRIVATE ${CUDA_CUFFT_LIBRARIES})
+    if (GMX_NVSHMEM)
+        target_link_libraries(testutils PUBLIC nvshmem_host_lib)
+    endif()
+elseif (GMX_GPU_HIP)
+    set_source_files_properties(test_device.cpp PROPERTIES LANGUAGE HIP)
+    gmx_hip_add_library(testutils test_device.cpp)
+
+    target_link_libraries(testutils PRIVATE hip::host)
+    if (GMX_GPU_FFT_VKFFT)
+        target_link_libraries(testutils PRIVATE VkFFT)
+    elseif(GMX_GPU_FFT_ROCFFT)
+        target_link_libraries(testutils PRIVATE roc::rocfft)
+    endif()
 else()
     add_library(testutils STATIC ${UNITTEST_TARGET_OPTIONS})
 endif()
@@ -71,8 +78,10 @@ target_sources(testutils PRIVATE
                loggertest.cpp
                mpi_printer.cpp
                mpitest.cpp
+               posixmemstream.cpp
                refdata.cpp
                refdata_xml.cpp
+               setenv.cpp
                simulationdatabase.cpp
                stdiohelper.cpp
                stringtest.cpp
@@ -85,7 +94,9 @@ target_sources(testutils PRIVATE
                testmatchers.cpp
                testoptions.cpp
                textblockmatchers.cpp
+               topologyhelpers.cpp
                tprfilegenerator.cpp
+               trajectoryreader.cpp
                xvgtest.cpp
                )
 
@@ -101,47 +112,40 @@ endif()
 target_include_directories(testutils PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
 if (GMX_GPU_SYCL)
-    set_source_files_properties(test_device.cpp
-      PROPERTIES COMPILE_FLAGS "${SYCL_CXX_FLAGS}")
+    add_sycl_to_target(
+        TARGET testutils
+        SOURCES test_device.cpp
+        )
 endif()
 
 gmx_target_compile_options(testutils)
 target_compile_definitions(testutils PRIVATE HAVE_CONFIG_H)
 target_include_directories(testutils SYSTEM BEFORE PRIVATE ${PROJECT_SOURCE_DIR}/src/external/thread_mpi/include)
+target_compile_definitions(testutils PRIVATE TMPI_USE_VISIBILITY)
+# These two include directories are supplied by the gmock target below
+# but can be added after global include directories added e.g. for
+# FFTW, which leads to unexpected mismatches. See #5141 and #5531.
+target_include_directories(testutils SYSTEM BEFORE PRIVATE ${PROJECT_SOURCE_DIR}/src/external/googletest/googletest/include)
+target_include_directories(testutils SYSTEM BEFORE PRIVATE ${PROJECT_SOURCE_DIR}/src/external/googletest/googlemock/include)
 target_link_libraries(testutils PRIVATE libgromacs ${GMX_COMMON_LIBRARIES} gmock)
 target_link_libraries(testutils PUBLIC common)
 
 # GROMACS module dependencies.
 # Note that testutils conveys transitive dependencies on some modules.
-# TODO: Explicitly link specific modules with minimal exposure.
+# TODO: Remove `legacy_modules` once specific modules are explicitly linked.
 target_link_libraries(testutils PUBLIC legacy_modules)
+target_link_libraries(testutils PUBLIC utility math)
+target_link_libraries(testutils PRIVATE topology)
 
-# TODO Use gmx_add_missing_tests_notice() instead of the messages below.
-set(GMX_CAN_RUN_MPI_TESTS 1)
-if (GMX_MPI)
-    set(_an_mpi_variable_had_content 0)
-    foreach(VARNAME MPIEXEC MPIEXEC_NUMPROC_FLAG MPIEXEC_PREFLAGS MPIEXEC_POSTFLAGS)
-        # These variables need a valid value for the test to run
-        # and pass, but conceivably any of them might be valid
-        # with arbitrary (including empty) content. They can't be
-        # valid if they've been populated with the CMake
-        # find_package magic suffix/value "NOTFOUND", though.
-        if (${VARNAME} MATCHES ".*NOTFOUND")
-            message(STATUS "CMake variable ${VARNAME} was not detected to be a valid value. To test GROMACS correctly, check the advice in the install guide.")
-            set(GMX_CAN_RUN_MPI_TESTS 0)
-        endif()
-        if (NOT VARNAME STREQUAL MPIEXEC AND ${VARNAME})
-            set(_an_mpi_variable_had_content 1)
-        endif()
-    endforeach()
-    if(_an_mpi_variable_had_content AND NOT MPIEXEC)
-        message(STATUS "CMake variable MPIEXEC must have a valid value if one of the other related MPIEXEC variables does. To test GROMACS correctly, check the advice in the install guide.")
-        set(GMX_CAN_RUN_MPI_TESTS 0)
-    endif()
-elseif (NOT GMX_THREAD_MPI)
-    set(GMX_CAN_RUN_MPI_TESTS 0)
+# Permit having tests of legacy functions using FILE*, which work best
+# when the system supports the POSIX open_memstream() function.
+include(CheckCXXSymbolExists)
+check_cxx_symbol_exists("open_memstream" "cstdio" HAVE_OPEN_MEMSTREAM)
+if (HAVE_OPEN_MEMSTREAM)
+    set(_have_open_memstream_value 1)
+else()
+    set(_have_open_memstream_value 0)
 endif()
-
-set(GMX_CAN_RUN_MPI_TESTS ${GMX_CAN_RUN_MPI_TESTS} PARENT_SCOPE)
+set_source_files_properties(posixmemstream.cpp PROPERTIES COMPILE_DEFINITIONS "-DHAVE_OPEN_MEMSTREAM=${_have_open_memstream_value}")
 
 add_subdirectory(tests)

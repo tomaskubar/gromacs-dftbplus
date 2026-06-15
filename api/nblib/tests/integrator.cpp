@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2020- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \internal \file
  * \brief
@@ -43,14 +42,25 @@
  * \author Artem Zhmurov <zhmurov@gmail.com>
  */
 #include "nblib/integrator.h"
+
+#include <string>
+
+#include <gtest/gtest.h>
+
+#include "gromacs/mdtypes/md_enums.h"
 #include "gromacs/pbcutil/pbc.h"
+#include "gromacs/utility/arrayref.h"
+#include "gromacs/utility/vectypes.h"
+
+#include "testutils/testasserts.h"
+
+#include "nblib/interactions.h"
 #include "nblib/molecules.h"
 #include "nblib/particletype.h"
 #include "nblib/simulationstate.h"
 #include "nblib/topology.h"
-#include "nblib/util/internal.h"
-
-#include "testutils/testasserts.h"
+#include "nblib/util/util.hpp"
+#include "nblib/vector.h"
 
 namespace nblib
 {
@@ -77,10 +87,8 @@ TEST(NBlibTest, IntegratorWorks)
     topologyBuilder.addParticleTypesInteractions(interactions);
     Topology topology = topologyBuilder.buildTopology();
 
-    // Some random starting conditions
-    std::vector<Vec3> x(numAtoms, { -9.0, 8.0, -7.0 });
-    std::vector<Vec3> v(numAtoms, { 0.6, -0.5, 0.4 });
-    // Constant force acting on the atom
+    std::vector<Vec3> x(numAtoms, { 0.0, 0.0, 0.0 });
+    std::vector<Vec3> v(numAtoms, { 0.0, 0.0, 0.0 });
     std::vector<Vec3> f(numAtoms, { 1.0, 2.0, 0.0 });
 
     Box box(100);
@@ -116,17 +124,23 @@ TEST(NBlibTest, IntegratorWorks)
                         << formatString(
                                    "Coordinate {} of atom {} is different from analytical solution "
                                    "at step {}.",
-                                   d, i, step);
+                                   d,
+                                   i,
+                                   step);
 
                 EXPECT_REAL_EQ_TOL(vAnalytical[d], simulationState.velocities()[i][d], tolerance)
                         << formatString(
                                    "Velocity component {} of atom {} is different from analytical "
                                    "solution at step {}.",
-                                   d, i, step);
+                                   d,
+                                   i,
+                                   step);
             }
+            integrator.integrate(dt,
+                                 simulationState.coordinates(),
+                                 simulationState.velocities(),
+                                 simulationState.forces());
         }
-        integrator.integrate(dt, simulationState.coordinates(), simulationState.velocities(),
-                             simulationState.forces());
     }
 }
 

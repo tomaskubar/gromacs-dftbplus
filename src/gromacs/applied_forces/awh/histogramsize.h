@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2015,2016,2017,2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2015- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 
 /*! \internal \file
@@ -52,11 +51,12 @@
 #ifndef GMX_AWH_HISTOGRAMSIZE_H
 #define GMX_AWH_HISTOGRAMSIZE_H
 
+#include <cstdint>
 #include <cstdio>
 
 #include <vector>
 
-#include "gromacs/math/vectypes.h"
+#include "gromacs/utility/vectypes.h"
 
 namespace gmx
 {
@@ -64,7 +64,7 @@ namespace gmx
 template<typename>
 class ArrayRef;
 struct AwhBiasStateHistory;
-struct AwhBiasParams;
+class AwhBiasParams;
 class BiasParams;
 class PointState;
 
@@ -98,7 +98,8 @@ private:
      * \param[in]     params             The bias parameters.
      * \param[in]     t                  Time.
      * \param[in]     detectedCovering   True if we detected that the sampling interval has been
-     * sufficiently covered. \param[in,out] weightsumCovering  The weight sum for checking covering.
+     *                                   sufficiently covered.
+     * \param[in,out] weightsumCovering  The weight sum for checking covering.
      * \param[in,out] fplog              Log file.
      * \returns the new histogram size.
      */
@@ -122,12 +123,12 @@ public:
      * \param[in,out] fplog              Log file.
      * \returns the new histogram size.
      */
-    double newHistogramSize(const BiasParams&              params,
-                            double                         t,
-                            bool                           covered,
-                            const std::vector<PointState>& pointStates,
-                            ArrayRef<double>               weightsumCovering,
-                            FILE*                          fplog);
+    double newHistogramSize(const BiasParams&          params,
+                            double                     t,
+                            bool                       covered,
+                            ArrayRef<const PointState> pointStates,
+                            ArrayRef<double>           weightsumCovering,
+                            FILE*                      fplog);
 
     /*! \brief Restores the histogram size from history.
      *
@@ -175,8 +176,10 @@ private:
     double histogramSize_; /**< Size of reference weight histogram. */
 
     /* Values that control the evolution of the histogram size. */
-    bool   inInitialStage_;       /**< True if in the intial stage. */
-    bool   equilibrateHistogram_; /**< True if samples are kept from accumulating until the sampled distribution is close enough to the target. */
+    bool   inInitialStage_;     /**< True if in the initial stage. */
+    double growthFactor_;       /**< The growth factor for the initial stage */
+    bool equilibrateHistogram_; /**< True if samples are kept from accumulating until the sampled distribution is close enough to the target. */
+    double histogramTolerance_; /**< The fraction by which the histogram is allowed to deviate */
     double logScaledSampleWeight_; /**< The log of the current sample weight, scaled because of the histogram rescaling. */
     double maxLogScaledSampleWeight_; /**< Maximum sample weight obtained for previous (smaller) histogram sizes. */
 

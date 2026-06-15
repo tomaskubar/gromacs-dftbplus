@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2020- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \internal \file
  * \brief
@@ -43,11 +42,18 @@
  * \author Artem Zhmurov <zhmurov@gmail.com>
  */
 #include "nblib/molecules.h"
+
+#include <cstddef>
+
+#include <stdexcept>
+
+#include <gtest/gtest.h>
+
+#include "testutils/testasserts.h"
+
 #include "nblib/exception.h"
 #include "nblib/particletype.h"
 #include "nblib/tests/testsystems.h"
-
-#include "testutils/testasserts.h"
 
 namespace nblib
 {
@@ -114,28 +120,6 @@ TEST(NBlibTest, CanConstructExclusionListFromNames)
     }
 }
 
-TEST(NBlibTest, CanConstructExclusionListFromIndices)
-{
-    WaterMoleculeBuilder waterMolecule;
-    Molecule             water = waterMolecule.waterMoleculeWithoutExclusions();
-
-    //! Add the exclusions
-    water.addExclusion(1, 0);
-    water.addExclusion(2, 0);
-    water.addExclusion(1, 2);
-
-    std::vector<std::tuple<int, int>> exclusions = water.getExclusions();
-
-    std::vector<std::tuple<int, int>> reference{ { 0, 0 }, { 0, 1 }, { 0, 2 }, { 1, 0 }, { 1, 1 },
-                                                 { 1, 2 }, { 2, 0 }, { 2, 1 }, { 2, 2 } };
-
-    ASSERT_EQ(exclusions.size(), 9);
-    for (std::size_t i = 0; i < exclusions.size(); ++i)
-    {
-        EXPECT_EQ(exclusions[i], reference[i]);
-    }
-}
-
 TEST(NBlibTest, CanConstructExclusionListFromNamesAndIndicesMixed)
 {
     WaterMoleculeBuilder waterMolecule;
@@ -144,7 +128,7 @@ TEST(NBlibTest, CanConstructExclusionListFromNamesAndIndicesMixed)
     //! Add the exclusions
     water.addExclusion(ParticleName("H1"), ParticleName("Oxygen"));
     water.addExclusion(ParticleName("H2"), ParticleName("Oxygen"));
-    water.addExclusion(1, 2);
+    water.addExclusion(ParticleName("H1"), ParticleName("H2"));
 
     std::vector<std::tuple<int, int>> exclusions = water.getExclusions();
 
@@ -217,7 +201,7 @@ TEST(NBlibTest, CanAddInteractions)
 
     HarmonicBondType hb(1, 2);
     CubicBondType    cub(1, 2, 3);
-    DefaultAngle     ang(Degrees(1), 1);
+    HarmonicAngle    ang(1, Degrees(1));
 
     molecule.addInteraction(ParticleName("O"), ParticleName("H1"), hb);
     molecule.addInteraction(ParticleName("O"), ParticleName("H2"), hb);
@@ -231,7 +215,33 @@ TEST(NBlibTest, CanAddInteractions)
     //! cubic bonds
     EXPECT_EQ(pickType<CubicBondType>(interactionData).interactions_.size(), 1);
     //! angular interactions
-    EXPECT_EQ(pickType<DefaultAngle>(interactionData).interactions_.size(), 1);
+    EXPECT_EQ(pickType<HarmonicAngle>(interactionData).interactions_.size(), 1);
+}
+
+TEST(NBlibTest, CanAddUreyBradley)
+{
+    Molecule     molecule(MoleculeName("UreyBradleyTest"));
+    ParticleType O(ParticleTypeName("Ow"), Mass(1));
+    ParticleType H(ParticleTypeName("Hw"), Mass(1));
+    molecule.addParticle(ParticleName("O"), O);
+    molecule.addParticle(ParticleName("H1"), H);
+    molecule.addParticle(ParticleName("H2"), H);
+
+    addUreyBradleyInteraction(molecule,
+                              ParticleName("H1"),
+                              ParticleName("O"),
+                              ParticleName("H2"),
+                              Radians(1.82),
+                              ForceConstant(2.0),
+                              EquilConstant(0.15),
+                              ForceConstant(3.0));
+
+    const auto& interactionData = molecule.interactionData();
+
+    //! harmonic bonds
+    EXPECT_EQ(pickType<HarmonicBondType>(interactionData).interactions_.size(), 1);
+    //! angular interactions
+    EXPECT_EQ(pickType<HarmonicAngle>(interactionData).interactions_.size(), 1);
 }
 
 } // namespace

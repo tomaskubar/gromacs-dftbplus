@@ -5,12 +5,15 @@ Automatic source code formatting
 
 .. highlight:: bash
 
-The source code can be automatically formatted using clang-format
-since GROMACS 2020.
-Both are formatting tools that apply the guidelines in :doc:`formatting`.
+Python sources can be automatically formatted with
+`Black <https://black.readthedocs.io/en/stable/>`__ from Python 3.9.3.
+
+C++ source code can be automatically formatted using clang-format
+since |Gromacs| 2020.
+It automatically applies the guidelines in :doc:`formatting` and in
+:doc:`includestyle`.
 Additionally, other Python scripts are used for a few other automatic
-formatting/checking tasks.  The overview tools page contains a list of these
-tools: :ref:`dev-formatting-tools`.
+formatting/checking tasks.
 This page provides more details for clang-format, clang-tidy and copyright scripts.
 
 Our CI uses these same scripts (in particular, ``clang-format.sh``,
@@ -22,15 +25,15 @@ the code stays invariant under such formatting.
 Setting up clang-format
 -----------------------
 
-|Gromacs| formatting is enforced with clang-format 7.0.1.
+|Gromacs| formatting is enforced with clang-format 18.1.8.
 :command:`clang-format` is one of the core *clang* tools.
 It may be included in a *clang* or *llvm* package from your favorite packaging
 system or you may find a standalone *clang-format* package,
-but you should confirm that the provided command is version 7.0.1 or
-7.1.0. Example::
+but you should confirm that the provided command is correct (other 18.1.x versions might be okay too).
+Example::
 
     $ clang-format --version
-    clang-format version 7.1.0 (tags/RELEASE_710/final)
+    clang-format version 18.1.8
 
 If you use a different version of clang-format,
 you will likely get different formatting results than
@@ -39,12 +42,12 @@ and the commits that you push will fail the automated tests.
 
 .. note::
 
-    Refer to `LLVM <http://releases.llvm.org/download.html#7.1.0>`__ for
+    Refer to `LLVM <http://releases.llvm.org/download.html#18.1.8>`__ for
     source and binary downloads.
     If downloading sources, note that you will need to download both the
     *LLVM source code* and the *Clang source code*.
     As per the clang
-    `INSTALL.txt <https://github.com/llvm/llvm-project/blob/release/7.x/clang/INSTALL.txt>`__,
+    `INSTALL.txt <https://github.com/llvm/llvm-project/blob/release/18.x/clang/INSTALL.txt>`__,
     place the expanded clang source into a :file:`tools/clang` subdirectory within
     the expanded llvm archive, then run CMake against the llvm source directory.
 
@@ -70,7 +73,7 @@ clang-format discovers which formatting rules to apply from the
 which will be automatically updated (if necessary) when you :command:`git pull`
 from the |Gromacs| repository.
 For more about the tool and the :file:`.clang-format` configuration file,
-visit https://releases.llvm.org/7.0.1/tools/clang/docs/ClangFormat.html
+visit https://releases.llvm.org/18.1.8/tools/clang/docs/ClangFormat.html
 
 What is automatically formatted?
 --------------------------------
@@ -94,16 +97,16 @@ Setting up clang-tidy
 ---------------------
 
 |Gromacs| source code tidiness checking is enforced with clang-tidy provided
-alongside *clang* compiler version 9.
+alongside *clang* compiler version 18.
 :command:`clang-tidy` is one of the core *clang* tools.
 It may be included in a *clang* or *llvm* package from your favorite packaging
 system or you may find a standalone *clang-tidy* or *clang-tools* package,
-but you should confirm that the provided command is version 9.
+but you should confirm that the provided command is version 18.
 Example::
 
     $ clang-tidy --version
       LLVM (http://llvm.org/):
-        LLVM version 9.0.0
+        LLVM version 18.1.8
 
 If you use a different version of clang-tidy,
 you will likely get different checking results than
@@ -112,12 +115,12 @@ and the commits that you push will fail the automated tests.
 
 .. note::
 
-    Refer to `LLVM <http://releases.llvm.org/download.html#9.0.1>`__ for
+    Refer to `LLVM <https://releases.llvm.org/download.html#18.1.8>`__ for
     source and binary downloads.
     If downloading sources, note that you will need to download both the
     *LLVM source code* and the *Clang source code*.
     As per the clang
-    `INSTALL.txt <https://github.com/llvm/llvm-project/blob/release/9.x/clang/INSTALL.txt>`__,
+    `INSTALL.txt <https://github.com/llvm/llvm-project/blob/release/18.x/clang/INSTALL.txt>`__,
     place the expanded clang source into a :file:`tools/clang` subdirectory within
     the expanded llvm archive, then run CMake against the llvm source directory.
 
@@ -136,10 +139,10 @@ clang-tidy discovers which formatting rules to apply from the
 which will be automatically updated (if necessary) when you :command:`git pull`
 from the |Gromacs| repository.
 For more about the tool and the :file:`.clang-tidy` configuration file,
-visit http://releases.llvm.org/9.0.0/tools/clang/tools/extra/docs/clang-tidy/index.html
+visit https://releases.llvm.org/18.1.8/tools/clang/tools/extra/docs/clang-tidy/index.html.
 
-Scripts
--------
+Tools
+-----
 
 ``copyright.py``
 ^^^^^^^^^^^^^^^^
@@ -225,6 +228,11 @@ By default, ``update-*`` refuses to update dirty files (i.e., that differ
 between the disk and the index) to make it easy to revert the changes.
 This can be overridden by adding a ``-f``/``--force`` option.
 
+Since the behaviour of clang-format can change between versions even when using the same options,
+only clang-format from Clang 18 will give correct results. The path to the correct ``clang-format``
+binary can be specified via ``CLANG_FORMAT`` environment variable or by running
+``git config hooks.clangformatpath /path/to/clang-format-18`` in the repository root.
+
 ``clang-tidy.sh``
 ^^^^^^^^^^^^^^^^^
 
@@ -257,6 +265,15 @@ By default, ``update-*`` refuses to update dirty files (i.e., that differ
 between the disk and the index) to make it easy to revert the changes.
 This can be overridden by adding a ``-f``/``--force`` option.
 
+Black
+^^^^^
+
+The `Black <https://black.readthedocs.io/>`__ tool reformats Python files in
+place, by default. To check and update the entire repository, use the
+:file:`.black.toml` config file in the root directory of the repository::
+
+    pip install black
+    black --config .black.toml .
 
 git pre-commit hook
 ^^^^^^^^^^^^^^^^^^^
@@ -297,8 +314,7 @@ variable.  For example, ::
 
     NO_FORMAT_CHECK=1 git commit -a
 
-You can also run ``git commit --no-verify``, but that also disables other hooks,
-such as the Change-Id ``commit-msg`` hook used by Gerrit.
+You can also run ``git commit --no-verify``, but that also disables other hooks.
 
 Note that when you run ``git commit --amend``, the hook is only run for the
 changes that are getting amended, not for the whole commit.  During a rebase,
@@ -334,7 +350,7 @@ the git index do not match.
 Using git filters
 -----------------
 
-An alternative to using a pre-commit hook to automatically apply uncrustify or
+An alternative to using a pre-commit hook to automatically apply
 clang-format on changes is to use a git filter (does not require either of the scripts,
 only the ``.gitattributes`` file).  You can run ::
 
@@ -353,3 +369,19 @@ currently also checks the copyright headers.
 The filter allows one to transparently merge branches that have not been run
 through the source checkers, and is applied more consistently (the pre-commit hook is
 not run for every commit, e.g., during a rebase).
+
+Hiding formatting commits from ``git blame``
+--------------------------------------------
+
+A large-scale code reformatting, for example, when switching to a new clang-format
+version, might make the output of ``git blame``/``git praise`` hard to parse, since
+many lines will be touched by reformatting without any functional change.
+
+A manually-managed list of such formatting-only commits is kept in the
+``.git-blame-ignore-revs`` file. Please run the following command in the repository
+root to instruct Git to "skip" the listed commits and instead show the earlier commit
+from which the line originates ::
+
+    git config blame.ignoreRevsFile .git-blame-ignore-revs
+
+To temporarily disable this option, use ``git blame --ignore-revs-file=`` (without any argument).

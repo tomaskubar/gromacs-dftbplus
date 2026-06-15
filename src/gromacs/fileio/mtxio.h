@@ -1,12 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
- * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2012,2014,2018,2019, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 1991- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -20,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -29,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 
 /* This module provides routines to read/write sparse or full storage
@@ -43,6 +40,8 @@
 #ifndef GMX_FILEIO_MTXIO_H
 #define GMX_FILEIO_MTXIO_H
 
+#include <filesystem>
+
 #include "gromacs/linearalgebra/sparsematrix.h"
 #include "gromacs/utility/real.h"
 
@@ -52,7 +51,11 @@
  * EITHER a pointer to a full storage matrix or a sparse storage
  * matrix. If both pointers are non-NULL a fatal error will occur.
  */
-void gmx_mtxio_write(const char* filename, int nrow, int ncol, real* full_matrix, gmx_sparsematrix_t* sparse_matrix);
+void gmx_mtxio_write(const std::filesystem::path& filename,
+                     int                          nrow,
+                     int                          ncol,
+                     real*                        full_matrix,
+                     gmx_sparsematrix_t*          sparse_matrix);
 
 
 /* Read a matrix from file.
@@ -66,6 +69,10 @@ void gmx_mtxio_write(const char* filename, int nrow, int ncol, real* full_matrix
  * To determine the format you should set *full_matrix and *sparse_matrix to NULL
  * before calling this routine, and check which one is non-NULL on return.
  */
-void gmx_mtxio_read(const char* filename, int* nrow, int* ncol, real** full_matrix, gmx_sparsematrix_t** sparse_matrix);
+void gmx_mtxio_read(const std::filesystem::path& filename,
+                    int*                         nrow,
+                    int*                         ncol,
+                    real**                       full_matrix,
+                    gmx_sparsematrix_t**         sparse_matrix);
 
 #endif

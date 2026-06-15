@@ -1,13 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
- * Copyright (c) 2001-2013, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2016,2017 by the GROMACS development team.
- * Copyright (c) 2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 1991- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -21,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -30,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 #include "gmxpre.h"
 
@@ -43,33 +39,51 @@
 #include <cstdio>
 #include <cstring>
 
+#include <array>
+#include <filesystem>
+#include <memory>
+#include <string>
+#include <vector>
+
+#include "gromacs/commandline/filenm.h"
 #include "gromacs/commandline/pargs.h"
 #include "gromacs/fileio/confio.h"
 #include "gromacs/fileio/enxio.h"
+#include "gromacs/fileio/filetypes.h"
 #include "gromacs/fileio/gmxfio.h"
+#include "gromacs/fileio/oenv.h"
 #include "gromacs/fileio/tpxio.h"
 #include "gromacs/fileio/trxio.h"
 #include "gromacs/fileio/xtcio.h"
 #include "gromacs/math/functions.h"
 #include "gromacs/math/units.h"
-#include "gromacs/math/vec.h"
 #include "gromacs/mdrun/mdmodules.h"
 #include "gromacs/mdtypes/inputrec.h"
 #include "gromacs/mdtypes/md_enums.h"
 #include "gromacs/mdtypes/state.h"
 #include "gromacs/pbcutil/pbc.h"
 #include "gromacs/topology/atomprop.h"
+#include "gromacs/topology/atoms.h"
 #include "gromacs/topology/block.h"
+#include "gromacs/topology/idef.h"
 #include "gromacs/topology/ifunc.h"
 #include "gromacs/topology/index.h"
 #include "gromacs/topology/mtop_util.h"
 #include "gromacs/topology/topology.h"
 #include "gromacs/trajectory/energyframe.h"
 #include "gromacs/trajectory/trajectoryframe.h"
+#include "gromacs/utility/arrayref.h"
 #include "gromacs/utility/arraysize.h"
+#include "gromacs/utility/basedefinitions.h"
+#include "gromacs/utility/cstringutil.h"
 #include "gromacs/utility/fatalerror.h"
 #include "gromacs/utility/futil.h"
+#include "gromacs/utility/real.h"
 #include "gromacs/utility/smalloc.h"
+#include "gromacs/utility/vec.h"
+#include "gromacs/utility/vectypes.h"
+
+struct gmx_output_env_t;
 
 typedef struct
 {
@@ -95,31 +109,31 @@ typedef struct
 
 static void comp_tpx(const char* fn1, const char* fn2, gmx_bool bRMSD, real ftol, real abstol)
 {
-    const char* ff[2];
-    t_inputrec* ir[2];
-    t_state     state[2];
-    gmx_mtop_t  mtop[2];
-    int         i;
+    const char*                 ff[2];
+    std::unique_ptr<t_inputrec> ir[2];
+    t_state                     state[2];
+    gmx_mtop_t                  mtop[2];
+    int                         i;
 
     ff[0] = fn1;
     ff[1] = fn2;
     for (i = 0; i < (fn2 ? 2 : 1); i++)
     {
-        ir[i] = new t_inputrec();
-        read_tpx_state(ff[i], ir[i], &state[i], &(mtop[i]));
-        gmx::MDModules().adjustInputrecBasedOnModules(ir[i]);
+        ir[i] = std::make_unique<t_inputrec>();
+        read_tpx_state(ff[i], ir[i].get(), &state[i], &(mtop[i]));
+        gmx::MDModules().adjustInputrecBasedOnModules(ir[i].get());
     }
     if (fn2)
     {
-        cmp_inputrec(stdout, ir[0], ir[1], ftol, abstol);
+        cmp_inputrec(stdout, ir[0].get(), ir[1].get(), ftol, abstol);
         compareMtop(stdout, mtop[0], mtop[1], ftol, abstol);
         comp_state(&state[0], &state[1], bRMSD, ftol, abstol);
     }
     else
     {
-        if (ir[0]->efep == efepNO)
+        if (ir[0]->efep == FreeEnergyPerturbationType::No)
         {
-            fprintf(stdout, "inputrec->efep = %s\n", efep_names[ir[0]->efep]);
+            fprintf(stdout, "inputrec->efep = %s\n", enumValueToString(ir[0]->efep));
         }
         else
         {
@@ -130,8 +144,6 @@ static void comp_tpx(const char* fn1, const char* fn2, gmx_bool bRMSD, real ftol
             compareMtopAB(stdout, mtop[0], ftol, abstol);
         }
     }
-    delete ir[0];
-    delete ir[1];
 }
 
 static void comp_trx(const gmx_output_env_t* oenv, const char* fn1, const char* fn2, gmx_bool bRMSD, real ftol, real abstol)
@@ -187,12 +199,12 @@ static void chk_coords(int frame, int natoms, rvec* x, matrix box, real fac, rea
     {
         for (j = 0; (j < DIM); j++)
         {
-            if ((vol > 0) && (fabs(x[i][j]) > fac * box[j][j]))
+            if ((vol > 0) && (std::fabs(x[i][j]) > fac * box[j][j]))
             {
                 printf("Warning at frame %d: coordinates for atom %d are large (%g)\n", frame, i, x[i][j]);
             }
         }
-        if ((fabs(x[i][XX]) < tol) && (fabs(x[i][YY]) < tol) && (fabs(x[i][ZZ]) < tol))
+        if ((std::fabs(x[i][XX]) < tol) && (std::fabs(x[i][YY]) < tol) && (std::fabs(x[i][ZZ]) < tol))
         {
             nNul++;
         }
@@ -211,7 +223,7 @@ static void chk_vels(int frame, int natoms, rvec* v)
     {
         for (j = 0; (j < DIM); j++)
         {
-            if (fabs(v[i][j]) > 500)
+            if (std::fabs(v[i][j]) > 500)
             {
                 printf("Warning at frame %d. Velocities for atom %d are large (%g)\n", frame, i, v[i][j]);
             }
@@ -227,7 +239,7 @@ static void chk_forces(int frame, int natoms, rvec* f)
     {
         for (j = 0; (j < DIM); j++)
         {
-            if (fabs(f[i][j]) > 10000)
+            if (std::fabs(f[i][j]) > 10000)
             {
                 printf("Warning at frame %d. Forces for atom %d are large (%g)\n", frame, i, f[i][j]);
             }
@@ -237,7 +249,7 @@ static void chk_forces(int frame, int natoms, rvec* f)
 
 static void chk_bonds(const InteractionDefinitions* idef, PbcType pbcType, rvec* x, matrix box, real tol)
 {
-    int   ftype, k, ai, aj, type;
+    int   k, ai, aj, type;
     real  b0, blen, deviation;
     t_pbc pbc;
     rvec  dx;
@@ -245,7 +257,7 @@ static void chk_bonds(const InteractionDefinitions* idef, PbcType pbcType, rvec*
     gmx::ArrayRef<const t_iparams> iparams = idef->iparams;
 
     set_pbc(&pbc, pbcType, box);
-    for (ftype = 0; (ftype < F_NRE); ftype++)
+    for (const auto ftype : gmx::EnumerationWrapper<InteractionFunction>{})
     {
         if ((interaction_function[ftype].flags & IF_CHEMBOND) == IF_CHEMBOND)
         {
@@ -257,11 +269,13 @@ static void chk_bonds(const InteractionDefinitions* idef, PbcType pbcType, rvec*
                 b0   = 0;
                 switch (ftype)
                 {
-                    case F_BONDS: b0 = iparams[type].harmonic.rA; break;
-                    case F_G96BONDS: b0 = std::sqrt(iparams[type].harmonic.rA); break;
-                    case F_MORSE: b0 = iparams[type].morse.b0A; break;
-                    case F_CUBICBONDS: b0 = iparams[type].cubic.b0; break;
-                    case F_CONSTR: b0 = iparams[type].constr.dA; break;
+                    case InteractionFunction::Bonds: b0 = iparams[type].harmonic.rA; break;
+                    case InteractionFunction::GROMOS96Bonds:
+                        b0 = std::sqrt(iparams[type].harmonic.rA);
+                        break;
+                    case InteractionFunction::MorsePotential: b0 = iparams[type].morse.b0A; break;
+                    case InteractionFunction::CubicBonds: b0 = iparams[type].cubic.b0; break;
+                    case InteractionFunction::Constraints: b0 = iparams[type].constr.dA; break;
                     default: break;
                 }
                 if (b0 != 0)
@@ -271,8 +285,12 @@ static void chk_bonds(const InteractionDefinitions* idef, PbcType pbcType, rvec*
                     deviation = gmx::square(blen - b0);
                     if (std::sqrt(deviation / gmx::square(b0)) > tol)
                     {
-                        fprintf(stderr, "Distance between atoms %d and %d is %.3f, should be %.3f\n",
-                                ai + 1, aj + 1, blen, b0);
+                        fprintf(stderr,
+                                "Distance between atoms %d and %d is %.3f, should be %.3f\n",
+                                ai + 1,
+                                aj + 1,
+                                blen,
+                                b0);
                     }
                 }
             }
@@ -298,7 +316,7 @@ static void chk_trj(const gmx_output_env_t* oenv, const char* fn, const char* tp
     {
         read_tpx_state(tpr, &ir, &state, &mtop);
         top = std::make_unique<gmx_localtop_t>(mtop.ffparams);
-        gmx_mtop_generate_local_top(mtop, top.get(), ir.efep != efepNO);
+        gmx_mtop_generate_local_top(mtop, top.get(), ir.efep != FreeEnergyPerturbationType::No);
     }
     new_natoms = -1;
     natoms     = -1;
@@ -357,8 +375,12 @@ static void chk_trj(const gmx_output_env_t* oenv, const char* fn, const char* tp
                 > 0.1 * (std::fabs(fr.time - old_t1) + std::fabs(old_t1 - old_t2)))
             {
                 bShowTimestep = FALSE;
-                fprintf(stderr, "%sTimesteps at t=%g don't match (%g, %g)\n", newline ? "\n" : "",
-                        old_t1, old_t1 - old_t2, fr.time - old_t1);
+                fprintf(stderr,
+                        "%sTimesteps at t=%g don't match (%g, %g)\n",
+                        newline ? "\n" : "",
+                        old_t1,
+                        old_t1 - old_t2,
+                        fr.time - old_t1);
             }
         }
         natoms = new_natoms;
@@ -486,15 +508,18 @@ static void chk_tps(const char* fn, real vdw_fac, real bon_lo, real bon_hi)
                 ekin += 0.5 * atoms->atom[i].m * v[i][j] * v[i][j];
             }
         }
-        temp1 = (2.0 * ekin) / (natom * DIM * BOLTZ);
-        temp2 = (2.0 * ekin) / (natom * (DIM - 1) * BOLTZ);
+        temp1 = (2.0 * ekin) / (natom * DIM * gmx::c_boltz);
+        temp2 = (2.0 * ekin) / (natom * (DIM - 1) * gmx::c_boltz);
         fprintf(stderr, "Kinetic energy: %g (kJ/mol)\n", ekin);
         fprintf(stderr,
                 "Assuming the number of degrees of freedom to be "
                 "Natoms * %d or Natoms * %d,\n"
                 "the velocities correspond to a temperature of the system\n"
                 "of %g K or %g K respectively.\n\n",
-                DIM, DIM - 1, temp1, temp2);
+                DIM,
+                DIM - 1,
+                temp1,
+                temp2);
     }
 
     /* check coordinates */
@@ -507,17 +532,25 @@ static void chk_tps(const char* fn, real vdw_fac, real bon_lo, real bon_hi)
         fprintf(stderr,
                 "Checking for atoms closer than %g and not between %g and %g,\n"
                 "relative to sum of Van der Waals distance:\n",
-                vdw_fac, bon_lo, bon_hi);
+                vdw_fac,
+                bon_lo,
+                bon_hi);
         snew(atom_vdw, natom);
         AtomProperties aps;
         for (i = 0; (i < natom); i++)
         {
-            aps.setAtomProperty(epropVDW, *(atoms->resinfo[atoms->atom[i].resind].name),
-                                *(atoms->atomname[i]), &(atom_vdw[i]));
+            aps.setAtomProperty(epropVDW,
+                                *(atoms->resinfo[atoms->atom[i].resind].name),
+                                *(atoms->atomname[i]),
+                                &(atom_vdw[i]));
             if (debug)
             {
-                fprintf(debug, "%5d %4s %4s %7g\n", i + 1, *(atoms->resinfo[atoms->atom[i].resind].name),
-                        *(atoms->atomname[i]), atom_vdw[i]);
+                fprintf(debug,
+                        "%5d %4s %4s %7g\n",
+                        i + 1,
+                        *(atoms->resinfo[atoms->atom[i].resind].name),
+                        *(atoms->atomname[i]),
+                        atom_vdw[i]);
             }
         }
         if (bB)
@@ -531,7 +564,7 @@ static void chk_tps(const char* fn, real vdw_fac, real bon_lo, real bon_hi)
             if (((i + 1) % 10) == 0)
             {
                 fprintf(stderr, "\r%5d", i + 1);
-                fflush(stderr);
+                std::fflush(stderr);
             }
             for (j = i + 1; (j < natom); j++)
             {
@@ -549,15 +582,32 @@ static void chk_tps(const char* fn, real vdw_fac, real bon_lo, real bon_hi)
                 {
                     if (bFirst)
                     {
-                        fprintf(stderr, "\r%5s %4s %8s %5s  %5s %4s %8s %5s  %6s\n", "atom#", "name",
-                                "residue", "r_vdw", "atom#", "name", "residue", "r_vdw", "distance");
+                        fprintf(stderr,
+                                "\r%5s %4s %8s %5s  %5s %4s %8s %5s  %6s\n",
+                                "atom#",
+                                "name",
+                                "residue",
+                                "r_vdw",
+                                "atom#",
+                                "name",
+                                "residue",
+                                "r_vdw",
+                                "distance");
                         bFirst = FALSE;
                     }
-                    fprintf(stderr, "\r%5d %4s %4s%4d %-5.3g  %5d %4s %4s%4d %-5.3g  %-6.4g\n", i + 1,
-                            *(atoms->atomname[i]), *(atoms->resinfo[atoms->atom[i].resind].name),
-                            atoms->resinfo[atoms->atom[i].resind].nr, atom_vdw[i], j + 1,
-                            *(atoms->atomname[j]), *(atoms->resinfo[atoms->atom[j].resind].name),
-                            atoms->resinfo[atoms->atom[j].resind].nr, atom_vdw[j], std::sqrt(r2));
+                    fprintf(stderr,
+                            "\r%5d %4s %4s%4d %-5.3g  %5d %4s %4s%4d %-5.3g  %-6.4g\n",
+                            i + 1,
+                            *(atoms->atomname[i]),
+                            *(atoms->resinfo[atoms->atom[i].resind].name),
+                            atoms->resinfo[atoms->atom[i].resind].nr,
+                            atom_vdw[i],
+                            j + 1,
+                            *(atoms->atomname[j]),
+                            *(atoms->resinfo[atoms->atom[j].resind].name),
+                            atoms->resinfo[atoms->atom[j].resind].nr,
+                            atom_vdw[j],
+                            std::sqrt(r2));
                 }
             }
         }
@@ -593,12 +643,20 @@ static void chk_tps(const char* fn, real vdw_fac, real bon_lo, real bon_hi)
                                 "):\n"
                                 "(These may occur often and are normally not a problem)\n"
                                 "%5s %4s %8s %5s  %s\n",
-                                "atom#", "name", "residue", "r_vdw", "coordinate");
+                                "atom#",
+                                "name",
+                                "residue",
+                                "r_vdw",
+                                "coordinate");
                         bFirst = FALSE;
                     }
-                    fprintf(stderr, "%5d %4s %4s%4d %-5.3g", i, *(atoms->atomname[i]),
+                    fprintf(stderr,
+                            "%5d %4s %4s%4d %-5.3g",
+                            i,
+                            *(atoms->atomname[i]),
                             *(atoms->resinfo[atoms->atom[i].resind].name),
-                            atoms->resinfo[atoms->atom[i].resind].nr, atom_vdw[i]);
+                            atoms->resinfo[atoms->atom[i].resind].nr,
+                            atom_vdw[i]);
                     for (j = 0; (j < DIM); j++)
                     {
                         fprintf(stderr, " %6.3g", x[i][j]);
@@ -621,32 +679,26 @@ static void chk_tps(const char* fn, real vdw_fac, real bon_lo, real bon_hi)
 
 static void chk_ndx(const char* fn)
 {
-    t_blocka* grps;
-    char**    grpname;
-    int       i;
-
-    grps = init_index(fn, &grpname);
+    const auto grps = init_index(fn);
     if (debug)
     {
-        pr_blocka(debug, 0, fn, grps, FALSE);
+        pr_blocka(debug, 0, fn, grps, false);
     }
     else
     {
         printf("Contents of index file %s\n", fn);
         printf("--------------------------------------------------\n");
         printf("Nr.   Group               #Entries   First    Last\n");
-        for (i = 0; (i < grps->nr); i++)
+        for (gmx::Index i = 0; i < gmx::ssize(grps); i++)
         {
-            printf("%4d  %-20s%8d%8d%8d\n", i, grpname[i], grps->index[i + 1] - grps->index[i],
-                   grps->a[grps->index[i]] + 1, grps->a[grps->index[i + 1] - 1] + 1);
+            printf("%4td  %-20s%8td%8d%8d\n",
+                   i,
+                   grps[i].name.c_str(),
+                   gmx::ssize(grps[i].particleIndices),
+                   grps[i].particleIndices[0] + 1,
+                   grps[i].particleIndices.back() + 1);
         }
     }
-    for (i = 0; (i < grps->nr); i++)
-    {
-        sfree(grpname[i]);
-    }
-    sfree(grpname);
-    done_blocka(grps);
 }
 
 static void chk_enx(const char* fn)
@@ -677,12 +729,11 @@ static void chk_enx(const char* fn)
     {
         if (fnr >= 2)
         {
-            if (fabs((fr->t - old_t1) - (old_t1 - old_t2))
-                > 0.1 * (fabs(fr->t - old_t1) + std::fabs(old_t1 - old_t2)))
+            if (std::fabs((fr->t - old_t1) - (old_t1 - old_t2))
+                > 0.1 * (std::fabs(fr->t - old_t1) + std::fabs(old_t1 - old_t2)))
             {
                 bShowTStep = FALSE;
-                fprintf(stderr, "\nTimesteps at t=%g don't match (%g, %g)\n", old_t1,
-                        old_t1 - old_t2, fr->t - old_t1);
+                fprintf(stderr, "\nTimesteps at t=%g don't match (%g, %g)\n", old_t1, old_t1 - old_t2, fr->t - old_t1);
             }
         }
         old_t2 = old_t1;
@@ -694,8 +745,7 @@ static void chk_enx(const char* fn)
         }
         if (fnr == 0)
         {
-            fprintf(stderr, "\rframe: %6s (index %6d), t: %10.3f\n", gmx_step_str(fr->step, buf),
-                    fnr, fr->t);
+            fprintf(stderr, "\rframe: %6s (index %6d), t: %10.3f\n", gmx_step_str(fr->step, buf), fnr, fr->t);
         }
         fnr++;
     }
@@ -753,41 +803,41 @@ int gmx_check(int argc, char* argv[])
     const char *fn1 = nullptr, *fn2 = nullptr, *tex = nullptr;
 
     gmx_output_env_t* oenv;
-    static real       vdw_fac  = 0.8;
-    static real       bon_lo   = 0.4;
-    static real       bon_hi   = 0.7;
-    static gmx_bool   bRMSD    = FALSE;
-    static real       ftol     = 0.001;
-    static real       abstol   = 0.001;
-    static gmx_bool   bCompAB  = FALSE;
-    static char*      lastener = nullptr;
-    static t_pargs    pa[]     = {
+    real              vdw_fac  = 0.8;
+    real              bon_lo   = 0.4;
+    real              bon_hi   = 0.7;
+    gmx_bool          bRMSD    = FALSE;
+    real              ftol     = 0.001;
+    real              abstol   = 0.001;
+    gmx_bool          bCompAB  = FALSE;
+    char*             lastener = nullptr;
+    t_pargs           pa[]     = {
         { "-vdwfac",
-          FALSE,
-          etREAL,
-          { &vdw_fac },
-          "Fraction of sum of VdW radii used as warning cutoff" },
+                        FALSE,
+                        etREAL,
+                        { &vdw_fac },
+                        "Fraction of sum of VdW radii used as warning cutoff" },
         { "-bonlo", FALSE, etREAL, { &bon_lo }, "Min. fract. of sum of VdW radii for bonded atoms" },
         { "-bonhi", FALSE, etREAL, { &bon_hi }, "Max. fract. of sum of VdW radii for bonded atoms" },
         { "-rmsd", FALSE, etBOOL, { &bRMSD }, "Print RMSD for x, v and f" },
         { "-tol",
-          FALSE,
-          etREAL,
-          { &ftol },
-          "Relative tolerance for comparing real values defined as "
-          "[MATH]2*(a-b)/([MAG]a[mag]+[MAG]b[mag])[math]" },
+                        FALSE,
+                        etREAL,
+                        { &ftol },
+                        "Relative tolerance for comparing real values defined as "
+                                      "[MATH]2*(a-b)/([MAG]a[mag]+[MAG]b[mag])[math]" },
         { "-abstol",
-          FALSE,
-          etREAL,
-          { &abstol },
-          "Absolute tolerance, useful when sums are close to zero." },
+                        FALSE,
+                        etREAL,
+                        { &abstol },
+                        "Absolute tolerance, useful when sums are close to zero." },
         { "-ab", FALSE, etBOOL, { &bCompAB }, "Compare the A and B topology from one file" },
         { "-lastener",
-          FALSE,
-          etSTR,
-          { &lastener },
-          "Last energy term to compare (if not given all are tested). It makes sense to go up "
-          "until the Pressure." }
+                        FALSE,
+                        etSTR,
+                        { &lastener },
+                        "Last energy term to compare (if not given all are tested). It makes sense to go up "
+                                      "until the Pressure." }
     };
 
     if (!parse_common_args(&argc, argv, 0, NFILE, fnm, asize(pa), pa, asize(desc), desc, 0, nullptr, &oenv))

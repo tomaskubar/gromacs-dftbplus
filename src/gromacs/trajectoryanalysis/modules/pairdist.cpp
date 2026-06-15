@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2014,2015,2016,2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2014- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \internal \file
  * \brief
@@ -44,9 +43,11 @@
 #include "pairdist.h"
 
 #include <cmath>
+#include <cstddef>
 
 #include <algorithm>
 #include <limits>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -55,6 +56,8 @@
 #include "gromacs/options/basicoptions.h"
 #include "gromacs/options/filenameoption.h"
 #include "gromacs/options/ioptionscontainer.h"
+#include "gromacs/options/optionfiletype.h"
+#include "gromacs/selection/indexutil.h"
 #include "gromacs/selection/nbsearch.h"
 #include "gromacs/selection/selection.h"
 #include "gromacs/selection/selectionoption.h"
@@ -62,11 +65,17 @@
 #include "gromacs/trajectoryanalysis/analysissettings.h"
 #include "gromacs/trajectoryanalysis/topologyinformation.h"
 #include "gromacs/utility/arrayref.h"
+#include "gromacs/utility/enumerationhelpers.h"
 #include "gromacs/utility/exceptions.h"
-#include "gromacs/utility/stringutil.h"
+#include "gromacs/utility/real.h"
+
+struct gmx_mtop_t;
+struct t_pbc;
 
 namespace gmx
 {
+class AnalysisDataParallelOptions;
+class SelectionCollection;
 
 namespace analysismodules
 {
@@ -98,8 +107,9 @@ enum class GroupType : int
 //! Strings corresponding to DistanceType.
 const EnumerationArray<DistanceType, const char*> c_distanceTypeNames = { { "min", "max" } };
 //! Strings corresponding to GroupType.
-const EnumerationArray<GroupType, const char*> c_groupTypeNames = { { "all", "res", "mol",
-                                                                      "none" } };
+const EnumerationArray<GroupType, const char*> c_groupTypeNames = {
+    { "all", "res", "mol", "none" }
+};
 
 /*! \brief
  * Implements `gmx pairdist` trajectory analysis module.
@@ -114,7 +124,7 @@ public:
 
     TrajectoryAnalysisModuleDataPointer startFrames(const AnalysisDataParallelOptions& opt,
                                                     const SelectionCollection& selections) override;
-    void                                analyzeFrame(int frnr, const t_trxframe& fr, t_pbc* pbc, TrajectoryAnalysisModuleData* pdata) override;
+    void analyzeFrame(int frnr, const t_trxframe& fr, t_pbc* pbc, TrajectoryAnalysisModuleData* pdata) override;
 
     void finishAnalysis(int nframes) override;
     void writeOutput() override;
@@ -220,7 +230,7 @@ void PairDistance::initOptions(IOptionsContainer* options, TrajectoryAnalysisSet
     settings->setHelpText(desc);
 
     options->addOption(FileNameOption("o")
-                               .filetype(eftPlot)
+                               .filetype(OptionFileType::Plot)
                                .outputFile()
                                .required()
                                .store(&fnDist_)

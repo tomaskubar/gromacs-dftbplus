@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2018,2019, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2018- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \internal \file
  * \brief
@@ -41,15 +40,24 @@
  */
 #include "gmxpre.h"
 
+#include <cmath>
+
 #include <array>
+#include <string>
 
 #include <gtest/gtest.h>
 
 #include "gromacs/math/do_fit.h"
-#include "gromacs/math/vec.h"
+#include "gromacs/utility/real.h"
+#include "gromacs/utility/vec.h"
+#include "gromacs/utility/vectypes.h"
 
 #include "testutils/testasserts.h"
 
+namespace gmx
+{
+namespace test
+{
 namespace
 {
 
@@ -58,7 +66,7 @@ using gmx::test::defaultRealTolerance;
 class StructureSimilarityTest : public ::testing::Test
 {
 protected:
-    static constexpr int       c_nAtoms = 4;
+    static constexpr int c_nAtoms = 4;
     std::array<RVec, c_nAtoms> structureA_{ { { 1, 0, 0 }, { 0, 1, 0 }, { 0, 0, 1 }, { 0, 0, 0 } } };
     std::array<RVec, c_nAtoms> structureB_{ { { 0, 1, 0 }, { 0, 0, 1 }, { 1, 0, 0 }, { 0, 0, 0 } } };
     std::array<real, c_nAtoms> masses_{ { 1, 1, 1, 0 } };
@@ -80,7 +88,7 @@ TEST_F(StructureSimilarityTest, StructureComparedToSelfHasZeroRho)
 
 TEST_F(StructureSimilarityTest, YieldsCorrectRMSD)
 {
-    EXPECT_REAL_EQ_TOL(sqrt(2.0), rmsdev(c_nAtoms, m_, x1_, x2_), defaultRealTolerance());
+    EXPECT_REAL_EQ_TOL(std::sqrt(2.0), rmsdev(c_nAtoms, m_, x1_, x2_), defaultRealTolerance());
 }
 
 TEST_F(StructureSimilarityTest, YieldsCorrectRho)
@@ -90,7 +98,8 @@ TEST_F(StructureSimilarityTest, YieldsCorrectRho)
 
 TEST_F(StructureSimilarityTest, YieldsCorrectRMSDWithIndex)
 {
-    EXPECT_REAL_EQ_TOL(sqrt(2.0), rmsdev_ind(index_.size(), index_.data(), m_, x1_, x2_),
+    EXPECT_REAL_EQ_TOL(std::sqrt(2.0),
+                       rmsdev_ind(index_.size(), index_.data(), m_, x1_, x2_),
                        defaultRealTolerance());
 }
 
@@ -100,3 +109,5 @@ TEST_F(StructureSimilarityTest, YieldsCorrectRhoWidthIndex)
 }
 
 } // namespace
+} // namespace test
+} // namespace gmx

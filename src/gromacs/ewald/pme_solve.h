@@ -1,11 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2014,2015,2016,2017,2018 by the GROMACS development team.
- * Copyright (c) 2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2014- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -19,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -28,55 +26,80 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 #ifndef GMX_EWALD_PME_SOLVE_H
 #define GMX_EWALD_PME_SOLVE_H
 
+#include <memory>
+
 #include "gromacs/math/gmxcomplex.h"
+#include "gromacs/math/paddedvector.h"
 #include "gromacs/utility/basedefinitions.h"
 #include "gromacs/utility/real.h"
 
-struct pme_solve_work_t;
 struct gmx_pme_t;
+struct PmeAndFftGrids;
+struct pme_solve_work_t;
 struct PmeOutput;
 
-/*! \brief Allocates array of work structures
- *
- * Note that work is the address of a pointer allocated by
- * this function. Upon return it will point at
- * an array of work structures.
- */
-void pme_init_all_work(struct pme_solve_work_t** work, int nthread, int nkx);
+namespace gmx
+{
+template<typename>
+class ArrayRef;
+}
 
-/*! \brief Frees array of work structures
- *
- * Frees work and sets it to NULL. */
-void pme_free_all_work(struct pme_solve_work_t** work, int nthread);
+//! Class for solving PME for Coulomb and LJ
+class PmeSolve
+{
+public:
+    /*! Constructor
+     *
+     * \param numThreads  The number of OpenMP threads used during solve
+     * \param nkx         The number of PME grid points along dimension X
+     */
+    PmeSolve(int numThreads, int nkx);
 
-/*! \brief Get energy and virial for electrostatics
- *
- * Note that work is an array of work structures
- */
-void get_pme_ener_vir_q(pme_solve_work_t* work, int nthread, PmeOutput* output);
+    ~PmeSolve();
 
-/*! \brief Get energy and virial for L-J
- *
- * Note that work is an array of work structures
- */
-void get_pme_ener_vir_lj(pme_solve_work_t* work, int nthread, PmeOutput* output);
+    /*! \brief Solves PME for Coulomb
+     *
+     * \returns the number of grid elements solved
+     */
+    int solveCoulombYZX(const gmx_pme_t& pme, t_complex* grid, real vol, bool computeEnergyAndVirial, int thread);
 
-int solve_pme_yzx(const gmx_pme_t* pme, t_complex* grid, real vol, bool computeEnergyAndVirial, int nthread, int thread);
+    /*! \brief Solves PME for LJ
+     *
+     * \returns the number of grid elements solved
+     */
+    int solveLJYZX(const gmx_pme_t&              pme,
+                   gmx::ArrayRef<PmeAndFftGrids> grids,
+                   bool                          useLBCombinationRule,
+                   real                          vol,
+                   bool                          computeEnergyAndVirial,
+                   int                           thread);
 
-int solve_pme_lj_yzx(const gmx_pme_t* pme,
-                     t_complex**      grid,
-                     gmx_bool         bLB,
-                     real             vol,
-                     bool             computeEnergyAndVirial,
-                     int              nthread,
-                     int              thread);
+    //! Get Coulomb energy and virial
+    void getCoulombEnergyAndVirial(PmeOutput* output) const;
+
+    //! Get LJ energy and virial
+    void getLJEnergyAndVirial(PmeOutput* output) const;
+
+private:
+    //! Returns the number of threads used for solve
+    int numThreads() const { return gmx::ssize(workData_); }
+
+    //! Returns the work data for thread \p thread
+    pme_solve_work_t& workData(int thread) { return *workData_[thread]; }
+
+    //! Returns the work data for thread \p thread
+    const pme_solve_work_t& workData(int thread) const { return *workData_[thread]; }
+
+    //! Work data for the threads, stored with unique_ptr for thread-local memory
+    std::vector<std::unique_ptr<pme_solve_work_t>> workData_;
+};
 
 #endif

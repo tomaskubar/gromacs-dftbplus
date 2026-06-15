@@ -1,13 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
- * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2016,2017 by the GROMACS development team.
- * Copyright (c) 2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 1991- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -21,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -30,51 +26,63 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 #include "gmxpre.h"
 
-#include "topology.h"
+#include "gromacs/topology/topology.h"
 
 #include <cstdio>
+#include <cstdlib>
 
 #include <algorithm>
+#include <array>
+#include <limits>
+#include <memory>
+#include <string>
+#include <vector>
 
-#include "gromacs/math/vecdump.h"
 #include "gromacs/topology/atoms.h"
+#include "gromacs/topology/block.h"
+#include "gromacs/topology/forcefieldparameters.h"
 #include "gromacs/topology/idef.h"
 #include "gromacs/topology/ifunc.h"
 #include "gromacs/topology/symtab.h"
+#include "gromacs/topology/topology_enums.h"
 #include "gromacs/utility/arrayref.h"
+#include "gromacs/utility/basedefinitions.h"
 #include "gromacs/utility/compare.h"
+#include "gromacs/utility/enumerationhelpers.h"
 #include "gromacs/utility/gmxassert.h"
+#include "gromacs/utility/listoflists.h"
+#include "gromacs/utility/real.h"
 #include "gromacs/utility/smalloc.h"
 #include "gromacs/utility/strconvert.h"
+#include "gromacs/utility/stringutil.h"
 #include "gromacs/utility/txtdump.h"
-
-static gmx::EnumerationArray<SimulationAtomGroupType, const char*> c_simulationAtomGroupTypeShortNames = {
-    { "T-Coupling", "Energy Mon.", "Acceleration", "Freeze", "User1", "User2", "VCM",
-      "Compressed X", "Or. Res. Fit", "QMMM" }
-};
+#include "gromacs/utility/vecdump.h"
+#include "gromacs/utility/vectypes.h"
 
 const char* shortName(SimulationAtomGroupType type)
 {
-    return c_simulationAtomGroupTypeShortNames[type];
-}
+    constexpr gmx::EnumerationArray<SimulationAtomGroupType, const char*> sc_simulationAtomGroupTypeShortNames = {
+        { "T-Coupling",
+          "Energy Mon.",
+          "Acc. not used",
+          "Freeze",
+          "User1",
+          "User2",
+          "VCM",
+          "Compressed X",
+          "Or. Res. Fit",
+          "QMMM" }
+    };
 
-void init_top(t_topology* top)
-{
-    top->name = nullptr;
-    init_idef(&top->idef);
-    init_atom(&(top->atoms));
-    init_atomtypes(&(top->atomtypes));
-    init_block(&top->mols);
-    open_symtab(&top->symtab);
+    return sc_simulationAtomGroupTypeShortNames[type];
 }
-
 
 gmx_moltype_t::gmx_moltype_t() : name(nullptr)
 {
@@ -110,7 +118,6 @@ static int gmx_mtop_maxresnr(const gmx::ArrayRef<const gmx_moltype_t> moltypes, 
 
 gmx_mtop_t::gmx_mtop_t()
 {
-    init_atomtypes(&atomtypes);
     open_symtab(&symtab);
 }
 
@@ -120,7 +127,6 @@ gmx_mtop_t::~gmx_mtop_t()
 
     moltype.clear();
     molblock.clear();
-    done_atomtypes(&atomtypes);
 }
 
 void gmx_mtop_t::finalize()
@@ -141,7 +147,7 @@ void gmx_mtop_t::finalize()
         maxResiduesPerMoleculeToTriggerRenumber_ = 1;
     }
 
-    const char* env = getenv("GMX_MAXRESRENUM");
+    const char* env = std::getenv("GMX_MAXRESRENUM");
     if (env != nullptr)
     {
         sscanf(env, "%d", &maxResiduesPerMoleculeToTriggerRenumber_);
@@ -192,9 +198,6 @@ void done_top(t_topology* top)
     done_idef(&top->idef);
     done_atom(&(top->atoms));
 
-    /* For GB */
-    done_atomtypes(&(top->atomtypes));
-
     done_symtab(&(top->symtab));
     done_block(&(top->mols));
 }
@@ -210,7 +213,6 @@ void done_top_mtop(t_topology* top, gmx_mtop_t* mtop)
             done_block(&top->mols);
             done_symtab(&top->symtab);
             open_symtab(&mtop->symtab);
-            done_atomtypes(&(top->atomtypes));
         }
 
         // Note that the rest of mtop will be freed by the destructor
@@ -237,25 +239,6 @@ bool gmx_mtop_has_charges(const gmx_mtop_t* mtop)
     return mtop->moltype.empty() || mtop->moltype[0].atoms.haveCharge;
 }
 
-bool gmx_mtop_has_perturbed_charges(const gmx_mtop_t& mtop)
-{
-    for (const gmx_moltype_t& moltype : mtop.moltype)
-    {
-        const t_atoms& atoms = moltype.atoms;
-        if (atoms.haveBState)
-        {
-            for (int a = 0; a < atoms.nr; a++)
-            {
-                if (atoms.atom[a].q != atoms.atom[a].qB)
-                {
-                    return true;
-                }
-            }
-        }
-    }
-    return false;
-}
-
 bool gmx_mtop_has_atomtypes(const gmx_mtop_t* mtop)
 {
     if (mtop == nullptr)
@@ -274,12 +257,18 @@ bool gmx_mtop_has_pdbinfo(const gmx_mtop_t* mtop)
     return mtop->moltype.empty() || mtop->moltype[0].atoms.havePdbInfo;
 }
 
-static void pr_grps(FILE* fp, const char* title, gmx::ArrayRef<const AtomGroupIndices> grps, char*** grpname)
+static void pr_grps(FILE*                                 fp,
+                    const char*                           title,
+                    gmx::ArrayRef<const AtomGroupIndices> grps,
+                    const char* const* const*             grpname)
 {
     int index = 0;
     for (const auto& group : grps)
     {
-        fprintf(fp, "%s[%-12s] nr=%zu, name=[", title, c_simulationAtomGroupTypeShortNames[index],
+        fprintf(fp,
+                "%s[%-12s] nr=%zu, name=[",
+                title,
+                shortName(static_cast<SimulationAtomGroupType>(index)),
                 group.size());
         for (const auto& entry : group)
         {
@@ -292,15 +281,14 @@ static void pr_grps(FILE* fp, const char* title, gmx::ArrayRef<const AtomGroupIn
 
 static void pr_groups(FILE* fp, int indent, const SimulationGroups& groups, gmx_bool bShowNumbers)
 {
-    pr_grps(fp, "grp", groups.groups, const_cast<char***>(groups.groupNames.data()));
-    pr_strings(fp, indent, "grpname", const_cast<char***>(groups.groupNames.data()),
-               groups.groupNames.size(), bShowNumbers);
+    pr_grps(fp, "grp", groups.groups, groups.groupNames.data());
+    pr_strings(fp, indent, "grpname", groups.groupNames.data(), groups.groupNames.size(), bShowNumbers);
 
     pr_indent(fp, indent);
     fprintf(fp, "groups          ");
-    for (const auto& group : c_simulationAtomGroupTypeShortNames)
+    for (const auto group : gmx::EnumerationWrapper<SimulationAtomGroupType>{})
     {
-        printf(" %5.5s", group);
+        printf(" %5.5s", shortName(group));
     }
     printf("\n");
 
@@ -332,7 +320,8 @@ static void pr_groups(FILE* fp, int indent, const SimulationGroups& groups, gmx_
             fprintf(fp, "groupnr[%5d] =", i);
             for (auto group : keysOf(groups.groups))
             {
-                fprintf(fp, "  %3d ",
+                fprintf(fp,
+                        "  %3d ",
                         !groups.groupNumbers[group].empty() ? groups.groupNumbers[group][i] : 0);
             }
             fprintf(fp, "\n");
@@ -349,17 +338,21 @@ static void pr_moltype(FILE*                 fp,
                        gmx_bool              bShowNumbers,
                        gmx_bool              bShowParameters)
 {
-    int j;
-
     indent = pr_title_n(fp, indent, title, n);
     pr_indent(fp, indent);
     fprintf(fp, "name=\"%s\"\n", *(molt->name));
     pr_atoms(fp, indent, "atoms", &(molt->atoms), bShowNumbers);
     pr_listoflists(fp, indent, "excls", &molt->excls, bShowNumbers);
-    for (j = 0; (j < F_NRE); j++)
+    for (const auto j : gmx::EnumerationWrapper<InteractionFunction>{})
     {
-        pr_ilist(fp, indent, interaction_function[j].longname, ffparams->functype.data(),
-                 molt->ilist[j], bShowNumbers, bShowParameters, ffparams->iparams.data());
+        pr_ilist(fp,
+                 indent,
+                 interaction_function[j].longname,
+                 ffparams->functype.data(),
+                 molt->ilist[j],
+                 bShowNumbers,
+                 bShowParameters,
+                 ffparams->iparams.data());
     }
 }
 
@@ -399,23 +392,25 @@ void pr_mtop(FILE* fp, int indent, const char* title, const gmx_mtop_t* mtop, gm
         {
             pr_molblock(fp, indent, "molblock", &mtop->molblock[mb], mb, mtop->moltype);
         }
-        pr_str(fp, indent, "bIntermolecularInteractions",
-               gmx::boolToString(mtop->bIntermolecularInteractions));
+        pr_str(fp, indent, "bIntermolecularInteractions", gmx::boolToString(mtop->bIntermolecularInteractions));
         if (mtop->bIntermolecularInteractions)
         {
-            for (int j = 0; j < F_NRE; j++)
+            for (const auto j : gmx::EnumerationWrapper<InteractionFunction>{})
             {
-                pr_ilist(fp, indent, interaction_function[j].longname,
-                         mtop->ffparams.functype.data(), (*mtop->intermolecular_ilist)[j],
-                         bShowNumbers, bShowParameters, mtop->ffparams.iparams.data());
+                pr_ilist(fp,
+                         indent,
+                         interaction_function[j].longname,
+                         mtop->ffparams.functype.data(),
+                         (*mtop->intermolecular_ilist)[j],
+                         bShowNumbers,
+                         bShowParameters,
+                         mtop->ffparams.iparams.data());
             }
         }
         pr_ffparams(fp, indent, "ffparams", &(mtop->ffparams), bShowNumbers);
-        pr_atomtypes(fp, indent, "atomtypes", &(mtop->atomtypes), bShowNumbers);
         for (size_t mt = 0; mt < mtop->moltype.size(); mt++)
         {
-            pr_moltype(fp, indent, "moltype", &mtop->moltype[mt], mt, &mtop->ffparams, bShowNumbers,
-                       bShowParameters);
+            pr_moltype(fp, indent, "moltype", &mtop->moltype[mt], mt, &mtop->ffparams, bShowNumbers, bShowParameters);
         }
         pr_groups(fp, indent, mtop->groups, bShowNumbers);
     }
@@ -429,27 +424,22 @@ void pr_top(FILE* fp, int indent, const char* title, const t_topology* top, gmx_
         pr_indent(fp, indent);
         fprintf(fp, "name=\"%s\"\n", *(top->name));
         pr_atoms(fp, indent, "atoms", &(top->atoms), bShowNumbers);
-        pr_atomtypes(fp, indent, "atomtypes", &(top->atomtypes), bShowNumbers);
         pr_block(fp, indent, "mols", &top->mols, bShowNumbers);
-        pr_str(fp, indent, "bIntermolecularInteractions",
-               gmx::boolToString(top->bIntermolecularInteractions));
+        pr_str(fp, indent, "bIntermolecularInteractions", gmx::boolToString(top->bIntermolecularInteractions));
         pr_idef(fp, indent, "idef", &top->idef, bShowNumbers, bShowParameters);
     }
 }
 
-static void cmp_iparm(FILE*            fp,
-                      const char*      s,
-                      t_functype       ft,
-                      const t_iparams& ip1,
-                      const t_iparams& ip2,
-                      real             relativeTolerance,
-                      real             absoluteTolerance)
+static void cmp_iparm(FILE*               fp,
+                      const char*         s,
+                      InteractionFunction ft,
+                      const t_iparams&    ip1,
+                      const t_iparams&    ip2,
+                      real                relativeTolerance,
+                      real                absoluteTolerance)
 {
-    int      i;
-    gmx_bool bDiff;
-
-    bDiff = FALSE;
-    for (i = 0; i < MAXFORCEPARAM && !bDiff; i++)
+    bool bDiff = false;
+    for (int i = 0; i < MAXFORCEPARAM && !bDiff; i++)
     {
         bDiff = !equal_real(ip1.generic.buf[i], ip2.generic.buf[i], relativeTolerance, absoluteTolerance);
     }
@@ -462,16 +452,18 @@ static void cmp_iparm(FILE*            fp,
     }
 }
 
-static void cmp_iparm_AB(FILE* fp, const char* s, t_functype ft, const t_iparams& ip1, real relativeTolerance, real absoluteTolerance)
+static void cmp_iparm_AB(FILE*               fp,
+                         const char*         s,
+                         InteractionFunction ft,
+                         const t_iparams&    ip1,
+                         real                relativeTolerance,
+                         real                absoluteTolerance)
 {
-    int      nrfpA, nrfpB, p0, i;
-    gmx_bool bDiff;
-
     /* Normally the first parameter is perturbable */
-    p0    = 0;
-    nrfpA = interaction_function[ft].nrfpA;
-    nrfpB = interaction_function[ft].nrfpB;
-    if (ft == F_PDIHS)
+    int p0    = 0;
+    int nrfpA = interaction_function[ft].nrfpA;
+    int nrfpB = interaction_function[ft].nrfpB;
+    if (ft == InteractionFunction::ProperDihedrals)
     {
         nrfpB = 2;
     }
@@ -481,11 +473,11 @@ static void cmp_iparm_AB(FILE* fp, const char* s, t_functype ft, const t_iparams
         p0    = 1;
         nrfpB = 1;
     }
-    bDiff = FALSE;
-    for (i = 0; i < nrfpB && !bDiff; i++)
+    bool bDiff = false;
+    for (int i = 0; i < nrfpB && !bDiff; i++)
     {
-        bDiff = !equal_real(ip1.generic.buf[p0 + i], ip1.generic.buf[nrfpA + i], relativeTolerance,
-                            absoluteTolerance);
+        bDiff = !equal_real(
+                ip1.generic.buf[p0 + i], ip1.generic.buf[nrfpA + i], relativeTolerance, absoluteTolerance);
     }
     if (bDiff)
     {
@@ -511,14 +503,11 @@ static void cmp_cmap(FILE* fp, const gmx_cmap_t* cmap1, const gmx_cmap_t* cmap2,
     {
         for (size_t g = 0; g < cmap1->cmapdata.size(); g++)
         {
-            int i;
-
             fprintf(fp, "comparing cmap %zu\n", g);
 
-            for (i = 0; i < 4 * cmap1->grid_spacing * cmap1->grid_spacing; i++)
+            for (int i = 0; i < 4 * cmap1->grid_spacing * cmap1->grid_spacing; i++)
             {
-                cmp_real(fp, "", i, cmap1->cmapdata[g].cmap[i], cmap2->cmapdata[g].cmap[i],
-                         relativeTolerance, absoluteTolerance);
+                cmp_real(fp, "", i, cmap1->cmapdata[g].cmap[i], cmap2->cmapdata[g].cmap[i], relativeTolerance, absoluteTolerance);
             }
         }
     }
@@ -553,10 +542,9 @@ static void compareFfparams(FILE*                 fp,
     for (int i = 0; i < std::min(ff1.numTypes(), ff2.numTypes()); i++)
     {
         std::string buf = gmx::formatString("ffparams->functype[%d]", i);
-        cmp_int(fp, buf.c_str(), i, ff1.functype[i], ff2.functype[i]);
+        cmp_int(fp, buf.c_str(), i, static_cast<int>(ff1.functype[i]), static_cast<int>(ff2.functype[i]));
         buf = gmx::formatString("ffparams->iparams[%d]", i);
-        cmp_iparm(fp, buf.c_str(), ff1.functype[i], ff1.iparams[i], ff2.iparams[i],
-                  relativeTolerance, absoluteTolerance);
+        cmp_iparm(fp, buf.c_str(), ff1.functype[i], ff1.iparams[i], ff2.iparams[i], relativeTolerance, absoluteTolerance);
     }
 }
 
@@ -578,13 +566,13 @@ static void compareInteractionLists(FILE* fp, const InteractionLists* il1, const
     }
     if (il1 && il2)
     {
-        for (int i = 0; i < F_NRE; i++)
+        for (const auto i : gmx::EnumerationWrapper<InteractionFunction>{})
         {
-            cmp_int(fp, "InteractionList size", i, il1->at(i).size(), il2->at(i).size());
-            int nr = std::min(il1->at(i).size(), il2->at(i).size());
+            cmp_int(fp, "InteractionList size", static_cast<int>(i), (*il1)[i].size(), (*il2)[i].size());
+            int nr = std::min((*il1)[i].size(), (*il2)[i].size());
             for (int j = 0; j < nr; j++)
             {
-                cmp_int(fp, "InteractionList entry", j, il1->at(i).iatoms.at(j), il2->at(i).iatoms.at(j));
+                cmp_int(fp, "InteractionList entry", j, (*il1)[i].iatoms.at(j), (*il2)[i].iatoms.at(j));
             }
         }
     }
@@ -611,7 +599,7 @@ static void compareMoltypes(FILE*                              fp,
 static void compareMoletypeAB(FILE* fp, gmx::ArrayRef<const gmx_moltype_t> mt1, real relativeTolerance, real absoluteTolerance)
 {
     fprintf(fp, "comparing free energy molecule types\n");
-    for (gmx::index i = 0; i < mt1.ssize(); i++)
+    for (gmx::Index i = 0; i < mt1.ssize(); i++)
     {
         compareAtoms(fp, &mt1[i].atoms, nullptr, relativeTolerance, absoluteTolerance);
     }
@@ -630,17 +618,6 @@ static void compareMolblocks(FILE*                               fp,
         // Only checking size of restraint vectors for now
         cmp_int(fp, "posres_xA size", i, mb1[i].posres_xA.size(), mb2[i].posres_xA.size());
         cmp_int(fp, "posres_xB size", i, mb1[i].posres_xB.size(), mb2[i].posres_xB.size());
-    }
-}
-
-static void compareAtomtypes(FILE* fp, const t_atomtypes& at1, const t_atomtypes& at2)
-{
-    fprintf(fp, "comparing atomtypes\n");
-    cmp_int(fp, "nr", -1, at1.nr, at2.nr);
-    int nr = std::min(at1.nr, at2.nr);
-    for (int i = 0; i < nr; i++)
-    {
-        cmp_int(fp, "atomtype", i, at1.atomnumber[i], at2.atomnumber[i]);
     }
 }
 
@@ -679,21 +656,22 @@ void compareMtop(FILE* fp, const gmx_mtop_t& mtop1, const gmx_mtop_t& mtop2, rea
     fprintf(fp, "comparing mtop topology\n");
     cmp_str(fp, "Name", -1, *mtop1.name, *mtop2.name);
     cmp_int(fp, "natoms", -1, mtop1.natoms, mtop2.natoms);
-    cmp_int(fp, "maxres_renum", -1, mtop1.maxResiduesPerMoleculeToTriggerRenumber(),
+    cmp_int(fp,
+            "maxres_renum",
+            -1,
+            mtop1.maxResiduesPerMoleculeToTriggerRenumber(),
             mtop2.maxResiduesPerMoleculeToTriggerRenumber());
     cmp_int(fp, "maxresnr", -1, mtop1.maxResNumberNotRenumbered(), mtop2.maxResNumberNotRenumbered());
-    cmp_bool(fp, "bIntermolecularInteractions", -1, mtop1.bIntermolecularInteractions,
-             mtop2.bIntermolecularInteractions);
+    cmp_bool(fp, "bIntermolecularInteractions", -1, mtop1.bIntermolecularInteractions, mtop2.bIntermolecularInteractions);
     cmp_bool(fp, "haveMoleculeIndices", -1, mtop1.haveMoleculeIndices, mtop2.haveMoleculeIndices);
 
     compareFfparams(fp, mtop1.ffparams, mtop2.ffparams, relativeTolerance, absoluteTolerance);
     compareMoltypes(fp, mtop1.moltype, mtop2.moltype, relativeTolerance, absoluteTolerance);
     compareMolblocks(fp, mtop1.molblock, mtop2.molblock);
     compareInteractionLists(fp, mtop1.intermolecular_ilist.get(), mtop2.intermolecular_ilist.get());
-    compareAtomtypes(fp, mtop1.atomtypes, mtop2.atomtypes);
     compareAtomGroups(fp, mtop1.groups, mtop2.groups, mtop1.natoms, mtop2.natoms);
-    compareIntermolecularExclusions(fp, mtop1.intermolecularExclusionGroup,
-                                    mtop2.intermolecularExclusionGroup);
+    compareIntermolecularExclusions(
+            fp, mtop1.intermolecularExclusionGroup, mtop2.intermolecularExclusionGroup);
     compareBlockIndices(fp, mtop1.moleculeBlockIndices, mtop2.moleculeBlockIndices);
 }
 
@@ -714,22 +692,27 @@ void compareAtomGroups(FILE* fp, const SimulationGroups& g0, const SimulationGro
         cmp_int(fp, buf.c_str(), -1, g0.groups[group].size(), g1.groups[group].size());
         if (g0.groups[group].size() == g1.groups[group].size())
         {
-            for (gmx::index j = 0; j < gmx::ssize(g0.groups[group]); j++)
+            for (gmx::Index j = 0; j < gmx::ssize(g0.groups[group]); j++)
             {
                 buf = gmx::formatString("grps[%d].name[%zd]", static_cast<int>(group), j);
-                cmp_str(fp, buf.c_str(), -1, *g0.groupNames[g0.groups[group][j]],
+                cmp_str(fp,
+                        buf.c_str(),
+                        -1,
+                        *g0.groupNames[g0.groups[group][j]],
                         *g1.groupNames[g1.groups[group][j]]);
             }
         }
-        cmp_int(fp, "ngrpnr", static_cast<int>(group), g0.numberOfGroupNumbers(group),
+        cmp_int(fp,
+                "ngrpnr",
+                static_cast<int>(group),
+                g0.numberOfGroupNumbers(group),
                 g1.numberOfGroupNumbers(group));
         if (g0.numberOfGroupNumbers(group) == g1.numberOfGroupNumbers(group) && natoms0 == natoms1
             && (!g0.groupNumbers[group].empty() || !g1.groupNumbers[group].empty()))
         {
             for (int j = 0; j < natoms0; j++)
             {
-                cmp_int(fp, c_simulationAtomGroupTypeShortNames[group], j,
-                        getGroupType(g0, group, j), getGroupType(g1, group, j));
+                cmp_int(fp, shortName(group), j, getGroupType(g0, group, j), getGroupType(g1, group, j));
             }
         }
     }
@@ -751,7 +734,7 @@ void copy_moltype(const gmx_moltype_t* src, gmx_moltype_t* dst)
     dst->atoms         = *atomsCopy;
     sfree(atomsCopy);
 
-    for (int i = 0; i < F_NRE; ++i)
+    for (const auto i : gmx::EnumerationWrapper<InteractionFunction>{})
     {
         dst->ilist[i] = src->ilist[i];
     }

@@ -1,11 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2012,2014,2015,2016,2017 by the GROMACS development team.
- * Copyright (c) 2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2012- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -19,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -28,27 +26,29 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 #ifndef GMX_GPU_UTILS_CUDAUTILS_CUH
 #define GMX_GPU_UTILS_CUDAUTILS_CUH
 
-#include <stdio.h>
+#include <cstdio>
 
 #include <array>
 #include <string>
+#include <string_view>
+#include <type_traits>
 
 #include "gromacs/gpu_utils/device_stream.h"
 #include "gromacs/gpu_utils/gputraits.cuh"
-#include "gromacs/math/vec.h"
-#include "gromacs/math/vectypes.h"
 #include "gromacs/utility/exceptions.h"
 #include "gromacs/utility/fatalerror.h"
 #include "gromacs/utility/gmxassert.h"
 #include "gromacs/utility/stringutil.h"
+#include "gromacs/utility/vec.h"
+#include "gromacs/utility/vectypes.h"
 
 namespace gmx
 {
@@ -61,9 +61,11 @@ namespace
  *
  * \returns A description of the API error. Returns '(CUDA error #0 (cudaSuccess): no error)' in case deviceError is cudaSuccess.
  */
-static inline std::string getDeviceErrorString(const cudaError_t deviceError)
+inline std::string getDeviceErrorString(const cudaError_t deviceError)
 {
-    return formatString("CUDA error #%d (%s): %s.", deviceError, cudaGetErrorName(deviceError),
+    return formatString("CUDA error #%d (%s): %s.",
+                        deviceError,
+                        cudaGetErrorName(deviceError),
                         cudaGetErrorString(deviceError));
 }
 
@@ -74,11 +76,11 @@ static inline std::string getDeviceErrorString(const cudaError_t deviceError)
  *
  *  \throws InternalError if deviceError is not a success.
  */
-static inline void checkDeviceError(const cudaError_t deviceError, const std::string& errorMessage)
+inline void checkDeviceError(const cudaError_t deviceError, const std::string_view errorMessage)
 {
     if (deviceError != cudaSuccess)
     {
-        GMX_THROW(gmx::InternalError(errorMessage + " " + getDeviceErrorString(deviceError)));
+        GMX_THROW(gmx::InternalError(std::string{ errorMessage } + " " + getDeviceErrorString(deviceError)));
     }
 }
 
@@ -90,7 +92,7 @@ static inline void checkDeviceError(const cudaError_t deviceError, const std::st
  *
  * \param[in]  errorMessage  Undecorated error message.
  */
-static inline void ensureNoPendingDeviceError(const std::string& errorMessage)
+inline void ensureNoPendingDeviceError(const std::string_view errorMessage)
 {
     // Ensure there is no pending error that would otherwise affect
     // the behaviour of future error handling.
@@ -104,7 +106,8 @@ static inline void ensureNoPendingDeviceError(const std::string& errorMessage)
     // what is appropriate to do about it, so assert only for debug
     // builds.
     const std::string fullErrorMessage =
-            errorMessage + " An unhandled error from a previous CUDA operation was detected. "
+            std::string{ errorMessage }
+            + " An unhandled error from a previous CUDA operation was detected. "
             + gmx::getDeviceErrorString(deviceError);
     GMX_ASSERT(deviceError == cudaSuccess, fullErrorMessage.c_str());
     // TODO When we evolve a better logging framework, use that
@@ -114,8 +117,6 @@ static inline void ensureNoPendingDeviceError(const std::string& errorMessage)
 
 } // namespace
 } // namespace gmx
-
-enum class GpuApiCallBehavior;
 
 /* TODO error checking needs to be rewritten. We have 2 types of error checks needed
    based on where they occur in the code:
@@ -133,13 +134,13 @@ enum class GpuApiCallBehavior;
 #ifdef CHECK_CUDA_ERRORS
 
 /*! Check for CUDA error on the return status of a CUDA RT API call. */
-#    define CU_RET_ERR(deviceError, msg)                                                          \
-        do                                                                                        \
-        {                                                                                         \
-            if (deviceError != cudaSuccess)                                                       \
-            {                                                                                     \
-                gmx_fatal(FARGS, "%s\n", (msg + gmx::getDeviceErrorString(deviceError)).c_str()); \
-            }                                                                                     \
+#    define CU_RET_ERR(deviceError, msg)                                                            \
+        do                                                                                          \
+        {                                                                                           \
+            if ((deviceError) != cudaSuccess)                                                       \
+            {                                                                                       \
+                gmx_fatal(FARGS, "%s\n", ((msg) + gmx::getDeviceErrorString(deviceError)).c_str()); \
+            }                                                                                       \
         } while (0)
 
 #else /* CHECK_CUDA_ERRORS */
@@ -154,17 +155,6 @@ enum class GpuApiCallBehavior;
 // TODO: the 2 functions below are pretty much a constructor/destructor of a simple
 // GPU table object. There is also almost self-contained fetchFromParamLookupTable()
 // in cuda_kernel_utils.cuh. They could all live in a separate class/struct file.
-
-/*! \brief Add a triplets stored in a float3 to an rvec variable.
- *
- * \param[out]  a Rvec to increment
- * \param[in]   b Float triplet to increment with.
- */
-static inline void rvec_inc(rvec a, const float3 b)
-{
-    rvec tmp = { b.x, b.y, b.z };
-    rvec_inc(a, tmp);
-}
 
 /*! \brief  Returns true if all tasks in \p s have completed.
  *
@@ -237,7 +227,7 @@ void prepareGpuKernelArgument(KernelPtr                          kernel,
                               const CurrentArg*                  argPtr,
                               const RemainingArgs*... otherArgsPtrs)
 {
-    (*kernelArgsPtr)[argIndex] = (void*)argPtr;
+    (*kernelArgsPtr)[argIndex] = const_cast<void*>(static_cast<const void*>(argPtr));
     prepareGpuKernelArgument(kernel, kernelArgsPtr, argIndex + 1, otherArgsPtrs...);
 }
 
@@ -269,7 +259,8 @@ std::array<void*, sizeof...(Args)> prepareGpuKernelArguments(KernelPtr kernel,
  * \param[in] deviceStream    GPU stream to launch kernel in
  * \param[in] kernelName      Human readable kernel description, for error handling only
  * \param[in] kernelArgs      Array of the pointers to the kernel arguments, prepared by
- * prepareGpuKernelArguments() \throws gmx::InternalError on kernel launch failure
+ *                            prepareGpuKernelArguments()
+ * \throws gmx::InternalError on kernel launch failure
  */
 template<typename... Args>
 void launchGpuKernel(void (*kernel)(Args...),
@@ -281,11 +272,16 @@ void launchGpuKernel(void (*kernel)(Args...),
 {
     dim3 blockSize(config.blockSize[0], config.blockSize[1], config.blockSize[2]);
     dim3 gridSize(config.gridSize[0], config.gridSize[1], config.gridSize[2]);
-    cudaLaunchKernel((void*)kernel, gridSize, blockSize, const_cast<void**>(kernelArgs.data()),
-                     config.sharedMemorySize, deviceStream.stream());
-
-    gmx::ensureNoPendingDeviceError("GPU kernel (" + std::string(kernelName)
-                                    + ") failed to launch.");
+    auto stat = cudaLaunchKernel(reinterpret_cast<void*>(kernel),
+                                 gridSize,
+                                 blockSize,
+                                 const_cast<void**>(kernelArgs.data()),
+                                 config.sharedMemorySize,
+                                 deviceStream.stream());
+    GMX_RELEASE_ASSERT(stat == cudaSuccess,
+                       ("GPU kernel (" + std::string(kernelName)
+                        + ") failed to launch: " + gmx::getDeviceErrorString(stat))
+                               .c_str());
 }
 
 #endif

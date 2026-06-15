@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2019- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 
 /*! \file
@@ -43,24 +42,31 @@
 #include "gmxapi/compat/tpr.h"
 
 #include <cassert>
+#include <cmath>
+#include <cstdint>
 
+#include <filesystem>
 #include <map>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
-#include "gromacs/mdtypes/inputrec.h"
-#include "gromacs/topology/topology.h"
-#include "gromacs/mdtypes/state.h"
 #include "gromacs/fileio/oenv.h"
 #include "gromacs/fileio/tpxio.h"
+#include "gromacs/mdtypes/inputrec.h"
+#include "gromacs/mdtypes/state.h"
 #include "gromacs/options/timeunitmanager.h"
+#include "gromacs/topology/topology.h"
 #include "gromacs/utility/cstringutil.h"
 #include "gromacs/utility/programcontext.h"
+#include "gromacs/utility/real.h"
 
+#include "gmxapi/compat/mdparams.h"
 #include "gmxapi/gmxapi.h"
 #include "gmxapi/gmxapicompat.h"
-#include "gmxapi/compat/mdparams.h"
+
+struct gmx_output_env_t;
 
 using gmxapi::GmxapiType;
 
@@ -75,10 +81,10 @@ public:
         mtop_{ std::make_unique<gmx_mtop_t>() },
         state_{ std::make_unique<t_state>() }
     {
-        read_tpx_state(infile.c_str(), irInstance_.get(), state_.get(), mtop_.get());
+        read_tpx_state(infile, irInstance_.get(), state_.get(), mtop_.get());
     }
-    ~TprContents()                             = default;
-    TprContents(TprContents&& source) noexcept = default;
+    ~TprContents()                                 = default;
+    TprContents(TprContents&& source) noexcept     = default;
     TprContents& operator=(TprContents&&) noexcept = default;
 
     /*!
@@ -157,7 +163,6 @@ std::map<std::string, GmxapiType> simulationParameterTypeMap()
         { "compressed-x-precision", GmxapiType::FLOAT64 },
         { "cutoff-scheme", GmxapiType::STRING },
         { "nstlist", GmxapiType::INT64 },
-        { "ns-type", GmxapiType::STRING },
         { "pbc", GmxapiType::STRING },
         { "periodic-molecules", GmxapiType::BOOL },
         //            TBD
@@ -288,7 +293,7 @@ GmxapiType mdParamToType(const std::string& name)
         throw ValueError("Named parameter has unknown type mapping.");
     }
     return entry->second;
-};
+}
 
 
 /*!
@@ -706,7 +711,7 @@ void writeTprFile(const std::string&     filename,
     const auto& inputRecord   = tprFile->inputRecord();
     const auto& writeState    = tprFile->state();
     const auto& writeTopology = tprFile->molecularTopology();
-    write_tpx_state(filename.c_str(), &inputRecord, &writeState, &writeTopology);
+    write_tpx_state(filename.c_str(), &inputRecord, &writeState, writeTopology);
 }
 
 TprReadHandle::TprReadHandle(TprContents&& tprFile) :
@@ -736,7 +741,7 @@ GmxMdParams::GmxMdParams(std::unique_ptr<GmxMdParamsImpl>&& impl)
     // to worry about the restrictions on Deleters.
     // Ref: https://en.cppreference.com/w/cpp/memory/unique_ptr/unique_ptr
     params_.swap(impl);
-};
+}
 
 // maybe this should return a handle to the new file?
 bool copy_tprfile(const gmxapicompat::TprReadHandle& input, const std::string& outFile)
@@ -745,22 +750,20 @@ bool copy_tprfile(const gmxapicompat::TprReadHandle& input, const std::string& o
     {
         return false;
     }
-    gmxapicompat::writeTprFile(
-            outFile, *gmxapicompat::getMdParams(input), *gmxapicompat::getStructureSource(input),
-            *gmxapicompat::getSimulationState(input), *gmxapicompat::getTopologySource(input));
+    gmxapicompat::writeTprFile(outFile,
+                               *gmxapicompat::getMdParams(input),
+                               *gmxapicompat::getStructureSource(input),
+                               *gmxapicompat::getSimulationState(input),
+                               *gmxapicompat::getTopologySource(input));
     return true;
 }
 
 bool rewrite_tprfile(const std::string& inFile, const std::string& outFile, double endTime)
 {
-    auto success = false;
-
-    const char* top_fn = inFile.c_str();
-
     t_inputrec irInstance;
     gmx_mtop_t mtop;
     t_state    state;
-    read_tpx_state(top_fn, &irInstance, &state, &mtop);
+    read_tpx_state(inFile, &irInstance, &state, &mtop);
 
     /* set program name, command line, and default values for output options */
     gmx_output_env_t* oenv;
@@ -770,12 +773,11 @@ bool rewrite_tprfile(const std::string& inFile, const std::string& outFile, doub
 
     double run_t = irInstance.init_step * irInstance.delta_t + irInstance.init_t;
 
-    irInstance.nsteps = lround((endTime - run_t) / irInstance.delta_t);
+    irInstance.nsteps = std::lround((endTime - run_t) / irInstance.delta_t);
 
-    write_tpx_state(outFile.c_str(), &irInstance, &state, &mtop);
+    write_tpx_state(outFile.c_str(), &irInstance, &state, mtop);
 
-    success = true;
-    return success;
+    return true;
 }
 
 } // end namespace gmxapicompat

@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2018- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \internal \file
  * \brief
@@ -44,9 +43,14 @@
 
 #include "config.h"
 
+#include <cstddef>
+
+#include <memory>
+
 #include "gromacs/gpu_utils/device_context.h"
 #include "gromacs/utility/classhelpers.h"
 
+class ISyclKernelFunctor;
 class DeviceContext;
 struct DeviceInformation;
 
@@ -65,33 +69,30 @@ struct DeviceInformation;
  * revisit the number of kernels we pre-compile, and/or the management
  * of their lifetime.
  *
- * This also doesn't manage cuFFT/clFFT kernels, which depend on the PME grid dimensions.
- *
- * TODO: pass cl_context to the constructor and not create it inside.
- * See also Issue #2522.
+ * This also doesn't manage cuFFT/rocFFT kernels, which depend on the PME grid dimensions.
  */
 struct PmeGpuProgramImpl
 {
-    /*! \brief
-     * This is a handle to the GPU context, which is just a dummy in CUDA,
-     * but is created/destroyed by this class in OpenCL.
+    /*! \brief A handle to the device context (managed externally).
+     *
+     * Only used in OpenCL for JIT compilation.
      */
     const DeviceContext& deviceContext_;
 
     //! Conveniently all the PME kernels use the same single argument type
-#if GMX_GPU_CUDA
-    using PmeKernelHandle = void (*)(const struct PmeGpuCudaKernelParams);
+#if (GMX_GPU_CUDA || GMX_GPU_HIP)
+    using PmeKernelHandle = void (*)(const struct PmeGpuKernelParams);
 #elif GMX_GPU_OPENCL
     using PmeKernelHandle = cl_kernel;
 #else
-    using PmeKernelHandle = void*;
+    using PmeKernelHandle = ISyclKernelFunctor*;
 #endif
 
     /*! \brief
      * Maximum synchronous GPU thread group execution width.
-     * "Warp" is a CUDA term which we end up reusing in OpenCL kernels as well.
+     * "Warp" is a CUDA term which we end up reusing in other kernels as well.
      * For CUDA, this is a static value that comes from gromacs/gpu_utils/cuda_arch_utils.cuh;
-     * for OpenCL, we have to query it dynamically.
+     * For HIP, we will obtain it from the warpSize field during device code compilation.
      */
     size_t warpSize_;
 
@@ -164,10 +165,12 @@ struct PmeGpuProgramImpl
     PmeKernelHandle solveYZXEnergyKernelB;
     PmeKernelHandle solveXYZEnergyKernelB;
     //@}
+    PmeKernelHandle nvshmemSignalKern;
 
     PmeGpuProgramImpl() = delete;
     //! Constructor for the given device
     explicit PmeGpuProgramImpl(const DeviceContext& deviceContext);
+    // NOLINTNEXTLINE(performance-trivially-destructible)
     ~PmeGpuProgramImpl();
     GMX_DISALLOW_COPY_AND_ASSIGN(PmeGpuProgramImpl);
 

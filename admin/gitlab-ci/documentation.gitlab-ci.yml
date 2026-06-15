@@ -1,19 +1,33 @@
-# Build documentation and web page.
+# Test goal: Build documentation and web page.
+# Test intents (should change rarely and conservatively):
+#   OS: Ubuntu oldest supported
+#   Compiler: Clang oldest supported
+#   GPU: no
+#   MPI: no
+#   Features: python package, documentation
+#   Scope: configure, build, documentation
+# Test implementation choices (free to change as needed):
+#   OS: Ubuntu 24.04
+#   Build type: Debug
+#   Compiler: Clang 19
+#   MPI: non
+#   SIMD: none
+#   FFT: FFTW3
 
 .docs:configure:
   extends:
-    - .variables:default
     - .gromacs:base:configure
     - .before_script:default
   # TODO (#3480) this should be organized more like the current documentation.py script
-  image: ${CI_REGISTRY}/gromacs/gromacs/ci-ubuntu-18.04-llvm-7-docs
+  image: ${CI_REGISTRY}/gromacs/gromacs/ci-ubuntu-24.04-llvm-19-docs
   stage: configure-build
   cache: {}
   variables:
+    CMAKE: /usr/local/cmake-3.29.8/bin/cmake
     KUBERNETES_CPU_LIMIT: 1
     KUBERNETES_CPU_REQUEST: 1
     KUBERNETES_MEMORY_REQUEST: 2Gi
-    CMAKE_COMPILER_SCRIPT: "-DCMAKE_C_COMPILER=clang-7 -DCMAKE_CXX_COMPILER=clang++-7"
+    CMAKE_COMPILER_SCRIPT: "-DCMAKE_C_COMPILER=clang-19 -DCMAKE_CXX_COMPILER=clang++-19"
     CMAKE_SIMD_OPTIONS: "-DGMX_SIMD=None"
     CMAKE_MPI_OPTIONS: "-DGMX_THREAD_MPI=OFF"
     CMAKE_PRECISION_OPTIONS: "-DGMX_DOUBLE=OFF"
@@ -42,7 +56,12 @@
       mkdir $BUILD_DIR ;
       fi
     - cd $BUILD_DIR
-    - cmake ..
+    # Running CMake with the venv activated should not be strictly necessary,
+    # but helps to find and cache self-consistent Python and Sphinx details
+    # without additional hinting. Once CMakeCache.txt exists, the later stages
+    # should work fine without reactivating the venv.
+    - source /root/venv/py3.9/bin/activate
+    - $CMAKE ..
       -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
       $CMAKE_COMPILER_SCRIPT
       $CMAKE_EXTRA_OPTIONS
@@ -67,19 +86,20 @@
 
 .docs:configure:release:
   extends:
-    - .variables:default
     - .gromacs:base:configure
     - .before_script:default
-    - .rules:nightly-only-for-release
+  rules:
+    - !reference [.rules:nightly-only-for-release, rules]
   # TODO (#3480) this should be organized more like the current documentation.py script
-  image: ${CI_REGISTRY}/gromacs/gromacs/ci-ubuntu-18.04-llvm-7-docs
+  image: ${CI_REGISTRY}/gromacs/gromacs/ci-ubuntu-24.04-llvm-19-docs
   stage: release-configure
   cache: {}
   variables:
+    CMAKE: /usr/local/cmake-3.29.8/bin/cmake
     KUBERNETES_CPU_LIMIT: 1
     KUBERNETES_CPU_REQUEST: 1
     KUBERNETES_MEMORY_REQUEST: 2Gi
-    CMAKE_COMPILER_SCRIPT: "-DCMAKE_C_COMPILER=clang-7 -DCMAKE_CXX_COMPILER=clang++-7"
+    CMAKE_COMPILER_SCRIPT: "-DCMAKE_C_COMPILER=clang-19 -DCMAKE_CXX_COMPILER=clang++-19"
     CMAKE_SIMD_OPTIONS: "-DGMX_SIMD=None"
     CMAKE_MPI_OPTIONS: "-DGMX_THREAD_MPI=ON"
     CMAKE_PRECISION_OPTIONS: "-DGMX_DOUBLE=OFF"
@@ -104,13 +124,11 @@
     - echo $CMAKE_BUILD_TYPE_OPTIONS
     - echo $CMAKE_GMXAPI_OPTIONS
     - echo $REL_OPTION
-    - VERSION=`cat version.json |
-      python3 -c "import json,sys; print(json.load(sys.stdin)['version'])"`
+    - VERSION=`sed -n -e '/GMX_VERSION_STRING\b/ s/.*"\(.*\)")/\1/p' VersionInfo-partial.cmake.cmakein`
     - if [[ $GROMACS_RELEASE != "true" ]] ; then
       VERSION=$VERSION-dev ;
       fi
-    - REGTEST_COMPARE=`cat version.json |
-      python3 -c "import json,sys; print(json.load(sys.stdin)['regressiontest-md5sum'])"`
+    - REGTEST_COMPARE=`sed -n -e '/REGRESSIONTEST_MD5SUM/ s/.*"\(.*\)")/\1/p' VersionInfo-partial.cmake.cmakein`
     - SOURCENAME=gromacs-$VERSION
     - SOURCETARBALL=$SOURCENAME.tar.gz
     - REGTESTNAME=regressiontests-$VERSION
@@ -145,7 +163,8 @@
       mkdir $RELEASE_BUILD_DIR ;
       fi
     - cd $RELEASE_BUILD_DIR
-    - cmake ../$RELEASE_SOURCE/
+    - source /root/venv/py3.9/bin/activate
+    - $CMAKE ../$RELEASE_SOURCE/
       -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
       $CMAKE_COMPILER_SCRIPT
       $CMAKE_EXTRA_OPTIONS
@@ -175,17 +194,20 @@
 docs:configure:
   extends:
     - .docs:configure
-    - .rules:basic-push
+  rules:
+    - !reference [.rules:merge-requests, rules]
   variables:
     BUILD_DIR: build-docs
     CMAKE_EXTRA_OPTIONS: -DGMX_BUILD_HELP=on -DGMX_BUILD_MANUAL=on -DGMX_USE_SIMD_KERNELS=off
 
 .docs:build:
   # TODO (#3480) this should be organized more like the current documentation.py script
-  image: ${CI_REGISTRY}/gromacs/gromacs/ci-ubuntu-18.04-llvm-7-docs
+  image: ${CI_REGISTRY}/gromacs/gromacs/ci-ubuntu-24.04-llvm-19-docs
+  variables:
+    CMAKE: /usr/local/cmake-3.29.8/bin/cmake
   script:
     - cd $BUILD_DIR
-    - cmake --build . --target gmx -- -j8
+    - $CMAKE --build . --target gmx -- -j8
     - cd ..
   artifacts:
     name: docs-artifacts-$CI_COMMIT_REF_SLUG
@@ -196,13 +218,13 @@ docs:configure:
 
 docs:build:
   extends:
-    - .variables:default
     - .gromacs:base:build
     - .use-ccache
     - .docs:build
     - .before_script:default
-    - .rules:basic-push
   stage: documentation
+  rules:
+    - !reference [.rules:merge-requests, rules]
   needs:
     - job: docs:configure
   variables:
@@ -218,27 +240,57 @@ docs:build:
 # TODO use a feature from gitlab runner instead of using pipefail to get timings for the job
 .webpage:build:
   extends:
-    - .variables:default
     - .gromacs:base:build
     - .before_script:default
   # TODO (#3480) this should be organized more like the current documentation.py script
-  image: ${CI_REGISTRY}/gromacs/gromacs/ci-ubuntu-18.04-llvm-7-docs
+  image: ${CI_REGISTRY}/gromacs/gromacs/ci-ubuntu-24.04-llvm-19-docs
   cache: {}
   variables:
+    CMAKE: /usr/local/cmake-3.29.8/bin/cmake
     KUBERNETES_CPU_LIMIT: 4
     KUBERNETES_CPU_REQUEST: 2
     KUBERNETES_MEMORY_REQUEST: 4Gi
   script:
     - cd $BUILD_DIR
-    - cmake --build . --target manual -- -j4 | tee docs/manual/all-output.log
+    - |
+      $CMAKE --build . --target sphinx-programs \
+      -- -j4 2>setupErrors.log | tee docs/setup.log || true
+    - |
+      if [ ! -f setupErrors.log -o -s setupErrors.log ] ; then
+        echo "Errors while setting up Sphinx dependencies."
+        [ -f setupErrors.log ] && cat setupErrors.log
+        exit 1
+      fi
+    - $CMAKE --build . --target doxygen-all -- -j4 2>&1 | tee docs/doxygen-all.log
+    - $CMAKE --build . --target manual -- -j4 2>&1 | tee docs/manual/all-output.log
       | grep -i "warning" | grep -v "TeX" | grep -v "Package" || true
-    - cmake --build . --target webpage -- -j4
-    - grep "WARNING:" docs/manual/all-output.log | tee pythonErrors.log || true
-    - grep -i "error" docs/sphinx-*.log | tee sphinxDiagnostics.log || true
-    - grep -i "warning" docs/sphinx-*.log | tee -a sphinxDiagnostics.log || true
-    - if [ -s pythonErrors.log ] ; then echo "Found Python Errors during build"; exit 1; fi
-    - if [ -s sphinxErrors.log ] ; then echo "Found errors during Sphinx documentation build"; cat sphinxErrors.log; exit 1; fi
-    - if [ -s sphinxDiagnostics.log ] ; then echo "Found diagnostic warnings during Sphinx documentation build"; cat sphinxDiagnostics.log; exit 1; fi
+    - $CMAKE --build . --target webpage-sphinx -- -j4 2>&1 | tee webpage-sphinx.log || true
+    - $CMAKE --build . --target webpage -- -j4 > webpage.log 2>&1 || true
+    - grep "WARNING:" docs/manual/all-output.log > pythonErrors.log || true
+    - grep -i "error" docs/sphinx-*.log > sphinxDiagnostics.log || true
+    - grep -i "warning" docs/sphinx-*.log >> sphinxDiagnostics.log || true
+    - grep -e "error:" -e "warning:" docs/doxygen-all.log > doxygenErrors.log || true
+    - grep -e "ERROR:" -e "WARNING:" -e '[Ee]xception' webpage-sphinx.log > sphinxErrors.log || true
+# TODO(#4543): Resolve various warnings and errors from doxygen and its supporting tools.
+#    - if [ -s doxygenErrors.log ] ; then echo "Found errors during doxygen build"; cat doxygenErrors.log; exit 1; fi
+    - |
+      if [ ! -f pythonErrors.log -o -s pythonErrors.log ] ; then
+        echo "Found Python Errors during (latex) manual build"
+        cat pythonErrors.log
+        exit 1
+      fi
+    - |
+      if [ ! -f sphinxErrors.log -o -s sphinxErrors.log ] ; then
+        echo "Found errors during Sphinx documentation build";
+        cat sphinxErrors.log
+        exit 1
+      fi
+    - |
+      if [ ! -f sphinxDiagnostics.log -o -s sphinxDiagnostics.log ] ; then
+        echo "Found diagnostic warnings during Sphinx documentation build"
+        cat sphinxDiagnostics.log
+        exit 1
+      fi
     - cd ..
   artifacts:
     name: docs-artifacts-$CI_COMMIT_REF_SLUG
@@ -252,13 +304,16 @@ docs:build:
       - $BUILD_DIR/docs/doxygen/doxygen-user.log
       - $BUILD_DIR/docs/doxygen/doxygen-lib.log
       - $BUILD_DIR/docs/doxygen/doxygen-full.log
-      - $BUILD_DIR/docs/sphinx-html.log
+      - $BUILD_DIR/docs/doxygen-all.log
+      - $BUILD_DIR/docs/setup.log
+      - $BUILD_DIR/docs/sphinx-*.log
 
 webpage:build:
   extends:
     - .webpage:build
-    - .rules:basic-push
   stage: post-test
+  rules:
+    - !reference [.rules:merge-requests, rules]
   needs:
     - job: docs:build
     - job: check-source
@@ -269,14 +324,13 @@ webpage:build:
 webpage:configure:
   extends:
     - .docs:configure:release
-    - .rules:nightly-only-for-release
+  rules:
+    - !reference [.rules:nightly-only-for-release, rules]
   cache: {}
-  tags:
-    - k8s-scilifelab
-  dependencies:
-    - archive:package
-    - regressiontests:package
-    - prepare-release-version
+  needs:
+    - job: archive:package
+    - job: regressiontests:package
+    - job: prepare-release-version
   variables:
     CMAKE_EXTRA_OPTIONS: -DGMX_BUILD_HELP=on -DGMX_BUILD_MANUAL=on -DGMX_USE_SIMD_KERNELS=off
 
@@ -284,14 +338,12 @@ webpage:configure:
 webpage:dependencies:
   extends:
     - .gromacs:base:build
-    - .variables:default
     - .use-ccache
     - .docs:build
     - .before_script:default
-    - .rules:nightly-only-for-release
   stage: release-build
-  tags:
-    - k8s-scilifelab
+  rules:
+    - !reference [.rules:nightly-only-for-release, rules]
   needs:
     - job: webpage:configure
   variables:
@@ -300,12 +352,11 @@ webpage:dependencies:
 webpage:build:release:
   extends:
     - .webpage:build
-    - .rules:nightly-only-for-release
   stage: release-prepare-deploy
-  tags:
-    - k8s-scilifelab
-  dependencies:
-    - webpage:dependencies
-    - webpage:configure
+  rules:
+    - !reference [.rules:nightly-only-for-release, rules]
+  needs:
+    - job: webpage:dependencies
+    - job: webpage:configure
   variables:
     BUILD_DIR: release-doc-builds

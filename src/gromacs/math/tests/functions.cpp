@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2015,2016,2017,2018,2019, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2015- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,14 +26,20 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \internal \file
  * \brief
  * Tests for simple math functions.
+ *
+ * Theoretically we'd like all math functions to match exactly, even in
+ * floating-point, but that is not realistic without excessive corrections to
+ * get the last ulp right - so in practice we target 1-2 ulp, which is VERY
+ * tight. However, to avoid worrying users we are a bit more generous and
+ * use 5-10 ulp as tolerance for the actual tests users will run through.
  *
  * \author Erik Lindahl <erik.lindahl@gmail.com>
  * \ingroup module_math
@@ -44,13 +49,24 @@
 #include "gromacs/math/functions.h"
 
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
+
+#include <initializer_list>
+#include <limits>
+#include <random>
+#include <string>
+#include <vector>
 
 #include <gtest/gtest.h>
 
 #include "testutils/refdata.h"
 #include "testutils/testasserts.h"
 
+namespace gmx
+{
+namespace test
+{
 namespace
 {
 
@@ -135,6 +151,7 @@ TEST(FunctionTest, InvsqrtFloat)
     {
         result.push_back(gmx::invsqrt(f));
     }
+    checker.setDefaultTolerance(gmx::test::ulpTolerance(5));
     checker.checkSequence(result.begin(), result.end(), "InvsqrtFloat");
 }
 
@@ -148,6 +165,7 @@ TEST(FunctionTest, InvsqrtDouble)
     {
         result.push_back(gmx::invsqrt(f));
     }
+    checker.setDefaultTolerance(gmx::test::ulpTolerance(5));
     checker.checkSequence(result.begin(), result.end(), "InvsqrtDouble");
 }
 
@@ -161,6 +179,7 @@ TEST(FunctionTest, InvsqrtInteger)
     {
         result.push_back(gmx::invsqrt(i));
     }
+    checker.setDefaultTolerance(gmx::test::ulpTolerance(5));
     checker.checkSequence(result.begin(), result.end(), "InvsqrtInteger");
 }
 
@@ -174,6 +193,7 @@ TEST(FunctionTest, InvcbrtFloat)
     {
         result.push_back(gmx::invcbrt(f));
     }
+    checker.setDefaultTolerance(gmx::test::ulpTolerance(5));
     checker.checkSequence(result.begin(), result.end(), "InvcbrtFloat");
 }
 
@@ -187,6 +207,7 @@ TEST(FunctionTest, InvcbrtDouble)
     {
         result.push_back(gmx::invcbrt(d));
     }
+    checker.setDefaultTolerance(gmx::test::ulpTolerance(5));
     checker.checkSequence(result.begin(), result.end(), "InvcbrtDouble");
 }
 
@@ -200,6 +221,7 @@ TEST(FunctionTest, InvcbrtInteger)
     {
         result.push_back(gmx::invcbrt(i));
     }
+    checker.setDefaultTolerance(gmx::test::ulpTolerance(5));
     checker.checkSequence(result.begin(), result.end(), "InvcbrtInteger");
 }
 
@@ -214,6 +236,7 @@ TEST(FunctionTest, SixthrootFloat)
     {
         result.push_back(gmx::sixthroot(f));
     }
+    checker.setDefaultTolerance(gmx::test::ulpTolerance(5));
     checker.checkSequence(result.begin(), result.end(), "SixthrootFloat");
 }
 
@@ -227,6 +250,7 @@ TEST(FunctionTest, SixthrootDouble)
     {
         result.push_back(gmx::sixthroot(d));
     }
+    checker.setDefaultTolerance(gmx::test::ulpTolerance(5));
     checker.checkSequence(result.begin(), result.end(), "SixthrootDouble");
 }
 
@@ -241,6 +265,7 @@ TEST(FunctionTest, SixthrootInteger)
     {
         result.push_back(gmx::sixthroot(i));
     }
+    checker.setDefaultTolerance(gmx::test::ulpTolerance(5));
     checker.checkSequence(result.begin(), result.end(), "SixthrootInteger");
 }
 
@@ -254,6 +279,7 @@ TEST(FunctionTest, InvsixthrootFloat)
     {
         result.push_back(gmx::invsixthroot(f));
     }
+    checker.setDefaultTolerance(gmx::test::ulpTolerance(5));
     checker.checkSequence(result.begin(), result.end(), "InvsixthrootFloat");
 }
 
@@ -267,6 +293,7 @@ TEST(FunctionTest, InvsixthrootDouble)
     {
         result.push_back(gmx::invsixthroot(d));
     }
+    checker.setDefaultTolerance(gmx::test::ulpTolerance(5));
     checker.checkSequence(result.begin(), result.end(), "InvsixthrootDouble");
 }
 
@@ -280,6 +307,7 @@ TEST(FunctionTest, InvsixthrootInteger)
     {
         result.push_back(gmx::invsixthroot(i));
     }
+    checker.setDefaultTolerance(gmx::test::ulpTolerance(5));
     checker.checkSequence(result.begin(), result.end(), "InvsixthrootInteger");
 }
 
@@ -315,6 +343,7 @@ TEST(FunctionTest, ErfInvFloat)
 
         result.push_back(gmx::erfinv(r));
     }
+    checker.setDefaultTolerance(gmx::test::ulpTolerance(5));
     checker.checkSequence(result.begin(), result.end(), "ErfInvFloat");
 }
 
@@ -328,9 +357,9 @@ TEST(FunctionTest, ErfInvDouble)
     for (int i = 0; i < npoints; i++)
     {
         double r = double(2 * i - npoints + 1) / npoints;
-
         result.push_back(gmx::erfinv(r));
     }
+    checker.setDefaultTolerance(gmx::test::ulpTolerance(5));
     checker.checkSequence(result.begin(), result.end(), "ErfInvDouble");
 }
 
@@ -341,6 +370,9 @@ TEST(FunctionTest, ErfAndErfInvAreInversesFloat)
     for (int i = 0; i < npoints; i++)
     {
         float r = float(2 * i - npoints + 1) / float(npoints);
+        // There is extra rounding when we do two function calls,
+        // and since the derivative is >1 we lose a few ulp extra
+        // when going back to r.
         EXPECT_FLOAT_EQ_TOL(r, std::erf(gmx::erfinv(r)), gmx::test::ulpTolerance(10));
     }
 }
@@ -352,8 +384,79 @@ TEST(FunctionTest, ErfAndErfInvAreInversesDouble)
     for (int i = 0; i < npoints; i++)
     {
         double r = double(2 * i - npoints + 1) / npoints;
+        // There is extra rounding when we do two function calls,
+        // and since the derivative is >1 we lose a few ulp extra
+        // when going back to r.
         EXPECT_DOUBLE_EQ_TOL(r, std::erf(gmx::erfinv(r)), gmx::test::ulpTolerance(10));
     }
 }
 
+template<typename T>
+class FunctionTestIntegerTypes : public ::testing::Test
+{
+};
+
+typedef ::testing::Types<signed char, unsigned char, short, unsigned short, int, unsigned int, long, unsigned long> IntegerTypes;
+TYPED_TEST_SUITE(FunctionTestIntegerTypes, IntegerTypes);
+
+TYPED_TEST(FunctionTestIntegerTypes, IsPowerOfTwo)
+{
+    if (std::is_signed_v<TypeParam>)
+    {
+        EXPECT_EQ(false, gmx::isPowerOfTwo<TypeParam>(std::numeric_limits<TypeParam>::min()));
+        EXPECT_EQ(false, gmx::isPowerOfTwo<TypeParam>(-16));
+        EXPECT_EQ(false, gmx::isPowerOfTwo<TypeParam>(-3));
+        EXPECT_EQ(false, gmx::isPowerOfTwo<TypeParam>(-2));
+        EXPECT_EQ(false, gmx::isPowerOfTwo<TypeParam>(-1));
+    }
+    EXPECT_EQ(false, gmx::isPowerOfTwo<TypeParam>(0));
+    EXPECT_EQ(true, gmx::isPowerOfTwo<TypeParam>(1));
+    EXPECT_EQ(true, gmx::isPowerOfTwo<TypeParam>(2));
+    EXPECT_EQ(false, gmx::isPowerOfTwo<TypeParam>(3));
+    EXPECT_EQ(true, gmx::isPowerOfTwo<TypeParam>(4));
+    EXPECT_EQ(false, gmx::isPowerOfTwo<TypeParam>(5));
+    EXPECT_EQ(false, gmx::isPowerOfTwo<TypeParam>(6));
+    EXPECT_EQ(false, gmx::isPowerOfTwo<TypeParam>(24));
+    EXPECT_EQ(false, gmx::isPowerOfTwo<TypeParam>(63));
+    EXPECT_EQ(true, gmx::isPowerOfTwo<TypeParam>(64));
+    EXPECT_EQ(false, gmx::isPowerOfTwo<TypeParam>(66));
+    // Max for any type is always 2^x - 1
+    EXPECT_EQ(false, gmx::isPowerOfTwo<TypeParam>(std::numeric_limits<TypeParam>::max()));
+}
+
+
+TYPED_TEST(FunctionTestIntegerTypes, DivideRoundUp)
+{
+    // Test some reasonable values and edge-cases
+    // Constraint: the sum of numerator and denominator must fit into TypeParam
+    EXPECT_EQ(gmx::divideRoundUp<TypeParam>(0, 1), 0);
+    EXPECT_EQ(gmx::divideRoundUp<TypeParam>(0, 10), 0);
+    EXPECT_EQ(gmx::divideRoundUp<TypeParam>(0, std::numeric_limits<TypeParam>::max()), 0);
+    EXPECT_EQ(gmx::divideRoundUp<TypeParam>(1, 1), 1);
+    EXPECT_EQ(gmx::divideRoundUp<TypeParam>(10, 1), 10);
+    EXPECT_EQ(gmx::divideRoundUp<TypeParam>(std::numeric_limits<TypeParam>::max() - 1, 1),
+              std::numeric_limits<TypeParam>::max() - 1);
+    EXPECT_EQ(gmx::divideRoundUp<TypeParam>(2, 2), 1);
+    EXPECT_EQ(gmx::divideRoundUp<TypeParam>(3, 2), 2);
+    EXPECT_EQ(gmx::divideRoundUp<TypeParam>(4, 2), 2);
+    EXPECT_EQ(gmx::divideRoundUp<TypeParam>(5, 2), 3);
+    EXPECT_EQ(gmx::divideRoundUp<TypeParam>(1, 10), 1);
+    EXPECT_EQ(gmx::divideRoundUp<TypeParam>(1, std::numeric_limits<TypeParam>::max() - 1), 1);
+
+    // Test random inputs; up to square root of max value
+    auto                                       rng = std::minstd_rand{ 20240207 };
+    std::uniform_int_distribution<std::size_t> distrib(
+            0, std::sqrt(std::numeric_limits<TypeParam>::max()));
+    for (int iter = 0; iter < 400; iter++)
+    {
+        TypeParam nom    = distrib(rng);
+        TypeParam denom  = distrib(rng) + 1;
+        TypeParam result = gmx::divideRoundUp(nom, denom);
+        EXPECT_GT(nom, denom * (result - 1));
+        EXPECT_LE(nom, denom * result);
+    }
+}
+
 } // namespace
+} // namespace test
+} // namespace gmx

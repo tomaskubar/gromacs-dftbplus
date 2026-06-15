@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2020- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \internal \file
  *
@@ -43,9 +42,19 @@
 
 #include "gromacs/fileio/checkpoint.h"
 
+#include <cstdint>
+
+#include <string>
+
 #include <gtest/gtest.h>
 
+#include "gromacs/compat/pointers.h"
 #include "gromacs/utility/exceptions.h"
+#include "gromacs/utility/keyvaluetree.h"
+#include "gromacs/utility/keyvaluetreebuilder.h"
+#include "gromacs/utility/real.h"
+
+#include "testutils/testasserts.h"
 
 namespace gmx
 {
@@ -57,27 +66,27 @@ namespace
 TEST(Checkpoint, ReadingThrowsWhenValueNotPresent)
 {
     KeyValueTreeObject kvtObject;
-    std::int64_t       readValue;
+    std::int64_t       readValue = 0;
     EXPECT_THROW_GMX(readKvtCheckpointValue(compat::make_not_null(&readValue), "non", "sense", kvtObject),
-                     InternalError);
+                     gmx::InternalError);
 }
 
 TEST(Checkpoint, ReadingDoesNotThrowWhenValuePresent)
 {
-    int64_t             value;
+    int64_t             value      = 37;
     std::string         name       = "checkpointedInteger";
     std::string         identifier = "testingmodule";
     KeyValueTreeBuilder kvtBuilder;
     writeKvtCheckpointValue(value, name, identifier, kvtBuilder.rootObject());
     const auto kvtObject = kvtBuilder.build();
     int64_t    readValue = 0;
-    EXPECT_NO_THROW_GMX(readKvtCheckpointValue(compat::make_not_null(&readValue), "non", "sense", kvtObject),
-                        InternalError);
+    EXPECT_NO_THROW_GMX(
+            readKvtCheckpointValue(compat::make_not_null(&readValue), name, identifier, kvtObject));
 }
 
 TEST(Checkpoint, KvtRoundTripInt64)
 {
-    int64_t             value;
+    int64_t             value      = INT64_MAX;
     std::string         name       = "checkpointedInteger";
     std::string         identifier = "testingmodule";
     KeyValueTreeBuilder kvtBuilder;
@@ -90,8 +99,8 @@ TEST(Checkpoint, KvtRoundTripInt64)
 
 TEST(Checkpoint, KvtRoundTripReal)
 {
-    real                value;
-    std::string         name       = "checkpointedInteger";
+    real                value      = 926.7;
+    std::string         name       = "checkpointedReal";
     std::string         identifier = "testingmodule";
     KeyValueTreeBuilder kvtBuilder;
     writeKvtCheckpointValue(value, name, identifier, kvtBuilder.rootObject());

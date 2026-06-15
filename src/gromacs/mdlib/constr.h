@@ -1,13 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
- * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2016,2017 by the GROMACS development team.
- * Copyright (c) 2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 1991- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -21,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -30,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \libinternal \file
  * \brief Declares interface to constraint code.
@@ -47,16 +43,18 @@
 #ifndef GMX_MDLIB_CONSTR_H
 #define GMX_MDLIB_CONSTR_H
 
+#include <cstdint>
 #include <cstdio>
 
-#include "gromacs/math/vectypes.h"
+#include <memory>
+#include <vector>
+
 #include "gromacs/topology/idef.h"
 #include "gromacs/utility/arrayref.h"
-#include "gromacs/utility/basedefinitions.h"
-#include "gromacs/utility/classhelpers.h"
-#include "gromacs/utility/gmxassert.h"
 #include "gromacs/utility/real.h"
+#include "gromacs/utility/vectypes.h"
 
+struct gmx_domdec_t;
 struct gmx_edsam;
 struct gmx_localtop_t;
 struct gmx_moltype_t;
@@ -64,19 +62,20 @@ struct gmx_mtop_t;
 struct gmx_multisim_t;
 struct gmx_wallcycle;
 struct pull_t;
-struct t_commrec;
 struct t_ilist;
 struct t_inputrec;
 struct t_nrnb;
 struct t_pbc;
 class t_state;
-
+enum class ConstraintAlgorithm : int;
 namespace gmx
 {
 template<typename T>
 class ArrayRefWithPadding;
+class MpiComm;
 template<typename>
 class ListOfLists;
+class ObservablesReducerBuilder;
 
 //! Describes supported flavours of constrained updates.
 enum class ConstraintVariable : int
@@ -102,17 +101,20 @@ private:
      *
      * Private to enforce use of makeConstraints() factory
      * function. */
-    Constraints(const gmx_mtop_t&     mtop,
-                const t_inputrec&     ir,
-                pull_t*               pull_work,
-                FILE*                 log,
-                const t_commrec*      cr,
-                const gmx_multisim_t* ms,
-                t_nrnb*               nrnb,
-                gmx_wallcycle*        wcycle,
-                bool                  pbcHandlingRequired,
-                int                   numConstraints,
-                int                   numSettles);
+    Constraints(const gmx_mtop_t&          mtop,
+                const t_inputrec&          ir,
+                pull_t*                    pull_work,
+                FILE*                      log,
+                const MpiComm&             mpiComm,
+                gmx_domdec_t*              dd,
+                bool                       useUpdateGroups,
+                const gmx_multisim_t*      ms,
+                t_nrnb*                    nrnb,
+                gmx_wallcycle*             wcycle,
+                bool                       pbcHandlingRequired,
+                ObservablesReducerBuilder* observablesReducerBuilder,
+                int                        numConstraints,
+                int                        numSettles);
 
 public:
     /*! \brief This member type helps implement a factory
@@ -132,14 +134,14 @@ public:
      *
      * \todo Make this a callback that is called automatically
      * once a new domain has been made. */
-    void setConstraints(gmx_localtop_t* top,
-                        int             numAtoms,
-                        int             numHomeAtoms,
-                        real*           masses,
-                        real*           inverseMasses,
-                        bool            hasMassPerturbedAtoms,
-                        real            lambda,
-                        unsigned short* cFREEZE);
+    void setConstraints(gmx_localtop_t*                     top,
+                        int                                 numAtoms,
+                        int                                 numHomeAtoms,
+                        gmx::ArrayRef<const real>           masses,
+                        gmx::ArrayRef<const real>           inverseMasses,
+                        bool                                hasMassPerturbedAtoms,
+                        real                                lambda,
+                        gmx::ArrayRef<const unsigned short> cFREEZE);
 
     /*! \brief Applies constraints to coordinates.
      *
@@ -175,8 +177,7 @@ public:
      *
      * /note x is non-const, because non-local atoms need to be communicated.
      */
-    bool apply(bool                      bLog,
-               bool                      bEner,
+    bool apply(bool                      computeRmsd,
                int64_t                   step,
                int                       delta_step,
                real                      step_scaling,
@@ -185,7 +186,7 @@ public:
                ArrayRef<RVec>            min_proj,
                const matrix              box,
                real                      lambda,
-               real*                     dvdlambda,
+               real*                     dhdlambda,
                ArrayRefWithPadding<RVec> v,
                bool                      computeVirial,
                tensor                    constraintsVirial,
@@ -197,10 +198,6 @@ public:
     //! Getter for use by domain decomposition.
     ArrayRef<const std::vector<int>> atom2settle_moltype() const;
 
-    /*! \brief Return the data for reduction for determining
-     * constraint RMS relative deviations, or an empty ArrayRef
-     * when not supported for any active constraints. */
-    ArrayRef<real> rmsdData() const;
     /*! \brief Return the RMSD of the constraints when available. */
     real rmsd() const;
 
@@ -214,11 +211,11 @@ private:
     //! Implementation type.
     class Impl;
     //! Implementation object.
-    PrivateImplPointer<Impl> impl_;
+    std::unique_ptr<Impl> impl_;
 };
 
 /*! \brief Generate a fatal error because of too many LINCS/SETTLE warnings. */
-[[noreturn]] void too_many_constraint_warnings(int eConstrAlg, int warncount);
+[[noreturn]] void too_many_constraint_warnings(ConstraintAlgorithm eConstrAlg, int warncount);
 
 /*! \brief Returns whether constraint with parameter \p iparamsIndex is a flexible constraint */
 static inline bool isConstraintFlexible(ArrayRef<const t_iparams> iparams, int iparamsIndex)
@@ -228,8 +225,8 @@ static inline bool isConstraintFlexible(ArrayRef<const t_iparams> iparams, int i
 
 /* The at2con t_blocka struct returned by the routines below
  * contains a list of constraints per atom.
- * The F_CONSTRNC constraints in this structure number consecutively
- * after the F_CONSTR constraints.
+ * The InteractionFunction::ConstraintsNoCoupling constraints in this structure number consecutively
+ * after the InteractionFunction::Constraints constraints.
  */
 
 /*! \brief Tells make_at2con how to treat flexible constraints */
@@ -245,8 +242,8 @@ FlexibleConstraintTreatment flexibleConstraintTreatment(bool haveDynamicsIntegra
 /*! \brief Returns a ListOfLists object to go from atoms to constraints
  *
  * The object will contain constraint indices with lower indices
- * directly matching the order in F_CONSTR and higher indices matching
- * the order in F_CONSTRNC offset by the number of constraints in F_CONSTR.
+ * directly matching the order in InteractionFunction::Constraints and higher indices matching
+ * the order in InteractionFunction::ConstraintsNoCoupling offset by the number of constraints in InteractionFunction::Constraints.
  *
  * \param[in]  moltype   The molecule data
  * \param[in]  iparams   Interaction parameters, can be null when
@@ -263,11 +260,11 @@ ListOfLists<int> make_at2con(const gmx_moltype_t&           moltype,
 /*! \brief Returns a ListOfLists object to go from atoms to constraints
  *
  * The object will contain constraint indices with lower indices
- * directly matching the order in F_CONSTR and higher indices matching
- * the order in F_CONSTRNC offset by the number of constraints in F_CONSTR.
+ * directly matching the order in InteractionFunction::Constraints and higher indices matching
+ * the order in InteractionFunction::ConstraintsNoCoupling offset by the number of constraints in InteractionFunction::Constraints.
  *
  * \param[in]  numAtoms  The number of atoms to construct the list for
- * \param[in]  ilist     Interaction list, size F_NRE
+ * \param[in]  ilist     Interaction list, size InteractionFunction::Count
  * \param[in]  iparams   Interaction parameters, can be null when
  *                       \p flexibleConstraintTreatment==Include
  * \param[in]  flexibleConstraintTreatment  The flexible constraint treatment,
@@ -275,17 +272,14 @@ ListOfLists<int> make_at2con(const gmx_moltype_t&           moltype,
  *
  * \returns a ListOfLists object with all constraints for each atom
  */
-ListOfLists<int> make_at2con(int                             numAtoms,
-                             ArrayRef<const InteractionList> ilist,
-                             ArrayRef<const t_iparams>       iparams,
-                             FlexibleConstraintTreatment     flexibleConstraintTreatment);
-
-//! Return the number of flexible constraints in the \c ilist and \c iparams.
-int countFlexibleConstraints(ArrayRef<const InteractionList> ilist, ArrayRef<const t_iparams> iparams);
+ListOfLists<int> make_at2con(int numAtoms,
+                             const gmx::EnumerationArray<InteractionFunction, InteractionList>& ilist,
+                             ArrayRef<const t_iparams>   iparams,
+                             FlexibleConstraintTreatment flexibleConstraintTreatment);
 
 /*! \brief Returns the constraint iatoms for a constraint number con
- * which comes from a list where F_CONSTR and F_CONSTRNC constraints
- * are concatenated. */
+ * which comes from a list where InteractionFunction::Constraints and
+ * InteractionFunction::ConstraintsNoCoupling constraints are concatenated. */
 inline const int* constr_iatomptr(gmx::ArrayRef<const int> iatom_constr,
                                   gmx::ArrayRef<const int> iatom_constrnc,
                                   int                      con)
@@ -300,49 +294,62 @@ inline const int* constr_iatomptr(gmx::ArrayRef<const int> iatom_constr,
     }
 };
 
-/*! \brief Returns whether there are inter charge group constraints */
-bool inter_charge_group_constraints(const gmx_mtop_t& mtop);
-
-/*! \brief Returns whether there are inter charge group settles */
-bool inter_charge_group_settles(const gmx_mtop_t& mtop);
-
 /*! \brief Constrain the initial coordinates and velocities */
 void do_constrain_first(FILE*                     log,
                         gmx::Constraints*         constr,
-                        const t_inputrec*         inputrec,
-                        int                       numAtoms,
+                        const t_inputrec&         inputrec,
                         int                       numHomeAtoms,
                         ArrayRefWithPadding<RVec> x,
                         ArrayRefWithPadding<RVec> v,
                         const matrix              box,
                         real                      lambda);
 
-/*! \brief Constrain velocities only.
+/*! \brief Constrain the velocities only.
  *
- * The dvdlambda contribution has to be added to the bonded interactions
+ * The dhdlambda contribution has to be added to the bonded interactions
+ *
+ * \param[in,out] constr         The constraints object
+ * \param[in]     computeRmsd    Tells whether the constraint RMS deviation should be computed
+ * \param[in]     step           The integration step index
+ * \param[in,out] state          The state, x is read and halo data updated, v is constrained
+ * \param[out]    dhdlambda      The dHdlambda contraint contribution is returned in this
+ * \param[in]     computeVirial  Whether the constraint virial contribution should be computed
+ * \param[out]    constraintsVirial  The constraint virial is returned in this
  */
 void constrain_velocities(gmx::Constraints* constr,
-                          bool              do_log,
-                          bool              do_ene,
+                          bool              computeRmsd,
                           int64_t           step,
                           t_state*          state,
-                          real*             dvdlambda,
-                          gmx_bool          computeVirial,
+                          real*             dhdlambda,
+                          bool              computeVirial,
                           tensor            constraintsVirial);
 
-/*! \brief Constraint coordinates.
+/*! \brief Constrain the coordinates.
  *
- * The dvdlambda contribution has to be added to the bonded interactions
+ * Constrain the coordinates \p xp using reference coordinates in \p state.
+ * When present, the velocities in \p state are also constrained.
+ * The dhdlambda contribution has to be added to the bonded interactions.
+ *
+ * \param[in,out] constr         The constraints object
+ * \param[in]     computeRmsd    Tells whether the constraint RMS deviation should be computed
+ * \param[in]     step           The integration step index
+ * \param[in,out] state          The state, x is read and halo data updated, v is constrained
+ * \param[in,out] xp             The coordinates to constrain
+ * \param[out]    dhdlambda      The dHdlambda contraint contribution is returned in this
+ * \param[in]     computeVirial  Whether the constraint virial contribution should be computed
+ * \param[out]    constraintsVirial  The constraint virial is returned in this
  */
 void constrain_coordinates(gmx::Constraints*         constr,
-                           bool                      do_log,
-                           bool                      do_ene,
+                           bool                      computeRmsd,
                            int64_t                   step,
                            t_state*                  state,
                            ArrayRefWithPadding<RVec> xp,
-                           real*                     dvdlambda,
-                           gmx_bool                  computeVirial,
+                           real*                     dhdlambda,
+                           bool                      computeVirial,
                            tensor                    constraintsVirial);
+
+/*! \brief Returns True if there is at least one triangular constraint. */
+bool hasTriangleConstraints(const gmx_mtop_t& mtop, FlexibleConstraintTreatment flexibleConstraintTreatment);
 
 } // namespace gmx
 

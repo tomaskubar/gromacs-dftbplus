@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2018,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2018- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \file
  * \brief Implementation details of gmxapi::Context
@@ -47,30 +46,42 @@
 
 #include <cstring>
 
+#include <algorithm>
 #include <memory>
+#include <tuple>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
-#include "gromacs/commandline/pargs.h"
 #include "gromacs/commandline/filenm.h"
 #include "gromacs/commandline/pargs.h"
+#include "gromacs/compat/pointers.h"
 #include "gromacs/gmxlib/network.h"
 #include "gromacs/hardware/detecthardware.h"
 #include "gromacs/hardware/hw_info.h"
 #include "gromacs/mdlib/stophandler.h"
+#include "gromacs/mdrun/legacymdrunoptions.h"
+#include "gromacs/mdrun/mdmodules.h"
+#include "gromacs/mdrun/runner.h"
+#include "gromacs/mdrun/simulationcontext.h"
+#include "gromacs/mdrun/simulationinputhandle.h"
+#include "gromacs/mdrunutility/handlerestart.h"
 #include "gromacs/mdrunutility/logging.h"
 #include "gromacs/mdrunutility/multisim.h"
-#include "gromacs/mdrun/runner.h"
-#include "gromacs/mdrunutility/handlerestart.h"
+#include "gromacs/mdtypes/mdrunoptions.h"
+#include "gromacs/utility/arrayref.h"
 #include "gromacs/utility/arraysize.h"
+#include "gromacs/utility/basedefinitions.h"
 #include "gromacs/utility/basenetwork.h"
 #include "gromacs/utility/fatalerror.h"
+#include "gromacs/utility/gmxassert.h"
 #include "gromacs/utility/gmxmpi.h"
 #include "gromacs/utility/init.h"
 #include "gromacs/utility/physicalnodecommunicator.h"
+#include "gromacs/utility/unique_cptr.h"
 
-#include "gmxapi/mpi/resourceassignment.h"
 #include "gmxapi/exceptions.h"
+#include "gmxapi/mpi/resourceassignment.h"
 #include "gmxapi/session.h"
 #include "gmxapi/status.h"
 #include "gmxapi/version.h"
@@ -164,7 +175,7 @@ MpiContextManager::MpiContextManager(MPI_Comm communicator) :
         // Synchronise at the point of acquiring a MpiContextManager.
         gmx_barrier(this->communicator());
     }
-};
+}
 
 MpiContextManager::~MpiContextManager()
 {
@@ -233,7 +244,8 @@ Context createContext()
 ContextImpl::ContextImpl(MpiContextManager&& mpi) noexcept(std::is_nothrow_constructible_v<gmx::LegacyMdrunOptions>) :
     mpi_(std::move(mpi)),
     hardwareInformation_(gmx_detect_hardware(
-            gmx::PhysicalNodeCommunicator(mpi_.communicator(), gmx_physicalnode_id_hash())))
+            gmx::PhysicalNodeCommunicator(mpi_.communicator(), gmx_physicalnode_id_hash()),
+            mpi_.communicator()))
 {
     // Confirm our understanding of the MpiContextManager invariant.
     GMX_ASSERT(mpi_.communicator() == MPI_COMM_NULL ? !GMX_LIB_MPI : GMX_LIB_MPI,
@@ -286,17 +298,39 @@ std::shared_ptr<Session> ContextImpl::launch(const Workflow& work)
          */
 
         // Set input TPR name
+        if (std::any_of(mdArgs_.cbegin(),
+                        mdArgs_.cend(),
+                        [](const std::string& arg) { return arg == "-s"; }))
+        {
+            throw UsageError("gmxapi must control the simulation input, but caller provided '-s'.");
+        }
         mdArgs_.emplace_back("-s");
         mdArgs_.emplace_back(filename);
 
-        // Set checkpoint file name
-        mdArgs_.emplace_back("-cpi");
-        mdArgs_.emplace_back("state.cpt");
-        /* Note: we normalize the checkpoint file name, but not its full path.
-         * Through version 0.0.8, gmxapi clients change working directory
-         * for each session, so relative path(s) below are appropriate.
-         * A future gmxapi version should avoid changing directories once the
-         * process starts and instead manage files (paths) in an absolute and
+        // Set checkpoint file name(s) (if not already set by user).
+        if (std::none_of(mdArgs_.cbegin(),
+                         mdArgs_.cend(),
+                         [](const std::string& arg) { return arg == "-cpi"; }))
+        {
+            mdArgs_.emplace_back("-cpi");
+            mdArgs_.emplace_back("state.cpt");
+        }
+        if (std::none_of(mdArgs_.cbegin(),
+                         mdArgs_.cend(),
+                         [](const std::string& arg) { return arg == "-cpo"; }))
+        {
+            mdArgs_.emplace_back("-cpo");
+            mdArgs_.emplace_back("state.cpt");
+        }
+        if (std::none_of(mdArgs_.cbegin(),
+                         mdArgs_.cend(),
+                         [](const std::string& arg) { return arg == "-o"; }))
+        {
+            mdArgs_.emplace_back("-o");
+            mdArgs_.emplace_back("traj.trr");
+        }
+        /* Note: we normalize the file names, but not the full paths.
+         * A future gmxapi version should manage files (paths) in an absolute and
          * immutable way, with abstraction provided through the Context chain-of-responsibility.
          * TODO: API abstractions for initializing simulations that may be new or partially
          * complete. Reference gmxapi milestone 13 at https://gitlab.com/gromacs/gromacs/-/issues/2585
@@ -311,9 +345,10 @@ std::shared_ptr<Session> ContextImpl::launch(const Workflow& work)
         *argv[0] = '\0';
         for (size_t argvIndex = offset; argvIndex < argc; ++argvIndex)
         {
-            const auto& mdArg = mdArgs_[argvIndex - offset];
-            argv[argvIndex]   = new char[mdArg.length() + 1];
-            strcpy(argv[argvIndex], mdArg.c_str());
+            const auto&  mdArg   = mdArgs_[argvIndex - offset];
+            const size_t argSize = mdArg.length() + 1;
+            argv[argvIndex]      = new char[argSize];
+            std::strncpy(argv[argvIndex], mdArg.c_str(), argSize);
         }
 
         auto mdModules = std::make_unique<MDModules>();
@@ -328,8 +363,8 @@ std::shared_ptr<Session> ContextImpl::launch(const Workflow& work)
             return nullptr;
         }
 
-        ArrayRef<const std::string> multiSimDirectoryNames =
-                opt2fnsIfOptionSet("-multidir", ssize(options.filenames), options.filenames.data());
+        ArrayRef<const std::string> multiSimDirectoryNames = opt2fnsIfOptionSet(
+                "-multidir", gmx::ssize(options.filenames), options.filenames.data());
 
 
         // The SimulationContext is necessary with gmxapi so that
@@ -347,13 +382,16 @@ std::shared_ptr<Session> ContextImpl::launch(const Workflow& work)
         SimulationContext simulationContext(communicator, multiSimDirectoryNames);
 
 
-        StartingBehavior startingBehavior        = StartingBehavior::NewSimulation;
-        LogFilePtr       logFileGuard            = nullptr;
-        gmx_multisim_t*  ms                      = simulationContext.multiSimulation_.get();
-        std::tie(startingBehavior, logFileGuard) = handleRestart(
-                findIsSimulationMasterRank(ms, simulationContext.simulationCommunicator_),
-                simulationContext.simulationCommunicator_, ms, options.mdrunOptions.appendingBehavior,
-                ssize(options.filenames), options.filenames.data());
+        StartingBehavior startingBehavior = StartingBehavior::NewSimulation;
+        LogFilePtr       logFileGuard     = nullptr;
+        gmx_multisim_t*  ms               = simulationContext.multiSimulation_.get();
+        std::tie(startingBehavior, logFileGuard) =
+                handleRestart(findIsSimulationMainRank(ms, simulationContext.simulationCommunicator_),
+                              simulationContext.simulationCommunicator_,
+                              ms,
+                              options.mdrunOptions.appendingBehavior,
+                              gmx::ssize(options.filenames),
+                              options.filenames.data());
 
         auto builder = MdrunnerBuilder(std::move(mdModules),
                                        compat::not_null<SimulationContext*>(&simulationContext));
@@ -362,6 +400,8 @@ std::shared_ptr<Session> ContextImpl::launch(const Workflow& work)
         builder.addDomainDecomposition(options.domdecOptions);
         // \todo pass by value
         builder.addNonBonded(options.nbpu_opt_choices[0]);
+        // pass in nbfe option
+        builder.addNonBondedFETaskAssignment(options.nbfe_opt_choices[0]);
         // \todo pass by value
         builder.addElectrostatics(options.pme_opt_choices[0], options.pme_fft_opt_choices[0]);
         builder.addBondedTaskAssignment(options.bonded_opt_choices[0]);
@@ -384,8 +424,8 @@ std::shared_ptr<Session> ContextImpl::launch(const Workflow& work)
         builder.addLogFile(logFileGuard.get());
 
         // Note, creation is not mature enough to be exposed in the external API yet.
-        launchedSession = createSession(shared_from_this(), std::move(builder),
-                                        std::move(simulationContext), std::move(logFileGuard));
+        launchedSession = createSession(
+                shared_from_this(), std::move(builder), std::move(simulationContext), std::move(logFileGuard));
 
         // Clean up argv once builder is no longer in use
         // TODO: Remove long-lived references to argv so this is no longer necessary.

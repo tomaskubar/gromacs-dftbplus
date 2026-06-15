@@ -1,13 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
- * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2016,2017 by the GROMACS development team.
- * Copyright (c) 2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 1991- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -21,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -30,23 +26,23 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 #ifndef GMX_FILEIO_GMXFIO_XDR_H
 #define GMX_FILEIO_GMXFIO_XDR_H
 
 #include <cstddef>
+#include <cstdint>
 
 #include <string>
 
 #include "gromacs/fileio/xdrf.h"
-#include "gromacs/math/vectypes.h"
 #include "gromacs/utility/basedefinitions.h"
-#include "gromacs/utility/iserializer.h"
 #include "gromacs/utility/real.h"
+#include "gromacs/utility/vectypes.h"
 
 struct t_fileio;
 
@@ -159,60 +155,5 @@ gmx_bool gmx_fio_ndoe_string(struct t_fileio* fio, char* item[], int n, const ch
 #define gmx_fio_ndo_ivec(fio, item, n) gmx_fio_ndoe_ivec(fio, item, n, (#item), __FILE__, __LINE__)
 #define gmx_fio_ndo_string(fio, item, n) \
     gmx_fio_ndoe_string(fio, item, n, (#item), __FILE__, __LINE__)
-
-namespace gmx
-{
-/*!\internal \brief
- * Serializer to read/write XDR data.
- */
-class FileIOXdrSerializer : public ISerializer
-{
-public:
-    //! Only create with valid file I/O handle.
-    explicit FileIOXdrSerializer(t_fileio* fio);
-
-    //! If file is open in reading mode.
-    bool reading() const override;
-    //! Handle bool I/O.
-    void doBool(bool* value) override;
-    //! Handle unsigned char I/O.
-    void doUChar(unsigned char* value) override;
-    //! Handle char I/O.
-    void doChar(char* value) override;
-    //! Handle unsigned short I/O.
-    void doUShort(unsigned short* value) override;
-    //! Handle default integer I/O.
-    void doInt(int* value) override;
-    //! Handle int32 I/O.
-    void doInt32(int32_t* value) override;
-    //! Handle int64 I/O.
-    void doInt64(int64_t* value) override;
-    //! Handle single precision float I/O.
-    void doFloat(float* value) override;
-    //! Handle double precision float I/O.
-    void doDouble(double* value) override;
-    //! Handle GROMACS floating point number I/O.
-    void doReal(real* value) override;
-    //! Handle I/O of integer vector of size DIM.
-    void doIvec(ivec* value) override;
-    //! Handle I/O of GROMACS real vector of size DIM.
-    void doRvec(rvec* value) override;
-    //! Handle I/O if string.
-    void doString(std::string* value) override;
-    //! Handle opaque data.
-    void doOpaque(char* data, std::size_t size) override;
-    //! Special case for handling I/O of a vector of characters.
-    void doCharArray(char* values, int elements) override;
-    //! Special case for handling I/O of a vector of unsigned characters.
-    void doUCharArray(unsigned char* values, int elements) override;
-    //! Special case for handling I/O of a vector of rvecs.
-    void doRvecArray(rvec* values, int elements) override;
-
-private:
-    //! File I/O handle.
-    t_fileio* fio_;
-};
-
-} // namespace gmx
 
 #endif

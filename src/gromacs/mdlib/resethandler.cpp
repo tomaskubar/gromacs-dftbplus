@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2018- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \internal \file
  * \brief
@@ -44,7 +43,12 @@
 
 #include "resethandler.h"
 
+#include <cinttypes>
+
+#include <filesystem>
+
 #include "gromacs/domdec/domdec.h"
+#include "gromacs/domdec/domdec_struct.h"
 #include "gromacs/ewald/pme.h"
 #include "gromacs/ewald/pme_load_balancing.h"
 #include "gromacs/ewald/pme_pp.h"
@@ -54,9 +58,12 @@
 #include "gromacs/mdtypes/commrec.h"
 #include "gromacs/nbnxm/gpu_data_mgmt.h"
 #include "gromacs/nbnxm/nbnxm.h"
+#include "gromacs/timing/external_tracing.h"
+#include "gromacs/timing/wallcycle.h"
 #include "gromacs/timing/walltime_accounting.h"
 #include "gromacs/utility/cstringutil.h"
 #include "gromacs/utility/fatalerror.h"
+#include "gromacs/utility/gmxassert.h"
 
 namespace gmx
 {
@@ -76,16 +83,13 @@ static inline ResetSignal convertToResetSignal(signed char sig)
 ResetHandler::ResetHandler(compat::not_null<SimulationSignal*> signal,
                            bool                                simulationsShareState,
                            int64_t                             nsteps,
-                           bool                                isMaster,
+                           bool                                isMain,
                            bool                                resetHalfway,
                            real                                maximumHoursToRun,
                            const MDLogger&                     mdlog,
-                           gmx_wallcycle_t                     wcycle,
+                           gmx_wallcycle*                      wcycle,
                            gmx_walltime_accounting_t           walltime_accounting) :
-    signal_(*signal),
-    rankCanSetSignal_(false),
-    simulationNeedsReset_(false),
-    maximumHoursToRun_(maximumHoursToRun)
+    signal_(*signal), rankCanSetSignal_(false), simulationNeedsReset_(false), maximumHoursToRun_(maximumHoursToRun)
 {
     if (simulationsShareState)
     {
@@ -105,7 +109,7 @@ ResetHandler::ResetHandler(compat::not_null<SimulationSignal*> signal,
         }
         simulationNeedsReset_ = true;
 
-        if (isMaster && (maximumHoursToRun > 0))
+        if (isMain && (maximumHoursToRun > 0))
         {
             rankCanSetSignal_ = true;
         }
@@ -135,23 +139,23 @@ bool ResetHandler::setSignalImpl(gmx_walltime_accounting_t walltime_accounting)
     return false;
 }
 
-bool ResetHandler::resetCountersImpl(int64_t                     step,
-                                     int64_t                     step_rel,
-                                     const MDLogger&             mdlog,
-                                     FILE*                       fplog,
-                                     const t_commrec*            cr,
-                                     nonbonded_verlet_t*         nbv,
-                                     t_nrnb*                     nrnb,
-                                     const gmx_pme_t*            pme,
-                                     const pme_load_balancing_t* pme_loadbal,
-                                     gmx_wallcycle_t             wcycle,
-                                     gmx_walltime_accounting_t   walltime_accounting)
+bool ResetHandler::resetCountersImpl(int64_t                   step,
+                                     int64_t                   step_rel,
+                                     const MDLogger&           mdlog,
+                                     FILE*                     fplog,
+                                     const t_commrec*          cr,
+                                     nonbonded_verlet_t*       nbv,
+                                     t_nrnb*                   nrnb,
+                                     const gmx_pme_t*          pme,
+                                     const PmeLoadBalancing*   pme_loadbal,
+                                     gmx_wallcycle*            wcycle,
+                                     gmx_walltime_accounting_t walltime_accounting)
 {
     /* Reset either if signal has been passed, or if reset step has been reached */
     if (convertToResetSignal(signal_.set) == ResetSignal::doResetCounters
         || step_rel == wcycle_get_reset_counters(wcycle))
     {
-        if (pme_loadbal_is_active(pme_loadbal))
+        if (pme_loadbal && pme_loadbal->isActive())
         {
             /* Do not permit counter reset while PME load
              * balancing is active. The only purpose for resetting
@@ -181,7 +185,7 @@ bool ResetHandler::resetCountersImpl(int64_t                     step,
 
         if (nbv && nbv->useGpu())
         {
-            Nbnxm::gpu_reset_timings(nbv);
+            gpu_reset_timings(nbv);
         }
 
         if (pme_gpu_task_enabled(pme))
@@ -193,23 +197,24 @@ bool ResetHandler::resetCountersImpl(int64_t                     step,
         {
             resetGpuProfiler();
         }
+        resumeIttTracingWhenAppropriate();
 
-        wallcycle_stop(wcycle, ewcRUN);
+        wallcycle_stop(wcycle, WallCycleCounter::Run);
         wallcycle_reset_all(wcycle);
-        if (DOMAINDECOMP(cr))
+        if (haveDDAtomOrdering(*cr))
         {
             reset_dd_statistics_counters(cr->dd);
         }
         clear_nrnb(nrnb);
-        wallcycle_start(wcycle, ewcRUN);
+        wallcycle_start(wcycle, WallCycleCounter::Run);
         walltime_accounting_reset_time(walltime_accounting, step);
-        print_date_and_time(fplog, cr->nodeid, "Restarted time", gmx_gettime());
+        print_date_and_time(fplog, cr->commMyGroup.rank(), "Restarted time", gmx_gettime());
 
         wcycle_set_reset_counters(wcycle, -1);
-        if (!thisRankHasDuty(cr, DUTY_PME))
+        if (!thisRankHasPmeDuty(cr->dd))
         {
             /* Tell our PME node to reset its counters */
-            gmx_pme_send_resetcounters(cr, step);
+            gmx_pme_send_resetcounters(cr->commMySim, cr->dd, step);
         }
         /* Reset can only happen once, so clear the triggering flag. */
         signal_.set = static_cast<signed char>(ResetSignal::noSignal);

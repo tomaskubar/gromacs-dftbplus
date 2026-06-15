@@ -1,13 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
- * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2017,2018 by the GROMACS development team.
- * Copyright (c) 2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 1991- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -21,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -30,21 +26,25 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 #include "gmxpre.h"
 
 #include "cmat.h"
 
+#include <cstdio>
+
 #include <algorithm>
+#include <filesystem>
+#include <string>
 
 #include "gromacs/fileio/matio.h"
 #include "gromacs/fileio/xvgr.h"
 #include "gromacs/math/functions.h"
-#include "gromacs/math/vec.h"
+#include "gromacs/utility/basedefinitions.h"
 #include "gromacs/utility/futil.h"
 #include "gromacs/utility/smalloc.h"
 
@@ -89,32 +89,6 @@ void copy_t_mat(t_mat* dst, t_mat* src)
         dst->erow[i]  = src->erow[i];
         dst->m_ind[i] = src->m_ind[i];
     }
-}
-
-void enlarge_mat(t_mat* m, int deltan)
-{
-    int i, j;
-
-    srenew(m->erow, m->nn + deltan);
-    srenew(m->m_ind, m->nn + deltan);
-    srenew(m->mat, m->nn + deltan);
-
-    /* Reallocate existing rows in the matrix, and set them to zero */
-    for (i = 0; (i < m->nn); i++)
-    {
-        srenew(m->mat[i], m->nn + deltan);
-        for (j = m->nn; (j < m->nn + deltan); j++)
-        {
-            m->mat[i][j] = 0;
-        }
-    }
-    /* Allocate new rows of the matrix, set energies to zero */
-    for (i = m->nn; (i < m->nn + deltan); i++)
-    {
-        m->erow[i] = 0;
-        snew(m->mat[i], m->nn + deltan);
-    }
-    m->nn += deltan;
 }
 
 void reset_index(t_mat* m)
@@ -182,30 +156,6 @@ void swap_rows(t_mat* m, int iswap, int jswap)
         m->mat[i][iswap] = m->mat[i][jswap];
         m->mat[i][jswap] = ttt;
     }
-}
-
-void swap_mat(t_mat* m)
-{
-    t_mat* tmp;
-    int    i, j;
-
-    tmp = init_mat(m->nn, FALSE);
-    for (i = 0; (i < m->nn); i++)
-    {
-        for (j = 0; (j < m->nn); j++)
-        {
-            tmp->mat[m->m_ind[i]][m->m_ind[j]] = m->mat[i][j];
-        }
-    }
-    /*tmp->mat[i][j] =  m->mat[m->m_ind[i]][m->m_ind[j]]; */
-    for (i = 0; (i < m->nn); i++)
-    {
-        for (j = 0; (j < m->nn); j++)
-        {
-            m->mat[i][j] = tmp->mat[i][j];
-        }
-    }
-    done_mat(&tmp);
 }
 
 void low_rmsd_dist(const char* fn, real maxrms, int nn, real** mat, const gmx_output_env_t* oenv)

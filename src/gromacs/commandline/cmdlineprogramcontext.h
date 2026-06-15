@@ -1,11 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2012,2013,2014,2015,2018 by the GROMACS development team.
- * Copyright (c) 2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2012- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -19,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -28,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \file
  * \brief
@@ -49,11 +47,11 @@
 #ifndef GMX_COMMANDLINE_CMDLINEPROGRAMCONTEXT_H
 #define GMX_COMMANDLINE_CMDLINEPROGRAMCONTEXT_H
 
+#include <filesystem>
 #include <memory>
 #include <string>
 #include <vector>
 
-#include "gromacs/utility/classhelpers.h"
 #include "gromacs/utility/programcontext.h"
 
 namespace gmx
@@ -80,14 +78,14 @@ public:
     /*! \brief
      * Returns the working directory when the program was launched.
      */
-    virtual std::string getWorkingDirectory() const = 0;
+    virtual std::filesystem::path getWorkingDirectory() const = 0;
     /*! \brief
      * Returns list of paths where executables are searched for.
      *
      * The returned list should be in priority order.  An empty string in
      * the returned list corresponds to getWorkindDirectory().
      */
-    virtual std::vector<std::string> getExecutablePaths() const = 0;
+    virtual std::vector<std::filesystem::path> getExecutablePaths() const = 0;
 };
 
 //! Shorthand for a smart pointer to IExecutableEnvironment.
@@ -188,16 +186,14 @@ public:
      * Returns the full path of the running binary.
      *
      * \throws std::bad_alloc if out of memory.
-     * \throws tMPI::system_error on thread synchronization errors.
      *
      * Returns argv[0] if there was an error in finding the absolute path.
      */
-    const char* fullBinaryPath() const override;
+    std::filesystem::path fullBinaryPath() const override;
     /*! \brief
      * Returns the installation prefix (for finding \Gromacs data files).
      *
      * \throws std::bad_alloc if out of memory.
-     * \throws tMPI::system_error on thread synchronization errors.
      *
      * Returns a hardcoded path set during configuration time if there is
      * an error in finding the library data files.
@@ -213,7 +209,7 @@ public:
 private:
     class Impl;
 
-    PrivateImplPointer<Impl> impl_;
+    std::unique_ptr<Impl> impl_;
 };
 
 } // namespace gmx

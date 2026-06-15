@@ -1,10 +1,9 @@
 #
 # This file is part of the GROMACS molecular simulation package.
 #
-# Copyright (c) 2016,2019, by the GROMACS development team, led by
-# Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
-# and including many others, as listed in the AUTHORS file in the
-# top-level source directory and at http://www.gromacs.org.
+# Copyright 2016- The GROMACS Authors
+# and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+# Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
 #
 # GROMACS is free software; you can redistribute it and/or
 # modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
 #
 # You should have received a copy of the GNU Lesser General Public
 # License along with GROMACS; if not, see
-# http://www.gnu.org/licenses, or write to the Free Software Foundation,
+# https://www.gnu.org/licenses, or write to the Free Software Foundation,
 # Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
 #
 # If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
 # consider code for inclusion in the official distribution, but
 # derived work must not be called official GROMACS. Details are found
 # in the README & COPYING files - if they are missing, get the
-# official version at http://www.gromacs.org.
+# official version at https://www.gromacs.org.
 #
 # To help us fund GROMACS development, we humbly ask that you cite
-# the research papers on the package. Check out http://www.gromacs.org.
+# the research papers on the package. Check out https://www.gromacs.org.
 
 set(GMX_TNG_MINIMUM_REQUIRED_VERSION "1.7.10")
 
@@ -67,6 +66,11 @@ if(GMX_USE_TNG)
             endif()
         endif()
     endif()
+else()
+    # We are building without TNG support, but we need still need a
+    # do-nothing linker target to link GROMACS modules against, which
+    # is set up here.
+    add_library(tng_io INTERFACE)
 endif()
 
 function(gmx_setup_tng_for_libgromacs)
@@ -84,6 +88,13 @@ function(gmx_setup_tng_for_libgromacs)
             add_library(tng_io::tng_io ALIAS tng_io)
             gmx_target_compile_options(tng_io_obj)
             target_link_libraries(libgromacs PRIVATE $<BUILD_INTERFACE:tng_io::tng_io>)
+            if (NOT GMX_EXTERNAL_ZLIB)
+                # Bundled ZLib has compatibility issues with C2x, and Clang 15 warns about it.
+                check_c_compiler_flag("-Wno-deprecated-non-prototype" HAS_WARNING_NO_DEPRECATED_NON_PROTOTYPE)
+                if(HAS_WARNING_NO_DEPRECATED_NON_PROTOTYPE)
+                    target_compile_options(tng_io_zlib PRIVATE $<$<COMPILE_LANGUAGE:C>:-Wno-deprecated-non-prototype>)
+                endif()
+            endif()
         endif()
     endif()
 endfunction()

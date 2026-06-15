@@ -1,11 +1,9 @@
 #
 # This file is part of the GROMACS molecular simulation package.
 #
-# Copyright (c) 2012,2013,2014,2015,2016 by the GROMACS development team.
-# Copyright (c) 2017,2018,2019,2020, by the GROMACS development team, led by
-# Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
-# and including many others, as listed in the AUTHORS file in the
-# top-level source directory and at http://www.gromacs.org.
+# Copyright 2012- The GROMACS Authors
+# and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+# Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
 #
 # GROMACS is free software; you can redistribute it and/or
 # modify it under the terms of the GNU Lesser General Public License
@@ -19,7 +17,7 @@
 #
 # You should have received a copy of the GNU Lesser General Public
 # License along with GROMACS; if not, see
-# http://www.gnu.org/licenses, or write to the Free Software Foundation,
+# https://www.gnu.org/licenses, or write to the Free Software Foundation,
 # Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
 #
 # If you want to redistribute modifications to GROMACS, please
@@ -28,10 +26,10 @@
 # consider code for inclusion in the official distribution, but
 # derived work must not be called official GROMACS. Details are found
 # in the README & COPYING files - if they are missing, get the
-# official version at http://www.gromacs.org.
+# official version at https://www.gromacs.org.
 #
 # To help us fund GROMACS development, we humbly ask that you cite
-# the research papers on the package. Check out http://www.gromacs.org.
+# the research papers on the package. Check out https://www.gromacs.org.
 
 include(CheckCXXSourceCompiles)
 
@@ -47,36 +45,45 @@ macro(gmx_test_compiler_problems)
         message(WARNING "The versions of the C and C++ compilers do not match (${CMAKE_C_COMPILER_VERSION} and ${CMAKE_CXX_COMPILER_VERSION}, respectively). Mixing different C/C++ compilers can cause problems.")
     endif()
 
-    # Error if compiler doesn't support required C++14 features.
+    # Error if compiler doesn't support required C++17 features.
     # cmake feature detection is currently inconsistent: gitlab.kitware.com/cmake/cmake/issues/18869
-    # When we use C++17 we might want to switch to using feature test macros.
-    if(CMAKE_COMPILER_IS_GNUCXX)
-        if (CMAKE_CXX_COMPILER_VERSION VERSION_LESS 5)
-            set(cxx_required_version "GCC version 5")
+    # We might want to switch to using feature test macros some time.
+    if(CMAKE_CXX_COMPILER_ID MATCHES "GNU")
+        if (CMAKE_CXX_COMPILER_VERSION VERSION_LESS ${GMX_GCC_MINIMUM_REQUIRED_VERSION})
+            set(cxx_required_version "GCC version ${GMX_GCC_MINIMUM_REQUIRED_VERSION}")
         endif()
     elseif(CMAKE_CXX_COMPILER_ID MATCHES "MSVC")
         if (CMAKE_CXX_COMPILER_VERSION VERSION_LESS 19.15)
             set(cxx_required_version "Visual Studio 2017")
         endif()
     elseif(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
-        if (CMAKE_CXX_COMPILER_VERSION VERSION_LESS 3.6) # For feature complete C++14 only 3.4 is needed.
-            set(cxx_required_version "Clang 3.6")        # But prior version have bugs (e.g. debug symbol support)
+        if (CMAKE_CXX_COMPILER_VERSION VERSION_LESS ${GMX_CLANG_MINIMUM_REQUIRED_VERSION})
+            set(cxx_required_version "Clang ${GMX_CLANG_MINIMUM_REQUIRED_VERSION}")
         endif()
-    elseif(CMAKE_CXX_COMPILER_ID MATCHES "Intel")
-        if (CMAKE_CXX_COMPILER_VERSION VERSION_LESS 17)
-            set(cxx_required_version "Intel Compiler 2017")
+    elseif(CMAKE_CXX_COMPILER_ID MATCHES "IntelLLVM")
+        # All versions of IntelLLVM (a.k.a. DPCPP) compiler so far support C++17
+    elseif(CMAKE_CXX_COMPILER_ID MATCHES "NVHPC")
+        # All versions of NVC++ compiler so far support C++17
+        # but only due to other bugs related to OMP 24.1+ version works
+        # by disabling some OMP regions for it.
+        if (CMAKE_CXX_COMPILER_VERSION VERSION_LESS 24.1)
+            set(cxx_required_version "NVHPC SDK 24.1")
         endif()
     else()
-        message(WARNING "You are using an unsupported compiler. Please make sure it fully supports C++14.")
+        message(WARNING "You are using an unsupported compiler. Please make sure it fully supports C++17.")
     endif()
     if (cxx_required_version)
         message(FATAL_ERROR "${cxx_required_version} or later required. "
-                            "Earlier versions don't have full C++14 support.")
+                            "Earlier versions may not have full C++17 support.")
+    endif()
+
+    if (CMAKE_CXX_COMPILER_ID MATCHES "Intel" AND NOT CMAKE_CXX_COMPILER_ID MATCHES "IntelLLVM")
+        message(WARNING "The Intel classic compiler is no longer supported. It may pass the tests, but is not tested by the GROMACS developers. Use the clang-based compiler from oneAPI, or gcc")
     endif()
 
     if("${CMAKE_CXX_COMPILER_ID}" STREQUAL "XL")
         check_cxx_source_compiles(
-"// Test in-class array initalizers used with constructor initializer lists
+"// Test in-class array initializers used with constructor initializer lists
 struct TestStruct
 {
     float a[3][3] = {{0}}; // in-class initializer
@@ -90,7 +97,20 @@ TestStruct::TestStruct() : b(0) {}
         endif()
     endif()
     if("${CMAKE_CXX_COMPILER_ID}" STREQUAL "PGI")
-        message(WARNING "Currently tested PGI compiler versions (up to 15.7) generate binaries that do not pass all regression test, and the generated binaries are significantly slower than with GCC, ICC or Clang. For now we do not recommend PGI beyond development testing - make sure to run the regressiontests.")
+        message(WARNING "Currently tested PGI compiler versions (up to 15.7) generate binaries that do not pass all regression test, and the generated binaries are significantly slower than with GCC or Clang. For now we do not recommend PGI beyond development testing - make sure to run the regressiontests.")
     endif()
+
+    if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+        check_cxx_source_compiles(
+"#if !defined(__cray__) || !__cray__
+#error Not Cray
+#endif
+int main(void){return 0;}" HAVE_CRAY_MACRO)
+        # Later we will check if we can turn off GMX_THREAD_MPI but this check needs to run first
+        if (HAVE_CRAY_MACRO AND GMX_OPENMP AND GMX_THREAD_MPI AND NOT GMX_MPI)
+            message(WARNING "Clang-based Cray compiler works poorly with OpenMP and threadMPI. Consider enabling libMPI with -DGMX_MPI=ON.")
+        endif()
+    endif()
+
 
 endmacro(gmx_test_compiler_problems)

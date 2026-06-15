@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2019- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \internal \file
  * \brief
@@ -43,30 +42,45 @@
 
 #include "densityfitting.h"
 
+#include <filesystem>
+#include <functional>
 #include <memory>
 #include <numeric>
+#include <vector>
 
+#include "gromacs/applied_forces/densityfitting/densityfittingparameters.h"
 #include "gromacs/domdec/localatomset.h"
 #include "gromacs/domdec/localatomsetmanager.h"
 #include "gromacs/fileio/checkpoint.h"
 #include "gromacs/fileio/mrcdensitymap.h"
 #include "gromacs/math/coordinatetransformation.h"
+#include "gromacs/math/densityfit.h"
 #include "gromacs/math/multidimarray.h"
+#include "gromacs/mdrunutility/mdmodulesnotifiers.h"
+#include "gromacs/mdspan/extensions.h"
+#include "gromacs/mdspan/layouts.h"
+#include "gromacs/mdspan/mdspan.h"
+#include "gromacs/mdtypes/iforceprovider.h"
 #include "gromacs/mdtypes/imdmodule.h"
+#include "gromacs/selection/indexutil.h"
+#include "gromacs/utility/arrayref.h"
 #include "gromacs/utility/classhelpers.h"
 #include "gromacs/utility/exceptions.h"
 #include "gromacs/utility/keyvaluetreebuilder.h"
-#include "gromacs/utility/mdmodulenotification.h"
 
 #include "densityfittingforceprovider.h"
 #include "densityfittingoptions.h"
 #include "densityfittingoutputprovider.h"
+
+enum class PbcType : int;
 
 namespace gmx
 {
 
 class IMdpOptionProvider;
 class DensityFittingForceProvider;
+class IMDOutputProvider;
+class KeyValueTreeObject;
 
 namespace
 {
@@ -81,7 +95,7 @@ namespace
  * the DensityFitting class needs access to parameters that become available
  * only during simulation setup.
  *
- * This class collects these parameters via MdModuleNotifications in the
+ * This class collects these parameters via MDModulesNotifiers in the
  * simulation setup phase and provides a check if all necessary parameters have
  * been provided.
  */
@@ -163,17 +177,12 @@ public:
             GMX_THROW(InternalError("Need to set reference density before normalizing it."));
         }
 
-        const real sumOfDensityData = std::accumulate(begin(referenceDensity_->asView()),
-                                                      end(referenceDensity_->asView()), 0.);
-        for (float& referenceDensityVoxel : referenceDensity_->asView())
-        {
-            referenceDensityVoxel /= sumOfDensityData;
-        }
+        normalizeSumPositiveValuesToUnity(referenceDensity_->toArrayRef());
     }
-    /*! \brief Set the periodic boundary condition via MdModuleNotifier.
+    /*! \brief Set the periodic boundary condition via MDModuleNotifier.
      *
      * The pbc type is wrapped in PeriodicBoundaryConditionType to
-     * allow the MdModuleNotifier to statically distinguish the callback
+     * allow the MDModuleNotifier to statically distinguish the callback
      * function type from other 'int' function callbacks.
      *
      * \param[in] pbcType enumerates the periodic boundary condition.
@@ -198,7 +207,7 @@ public:
     void setSimulationTimeStep(double timeStep) { simulationTimeStep_ = timeStep; }
 
     //! Return the simulation time step
-    double simulationTimeStep() { return simulationTimeStep_; }
+    double simulationTimeStep() const { return simulationTimeStep_; }
 
 private:
     //! The reference density to fit to
@@ -230,7 +239,7 @@ public:
 
     /*! \brief Request to be notified during pre-processing.
      *
-     * \param[in] notifier allows the module to subscribe to notifications from MdModules.
+     * \param[in] notifiers allows the module to subscribe to notifications from MDModules.
      *
      * The density fitting code subscribes to these notifications:
      *   - setting atom group indices in the densityFittingOptions_ from an
@@ -239,9 +248,9 @@ public:
      *     key-value-tree during pre-processing by a function taking a
      *     KeyValueTreeObjectBuilder as parameter
      */
-    void subscribeToPreProcessingNotifications(MdModulesNotifier* notifier) override
+    void subscribeToPreProcessingNotifications(MDModulesNotifiers* notifiers) override
     {
-        // Callbacks for several kinds of MdModuleNotification are created
+        // Callbacks for several kinds of MDModulesNotifier are created
         // and subscribed, and will be dispatched correctly at run time
         // based on the type of the parameter required by the lambda.
 
@@ -251,23 +260,20 @@ public:
         }
 
         // Setting the atom group indices from index group string
-        const auto setFitGroupIndicesFunction = [this](const IndexGroupsAndNames& indexGroupsAndNames) {
-            densityFittingOptions_.setFitGroupIndices(indexGroupsAndNames);
-        };
-        notifier->preProcessingNotifications_.subscribe(setFitGroupIndicesFunction);
+        const auto setFitGroupIndicesFunction = [this](const IndexGroupsAndNames& indexGroupsAndNames)
+        { densityFittingOptions_.setFitGroupIndices(indexGroupsAndNames); };
+        notifiers->preProcessingNotifier_.subscribe(setFitGroupIndicesFunction);
 
         // Writing internal parameters during pre-processing
-        const auto writeInternalParametersFunction = [this](KeyValueTreeObjectBuilder treeBuilder) {
-            densityFittingOptions_.writeInternalParametersToKvt(treeBuilder);
-        };
-        notifier->preProcessingNotifications_.subscribe(writeInternalParametersFunction);
+        const auto writeInternalParametersFunction = [this](KeyValueTreeObjectBuilder treeBuilder)
+        { densityFittingOptions_.writeInternalParametersToKvt(treeBuilder); };
+        notifiers->preProcessingNotifier_.subscribe(writeInternalParametersFunction);
 
         // Checking for consistency with all .mdp options
-        const auto checkEnergyCaluclationFrequencyFunction =
-                [this](EnergyCalculationFrequencyErrors* energyCalculationFrequencyErrors) {
-                    densityFittingOptions_.checkEnergyCaluclationFrequency(energyCalculationFrequencyErrors);
-                };
-        notifier->preProcessingNotifications_.subscribe(checkEnergyCaluclationFrequencyFunction);
+        const auto checkEnergyCalculationFrequencyFunction =
+                [this](EnergyCalculationFrequencyErrors* energyCalculationFrequencyErrors)
+        { densityFittingOptions_.checkEnergyCalculationFrequency(energyCalculationFrequencyErrors); };
+        notifiers->preProcessingNotifier_.subscribe(checkEnergyCalculationFrequencyFunction);
     }
 
     /*! \brief Request to be notified.
@@ -279,13 +285,13 @@ public:
      *   - the type of periodic boundary conditions that are used
      *     by taking a PeriodicBoundaryConditionType as parameter
      *   - the writing of checkpoint data
-     *     by taking a MdModulesWriteCheckpointData as parameter
+     *     by taking a MDModulesWriteCheckpointData as parameter
      *   - the reading of checkpoint data
-     *     by taking a MdModulesCheckpointReadingDataOnMaster as parameter
+     *     by taking a MDModulesCheckpointReadingDataOnMain as parameter
      *   - the broadcasting of checkpoint data
-     *     by taking MdModulesCheckpointReadingBroadcast as parameter
+     *     by taking MDModulesCheckpointReadingBroadcast as parameter
      */
-    void subscribeToSimulationSetupNotifications(MdModulesNotifier* notifier) override
+    void subscribeToSimulationSetupNotifications(MDModulesNotifiers* notifiers) override
     {
         if (!densityFittingOptions_.active())
         {
@@ -293,55 +299,55 @@ public:
         }
 
         // Reading internal parameters during simulation setup
-        const auto readInternalParametersFunction = [this](const KeyValueTreeObject& tree) {
-            densityFittingOptions_.readInternalParametersFromKvt(tree);
-        };
-        notifier->simulationSetupNotifications_.subscribe(readInternalParametersFunction);
+        const auto readInternalParametersFunction = [this](const KeyValueTreeObject& tree)
+        { densityFittingOptions_.readInternalParametersFromKvt(tree); };
+        notifiers->simulationSetupNotifier_.subscribe(readInternalParametersFunction);
 
         // constructing local atom sets during simulation setup
-        const auto setLocalAtomSetFunction = [this](LocalAtomSetManager* localAtomSetManager) {
-            this->constructLocalAtomSet(localAtomSetManager);
-        };
-        notifier->simulationSetupNotifications_.subscribe(setLocalAtomSetFunction);
+        const auto setLocalAtomSetFunction = [this](LocalAtomSetManager* localAtomSetManager)
+        { this->constructLocalAtomSet(localAtomSetManager); };
+        notifiers->simulationSetupNotifier_.subscribe(setLocalAtomSetFunction);
 
         // constructing local atom sets during simulation setup
-        const auto setPeriodicBoundaryContionsFunction = [this](const PbcType& pbc) {
-            this->densityFittingSimulationParameters_.setPeriodicBoundaryConditionType(pbc);
-        };
-        notifier->simulationSetupNotifications_.subscribe(setPeriodicBoundaryContionsFunction);
+        const auto setPeriodicBoundaryContionsFunction = [this](const PbcType& pbc)
+        { this->densityFittingSimulationParameters_.setPeriodicBoundaryConditionType(pbc); };
+        notifiers->simulationSetupNotifier_.subscribe(setPeriodicBoundaryContionsFunction);
 
         // setting the simulation time step
         const auto setSimulationTimeStepFunction = [this](const SimulationTimeStep& simulationTimeStep) {
             this->densityFittingSimulationParameters_.setSimulationTimeStep(simulationTimeStep.delta_t);
         };
-        notifier->simulationSetupNotifications_.subscribe(setSimulationTimeStepFunction);
+        notifiers->simulationSetupNotifier_.subscribe(setSimulationTimeStepFunction);
 
         // adding output to energy file
         const auto requestEnergyOutput =
-                [this](MdModulesEnergyOutputToDensityFittingRequestChecker* energyOutputRequest) {
-                    this->setEnergyOutputRequest(energyOutputRequest);
-                };
-        notifier->simulationSetupNotifications_.subscribe(requestEnergyOutput);
+                [this](MDModulesEnergyOutputToDensityFittingRequestChecker* energyOutputRequest)
+        { this->setEnergyOutputRequest(energyOutputRequest); };
+        notifiers->simulationSetupNotifier_.subscribe(requestEnergyOutput);
 
         // writing checkpoint data
-        const auto checkpointDataWriting = [this](MdModulesWriteCheckpointData checkpointData) {
-            forceProvider_->writeCheckpointData(checkpointData, DensityFittingModuleInfo::name_);
-        };
-        notifier->checkpointingNotifications_.subscribe(checkpointDataWriting);
+        const auto checkpointDataWriting = [this](MDModulesWriteCheckpointData checkpointData)
+        { forceProvider_->writeCheckpointData(checkpointData, DensityFittingModuleInfo::sc_name); };
+        notifiers->checkpointingNotifier_.subscribe(checkpointDataWriting);
 
         // reading checkpoint data
-        const auto checkpointDataReading = [this](MdModulesCheckpointReadingDataOnMaster checkpointData) {
+        const auto checkpointDataReading = [this](MDModulesCheckpointReadingDataOnMain checkpointData)
+        {
             densityFittingState_.readState(checkpointData.checkpointedData_,
-                                           DensityFittingModuleInfo::name_);
+                                           DensityFittingModuleInfo::sc_name);
         };
-        notifier->checkpointingNotifications_.subscribe(checkpointDataReading);
+        notifiers->checkpointingNotifier_.subscribe(checkpointDataReading);
 
         // broadcasting checkpoint data
-        const auto checkpointDataBroadcast = [this](MdModulesCheckpointReadingBroadcast checkpointData) {
+        const auto checkpointDataBroadcast = [this](MDModulesCheckpointReadingBroadcast checkpointData)
+        {
             densityFittingState_.broadcastState(checkpointData.communicator_, checkpointData.isParallelRun_);
         };
-        notifier->checkpointingNotifications_.subscribe(checkpointDataBroadcast);
+        notifiers->checkpointingNotifier_.subscribe(checkpointDataBroadcast);
     }
+
+    //! No subscriptions to run notifications
+    void subscribeToSimulationRunNotifications(MDModulesNotifiers* /* notifiers */) override {}
 
     //! From IMDModule
     IMdpOptionProvider* mdpOptionProvider() override { return &densityFittingOptions_; }
@@ -359,12 +365,14 @@ public:
                 densityFittingSimulationParameters_.normalizeReferenceDensity();
             }
             forceProvider_ = std::make_unique<DensityFittingForceProvider>(
-                    parameters, densityFittingSimulationParameters_.referenceDensity(),
+                    parameters,
+                    densityFittingSimulationParameters_.referenceDensity(),
                     densityFittingSimulationParameters_.transformationToDensityLattice(),
                     densityFittingSimulationParameters_.localAtomSet(),
                     densityFittingSimulationParameters_.periodicBoundaryConditionType(),
-                    densityFittingSimulationParameters_.simulationTimeStep(), densityFittingState_);
-            forceProviders->addForceProvider(forceProvider_.get());
+                    densityFittingSimulationParameters_.simulationTimeStep(),
+                    densityFittingState_);
+            forceProviders->addForceProvider(forceProvider_.get(), "Density fitting");
         }
     }
 
@@ -373,7 +381,7 @@ public:
 
     /*! \brief Set up the local atom sets that are used by this module.
      *
-     * \note When density fitting is set up with MdModuleNotification in
+     * \note When density fitting is set up with MDModulesNotifier in
      *       the constructor, this function is called back.
      *
      * \param[in] localAtomSetManager the manager to add local atom sets.
@@ -386,7 +394,7 @@ public:
 
     /*! \brief Request energy output to energy file during simulation.
      */
-    void setEnergyOutputRequest(MdModulesEnergyOutputToDensityFittingRequestChecker* energyOutputRequest)
+    void setEnergyOutputRequest(MDModulesEnergyOutputToDensityFittingRequestChecker* energyOutputRequest)
     {
         energyOutputRequest->energyOutputToDensityFitting_ = densityFittingOptions_.active();
     }
@@ -414,7 +422,5 @@ std::unique_ptr<IMDModule> DensityFittingModuleInfo::create()
 {
     return std::make_unique<DensityFitting>();
 }
-
-const std::string DensityFittingModuleInfo::name_ = "density-guided-simulation";
 
 } // namespace gmx

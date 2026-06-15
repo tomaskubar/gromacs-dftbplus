@@ -22,6 +22,8 @@ init_step                = 0
 simulation-part          = 1
 ; Multiple time-stepping
 mts                      = no
+; factor by which to increase the mass of the lightest atoms
+mass-repartition-factor  = 1
 ; mode for center of mass motion removal
 comm-mode                = Linear
 ; number of steps for center of mass motion removal
@@ -76,9 +78,11 @@ nstlist                  = 10
 ; Periodic boundary conditions: xyz, no, xy
 pbc                      = xyz
 periodic-molecules       = no
-; Allowed energy error due to the Verlet buffer in kJ/mol/ps per atom,
+; Allowed energy drift due to the Verlet buffer in kJ/mol/ps per atom,
 ; a value of -1 means: use rlist
 verlet-buffer-tolerance  = 0.005
+; Allowed error in the average pressure due to the Verlet buffer for LJ interactions
+verlet-buffer-pressure-tolerance = 0.5
 ; nblist cut-off        
 rlist                    = 1
 ; long-range cut-off for switched potentials
@@ -120,6 +124,8 @@ epsilon-surface          = 0
 implicit-solvent         = no
 
 ; OPTIONS FOR WEAK COUPLING ALGORITHMS
+ensemble-temperature-setting = auto
+ensemble-temperature     = -1
 ; Temperature coupling  
 tcoupl                   = No
 nsttcouple               = -1
@@ -135,7 +141,7 @@ pcoupl                   = No
 pcoupltype               = Isotropic
 nstpcouple               = -1
 ; Time constant (ps), compressibility (1/bar) and reference P (bar)
-tau-p                    = 1
+tau-p                    = 5
 compressibility          = 
 ref-p                    = 
 ; Scaling of reference coordinates, No, All or COM
@@ -159,7 +165,7 @@ annealing-temp           =
 ; GENERATE VELOCITIES FOR STARTUP RUN
 gen-vel                  = no
 gen-temp                 = 300
-gen-seed                 = -1
+gen-seed                 = 256
 
 ; OPTIONS FOR BONDS    
 constraints              = none
@@ -248,12 +254,18 @@ restraint-lambdas        =
 temperature-lambdas      = 
 calc-lambda-neighbors    = 1
 init-lambda-weights      = 
+init-lambda-counts       = 
+init-wl-histogram-counts = 
 dhdl-print-energy        = no
+sc-function              = beutler
 sc-alpha                 = 0
 sc-power                 = 1
 sc-r-power               = 6
 sc-sigma                 = 0.3
 sc-coul                  = no
+sc-gapsys-scale-linpoint-lj = 0.85
+sc-gapsys-scale-linpoint-q = 0.3
+sc-gapsys-sigma-lj       = 0.3
 separate-dhdl-file       = yes
 dhdl-derivatives         = yes
 dh_hist_size             = 0
@@ -266,6 +278,7 @@ freezegrps               =
 freezedim                = 
 cos-acceleration         = 0
 deform                   = 
+deform-init-flow         = no
 
 ; simulated tempering variables
 simulated-tempering      = no
@@ -300,5 +313,17 @@ electric-field-z         = 0 0 0 0
 
 ; Density guided simulation
 density-guided-simulation-active = false
+
+; QM/MM with CP2K
+qmmm-cp2k-active         = false
+
+; Colvars bias
+colvars-active           = false
+
+; Neural Network potential
+nnpot-active             = false
+
+; Fast Multipole Method
+fmm-backend              = inactive
 </String>
 </ReferenceData>

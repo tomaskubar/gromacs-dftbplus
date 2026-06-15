@@ -1,11 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2011,2012,2013,2014,2015 by the GROMACS development team.
- * Copyright (c) 2017,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2011- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -19,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -28,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \internal \file
  * \brief
@@ -44,15 +42,18 @@
 
 #include "mock_datamodule.h"
 
+#include <algorithm>
+
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
-#include "gromacs/analysisdata/analysisdata.h"
+#include "gromacs/analysisdata/abstractdata.h"
 #include "gromacs/analysisdata/dataframe.h"
+#include "gromacs/analysisdata/tests/datatest.h"
+#include "gromacs/utility/arrayref.h"
 #include "gromacs/utility/gmxassert.h"
 #include "gromacs/utility/stringutil.h"
 
-#include "gromacs/analysisdata/tests/datatest.h"
 #include "testutils/refdata.h"
 #include "testutils/testasserts.h"
 
@@ -303,7 +304,7 @@ public:
     //! Function call operator for the functor.
     void operator()(const AnalysisDataFrameHeader& header) const
     {
-        SCOPED_TRACE(formatString("Frame %d", frame_->index()));
+        SCOPED_TRACE(formatString("Frame %zu", frame_->index()));
         checkHeader(header, *frame_);
     }
 
@@ -334,23 +335,28 @@ public:
      */
     StaticDataPointsChecker(const AnalysisDataTestInputFrame*    frame,
                             const AnalysisDataTestInputPointSet* points,
-                            int                                  firstcol,
-                            int                                  n) :
-        frame_(frame),
-        points_(points),
-        firstcol_(firstcol),
-        n_(n)
+                            size_t                               firstcol,
+                            size_t                               n) :
+        frame_(frame), points_(points), firstcol_(firstcol), n_(n)
     {
     }
 
     //! Function call operator for the functor.
     void operator()(const AnalysisDataPointSetRef& points) const
     {
-        SCOPED_TRACE(formatString("Frame %d, point set %d", frame_->index(), points_->index()));
+        SCOPED_TRACE(formatString("Frame %zu, point set %zu", frame_->index(), points_->index()));
         EXPECT_EQ(points_->dataSetIndex(), points.dataSetIndex());
-        const int expectedFirstColumn = std::max(0, points_->firstColumn() - firstcol_);
-        const int expectedLastColumn  = std::min(n_ - 1, points_->lastColumn() - firstcol_);
-        EXPECT_EQ(expectedFirstColumn, points.firstColumn());
+        if (points_->firstColumn() < firstcol_)
+        {
+            const size_t expectedFirstColumn = 0ul;
+            EXPECT_EQ(expectedFirstColumn, points.firstColumn());
+        }
+        else
+        {
+            const size_t expectedFirstColumn = points_->firstColumn() - firstcol_;
+            EXPECT_EQ(expectedFirstColumn, points.firstColumn());
+        }
+        const size_t expectedLastColumn = std::min(n_ - 1, points_->lastColumn() - firstcol_);
         EXPECT_EQ(expectedLastColumn, points.lastColumn());
         checkHeader(points.header(), *frame_);
         checkPoints(points, *points_, firstcol_);
@@ -359,8 +365,8 @@ public:
 private:
     const AnalysisDataTestInputFrame*    frame_;
     const AnalysisDataTestInputPointSet* points_;
-    int                                  firstcol_;
-    int                                  n_;
+    size_t                               firstcol_;
+    size_t                               n_;
 };
 
 /*! \brief
@@ -513,18 +519,18 @@ void MockAnalysisDataModule::setupStaticCheck(const AnalysisDataTestInput& data,
                 EXPECT_CALL(*this, parallelDataStarted(source, _)).WillOnce(Return(true));
         ::testing::ExpectationSet framesFinished;
         ::testing::Expectation    prevFinish;
-        for (int row = 0; row < data.frameCount(); ++row)
+        for (size_t row = 0; row < data.frameCount(); ++row)
         {
             ::testing::InSequence             frameSequence;
             const AnalysisDataTestInputFrame& frame = data.frame(row);
             EXPECT_CALL(*this, frameStarted(Property(&AnalysisDataFrameHeader::index, row)))
                     .After(init)
                     .WillOnce(Invoke(StaticDataFrameHeaderChecker(&frame)));
-            for (int ps = 0; ps < frame.pointSetCount(); ++ps)
+            for (size_t ps = 0; ps < frame.pointSetCount(); ++ps)
             {
                 const AnalysisDataTestInputPointSet& points = frame.pointSet(ps);
-                StaticDataPointsChecker              checker(&frame, &points, 0,
-                                                data.columnCount(points.dataSetIndex()));
+                StaticDataPointsChecker              checker(
+                        &frame, &points, 0, data.columnCount(points.dataSetIndex()));
                 EXPECT_CALL(*this, pointsAdded(Property(&AnalysisDataPointSetRef::frameIndex, row)))
                         .WillOnce(Invoke(checker));
             }
@@ -550,15 +556,15 @@ void MockAnalysisDataModule::setupStaticCheck(const AnalysisDataTestInput& data,
         ::testing::InSequence dummy;
         setSerialExpectationForParallelDataStarted(this);
         EXPECT_CALL(*this, dataStarted(source));
-        for (int row = 0; row < data.frameCount(); ++row)
+        for (size_t row = 0; row < data.frameCount(); ++row)
         {
             const AnalysisDataTestInputFrame& frame = data.frame(row);
             EXPECT_CALL(*this, frameStarted(_)).WillOnce(Invoke(StaticDataFrameHeaderChecker(&frame)));
-            for (int ps = 0; ps < frame.pointSetCount(); ++ps)
+            for (size_t ps = 0; ps < frame.pointSetCount(); ++ps)
             {
                 const AnalysisDataTestInputPointSet& points = frame.pointSet(ps);
-                StaticDataPointsChecker              checker(&frame, &points, 0,
-                                                data.columnCount(points.dataSetIndex()));
+                StaticDataPointsChecker              checker(
+                        &frame, &points, 0, data.columnCount(points.dataSetIndex()));
                 EXPECT_CALL(*this, pointsAdded(_)).WillOnce(Invoke(checker));
             }
             EXPECT_CALL(*this, frameFinished(_)).WillOnce(Invoke(StaticDataFrameHeaderChecker(&frame)));
@@ -570,8 +576,8 @@ void MockAnalysisDataModule::setupStaticCheck(const AnalysisDataTestInput& data,
 
 
 void MockAnalysisDataModule::setupStaticColumnCheck(const AnalysisDataTestInput& data,
-                                                    int                          firstcol,
-                                                    int                          n,
+                                                    size_t                       firstcol,
+                                                    size_t                       n,
                                                     AbstractAnalysisData* /*source*/)
 {
     impl_->flags_ |= efAllowMulticolumn | efAllowMultipoint | efAllowMultipleDataSets;
@@ -582,11 +588,11 @@ void MockAnalysisDataModule::setupStaticColumnCheck(const AnalysisDataTestInput&
 
     setSerialExpectationForParallelDataStarted(this);
     EXPECT_CALL(*this, dataStarted(_));
-    for (int row = 0; row < data.frameCount(); ++row)
+    for (size_t row = 0; row < data.frameCount(); ++row)
     {
         const AnalysisDataTestInputFrame& frame = data.frame(row);
         EXPECT_CALL(*this, frameStarted(_)).WillOnce(Invoke(StaticDataFrameHeaderChecker(&frame)));
-        for (int ps = 0; ps < frame.pointSetCount(); ++ps)
+        for (size_t ps = 0; ps < frame.pointSetCount(); ++ps)
         {
             const AnalysisDataTestInputPointSet& points = frame.pointSet(ps);
             if (points.lastColumn() >= firstcol && points.firstColumn() <= firstcol + n - 1)
@@ -603,7 +609,7 @@ void MockAnalysisDataModule::setupStaticColumnCheck(const AnalysisDataTestInput&
 
 
 void MockAnalysisDataModule::setupStaticStorageCheck(const AnalysisDataTestInput& data,
-                                                     int                          storageCount,
+                                                     size_t                       storageCount,
                                                      AbstractAnalysisData*        source)
 {
     GMX_RELEASE_ASSERT(data.isMultipoint() == source->isMultipoint(),
@@ -616,11 +622,11 @@ void MockAnalysisDataModule::setupStaticStorageCheck(const AnalysisDataTestInput
 
     setSerialExpectationForParallelDataStarted(this);
     EXPECT_CALL(*this, dataStarted(source)).WillOnce(Invoke(DataStorageRequester(storageCount)));
-    for (int row = 0; row < data.frameCount(); ++row)
+    for (size_t row = 0; row < data.frameCount(); ++row)
     {
         const AnalysisDataTestInputFrame& frame = data.frame(row);
         EXPECT_CALL(*this, frameStarted(_)).WillOnce(Invoke(StaticDataFrameHeaderChecker(&frame)));
-        for (int pointSet = 0; pointSet < frame.pointSetCount(); ++pointSet)
+        for (size_t pointSet = 0; pointSet < frame.pointSetCount(); ++pointSet)
         {
             StaticDataPointsStorageChecker checker(source, &data, row, pointSet, storageCount);
             EXPECT_CALL(*this, pointsAdded(_)).WillOnce(Invoke(checker));

@@ -1,13 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
- * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2016,2017 by the GROMACS development team.
- * Copyright (c) 2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 1991- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -21,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -30,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \file
  * \brief
@@ -45,12 +41,13 @@
 #ifndef GMX_COMMANDLINE_FILENM_H
 #define GMX_COMMANDLINE_FILENM_H
 
+#include <filesystem>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
 
 #include "gromacs/fileio/filetypes.h"
-#include "gromacs/utility/basedefinitions.h"
 
 
 //! \addtogroup module_commandline
@@ -69,9 +66,9 @@ class ArrayRef;
  */
 struct t_filenm
 {
-    int                      ftp; //!< File type, see enum in filetypes.h
-    const char*              opt; //!< Command line option, can be nullptr in which case the commandline module, including all opt2??? functions below, will use the default option for the file type
-    const char*              fn; //!< File name (as set in source code), can be nullptr in which case the commandline module will use the default file name for the file type
+    int ftp;         //!< File type, see enum in filetypes.h
+    const char* opt; //!< Command line option, can be nullptr in which case the commandline module, including all opt2??? functions below, will use the default option for the file type
+    const char* fn; //!< File name (as set in source code), can be nullptr in which case the commandline module will use the default file name for the file type
     unsigned long            flag;      //!< Flag for all kinds of info (see defs)
     std::vector<std::string> filenames; //!< File names
 };
@@ -149,34 +146,49 @@ gmx::ArrayRef<const std::string> ftp2fns(int ftp, int nfile, const t_filenm fnm[
 #define ftp2FILE(ftp, nfile, fnm, mode) gmx_ffopen(ftp2fn(ftp, nfile, fnm), mode)
 
 //! Returns TRUE when this file type has been found on the cmd-line.
-gmx_bool ftp2bSet(int ftp, int nfile, const t_filenm fnm[]);
+bool ftp2bSet(int ftp, int nfile, const t_filenm fnm[]);
 
 //! Returns TRUE when this option has been found on the cmd-line.
-gmx_bool opt2bSet(const char* opt, int nfile, const t_filenm fnm[]);
+bool opt2bSet(const char* opt, int nfile, const t_filenm fnm[]);
 
 /*! \brief
- * Returns the file name belonging top cmd-line option opt, or NULL when
- * no such option.
+ * DEPRECATED Returns the file name belonging top cmd-line option opt,
+ * or NULL when no such option.
  *
  * Also return NULL when opt is optional and option is not set.
  */
 const char* opt2fn_null(const char* opt, int nfile, const t_filenm fnm[]);
 
 /*! \brief
- * Returns the first file name with type ftp, or NULL when none found.
+ * Returns the file name belonging top cmd-line option opt, or
+ * std::nullopt when no such option.
+ *
+ * Also return std::nullopt when opt is optional and option is not set.
+ */
+std::optional<std::filesystem::path> opt2path_optional(const char* opt, int nfile, const t_filenm fnm[]);
+
+/*! \brief
+ * DEPRECATED Returns the first file name with type ftp, or NULL when none found.
  *
  * Also return NULL when ftp is optional and option is not set.
  */
 const char* ftp2fn_null(int ftp, int nfile, const t_filenm fnm[]);
 
+/*! \brief
+ * Returns the first file name with type ftp, or std::nullopt when none found.
+ *
+ * Also return std::nullopt when ftp is optional and option is not set.
+ */
+std::optional<std::filesystem::path> ftp2path_optional(int ftp, int nfile, const t_filenm fnm[]);
+
 //! Returns whether or not this filenm is optional.
-gmx_bool is_optional(const t_filenm* fnm);
+bool is_optional(const t_filenm* fnm);
 
 //! Returns whether or not this filenm is output.
-gmx_bool is_output(const t_filenm* fnm);
+bool is_output(const t_filenm* fnm);
 
 //! Returns whether or not this filenm is set.
-gmx_bool is_set(const t_filenm* fnm);
+bool is_set(const t_filenm* fnm);
 
 /*! \brief Return whether \c filename might have been produced by mdrun -noappend.
  *

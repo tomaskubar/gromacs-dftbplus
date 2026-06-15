@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2018,2019, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2018- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /* \internal \file
  *
@@ -44,7 +43,8 @@
 
 #include "atomdistribution.h"
 
-#include "gromacs/math/vec.h"
+#include "gromacs/utility/gmxassert.h"
+#include "gromacs/utility/vec.h"
 
 #include "domdec_internal.h"
 
@@ -66,17 +66,22 @@ AtomDistribution::AtomDistribution(const ivec numCells, int numAtomGroups, int n
     }
 }
 
-void get_commbuffer_counts(AtomDistribution* ma, int** counts, int** disps)
+void get_commbuffer_counts(AtomDistribution*         ma,
+                           gmx::ArrayRef<const int>* counts,
+                           gmx::ArrayRef<const int>* displacements)
 {
-    GMX_ASSERT(ma != nullptr, "Need a valid AtomDistribution struct (on the master rank)");
+    GMX_ASSERT(ma != nullptr, "Need a valid AtomDistribution struct (on the main rank)");
 
-    /* Make the rvec count and displacement arrays */
-    int numRanks = ma->intBuffer.size() / 2;
-    *counts      = ma->intBuffer.data();
-    *disps       = ma->intBuffer.data() + numRanks;
+    /* Make the real (not rvec) count and displacement arrays */
+    int  numRanks = ma->intBuffer.size() / 2;
+    auto c        = gmx::makeArrayRef(ma->intBuffer).subArray(0, numRanks);
+    auto d        = gmx::makeArrayRef(ma->intBuffer).subArray(numRanks, numRanks);
     for (int rank = 0; rank < numRanks; rank++)
     {
-        (*counts)[rank] = ma->domainGroups[rank].numAtoms * sizeof(rvec);
-        (*disps)[rank]  = (rank == 0 ? 0 : (*disps)[rank - 1] + (*counts)[rank - 1]);
+        c[rank] = ma->domainGroups[rank].numAtoms;
+        d[rank] = (rank == 0 ? 0 : d[rank - 1] + c[rank - 1]);
     }
+
+    *counts        = c;
+    *displacements = d;
 }

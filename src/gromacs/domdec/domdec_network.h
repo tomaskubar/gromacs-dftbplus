@@ -1,11 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2008-2018, The GROMACS development team.
- * Copyright (c) 2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2008- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -19,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -28,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 
 /*! \libinternal \file
@@ -49,7 +47,7 @@
 #ifndef GMX_DOMDEC_DOMDEC_NETWORK_H
 #define GMX_DOMDEC_DOMDEC_NETWORK_H
 
-#include "gromacs/math/vectypes.h"
+#include "gromacs/utility/vectypes.h"
 
 struct gmx_domdec_t;
 
@@ -64,52 +62,6 @@ enum
     dddirForward,
     dddirBackward
 };
-
-/*! \brief Move T values in the communication region one cell along
- * the domain decomposition
- *
- * Moves in the dimension indexed by ddDimensionIndex, either forward
- * (direction=dddirFoward) or backward (direction=dddirBackward).
- *
- * \todo This function template is deprecated, new calls should be
- * made to the version taking ArrayRef parameters and this function
- * template removed when unused.
- */
-template<typename T>
-void ddSendrecv(const gmx_domdec_t* dd,
-                int                 ddDimensionIndex,
-                int                 direction,
-                T*                  sendBuffer,
-                int                 numElementsToSend,
-                T*                  receiveBuffer,
-                int                 numElementsToReceive);
-
-//! Extern declaration for int specialization
-extern template void ddSendrecv<int>(const gmx_domdec_t* dd,
-                                     int                 ddDimensionIndex,
-                                     int                 direction,
-                                     int*                buf_s,
-                                     int                 n_s,
-                                     int*                buf_r,
-                                     int                 n_r);
-
-//! Extern declaration for real specialization
-extern template void ddSendrecv<real>(const gmx_domdec_t* dd,
-                                      int                 ddDimensionIndex,
-                                      int                 direction,
-                                      real*               buf_s,
-                                      int                 n_s,
-                                      real*               buf_r,
-                                      int                 n_r);
-
-//! Extern declaration for rvec specialization
-extern template void ddSendrecv<rvec>(const gmx_domdec_t* dd,
-                                      int                 ddDimensionIndex,
-                                      int                 direction,
-                                      rvec*               buf_s,
-                                      int                 n_s,
-                                      rvec*               buf_r,
-                                      int                 n_r);
 
 /*! \brief Move a view of T values in the communication region one
  * cell along the domain decomposition
@@ -165,33 +117,85 @@ void dd_sendrecv2_rvec(const struct gmx_domdec_t* dd,
 /* The functions below perform the same operations as the MPI functions
  * with the same name appendices, but over the domain decomposition
  * nodes only.
- * The DD master node is the master for these operations.
+ * The DD main node is the coordinator for these operations.
  */
 
-/*! \brief Broadcasts \p nbytes from \p data on \p DDMASTERRANK to all PP ranks */
+/*! \brief Broadcasts \p nbytes from \p data on \p DDMAINRANK to all PP ranks */
 void dd_bcast(const gmx_domdec_t* dd, int nbytes, void* data);
 
-/*! \brief Copies \p nbytes from \p src to \p dest on \p DDMASTERRANK
- * and then broadcasts to \p dest on all PP ranks */
-void dd_bcastc(const gmx_domdec_t* dd, int nbytes, void* src, void* dest);
+/*! \brief Broadcasts content of  \p values on \p DDMAINRANK to all PP ranks */
+template<typename T>
+void dd_bcast(const gmx_domdec_t* dd, gmx::ArrayRef<T> values);
 
-/*! \brief Scatters \p nbytes from \p src on \p DDMASTERRANK to all PP ranks, received in \p dest */
+// Extern instantiations defined in the source file
+extern template void dd_bcast<int>(const gmx_domdec_t*, gmx::ArrayRef<int>);
+extern template void dd_bcast<float>(const gmx_domdec_t*, gmx::ArrayRef<float>);
+extern template void dd_bcast<double>(const gmx_domdec_t*, gmx::ArrayRef<double>);
+
+/*! \brief Scatters \p nbytes from \p src on \p DDMAINRANK to all PP ranks, received in \p dest */
 void dd_scatter(const gmx_domdec_t* dd, int nbytes, const void* src, void* dest);
 
-/*! \brief Gathers \p nbytes from \p src on all PP ranks, received in \p dest on \p DDMASTERRANK */
+/*! \brief Gathers \p nbytes from \p src on all PP ranks, received in \p dest on \p DDMAINRANK */
 void dd_gather(const gmx_domdec_t* dd, int nbytes, const void* src, void* dest);
 
-/*! \brief Scatters \p scounts bytes from \p src on \p DDMASTERRANK to all PP ranks, receiving \p rcount bytes in \p dest.
+/*! \brief Scatters \p scounts elements of type \p T from \p src on \p DDMAINRANK to all PP ranks, receiving \p rcount * \p sc_scattervSize elements in \p dest.
+ *
+ * \tparam T  Data type, can only be int or real
  *
  * See man MPI_Scatterv for details of how to construct scounts and disps.
- * If rcount==0, rbuf is allowed to be NULL */
-void dd_scatterv(const gmx_domdec_t* dd, int* scounts, int* disps, const void* sbuf, int rcount, void* rbuf);
+ * If rcount==0, rbuf is allowed to be nullptr.
+ */
+template<typename T>
+void dd_scatterv(const gmx_domdec_t*      dd,
+                 gmx::ArrayRef<const int> scounts,
+                 gmx::ArrayRef<const int> disps,
+                 const T*                 sbuf,
+                 int                      rcount,
+                 T*                       rbuf);
 
-/*! \brief Gathers \p rcount bytes from \p src on all PP ranks, received in \p scounts bytes in \p dest on \p DDMASTERRANK.
+//! Instantiation of \p dd_scatterv for type int
+extern template void dd_scatterv(const gmx_domdec_t*      dd,
+                                 gmx::ArrayRef<const int> scounts,
+                                 gmx::ArrayRef<const int> disps,
+                                 const int*               sbuf,
+                                 int                      rcount,
+                                 int*                     rbuf);
+
+//! Instantiation of \p dd_scatterv for type real
+extern template void dd_scatterv(const gmx_domdec_t*      dd,
+                                 gmx::ArrayRef<const int> scounts,
+                                 gmx::ArrayRef<const int> disps,
+                                 const gmx::RVec*         sbuf,
+                                 int                      rcount,
+                                 gmx::RVec*               rbuf);
+
+/*! \brief Gathers \p rcount elements of type \p T from \p src on all PP ranks, received in \p scounts elements in \p dest on \p DDMAINRANK.
  *
- * See man MPI_Gatherv for details of how to construct scounts and disps.
+ * \tparam T  Data type, can only be int or real
  *
- * If scount==0, sbuf is allowed to be NULL */
-void dd_gatherv(const gmx_domdec_t* dd, int scount, const void* sbuf, int* rcounts, int* disps, void* rbuf);
+ * See man MPI_Gatherv for details of how to construct rcounts and disps.
+ *
+ * sendBuffer is allowed to be empty.
+ */
+template<typename T>
+void dd_gatherv(const gmx_domdec_t&      dd,
+                gmx::ArrayRef<const T>   sendBuffer,
+                gmx::ArrayRef<const int> rcounts,
+                gmx::ArrayRef<const int> disps,
+                gmx::ArrayRef<T>         receiveBuffer);
+
+//! Instantiation of \p dd_gatherv for type int
+extern template void dd_gatherv(const gmx_domdec_t&      dd,
+                                gmx::ArrayRef<const int> sendBuffer,
+                                gmx::ArrayRef<const int> rcounts,
+                                gmx::ArrayRef<const int> disps,
+                                gmx::ArrayRef<int>       receiveBuffer);
+
+//! Instantiation of \p dd_gatherv for type real
+extern template void dd_gatherv(const gmx_domdec_t&            dd,
+                                gmx::ArrayRef<const gmx::RVec> sendBuffer,
+                                gmx::ArrayRef<const int>       rcounts,
+                                gmx::ArrayRef<const int>       disps,
+                                gmx::ArrayRef<gmx::RVec>       receiveBuffer);
 
 #endif

@@ -1,13 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
- * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2012,2013,2014,2015,2016 by the GROMACS development team.
- * Copyright (c) 2017,2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 1991- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -21,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -30,32 +26,47 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 #include "gmxpre.h"
 
 #include "make_ndx.h"
 
 #include <cctype>
+#include <cstdio>
 #include <cstring>
 
 #include <algorithm>
+#include <array>
+#include <filesystem>
+#include <string>
+#include <vector>
 
+#include "gromacs/commandline/filenm.h"
 #include "gromacs/commandline/pargs.h"
 #include "gromacs/fileio/confio.h"
-#include "gromacs/math/vec.h"
+#include "gromacs/fileio/filetypes.h"
+#include "gromacs/fileio/oenv.h"
+#include "gromacs/topology/atoms.h"
 #include "gromacs/topology/block.h"
 #include "gromacs/topology/index.h"
 #include "gromacs/topology/mtop_util.h"
 #include "gromacs/topology/topology.h"
+#include "gromacs/utility/arrayref.h"
 #include "gromacs/utility/arraysize.h"
+#include "gromacs/utility/basedefinitions.h"
 #include "gromacs/utility/cstringutil.h"
 #include "gromacs/utility/fatalerror.h"
 #include "gromacs/utility/futil.h"
 #include "gromacs/utility/smalloc.h"
+#include "gromacs/utility/vec.h"
+#include "gromacs/utility/vectypes.h"
+
+enum class PbcType : int;
+struct gmx_output_env_t;
 
 /* It's not nice to have size limits, but we should not spend more time
  * on this ancient tool, but instead use the new selection library.
@@ -64,6 +75,7 @@
 #define NAME_LEN 1024
 static const int NOTSET = -92637;
 
+// NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)
 static gmx_bool bCase = FALSE;
 
 static int or_groups(int nr1, const int* at1, int nr2, const int* at2, int* nr, int* at)
@@ -157,7 +169,7 @@ static gmx_bool is_name_char(char c)
     return (c != '\0' && std::strchr(spec, c) == nullptr);
 }
 
-static int parse_names(char** string, int* n_names, char** names)
+static int parse_names(char** string, int* n_names, gmx::ArrayRef<char*> names)
 {
     int i;
 
@@ -198,7 +210,7 @@ static int parse_names(char** string, int* n_names, char** names)
     return *n_names;
 }
 
-static gmx_bool parse_int_char(char** string, int* nr, char* c)
+static gmx_bool parse_int_char(char** string, int* nr, unsigned char* c)
 {
     char*    orig;
     gmx_bool bRet;
@@ -248,8 +260,9 @@ static gmx_bool parse_int_char(char** string, int* nr, char* c)
 
 static gmx_bool parse_int(char** string, int* nr)
 {
-    char *   orig, c;
-    gmx_bool bRet;
+    char*         orig;
+    unsigned char c;
+    gmx_bool      bRet;
 
     orig = *string;
     bRet = parse_int_char(string, nr, &c);
@@ -267,7 +280,7 @@ static gmx_bool isquote(char c)
     return (c == '\"');
 }
 
-static gmx_bool parse_string(char** string, int* nr, int ngrps, char** grpname)
+static gmx_bool parse_string(char** string, int* nr, gmx::ArrayRef<const IndexGroup> indexGroups)
 {
     char *s, *sp;
     char  c;
@@ -288,7 +301,7 @@ static gmx_bool parse_string(char** string, int* nr, int ngrps, char** grpname)
         {
             (*string) += sp - s + 1;
             sp[0] = '\0';
-            (*nr) = find_group(s, ngrps, grpname);
+            (*nr) = find_group(s, indexGroups);
         }
     }
 
@@ -356,7 +369,8 @@ static int select_atomnumbers(char** string, const t_atoms* atoms, int n1, int* 
     return *nr;
 }
 
-static int select_residuenumbers(char** string, const t_atoms* atoms, int n1, char c, int* nr, int* index, char* gname)
+static int
+select_residuenumbers(char** string, const t_atoms* atoms, int n1, unsigned char c, int* nr, int* index, char* gname)
 {
     char       buf[STRLEN];
     int        i, j, up;
@@ -425,7 +439,8 @@ static int select_residuenumbers(char** string, const t_atoms* atoms, int n1, ch
     return *nr;
 }
 
-static int select_residueindices(char** string, const t_atoms* atoms, int n1, char c, int* nr, int* index, char* gname)
+static int
+select_residueindices(char** string, const t_atoms* atoms, int n1, unsigned char c, int* nr, int* index, char* gname)
 {
     /*this should be similar to select_residuenumbers except select by index (sequential numbering in file)*/
     /*resind+1 for 1-indexing*/
@@ -497,28 +512,23 @@ static int select_residueindices(char** string, const t_atoms* atoms, int n1, ch
 }
 
 
-static gmx_bool
-atoms_from_residuenumbers(const t_atoms* atoms, int group, t_blocka* block, int* nr, int* index, char* gname)
+static gmx_bool atoms_from_residuenumbers(const t_atoms* atoms, const IndexGroup& indexGroup, int* nr, int* index)
 {
-    int i, j, j0, j1, resnr, nres;
-
-    j0   = block->index[group];
-    j1   = block->index[group + 1];
-    nres = atoms->nres;
-    for (j = j0; j < j1; j++)
+    const int nres = atoms->nres;
+    for (const int resnr : indexGroup.particleIndices)
     {
-        if (block->a[j] >= nres)
+        if (resnr >= nres)
         {
-            printf("Index %s contains number>nres (%d>%d)\n", gname, block->a[j] + 1, nres);
+            printf("Index %s contains number>nres (%d>%d)\n", indexGroup.name.c_str(), resnr + 1, nres);
             return FALSE;
         }
     }
-    for (i = 0; i < atoms->nr; i++)
+    for (int i = 0; i < atoms->nr; i++)
     {
-        resnr = atoms->resinfo[atoms->atom[i].resind].nr;
-        for (j = j0; j < j1; j++)
+        const int selectedResnr = atoms->resinfo[atoms->atom[i].resind].nr;
+        for (const int resnr : indexGroup.particleIndices)
         {
-            if (block->a[j] + 1 == resnr)
+            if (resnr + 1 == selectedResnr)
             {
                 index[*nr] = i;
                 (*nr)++;
@@ -526,7 +536,11 @@ atoms_from_residuenumbers(const t_atoms* atoms, int group, t_blocka* block, int*
             }
         }
     }
-    printf("Found %d atom%s in %d residues from group %s\n", *nr, (*nr == 1) ? "" : "s", j1 - j0, gname);
+    printf("Found %d atom%s in %td residues from group %s\n",
+           *nr,
+           (*nr == 1) ? "" : "s",
+           gmx::ssize(indexGroup.particleIndices),
+           indexGroup.name.c_str());
     return *nr != 0;
 }
 
@@ -569,7 +583,7 @@ static gmx_bool comp_name(const char* name, const char* search)
     return matches;
 }
 
-static int select_chainnames(const t_atoms* atoms, int n_names, char** names, int* nr, int* index)
+static int select_chainnames(const t_atoms* atoms, int n_names, gmx::ArrayRef<char*> names, int* nr, int* index)
 {
     char name[2];
     int  j;
@@ -601,7 +615,7 @@ static int select_chainnames(const t_atoms* atoms, int n_names, char** names, in
     return *nr;
 }
 
-static int select_atomnames(const t_atoms* atoms, int n_names, char** names, int* nr, int* index, gmx_bool bType)
+static int select_atomnames(const t_atoms* atoms, int n_names, gmx::ArrayRef<char*> names, int* nr, int* index, gmx_bool bType)
 {
     char* name;
     int   j;
@@ -639,7 +653,7 @@ static int select_atomnames(const t_atoms* atoms, int n_names, char** names, int
     return *nr;
 }
 
-static int select_residuenames(const t_atoms* atoms, int n_names, char** names, int* nr, int* index)
+static int select_residuenames(const t_atoms* atoms, int n_names, gmx::ArrayRef<char*> names, int* nr, int* index)
 {
     char* name;
     int   j;
@@ -670,23 +684,7 @@ static int select_residuenames(const t_atoms* atoms, int n_names, char** names, 
     return *nr;
 }
 
-static void copy2block(int n, const int* index, t_blocka* block)
-{
-    int i, n0;
-
-    block->nr++;
-    n0         = block->nra;
-    block->nra = n0 + n;
-    srenew(block->index, block->nr + 1);
-    block->index[block->nr] = n0 + n;
-    srenew(block->a, n0 + n);
-    for (i = 0; (i < n); i++)
-    {
-        block->a[n0 + i] = index[i];
-    }
-}
-
-static void make_gname(int n, char** names, char* gname)
+static void make_gname(int n, gmx::ArrayRef<char*> names, char* gname)
 {
     int i;
 
@@ -698,106 +696,69 @@ static void make_gname(int n, char** names, char* gname)
     }
 }
 
-static void copy_group(int g, t_blocka* block, int* nr, int* index)
+static void copy_group(gmx::ArrayRef<const int> group, int* nr, int* index)
 {
-    int i, i0;
-
-    i0  = block->index[g];
-    *nr = block->index[g + 1] - i0;
-    for (i = 0; i < *nr; i++)
+    *nr = gmx::ssize(group);
+    for (gmx::Index i = 0; i < *nr; i++)
     {
-        index[i] = block->a[i0 + i];
+        index[i] = group[i];
     }
 }
 
-static void remove_group(int nr, int nr2, t_blocka* block, char*** gn)
+/* Remove groups in range [first, last] */
+static void remove_group(const int first, const int last, std::vector<IndexGroup>* indexGroups)
 {
-    int   i, j, shift;
-    char* name;
-
-    if (nr2 == NOTSET)
+    for (int j = 0; j <= last - first; j++)
     {
-        nr2 = nr;
-    }
-
-    for (j = 0; j <= nr2 - nr; j++)
-    {
-        if ((nr < 0) || (nr >= block->nr))
+        if (first < 0 || first >= gmx::ssize(*indexGroups))
         {
-            printf("Group %d does not exist\n", nr + j);
+            printf("Group %d does not exist\n", first + j);
         }
         else
         {
-            shift = block->index[nr + 1] - block->index[nr];
-            for (i = block->index[nr + 1]; i < block->nra; i++)
-            {
-                block->a[i - shift] = block->a[i];
-            }
-
-            for (i = nr; i < block->nr; i++)
-            {
-                block->index[i] = block->index[i + 1] - shift;
-            }
-            name = gmx_strdup((*gn)[nr]);
-            sfree((*gn)[nr]);
-            for (i = nr; i < block->nr - 1; i++)
-            {
-                (*gn)[i] = (*gn)[i + 1];
-            }
-            block->nr--;
-            block->nra = block->index[block->nr];
-            printf("Removed group %d '%s'\n", nr + j, name);
-            sfree(name);
+            printf("Removed group %d '%s'\n", first + j, (*indexGroups)[first].name.c_str());
+            indexGroups->erase(indexGroups->begin() + first);
         }
     }
 }
 
-static void split_group(const t_atoms* atoms, int sel_nr, t_blocka* block, char*** gn, gmx_bool bAtom)
+static void split_group(const t_atoms* atoms, int sel_nr, std::vector<IndexGroup>* indexGroups, gmx_bool bAtom)
 {
-    char buf[STRLEN], *name;
-    int  i, resind;
-    int  a, n0, n1;
+    char buf[STRLEN];
 
-    printf("Splitting group %d '%s' into %s\n", sel_nr, (*gn)[sel_nr], bAtom ? "atoms" : "residues");
+    const std::string nameToSplit =
+            (*indexGroups)[sel_nr].name; // Need a copy since indexGroups can reallocate
+    printf("Splitting group %d '%s' into %s\n", sel_nr, nameToSplit.c_str(), bAtom ? "atoms" : "residues");
 
-    n0 = block->index[sel_nr];
-    n1 = block->index[sel_nr + 1];
-    srenew(block->a, block->nra + n1 - n0);
-    for (i = n0; i < n1; i++)
+    gmx::ArrayRef<const int> groupToSplit = (*indexGroups)[sel_nr].particleIndices;
+    int                      prevAtom     = -1;
+    for (const int a : groupToSplit)
     {
-        a      = block->a[i];
-        resind = atoms->atom[a].resind;
-        name   = *(atoms->resinfo[resind].name);
-        if (bAtom || (i == n0) || (atoms->atom[block->a[i - 1]].resind != resind))
+        const int   resind = atoms->atom[a].resind;
+        const char* name   = *(atoms->resinfo[resind].name);
+        if (bAtom || (prevAtom == -1) || (atoms->atom[prevAtom].resind != resind))
         {
-            if (i > n0)
-            {
-                block->index[block->nr] = block->nra;
-            }
-            block->nr++;
-            srenew(block->index, block->nr + 1);
-            srenew(*gn, block->nr);
             if (bAtom)
             {
-                sprintf(buf, "%s_%s_%d", (*gn)[sel_nr], *atoms->atomname[a], a + 1);
+                sprintf(buf, "%s_%s_%d", nameToSplit.c_str(), *atoms->atomname[a], a + 1);
             }
             else
             {
-                sprintf(buf, "%s_%s_%d", (*gn)[sel_nr], name, atoms->resinfo[resind].nr);
+                sprintf(buf, "%s_%s_%d", nameToSplit.c_str(), name, atoms->resinfo[resind].nr);
             }
-            (*gn)[block->nr - 1] = gmx_strdup(buf);
+            indexGroups->push_back({ buf, {} });
         }
-        block->a[block->nra] = a;
-        block->nra++;
+        GMX_ASSERT(!indexGroups->empty(), "Should have already created an index group!");
+        indexGroups->back().particleIndices.push_back(a);
+        prevAtom = a;
     }
-    block->index[block->nr] = block->nra;
 }
 
-static int split_chain(const t_atoms* atoms, const rvec* x, int sel_nr, t_blocka* block, char*** gn)
+static int split_chain(const t_atoms* atoms, const rvec* x, int sel_nr, std::vector<IndexGroup>* indexGroups)
 {
     char buf[STRLEN];
     int  j, nchain;
-    int  i, a, natoms, *start = nullptr, *end = nullptr, ca_start, ca_end;
+    int  i, natoms, *start = nullptr, *end = nullptr, ca_start, ca_end;
     rvec vec;
 
     natoms   = atoms->nr;
@@ -864,27 +825,20 @@ static int split_chain(const t_atoms* atoms, const rvec* x, int sel_nr, t_blocka
 
     if (nchain > 1)
     {
-        srenew(block->a, block->nra + block->index[sel_nr + 1] - block->index[sel_nr]);
         for (j = 0; j < nchain; j++)
         {
-            block->nr++;
-            srenew(block->index, block->nr + 1);
-            srenew(*gn, block->nr);
-            sprintf(buf, "%s_chain%d", (*gn)[sel_nr], j + 1);
-            (*gn)[block->nr - 1] = gmx_strdup(buf);
-            for (i = block->index[sel_nr]; i < block->index[sel_nr + 1]; i++)
+            std::vector<int> particleIndices;
+            for (const int a : (*indexGroups)[sel_nr].particleIndices)
             {
-                a = block->a[i];
                 if ((a >= start[j]) && (a <= end[j]))
                 {
-                    block->a[block->nra] = a;
-                    block->nra++;
+                    particleIndices.push_back(a);
                 }
             }
-            block->index[block->nr] = block->nra;
-            if (block->index[block->nr - 1] == block->index[block->nr])
+            if (!particleIndices.empty())
             {
-                remove_group(block->nr - 1, NOTSET, block, gn);
+                sprintf(buf, "%s_chain%d", (*indexGroups)[sel_nr].name.c_str(), j + 1);
+                indexGroups->push_back({ buf, particleIndices });
             }
         }
     }
@@ -907,31 +861,20 @@ static gmx_bool check_have_atoms(const t_atoms* atoms, char* string)
     }
 }
 
-static gmx_bool parse_entry(char**         string,
-                            int            natoms,
-                            const t_atoms* atoms,
-                            t_blocka*      block,
-                            char***        gn,
-                            int*           nr,
-                            int*           index,
-                            char*          gname)
+static gmx_bool parse_entry(char**                   string,
+                            int                      natoms,
+                            const t_atoms*           atoms,
+                            std::vector<IndexGroup>* indexGroups,
+                            int*                     nr,
+                            int*                     index,
+                            char*                    gname,
+                            gmx::ArrayRef<char*>     entryNames)
 {
-    static char **  names, *ostring;
-    static gmx_bool bFirst = TRUE;
-    int             j, n_names, sel_nr1;
-    int             i, nr1, *index1;
-    char            c;
-    gmx_bool        bRet, bCompl;
-
-    if (bFirst)
-    {
-        bFirst = FALSE;
-        snew(names, MAXNAMES);
-        for (i = 0; i < MAXNAMES; i++)
-        {
-            snew(names[i], NAME_LEN + 1);
-        }
-    }
+    char*         ostring;
+    int           j, n_names, sel_nr1;
+    int           i, nr1, *index1;
+    unsigned char c;
+    gmx_bool      bRet, bCompl;
 
     bRet    = FALSE;
     sel_nr1 = NOTSET;
@@ -957,13 +900,13 @@ static gmx_bool parse_entry(char**         string,
 
     ostring = *string;
 
-    if (parse_int(string, &sel_nr1) || parse_string(string, &sel_nr1, block->nr, *gn))
+    if (parse_int(string, &sel_nr1) || parse_string(string, &sel_nr1, *indexGroups))
     {
-        if ((sel_nr1 >= 0) && (sel_nr1 < block->nr))
+        if (sel_nr1 >= 0 && sel_nr1 < gmx::ssize(*indexGroups))
         {
-            copy_group(sel_nr1, block, nr, index);
-            std::strcpy(gname, (*gn)[sel_nr1]);
-            printf("Copied index group %d '%s'\n", sel_nr1, (*gn)[sel_nr1]);
+            copy_group((*indexGroups)[sel_nr1].particleIndices, nr, index);
+            std::strcpy(gname, (*indexGroups)[sel_nr1].name.c_str());
+            printf("Copied index group %d '%s'\n", sel_nr1, (*indexGroups)[sel_nr1].name.c_str());
             bRet = TRUE;
         }
         else
@@ -980,17 +923,17 @@ static gmx_bool parse_entry(char**         string,
             {
                 bRet = (select_atomnumbers(string, atoms, sel_nr1, nr, index, gname) != 0);
             }
-            else if (parse_names(string, &n_names, names))
+            else if (parse_names(string, &n_names, entryNames))
             {
-                bRet = (select_atomnames(atoms, n_names, names, nr, index, FALSE) != 0);
-                make_gname(n_names, names, gname);
+                bRet = (select_atomnames(atoms, n_names, entryNames, nr, index, FALSE) != 0);
+                make_gname(n_names, entryNames, gname);
             }
         }
     }
     else if ((*string)[0] == 't')
     {
         (*string)++;
-        if (check_have_atoms(atoms, ostring) && parse_names(string, &n_names, names))
+        if (check_have_atoms(atoms, ostring) && parse_names(string, &n_names, entryNames))
         {
             if (!(atoms->haveType))
             {
@@ -998,8 +941,8 @@ static gmx_bool parse_entry(char**         string,
             }
             else
             {
-                bRet = (select_atomnames(atoms, n_names, names, nr, index, TRUE) != 0);
-                make_gname(n_names, names, gname);
+                bRet = (select_atomnames(atoms, n_names, entryNames, nr, index, TRUE) != 0);
+                make_gname(n_names, entryNames, gname);
             }
         }
     }
@@ -1007,10 +950,10 @@ static gmx_bool parse_entry(char**         string,
     {
         (*string) += 3;
         if (check_have_atoms(atoms, ostring) && parse_int(string, &sel_nr1) && (sel_nr1 >= 0)
-            && (sel_nr1 < block->nr))
+            && (sel_nr1 < gmx::ssize(*indexGroups)))
         {
-            bRet = atoms_from_residuenumbers(atoms, sel_nr1, block, nr, index, (*gn)[sel_nr1]);
-            sprintf(gname, "atom_%s", (*gn)[sel_nr1]);
+            bRet = atoms_from_residuenumbers(atoms, (*indexGroups)[sel_nr1], nr, index);
+            sprintf(gname, "atom_%s", (*indexGroups)[sel_nr1].name.c_str());
         }
     }
     else if (std::strncmp(*string, "ri", 2) == 0)
@@ -1030,23 +973,23 @@ static gmx_bool parse_entry(char**         string,
             {
                 bRet = (select_residuenumbers(string, atoms, sel_nr1, c, nr, index, gname) != 0);
             }
-            else if (parse_names(string, &n_names, names))
+            else if (parse_names(string, &n_names, entryNames))
             {
-                bRet = (select_residuenames(atoms, n_names, names, nr, index) != 0);
-                make_gname(n_names, names, gname);
+                bRet = (select_residuenames(atoms, n_names, entryNames, nr, index) != 0);
+                make_gname(n_names, entryNames, gname);
             }
         }
     }
     else if (std::strncmp(*string, "chain", 5) == 0)
     {
         (*string) += 5;
-        if (check_have_atoms(atoms, ostring) && parse_names(string, &n_names, names))
+        if (check_have_atoms(atoms, ostring) && parse_names(string, &n_names, entryNames))
         {
-            bRet = (select_chainnames(atoms, n_names, names, nr, index) != 0);
-            sprintf(gname, "ch%s", names[0]);
+            bRet = (select_chainnames(atoms, n_names, entryNames, nr, index) != 0);
+            sprintf(gname, "ch%s", entryNames[0]);
             for (i = 1; i < n_names; i++)
             {
-                std::strcat(gname, names[i]);
+                std::strcat(gname, entryNames[i]);
             }
         }
     }
@@ -1133,25 +1076,18 @@ static void list_residues(const t_atoms* atoms)
     printf("\n");
 }
 
-static void edit_index(int natoms, const t_atoms* atoms, const rvec* x, t_blocka* block, char*** gn, gmx_bool bVerbose)
+static void edit_index(int                      natoms,
+                       const t_atoms*           atoms,
+                       const rvec*              x,
+                       std::vector<IndexGroup>* indexGroups,
+                       gmx_bool                 bVerbose)
 {
-    static char **  atnames, *ostring;
-    static gmx_bool bFirst = TRUE;
-    char            inp_string[STRLEN], *string;
-    char            gname[STRLEN * 3], gname1[STRLEN], gname2[STRLEN];
-    int             i, i0, i1, sel_nr, sel_nr2, newgroup;
-    int             nr, nr1, nr2, *index, *index1, *index2;
-    gmx_bool        bAnd, bOr, bPrintOnce;
-
-    if (bFirst)
-    {
-        bFirst = FALSE;
-        snew(atnames, MAXNAMES);
-        for (i = 0; i < MAXNAMES; i++)
-        {
-            snew(atnames[i], NAME_LEN + 1);
-        }
-    }
+    char*    ostring;
+    char     inp_string[STRLEN], *string;
+    char     gname[STRLEN * 3], gname1[STRLEN], gname2[STRLEN];
+    int      i, i0, i1, sel_nr, sel_nr2, newgroup;
+    int      nr, nr1, nr2, *index, *index1, *index2;
+    gmx_bool bAnd, bOr, bPrintOnce;
 
     string = nullptr;
 
@@ -1161,6 +1097,12 @@ static void edit_index(int natoms, const t_atoms* atoms, const rvec* x, t_blocka
 
     newgroup   = NOTSET;
     bPrintOnce = TRUE;
+    std::array<char*, MAXNAMES> entryNames;
+    for (auto& name : entryNames)
+    {
+        snew(name, NAME_LEN + 1);
+    }
+
     do
     {
         gname1[0] = '\0';
@@ -1170,7 +1112,7 @@ static void edit_index(int natoms, const t_atoms* atoms, const rvec* x, t_blocka
             if (bVerbose || bPrintOnce || newgroup == NOTSET)
             {
                 i0 = 0;
-                i1 = block->nr;
+                i1 = gmx::ssize(*indexGroups);
             }
             else
             {
@@ -1179,7 +1121,10 @@ static void edit_index(int natoms, const t_atoms* atoms, const rvec* x, t_blocka
             }
             for (i = i0; i < i1; i++)
             {
-                printf("%3d %-20s: %5d atoms\n", i, (*gn)[i], block->index[i + 1] - block->index[i]);
+                printf("%3d %-20s: %5td atoms\n",
+                       i,
+                       (*indexGroups)[i].name.c_str(),
+                       gmx::ssize((*indexGroups)[i].particleIndices));
             }
             newgroup = NOTSET;
         }
@@ -1199,7 +1144,7 @@ static void edit_index(int natoms, const t_atoms* atoms, const rvec* x, t_blocka
         }
         printf("\n");
         printf("> ");
-        if (nullptr == fgets(inp_string, STRLEN, stdin))
+        if (nullptr == std::fgets(inp_string, STRLEN, stdin))
         {
             gmx_fatal(FARGS, "Error reading user input");
         }
@@ -1265,7 +1210,7 @@ static void edit_index(int natoms, const t_atoms* atoms, const rvec* x, t_blocka
             if (bVerbose)
             {
                 printf("\npress Enter ");
-                getchar();
+                std::getchar();
             }
         }
         else if (std::strncmp(string, "del", 3) == 0)
@@ -1284,7 +1229,7 @@ static void edit_index(int natoms, const t_atoms* atoms, const rvec* x, t_blocka
                 }
                 else
                 {
-                    sel_nr2 = NOTSET;
+                    sel_nr2 = sel_nr;
                 }
                 while (string[0] == ' ')
                 {
@@ -1292,7 +1237,7 @@ static void edit_index(int natoms, const t_atoms* atoms, const rvec* x, t_blocka
                 }
                 if (string[0] == '\0')
                 {
-                    remove_group(sel_nr, sel_nr2, block, gn);
+                    remove_group(sel_nr, sel_nr2, indexGroups);
                 }
                 else
                 {
@@ -1305,8 +1250,8 @@ static void edit_index(int natoms, const t_atoms* atoms, const rvec* x, t_blocka
             string += 4;
             if (parse_int(&string, &sel_nr))
             {
-                remove_group(sel_nr + 1, block->nr - 1, block, gn);
-                remove_group(0, sel_nr - 1, block, gn);
+                remove_group(sel_nr + 1, gmx::ssize(*indexGroups) - 1, indexGroups);
+                remove_group(0, sel_nr - 1, indexGroups);
             }
         }
         else if (std::strncmp(string, "name", 4) == 0)
@@ -1314,11 +1259,10 @@ static void edit_index(int natoms, const t_atoms* atoms, const rvec* x, t_blocka
             string += 4;
             if (parse_int(&string, &sel_nr))
             {
-                if ((sel_nr >= 0) && (sel_nr < block->nr))
+                if ((sel_nr >= 0) && (sel_nr < gmx::ssize(*indexGroups)))
                 {
                     sscanf(string, "%s", gname);
-                    sfree((*gn)[sel_nr]);
-                    (*gn)[sel_nr] = gmx_strdup(gname);
+                    (*indexGroups)[sel_nr].name = gname;
                 }
             }
         }
@@ -1343,27 +1287,27 @@ static void edit_index(int natoms, const t_atoms* atoms, const rvec* x, t_blocka
         {
             string += 7;
             if (check_have_atoms(atoms, ostring) && parse_int(&string, &sel_nr) && (sel_nr >= 0)
-                && (sel_nr < block->nr))
+                && (sel_nr < gmx::ssize(*indexGroups)))
             {
-                split_chain(atoms, x, sel_nr, block, gn);
+                split_chain(atoms, x, sel_nr, indexGroups);
             }
         }
         else if (std::strncmp(string, "splitres", 8) == 0)
         {
             string += 8;
             if (check_have_atoms(atoms, ostring) && parse_int(&string, &sel_nr) && (sel_nr >= 0)
-                && (sel_nr < block->nr))
+                && (sel_nr < gmx::ssize(*indexGroups)))
             {
-                split_group(atoms, sel_nr, block, gn, FALSE);
+                split_group(atoms, sel_nr, indexGroups, FALSE);
             }
         }
         else if (std::strncmp(string, "splitat", 7) == 0)
         {
             string += 7;
             if (check_have_atoms(atoms, ostring) && parse_int(&string, &sel_nr) && (sel_nr >= 0)
-                && (sel_nr < block->nr))
+                && (sel_nr < gmx::ssize(*indexGroups)))
             {
-                split_group(atoms, sel_nr, block, gn, TRUE);
+                split_group(atoms, sel_nr, indexGroups, TRUE);
             }
         }
         else if (string[0] == '\0')
@@ -1373,7 +1317,7 @@ static void edit_index(int natoms, const t_atoms* atoms, const rvec* x, t_blocka
         else if (string[0] != 'q')
         {
             nr2 = -1;
-            if (parse_entry(&string, natoms, atoms, block, gn, &nr, index, gname))
+            if (parse_entry(&string, natoms, atoms, indexGroups, &nr, index, gname, entryNames))
             {
                 do
                 {
@@ -1402,7 +1346,7 @@ static void edit_index(int natoms, const t_atoms* atoms, const rvec* x, t_blocka
                             index1[i] = index[i];
                         }
                         std::strcpy(gname1, gname);
-                        if (parse_entry(&string, natoms, atoms, block, gn, &nr2, index2, gname2))
+                        if (parse_entry(&string, natoms, atoms, indexGroups, &nr2, index2, gname2, entryNames))
                         {
                             if (bOr)
                             {
@@ -1428,10 +1372,7 @@ static void edit_index(int natoms, const t_atoms* atoms, const rvec* x, t_blocka
             }
             else if (nr > 0)
             {
-                copy2block(nr, index, block);
-                srenew(*gn, block->nr);
-                newgroup        = block->nr - 1;
-                (*gn)[newgroup] = gmx_strdup(gname);
+                indexGroups->push_back({ gname, { index, index + nr } });
             }
             else
             {
@@ -1440,48 +1381,29 @@ static void edit_index(int natoms, const t_atoms* atoms, const rvec* x, t_blocka
         }
     } while (string[0] != 'q');
 
+    for (auto& name : entryNames)
+    {
+        sfree(name);
+    }
     sfree(index);
     sfree(index1);
     sfree(index2);
 }
 
-static int block2natoms(t_blocka* block)
+//! Find the number of atoms in the system implied by the largest atom index
+static int impliedNumberOfAtom(gmx::ArrayRef<const IndexGroup> indexGroups)
 {
-    int i, natoms;
+    int maxAtomIndex = -1;
 
-    natoms = 0;
-    for (i = 0; i < block->nra; i++)
+    for (const auto& indexGroup : indexGroups)
     {
-        natoms = std::max(natoms, block->a[i]);
-    }
-    natoms++;
-
-    return natoms;
-}
-
-static void merge_blocks(t_blocka* dest, t_blocka* source)
-{
-    int i, nra0, i0;
-
-    /* count groups, srenew and fill */
-    i0   = dest->nr;
-    nra0 = dest->nra;
-    dest->nr += source->nr;
-    srenew(dest->index, dest->nr + 1);
-    for (i = 0; i < source->nr; i++)
-    {
-        dest->index[i0 + i] = nra0 + source->index[i];
-    }
-    /* count atoms, srenew and fill */
-    dest->nra += source->nra;
-    srenew(dest->a, dest->nra);
-    for (i = 0; i < source->nra; i++)
-    {
-        dest->a[nra0 + i] = source->a[i];
+        for (const int a : indexGroup.particleIndices)
+        {
+            maxAtomIndex = std::max(maxAtomIndex, a);
+        }
     }
 
-    /* terminate list */
-    dest->index[dest->nr] = dest->nra;
+    return maxAtomIndex + 1;
 }
 
 int gmx_make_ndx(int argc, char* argv[])
@@ -1516,32 +1438,29 @@ int gmx_make_ndx(int argc, char* argv[])
     static gmx_bool bVerbose   = FALSE;
     static gmx_bool bDuplicate = FALSE;
     t_pargs         pa[]       = { { "-natoms",
-                       FALSE,
-                       etINT,
-                       { &natoms },
-                       "set number of atoms (default: read from coordinate or index file)" },
-                     { "-twin",
-                       FALSE,
-                       etBOOL,
-                       { &bDuplicate },
-                       "Duplicate all index groups with an offset of -natoms" },
-                     { "-verbose", FALSE, etBOOL, { &bVerbose }, "HIDDENVerbose output" } };
+                                     FALSE,
+                                     etINT,
+                                     { &natoms },
+                                     "set number of atoms (default: read from coordinate or index file)" },
+                                   { "-twin",
+                                     FALSE,
+                                     etBOOL,
+                                     { &bDuplicate },
+                                     "Duplicate all index groups with an offset of -natoms" },
+                                   { "-verbose", FALSE, etBOOL, { &bVerbose }, "HIDDENVerbose output" } };
 #define NPA asize(pa)
 
     gmx_output_env_t* oenv;
     const char*       stxfile;
     const char*       ndxoutfile;
     gmx_bool          bNatoms;
-    int               j;
     t_atoms           atoms;
     rvec *            x, *v;
     PbcType           pbcType;
     matrix            box;
-    t_blocka *        block, *block2;
-    char **           gnames, **gnames2;
     t_filenm          fnm[] = { { efSTX, "-f", nullptr, ffOPTRD },
-                       { efNDX, "-n", nullptr, ffOPTRDMULT },
-                       { efNDX, "-o", nullptr, ffWRITE } };
+                                { efNDX, "-n", nullptr, ffOPTRDMULT },
+                                { efNDX, "-o", nullptr, ffWRITE } };
 #define NFILE asize(fnm)
 
     if (!parse_common_args(&argc, argv, 0, NFILE, fnm, NPA, pa, asize(desc), desc, 0, nullptr, &oenv))
@@ -1565,7 +1484,7 @@ int gmx_make_ndx(int argc, char* argv[])
         bool haveFullTopology = false;
         fprintf(stderr, "\nReading structure file\n");
         readConfAndTopology(stxfile, &haveFullTopology, &mtop, &pbcType, &x, &v, box);
-        atoms = gmx_mtop_global_atoms(&mtop);
+        atoms = gmx_mtop_global_atoms(mtop);
         if (atoms.pdbinfo == nullptr)
         {
             snew(atoms.pdbinfo, atoms.nr);
@@ -1579,42 +1498,37 @@ int gmx_make_ndx(int argc, char* argv[])
     }
 
     /* read input file(s) */
-    block  = new_blocka();
-    gnames = nullptr;
+    std::vector<IndexGroup> indexGroups;
     printf("Going to read %td old index file(s)\n", ndxInFiles.ssize());
     if (!ndxInFiles.empty())
     {
         for (const std::string& ndxInFile : ndxInFiles)
         {
-            block2 = init_index(ndxInFile.c_str(), &gnames2);
-            srenew(gnames, block->nr + block2->nr);
-            for (j = 0; j < block2->nr; j++)
-            {
-                gnames[block->nr + j] = gnames2[j];
-            }
-            sfree(gnames2);
-            merge_blocks(block, block2);
-            sfree(block2->a);
-            sfree(block2->index);
-            /*       done_block(block2); */
-            sfree(block2);
+            const auto indexGroups2 = init_index(ndxInFile.c_str());
+            indexGroups.insert(indexGroups.begin(), indexGroups2.begin(), indexGroups2.end());
         }
     }
     else
     {
-        snew(gnames, 1);
-        analyse(&atoms, block, &gnames, FALSE, TRUE);
+        indexGroups = analyse(&atoms, FALSE, TRUE);
     }
 
     if (!bNatoms)
     {
-        natoms = block2natoms(block);
-        printf("Counted atom numbers up to %d in index file\n", natoms);
+        natoms = impliedNumberOfAtom(indexGroups);
+        printf("Deducing %d atoms in the system from indices in the index file\n", natoms);
     }
+    edit_index(natoms, &atoms, x, &indexGroups, bVerbose);
 
-    edit_index(natoms, &atoms, x, block, &gnames, bVerbose);
+    write_index(ndxoutfile, indexGroups, bDuplicate, natoms);
 
-    write_index(ndxoutfile, block, gnames, bDuplicate, natoms);
+    if (stxfile)
+    {
+        sfree(v);
+        sfree(x);
+        done_atom(&atoms);
+    }
+    output_env_done(oenv);
 
     return 0;
 }

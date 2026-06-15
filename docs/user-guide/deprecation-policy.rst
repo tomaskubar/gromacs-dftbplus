@@ -12,8 +12,10 @@ previous major release the intent to remove and/or change the form of
 such functionality. Thus there is typically a year for users and
 external tool providers to prepare for such changes, and contact the
 |Gromacs| developers to see how they might be affected and how best to
-adapt. There is a :ref:`current list <deprecated-functionality>`
-of deprecated functionality.
+adapt.
+
+There is a current list of anticipated changes and deprecated functionality
+in the "Major release" :ref:`notes <release-notes>`.
 
 When environment variables are deprecated, it is up to the user to make
 sure that their scripts are updated accordingly for the new release. In

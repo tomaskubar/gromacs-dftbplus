@@ -1,13 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
- * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2016,2017 by the GROMACS development team.
- * Copyright (c) 2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 1991- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -21,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -30,22 +26,23 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 #ifndef GMX_FILEIO_TPXIO_H
 #define GMX_FILEIO_TPXIO_H
 
 #include <cstdio>
 
+#include <filesystem>
 #include <vector>
 
-#include "gromacs/math/vectypes.h"
 #include "gromacs/pbcutil/pbc.h"
 #include "gromacs/utility/basedefinitions.h"
 #include "gromacs/utility/real.h"
+#include "gromacs/utility/vectypes.h"
 
 struct gmx_mtop_t;
 struct t_atoms;
@@ -63,6 +60,9 @@ class ArrayRef;
  * \brief
  * First part of the TPR file structure containing information about
  * the general aspect of the system.
+ *
+ * When adding to or making breaking changes to reading this struct,
+ * update TpxGeneration.
  */
 struct TpxFileHeader
 {
@@ -121,7 +121,7 @@ struct PartialDeserializedTprFile
 /*
  * These routines handle reading and writing of preprocessed
  * topology files in any of the following formats:
- * TPR : topology in XDR format, portable accross platforms
+ * TPR : topology in XDR format, portable across platforms
  *
  * Files are written in the precision with which the source are compiled,
  * but double and single precision can be read by either.
@@ -139,9 +139,12 @@ struct PartialDeserializedTprFile
  * \param[in] canReadTopologyOnly If reading the inputrec can be skipped or not.
  * \returns An initialized and populated TPX File header object.
  */
-TpxFileHeader readTpxHeader(const char* fileName, bool canReadTopologyOnly);
+TpxFileHeader readTpxHeader(const std::filesystem::path& fileName, bool canReadTopologyOnly);
 
-void write_tpx_state(const char* fn, const t_inputrec* ir, const t_state* state, const gmx_mtop_t* mtop);
+void write_tpx_state(const std::filesystem::path& fn,
+                     const t_inputrec*            ir,
+                     const t_state*               state,
+                     const gmx_mtop_t&            mtop);
 /* Write a file, and close it again.
  */
 
@@ -178,7 +181,7 @@ PbcType completeTprDeserialization(PartialDeserializedTprFile* partialDeserializ
  * to populate the \p state, \p ir and \p mtop needed to run a simulations.
  *
  * This function returns the partial deserialized TPR file
- * that can then be communicated to set up non-master nodes to run simulations.
+ * that can then be communicated to set up non-main nodes to run simulations.
  *
  * \param[in] fn Input file name.
  * \param[out] ir Input parameters to be set, or nullptr.
@@ -186,7 +189,8 @@ PbcType completeTprDeserialization(PartialDeserializedTprFile* partialDeserializ
  * \param[out] mtop Global simulation topolgy.
  * \returns Struct with header and body in char vector.
  */
-PartialDeserializedTprFile read_tpx_state(const char* fn, t_inputrec* ir, t_state* state, gmx_mtop_t* mtop);
+PartialDeserializedTprFile
+read_tpx_state(const std::filesystem::path& fn, t_inputrec* ir, t_state* state, gmx_mtop_t* mtop);
 
 /*! \brief
  * Read a file and close it again.
@@ -210,12 +214,24 @@ PartialDeserializedTprFile read_tpx_state(const char* fn, t_inputrec* ir, t_stat
  * \param[out] mtop Topology to be populated, or nullptr.
  * \returns ir->pbcType if it was read from the file.
  */
-PbcType read_tpx(const char* fn, t_inputrec* ir, matrix box, int* natoms, rvec* x, rvec* v, gmx_mtop_t* mtop);
+PbcType read_tpx(const std::filesystem::path& fn,
+                 t_inputrec*                  ir,
+                 matrix                       box,
+                 int*                         natoms,
+                 rvec*                        x,
+                 rvec*                        v,
+                 gmx_mtop_t*                  mtop);
 
-PbcType read_tpx_top(const char* fn, t_inputrec* ir, matrix box, int* natoms, rvec* x, rvec* v, t_topology* top);
+PbcType read_tpx_top(const std::filesystem::path& fn,
+                     t_inputrec*                  ir,
+                     matrix                       box,
+                     int*                         natoms,
+                     rvec*                        x,
+                     rvec*                        v,
+                     t_topology*                  top);
 /* As read_tpx, but for the old t_topology struct */
 
-gmx_bool fn2bTPX(const char* file);
+gmx_bool fn2bTPX(const std::filesystem::path& file);
 /* return if *file is one of the TPX file types */
 
 void pr_tpxheader(FILE* fp, int indent, const char* title, const TpxFileHeader* sh);

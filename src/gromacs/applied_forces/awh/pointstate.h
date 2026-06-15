@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2015,2016,2017,2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2015- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 
 /*! \internal \file
@@ -51,9 +50,12 @@
 #define GMX_AWH_POINTSTATE_H
 
 #include <cmath>
+#include <cstdint>
+#include <cstdlib>
 
 #include "gromacs/mdtypes/awh_history.h"
 #include "gromacs/mdtypes/awh_params.h"
+#include "gromacs/utility/exceptions.h"
 #include "gromacs/utility/gmxassert.h"
 
 #include "biasparams.h"
@@ -93,7 +95,8 @@ public:
         lastUpdateIndex_(0),
         logPmfSum_(0),
         numVisitsIteration_(0),
-        numVisitsTot_(0)
+        numVisitsTot_(0),
+        localWeightSum_(0)
     {
     }
 
@@ -114,6 +117,7 @@ public:
         logPmfSum_          = psh.log_pmfsum;
         numVisitsIteration_ = psh.visits_iteration;
         numVisitsTot_       = psh.visits_tot;
+        localWeightSum_     = psh.localWeightSum;
     }
 
     /*! \brief
@@ -133,6 +137,7 @@ public:
         psh->log_pmfsum          = logPmfSum_;
         psh->visits_iteration    = numVisitsIteration_;
         psh->visits_tot          = numVisitsTot_;
+        psh->localWeightSum      = localWeightSum_;
     }
 
     /*! \brief
@@ -196,6 +201,9 @@ public:
 
     /*! \brief Return the total number of visits */
     double numVisitsTot() const { return numVisitsTot_; }
+
+    /*! \brief Return the local contribution to the accumulated weight */
+    double localWeightSum() const { return localWeightSum_; }
 
     /*! \brief Set the constant target weight factor.
      *
@@ -347,9 +355,11 @@ private:
         double df = -std::log(weighthistSampled / weighthistTarget);
         freeEnergy_ += df;
 
-        GMX_RELEASE_ASSERT(std::abs(freeEnergy_) < detail::c_largePositiveExponent,
-                           "Very large free energy differences or badly normalized free energy in "
-                           "AWH update.");
+        if (std::abs(freeEnergy_) > detail::c_largePositiveExponent)
+        {
+            GMX_THROW(InvalidInputError(
+                    "An AWH free energy difference is larger than 700 kT, which is not supported"));
+        }
     }
 
     /*! \brief Update the reference weight histogram of a point.
@@ -417,17 +427,18 @@ public:
     {
         switch (params.eTarget)
         {
-            case eawhtargetCONSTANT: target_ = 1; break;
-            case eawhtargetCUTOFF:
+            case AwhTargetType::Constant: target_ = 1; break;
+            case AwhTargetType::Cutoff:
             {
                 double df = freeEnergy_ - freeEnergyCutoff;
                 target_   = 1 / (1 + std::exp(df));
                 break;
             }
-            case eawhtargetBOLTZMANN:
+            case AwhTargetType::Boltzmann:
                 target_ = std::exp(-params.temperatureScaleFactor * freeEnergy_);
                 break;
-            case eawhtargetLOCALBOLTZMANN: target_ = weightSumRef_; break;
+            case AwhTargetType::LocalBoltzmann: target_ = weightSumRef_; break;
+            default: GMX_RELEASE_ASSERT(false, "Unhandled enum");
         }
 
         /* All target types can be modulated by a constant factor. */
@@ -454,6 +465,9 @@ public:
         numVisitsTot_ += numVisitsIteration_;
     }
 
+    /*! \brief Add the local weight contribution accumulated between updates. */
+    void addLocalWeightSum() { localWeightSum_ += weightSumIteration_; }
+
     /*! \brief Scale the target weight of the point.
      *
      * \param[in] scaleFactor  Factor to scale with.
@@ -466,12 +480,13 @@ private:
     double target_;               /**< Current target distribution, normalized to 1 */
     double targetConstantWeight_; /**< Constant target weight, from user data. */
     double weightSumIteration_; /**< Accumulated weight this iteration; note: only contains data for this Bias, even when sharing biases. */
-    double weightSumTot_;       /**< Accumulated weights, never reset */
+    double weightSumTot_;       /**< Accumulated weights, never reset or scaled. */
     double weightSumRef_; /**< The reference weight histogram determining the free energy updates */
     int64_t lastUpdateIndex_; /**< The last update that was performed at this point, in units of number of updates. */
-    double  logPmfSum_;          /**< Logarithm of the PMF histogram */
-    double  numVisitsIteration_; /**< Visits to this bin this iteration; note: only contains data for this Bias, even when sharing biases. */
-    double  numVisitsTot_;       /**< Accumulated visits to this bin */
+    double logPmfSum_;          /**< Logarithm of the PMF histogram */
+    double numVisitsIteration_; /**< Visits to this bin this iteration; note: only contains data for this Bias, even when sharing biases. */
+    double numVisitsTot_;       /**< Accumulated visits to this bin */
+    double localWeightSum_; /**< The contributed weight sum from the local Bias. This is used for computing the average shared friction metric. Never reset or scaled. */
 };
 
 } // namespace gmx

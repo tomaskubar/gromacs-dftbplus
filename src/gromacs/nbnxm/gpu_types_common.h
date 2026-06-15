@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2017,2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2017- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \internal \file
  * \brief Implements common internal types for different NBNXN GPU implementations
@@ -44,7 +43,10 @@
 
 #include "config.h"
 
+#include "gromacs/gpu_utils/hostallocator.h"
+#include "gromacs/mdtypes/interaction_const.h"
 #include "gromacs/mdtypes/locality.h"
+#include "gromacs/nbnxm/nbnxm_enums.h"
 #include "gromacs/utility/enumerationhelpers.h"
 
 #include "nbnxm.h"
@@ -58,6 +60,162 @@
 #    include "gromacs/gpu_utils/gpuregiontimer.cuh"
 #endif
 
+#if GMX_GPU_SYCL
+#    include "gromacs/gpu_utils/gpuregiontimer_sycl.h"
+#endif
+
+#if GMX_GPU_HIP
+#    include "gromacs/gpu_utils/gpuregiontimer_hip.h"
+#endif
+
+namespace gmx
+{
+
+/*! \brief Number of separate bins used during sorting of plist on gpu
+ *
+ * Ideally this number would be increased for very large system sizes (the cpu version of sorting
+ * uses 2 x avg(num cjPacked) but as sorting has negligible impact for very large system sizes we
+ * use a constant here for simplicity. On H100 sorting begins to have negligible effect for
+ * system sizes greater than ~400k atoms.
+ */
+static constexpr int c_sciHistogramSize = 8192;
+
+/*! \brief Number of threads per block used by the gpu sorting kernel
+ *
+ * TODO this is a reasonable default but the number has not been tuned
+ */
+static constexpr int c_sciSortingThreadsPerBlock = 256;
+static constexpr int c_sciSortingItemsPerThread  = 16;
+
+/*! \brief Macro definining default for the prune kernel's jPacked processing concurrency.
+ *
+ *  The GMX_NBNXN_PRUNE_KERNEL_JPACKED_CONCURRENCY macro allows compile-time override with the default value of 4.
+ */
+#ifndef GMX_NBNXN_PRUNE_KERNEL_JPACKED_CONCURRENCY
+#    define GMX_NBNXN_PRUNE_KERNEL_JPACKED_CONCURRENCY 4
+#endif
+//! Default for the prune kernel's jPacked processing concurrency.
+static constexpr int c_pruneKernelJPackedConcurrency = GMX_NBNXN_PRUNE_KERNEL_JPACKED_CONCURRENCY;
+
+/* Convenience constants */
+/*! \cond */
+/* Convenience defines */
+/*! \brief cluster size = number of atoms per cluster. */
+static constexpr int c_clusterSize = sc_gpuClusterSize(sc_layoutType);
+
+/*! \brief how the clusters are split */
+static constexpr int c_clusterSplitSize = sc_gpuClusterPairSplit(sc_layoutType);
+
+/*! \brief super cluster size */
+static constexpr int c_superClusterSize = sc_gpuClusterPerSuperCluster(sc_layoutType);
+
+/*! \brief How many J groups are used together */
+static constexpr int c_jGroupSize = sc_gpuJgroupSize(sc_layoutType);
+
+/*! \brief Square of cluster size. */
+static const int c_clusterSizeSq = c_clusterSize * c_clusterSize;
+
+/*! \brief j-cluster size after split (4 in the current implementation). */
+static const int c_splitClSize = sc_gpuSplitJClusterSize(sc_layoutType);
+
+/*! \brief Size of exclusion list */
+static constexpr int c_exclSize = sc_gpuExclSize(sc_layoutType);
+
+// i-cluster interaction mask for a super-cluster with all c_nbnxnGpuNumClusterPerSupercluster=8 bits set.
+static constexpr unsigned superClInteractionMask = ((1U << c_superClusterSize) - 1U);
+
+// 1/sqrt(pi), same value as \c M_FLOAT_1_SQRTPI in other NB kernels.
+static constexpr float c_oneOverSqrtPi = 0.564189583547756F;
+
+// 1/6, same value as in other NB kernels.
+static constexpr float c_oneSixth = 0.16666667F;
+
+// 1/12, same value as in other NB kernels.
+static constexpr float c_oneTwelfth = 0.08333333F;
+/*! \endcond */
+
+/*! \internal
+ * \brief Staging area for temporary data downloaded from the GPU.
+ *
+ * Since SYCL buffers already have host-side storage, this is a bit redundant.
+ * But it allows prefetching of the data from GPU, and brings GPU backends closer together.
+ */
+struct NBStagingData
+{
+    //! LJ energy
+    HostVector<float> eLJ;
+    //! electrostatic energy
+    HostVector<float> eElec;
+    //! dvdl terms
+    HostVector<float> dvdlLJ;
+    HostVector<float> dvdlElec;
+    //! shift forces
+    HostVector<Float3> fShift;
+
+    //! foreign lambda terms
+    HostVector<float> eLJForeign;
+    HostVector<float> eElecForeign;
+    HostVector<float> dvdlLJForeign;
+    HostVector<float> dvdlElecForeign;
+};
+
+/** \internal
+ * \brief Nonbonded atom data - both inputs and outputs.
+ */
+struct NBAtomDataGpu
+{
+    //! number of atoms
+    int numAtoms;
+    //! number of local atoms
+    int numAtomsLocal;
+    //! allocation size for the atom data (xq, f)
+    int numAtomsAlloc;
+
+    //! atom coordinates + charges, size \ref numAtoms
+    DeviceBuffer<Float4> xq;
+    //! atom charge(A&B), size numAtoms, only in FEP, use Float4 for coalesencing
+    DeviceBuffer<Float4> q4;
+    //! force output array, size \ref numAtoms
+    DeviceBuffer<Float3> f;
+
+    //! LJ energy output, size 1
+    DeviceBuffer<float> eLJ;
+    //! Electrostatics energy input, size 1
+    DeviceBuffer<float> eElec;
+
+    //! DVDL LJ output, size 1
+    DeviceBuffer<float> dvdlLJ;
+    //! DVDL Electrostatics input, size 1
+    DeviceBuffer<float> dvdlElec;
+
+    //! Foreign LJ energy output, size nLambda+1
+    DeviceBuffer<float> eLJForeign;
+    //! Foreign Elec energy output, size nLambda1
+    DeviceBuffer<float> eElecForeign;
+    //! Foreign DVDL LJ output, size nLambda+1
+    DeviceBuffer<float> dvdlLJForeign;
+    //! Foreign DVDL Elec output, size nLambda+1
+    DeviceBuffer<float> dvdlElecForeign;
+
+    //! shift forces
+    DeviceBuffer<Float3> fShift;
+
+    //! number of atom types
+    int numTypes;
+    //! atom type indices, size \ref numAtoms
+    DeviceBuffer<int> atomTypes;
+    //! sqrt(c6),sqrt(c12) size \ref numAtoms
+    DeviceBuffer<Float2> ljComb;
+    //! atom typeA&B indices, size numAtoms, only in FEP, use Int4 for coalesencing
+    DeviceBuffer<Int4> atomTypes4;
+    //! sqrt(c6),sqrt(c12) for stateA&B, size numAtoms, only in FEP, use Float4 for coalesencing
+    DeviceBuffer<Float4> ljComb4;
+    //! shifts
+    DeviceBuffer<Float3> shiftVec;
+    //! true if the shift vector has been uploaded
+    bool shiftVecUploaded;
+};
+
 /** \internal
  * \brief Parameters required for the GPU nonbonded calculations.
  */
@@ -65,9 +223,9 @@ struct NBParamGpu
 {
 
     //! type of electrostatics
-    enum Nbnxm::ElecType elecType;
+    enum ElecType elecType;
     //! type of VdW impl.
-    enum Nbnxm::VdwType vdwType;
+    enum VdwType vdwType;
 
     //! charge multiplication factor
     float epsfac;
@@ -77,7 +235,7 @@ struct NBParamGpu
     float two_k_rf;
     //! Ewald/PME parameter
     float ewald_beta;
-    //! Ewald/PME correction term substracted from the direct-space potential
+    //! Ewald/PME correction term subtracted from the direct-space potential
     float sh_ewald;
     //! LJ-Ewald/PME correction term added to the correction potential
     float sh_lj_ewald;
@@ -106,12 +264,12 @@ struct NBParamGpu
     switch_consts_t vdw_switch;
 
     /* LJ non-bonded parameters - accessed through texture memory */
-    //! nonbonded parameter table with C6/C12 pairs per atom type-pair, 2*ntype^2 elements
-    DeviceBuffer<float> nbfp;
+    //! nonbonded parameter table with 6*C6/12*C12 pairs per atom type-pair, ntype^2 elements
+    DeviceBuffer<Float2> nbfp{};
     //! texture object bound to nbfp
     DeviceTexture nbfp_texobj;
-    //! nonbonded parameter table per atom type, 2*ntype elements
-    DeviceBuffer<float> nbfp_comb;
+    //! nonbonded parameter table per atom type, ntype elements
+    DeviceBuffer<Float2> nbfp_comb{};
     //! texture object bound to nbfp_comb
     DeviceTexture nbfp_comb_texobj;
 
@@ -119,16 +277,25 @@ struct NBParamGpu
     //! table scale/spacing
     float coulomb_tab_scale;
     //! pointer to the table in the device memory
-    DeviceBuffer<float> coulomb_tab;
+    DeviceBuffer<float> coulomb_tab{};
     //! texture object bound to coulomb_tab
     DeviceTexture coulomb_tab_texobj;
+
+    //! whether running nonbonded free energy calculations on GPU
+    bool  bFepGpuNonBonded       = false;
+    float alphaCoul              = 0.0;
+    float alphaVdw               = 0.0;
+    int   lambdaPower            = 0; // Exponent for the dependence of the soft-core on lambda
+    float sigma6WithInvalidSigma = 0.0;
+    float sigma6Minimum          = 0.0;
+    // free energy λ for coulomb interaction
+    float lambdaCoul = 0.0;
+    // free energy λ for vdw interaction
+    float lambdaVdw = 0.0;
+    // foreign free energy λ for both coul & vdw interactions
+    DeviceBuffer<float> allLambdaCoul;
+    DeviceBuffer<float> allLambdaVdw;
 };
-
-namespace Nbnxm
-{
-
-using gmx::AtomLocality;
-using gmx::InteractionLocality;
 
 /*! \internal
  * \brief GPU region timers used for timing GPU kernels and H2D/D2H transfers.
@@ -136,7 +303,7 @@ using gmx::InteractionLocality;
  * The two-sized arrays hold the local and non-local values and should always
  * be indexed with eintLocal/eintNonlocal.
  */
-struct gpu_timers_t
+struct GpuTimers
 {
     /*! \internal
      * \brief Timers for local or non-local coordinate/force transfers
@@ -173,53 +340,243 @@ struct gpu_timers_t
     //! timer for atom data transfer (every PS step)
     GpuRegionTimer atdat;
     //! timers for coordinate/force transfers (every step)
-    gmx::EnumerationArray<AtomLocality, XFTransfers> xf;
+    EnumerationArray<AtomLocality, XFTransfers> xf;
     //! timers for interaction related transfers
-    gmx::EnumerationArray<InteractionLocality, Nbnxm::gpu_timers_t::Interaction> interaction;
+    EnumerationArray<InteractionLocality, GpuTimers::Interaction> interaction;
+};
+
+
+/*! \internal
+ * \brief Sorted pair list on GPU and data required for performing the sorting */
+class GpuPairlistSorting
+{
+public:
+    GpuPairlistSorting();
+    ~GpuPairlistSorting();
+
+    //! Do not allow copy construct
+    GpuPairlistSorting(const GpuPairlistSorting&) = delete;
+    //! Do not allow move construct until device buffers have ownership semantics
+    GpuPairlistSorting(GpuPairlistSorting&&) = delete;
+    //! Do not allow copy assign
+    GpuPairlistSorting& operator=(const GpuPairlistSorting&) = delete;
+    //! Do not allow move assign until device buffers have ownership semantics
+    GpuPairlistSorting& operator=(GpuPairlistSorting&&) = delete;
+
+    //! size of scanTemporary, working array used for exclusive prefix sum calculation
+    int nscanTemporary = -1;
+
+    //! allocation size of scanTemporary
+    int scanTemporaryNalloc = -1;
+
+    //! Temporary data of scan algorithm
+    DeviceBuffer<char> scanTemporary = nullptr;
+
+    //! number of buckets in histogram
+    int nsciHistogram = -1;
+
+    //! allocation size of sciHistogram
+    int sciHistogramNalloc = -1;
+
+    //! Histogram of sci nsp
+    DeviceBuffer<int> sciHistogram = nullptr;
+
+    //! size of sciOffset, number of histogram buckets
+    int nsciOffset = -1;
+
+    //! allocation size of sciOffset
+    int sciOffsetNalloc = -1;
+
+    //! Sci offset, the exclusive prefix sum of sciHistogram
+    DeviceBuffer<int> sciOffset = nullptr;
+
+    //! size of sci, # of i clusters in the list
+    int nsciCounted = -1;
+
+    //! allocation size of sci
+    int sciCountedNalloc = -1;
+
+    //! list of imask counts of sorted i-cluster ("super-clusters")
+    DeviceBuffer<int> sciCount = nullptr;
+
+    //! size of sci, # of i clusters in the list
+    int nsciSorted = -1;
+    //! allocation size of sci
+    int sciSortedNalloc = -1;
+
+    //! list of sorted i-cluster ("super-clusters")
+    DeviceBuffer<nbnxn_sci_t> sciSorted = nullptr;
 };
 
 /*! \internal
  * \brief GPU pair list structure */
-struct gpu_plist
+class GpuPairlist
 {
+public:
+    GpuPairlist();
+    ~GpuPairlist();
+
+    //! Do not allow copy construct
+    GpuPairlist(const GpuPairlist&) = delete;
+    //! Do not allow move construct until device buffers have ownership semantics
+    GpuPairlist(GpuPairlist&&) = delete;
+    //! Do not allow copy assign
+    GpuPairlist& operator=(const GpuPairlist&) = delete;
+    //! Do not allow move assign until device buffers have ownership semantics
+    GpuPairlist& operator=(GpuPairlist&&) = delete;
+
     //! number of atoms per cluster
-    int na_c;
+    int numAtomsPerCluster = -1;
 
     //! size of sci, # of i clusters in the list
-    int nsci;
+    int numSci = -1;
     //! allocation size of sci
-    int sci_nalloc;
+    int sciAllocationSize = -1;
     //! list of i-cluster ("super-clusters")
-    DeviceBuffer<nbnxn_sci_t> sci;
+    DeviceBuffer<nbnxn_sci_t> sci = nullptr;
 
-    //! total # of 4*j clusters
-    int ncj4;
-    //! allocation size of cj4
-    int cj4_nalloc;
-    //! 4*j cluster list, contains j cluster number and index into the i cluster list
-    DeviceBuffer<nbnxn_cj4_t> cj4;
-    //! # of 4*j clusters * # of warps
-    int nimask;
+    //! sorted pair list and data used for sorting
+    GpuPairlistSorting sorting;
+
+    //! total # of packed j clusters
+    int numPackedJClusters = -1;
+    //! allocation size of cjPacked
+    int packedJClustersAllocationSize = -1;
+    //! Packed j cluster list, contains j cluster number and index into the i cluster list
+    DeviceBuffer<nbnxn_cj_packed_t> cjPacked = nullptr;
+    //! # of packed j clusters * # of warps
+    int numIMask = -1;
     //! allocation size of imask
-    int imask_nalloc;
+    int iMaskAllocationSize = -1;
     //! imask for 2 warps for each 4*j cluster group
-    DeviceBuffer<unsigned int> imask;
+    DeviceBuffer<unsigned int> imask = nullptr;
     //! atom interaction bits
-    DeviceBuffer<nbnxn_excl_t> excl;
+    DeviceBuffer<nbnxn_excl_t> excl = nullptr;
     //! count for excl
-    int nexcl;
+    int numExcl = 1;
     //! allocation size of excl
-    int excl_nalloc;
+    int exclAllocationSize = -1;
 
     /* parameter+variables for normal and rolling pruning */
-    //! true after search, indictes that initial pruning with outer prunning is needed
-    bool haveFreshList;
-    //! the number of parts/steps over which one cyle of roling pruning takes places
-    int rollingPruningNumParts;
-    //! the next part to which the roling pruning needs to be applied
-    int rollingPruningPart;
+    //! true after search, indicates that initial pruning with outer pruning is needed
+    bool haveFreshList = false;
+    //! the number of parts/steps over which one cycle of rolling pruning takes places
+    int rollingPruningNumParts = 0;
+    //! the next part to which the rolling pruning needs to be applied
+    int rollingPruningPart = 0;
+    //! device memory buffer (1 value per thread block) for next part to which the rolling pruning needs to be applied
+    DeviceBuffer<int> d_rollingPruningPart = nullptr;
+    //! size of rolling pruning part buffer on device
+    int d_rollingPruningPartSize = -1;
+    //! allocated size of rolling pruning part buffer on device
+    int d_rollingPruningPartAllocationSize = -1;
 };
 
-} // namespace Nbnxm
+/*! \internal
+ * \brief GPU FEP list structure */
+class GpuFeplist
+{
+public:
+    GpuFeplist();
+    ~GpuFeplist();
+
+    //! Do not allow copy construct
+    GpuFeplist(const GpuFeplist&) = delete;
+    //! Do not allow move construct until device buffers have ownership semantics
+    GpuFeplist(GpuFeplist&&) = delete;
+    //! Do not allow copy assign
+    GpuFeplist& operator=(const GpuFeplist&) = delete;
+    //! Do not allow move assign until device buffers have ownership semantics
+    GpuFeplist& operator=(GpuFeplist&&) = delete;
+
+    int numiAtoms    = -1;
+    int maxNumiAtoms = -1; /* Current/max number of i particles	   */
+    int numShift     = -1;
+    int maxNumShift  = -1; /* Current/max number of shifts	   */
+    int numjIndex    = -1;
+    int maxNumjIndex = -1; /* Current/max number of jIndex	   */
+    int numjAtoms    = -1;
+    int maxNumjAtoms = -1; /* Current/max number of j particles	   */
+    int numExcl      = -1;
+    int maxNumExcl   = -1; /* Current/max number of exclusions	   */
+
+    DeviceBuffer<int> iinr;    /* The i-atom list                        */
+    DeviceBuffer<int> shift;   /* Shift vector index                    */
+    DeviceBuffer<int> jIndex;  /* Index in jjnr                         */
+    DeviceBuffer<int> jjnr;    /* The j-atom list                       */
+    DeviceBuffer<int> exclFep; /* Exclusions for FEP with Verlet scheme */
+};
+
+/*! \internal
+ * \brief GPU FEP Host Buffers */
+struct GpuFepHostData
+{
+    // Arrays of all lambda values
+    HostVector<float> allLambdaCoul{ { PinningPolicy::PinnedIfSupported } };
+    HostVector<float> allLambdaVdw{ { PinningPolicy::PinnedIfSupported } };
+
+    // The inverse of atom indices, used to find the correct atom indices
+    std::vector<int> atomIndicesInv;
+    // The i-atom list on host
+    HostVector<int> iinrHost{ { PinningPolicy::PinnedIfSupported } };
+    // The j-atom list on host
+    HostVector<int> jjnrHost{ { PinningPolicy::PinnedIfSupported } };
+    // The Indices in jjnr on host
+    HostVector<int> jIndexHost{ { PinningPolicy::PinnedIfSupported } };
+    // The shift vector index on host
+    HostVector<int> shiftHost{ { PinningPolicy::PinnedIfSupported } };
+    // The FEP exclusions on host
+    HostVector<int> exclFepHost{ { PinningPolicy::PinnedIfSupported } };
+
+    //! atom typeA&B indices, size numAtoms, only in FEP
+    HostVector<int> atomTypes4Host{ { PinningPolicy::PinnedIfSupported } };
+    //! sqrt(c6),sqrt(c12) for stateA&B, size numAtoms, only in FEP
+    HostVector<float> ljComb4Host{ { PinningPolicy::PinnedIfSupported } };
+    //! atom charge(A&B), size numAtoms, only in FEP
+    HostVector<float> q4Host{ { PinningPolicy::PinnedIfSupported } };
+};
+
+
+/*! \brief Set of boolean constants mimicking preprocessor macros.
+ *
+ * Those are currently used for SYCL and HIP.
+ */
+template<enum ElecType elecType, enum VdwType vdwType>
+struct EnergyFunctionProperties {
+    static constexpr bool elecCutoff = (elecType == ElecType::Cut); ///< EL_CUTOFF
+    static constexpr bool elecRF     = (elecType == ElecType::RF);  ///< EL_RF
+    static constexpr bool elecEwaldAna =
+            (elecType == ElecType::EwaldAna || elecType == ElecType::EwaldAnaTwin); ///< EL_EWALD_ANA
+    static constexpr bool elecEwaldTab =
+            (elecType == ElecType::EwaldTab || elecType == ElecType::EwaldTabTwin); ///< EL_EWALD_TAB
+    static constexpr bool elecEwaldTwin =
+            (elecType == ElecType::EwaldAnaTwin || elecType == ElecType::EwaldTabTwin); ///< Use twin cut-off.
+    static constexpr bool elecEwald = (elecEwaldAna || elecEwaldTab);  ///< EL_EWALD_ANY
+    static constexpr bool vdwCombLB = (vdwType == VdwType::CutCombLB); ///< LJ_COMB && !LJ_COMB_GEOM
+    static constexpr bool vdwCombGeom = (vdwType == VdwType::CutCombGeom);    ///< LJ_COMB_GEOM
+    static constexpr bool vdwComb     = (vdwCombLB || vdwCombGeom);           ///< LJ_COMB
+    static constexpr bool vdwEwaldCombGeom = (vdwType == VdwType::EwaldGeom); ///< LJ_EWALD_COMB_GEOM
+    static constexpr bool vdwEwaldCombLB = (vdwType == VdwType::EwaldLB);     ///< LJ_EWALD_COMB_LB
+    static constexpr bool vdwEwald       = (vdwEwaldCombGeom || vdwEwaldCombLB); ///< LJ_EWALD
+    static constexpr bool vdwFSwitch     = (vdwType == VdwType::FSwitch); ///< LJ_FORCE_SWITCH
+    static constexpr bool vdwPSwitch     = (vdwType == VdwType::PSwitch); ///< LJ_POT_SWITCH
+};
+
+//! \brief Templated constants to shorten kernel function declaration.
+//@{
+template<enum VdwType vdwType>
+constexpr bool ljComb = EnergyFunctionProperties<ElecType::Count, vdwType>().vdwComb;
+
+template<enum ElecType elecType>
+constexpr bool elecEwald = EnergyFunctionProperties<elecType, VdwType::Count>().elecEwald;
+
+template<enum ElecType elecType>
+constexpr bool elecEwaldTab = EnergyFunctionProperties<elecType, VdwType::Count>().elecEwaldTab;
+
+template<enum VdwType vdwType>
+constexpr bool ljEwald = EnergyFunctionProperties<ElecType::Count, vdwType>().vdwEwald;
+//@}
+
+} // namespace gmx
 
 #endif

@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2018,2019, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2018- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*
  * This file is a modified version of original work of Sandia Corporation.
@@ -150,12 +149,11 @@ public:
          * \param[in] r current rank
          * \param[in] sum current sum up to this rank
          * \param[in] i index
-         * \oaram[in] indices The rest of the paramter pack.
+         * \oaram[in] indices The rest of the parameter pack.
          * \returns The offset.
          */
         template<class... Indices>
-        inline constexpr index_type
-        offset(const size_t r, ptrdiff_t sum, const index_type i, Indices... indices) const noexcept
+        constexpr index_type offset(const size_t r, ptrdiff_t sum, const index_type i, Indices... indices) const noexcept
         {
             return offset(r + 1, sum * m_extents.extent(r) + i, indices...);
         }
@@ -177,7 +175,7 @@ public:
         }
 
         /*! \brief Map the multidimensional indices to 1D.
-         * Requires number of indicies have the same dimensionality as the mapping.
+         * Requires number of indices have the same dimensionality as the mapping.
          * \tparam Indices type of the indices to be mapped
          * \param[in] indices the indices to be mapped
          * \returns One-dimensional integer index.

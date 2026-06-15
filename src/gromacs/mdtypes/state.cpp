@@ -1,13 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
- * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2016,2017 by the GROMACS development team.
- * Copyright (c) 2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 1991- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -21,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -30,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /* This file is completely threadsafe - keep it that way! */
 #include "gmxpre.h"
@@ -43,12 +39,12 @@
 #include <cstring>
 
 #include <algorithm>
+#include <string>
 
 #include "gromacs/math/paddedvector.h"
-#include "gromacs/math/vec.h"
-#include "gromacs/math/veccompare.h"
 #include "gromacs/mdtypes/awh_history.h"
 #include "gromacs/mdtypes/df_history.h"
+#include "gromacs/mdtypes/group.h"
 #include "gromacs/mdtypes/inputrec.h"
 #include "gromacs/mdtypes/md_enums.h"
 #include "gromacs/mdtypes/pull_params.h"
@@ -59,21 +55,15 @@
 #include "gromacs/utility/gmxassert.h"
 #include "gromacs/utility/smalloc.h"
 #include "gromacs/utility/stringutil.h"
+#include "gromacs/utility/vec.h"
+#include "gromacs/utility/veccompare.h"
 
 #include "checkpointdata.h"
 
 /* The source code in this file should be thread-safe.
       Please keep it that way. */
 
-history_t::history_t() :
-    disre_initf(0),
-    ndisrepairs(0),
-    disre_rm3tav(nullptr),
-    orire_initf(0),
-    norire_Dtav(0),
-    orire_Dtav(nullptr)
-{
-}
+history_t::history_t() : disre_initf(0), orire_initf(0) {}
 
 ekinstate_t::ekinstate_t() :
     bUpToDate(FALSE),
@@ -160,37 +150,49 @@ void init_gtc_state(t_state* state, int ngtc, int nnhpres, int nhchainlength)
 
 
 /* Checkpoint code relies on this function having no effect if
-   state->natoms is > 0 and passed as natoms. */
-void state_change_natoms(t_state* state, int natoms)
+   numAtoms_ is > 0 and passed as numAtoms. */
+void t_state::changeNumAtoms(const int numAtoms)
 {
-    state->natoms = natoms;
+    numAtoms_ = numAtoms;
 
     /* We need padding, since we might use SIMD access, but the
      * containers here all ensure that. */
-    if (state->flags & (1 << estX))
+    if (hasEntry(StateEntry::X))
     {
-        state->x.resizeWithPadding(natoms);
+        x.resizeWithPadding(numAtoms);
     }
-    if (state->flags & (1 << estV))
+    if (hasEntry(StateEntry::V))
     {
-        state->v.resizeWithPadding(natoms);
+        v.resizeWithPadding(numAtoms);
     }
-    if (state->flags & (1 << estCGP))
+    if (hasEntry(StateEntry::Cgp))
     {
-        state->cg_p.resizeWithPadding(natoms);
+        cg_p.resizeWithPadding(numAtoms);
     }
+}
+
+void t_state::addEntry(const StateEntry entry)
+{
+    setFlags(flags_ | enumValueToBitMask(entry));
+}
+
+void t_state::setFlags(const int flags)
+{
+    flags_ = flags;
+
+    // Ensure potential new vectors added to flags_ have the correct size
+    changeNumAtoms(numAtoms_);
 }
 
 void init_dfhist_state(t_state* state, int dfhistNumLambda)
 {
     if (dfhistNumLambda > 0)
     {
-        snew(state->dfhist, 1);
-        init_df_history(state->dfhist, dfhistNumLambda);
+        state->dfhist = std::make_shared<df_history_t>(dfhistNumLambda);
     }
     else
     {
-        state->dfhist = nullptr;
+        state->dfhist.reset();
     }
 }
 
@@ -199,24 +201,24 @@ void comp_state(const t_state* st1, const t_state* st2, gmx_bool bRMSD, real fto
     int i, j, nc;
 
     fprintf(stdout, "comparing flags\n");
-    cmp_int(stdout, "flags", -1, st1->flags, st2->flags);
+    cmp_int(stdout, "flags", -1, st1->flags(), st2->flags());
     fprintf(stdout, "comparing box\n");
     cmp_rvecs(stdout, "box", DIM, st1->box, st2->box, FALSE, ftol, abstol);
     fprintf(stdout, "comparing box_rel\n");
     cmp_rvecs(stdout, "box_rel", DIM, st1->box_rel, st2->box_rel, FALSE, ftol, abstol);
     fprintf(stdout, "comparing boxv\n");
     cmp_rvecs(stdout, "boxv", DIM, st1->boxv, st2->boxv, FALSE, ftol, abstol);
-    if (st1->flags & (1 << estSVIR_PREV))
+    if (st1->hasEntry(StateEntry::SVirPrev))
     {
         fprintf(stdout, "comparing shake vir_prev\n");
         cmp_rvecs(stdout, "svir_prev", DIM, st1->svir_prev, st2->svir_prev, FALSE, ftol, abstol);
     }
-    if (st1->flags & (1 << estFVIR_PREV))
+    if (st1->hasEntry(StateEntry::FVirPrev))
     {
         fprintf(stdout, "comparing force vir_prev\n");
         cmp_rvecs(stdout, "fvir_prev", DIM, st1->fvir_prev, st2->fvir_prev, FALSE, ftol, abstol);
     }
-    if (st1->flags & (1 << estPRES_PREV))
+    if (st1->hasEntry(StateEntry::PressurePrevious))
     {
         fprintf(stdout, "comparing prev_pres\n");
         cmp_rvecs(stdout, "pres_prev", DIM, st1->pres_prev, st2->pres_prev, FALSE, ftol, abstol);
@@ -230,8 +232,7 @@ void comp_state(const t_state* st1, const t_state* st2, gmx_bool bRMSD, real fto
             nc = i * st1->nhchainlength;
             for (j = 0; j < nc; j++)
             {
-                cmp_real(stdout, "nosehoover_xi", i, st1->nosehoover_xi[nc + j],
-                         st2->nosehoover_xi[nc + j], ftol, abstol);
+                cmp_real(stdout, "nosehoover_xi", i, st1->nosehoover_xi[nc + j], st2->nosehoover_xi[nc + j], ftol, abstol);
             }
         }
     }
@@ -243,31 +244,28 @@ void comp_state(const t_state* st1, const t_state* st2, gmx_bool bRMSD, real fto
             nc = i * st1->nhchainlength;
             for (j = 0; j < nc; j++)
             {
-                cmp_real(stdout, "nosehoover_xi", i, st1->nhpres_xi[nc + j], st2->nhpres_xi[nc + j],
-                         ftol, abstol);
+                cmp_real(stdout, "nosehoover_xi", i, st1->nhpres_xi[nc + j], st2->nhpres_xi[nc + j], ftol, abstol);
             }
         }
     }
 
-    cmp_int(stdout, "natoms", -1, st1->natoms, st2->natoms);
-    if (st1->natoms == st2->natoms)
+    cmp_int(stdout, "natoms", -1, st1->numAtoms(), st2->numAtoms());
+    if (st1->numAtoms() == st2->numAtoms())
     {
-        if ((st1->flags & (1 << estX)) && (st2->flags & (1 << estX)))
+        if (st1->hasEntry(StateEntry::X) && st2->hasEntry(StateEntry::X))
         {
             fprintf(stdout, "comparing x\n");
-            cmp_rvecs(stdout, "x", st1->natoms, st1->x.rvec_array(), st2->x.rvec_array(), bRMSD,
-                      ftol, abstol);
+            cmp_rvecs(stdout, "x", st1->numAtoms(), st1->x.rvec_array(), st2->x.rvec_array(), bRMSD, ftol, abstol);
         }
-        if ((st1->flags & (1 << estV)) && (st2->flags & (1 << estV)))
+        if (st1->hasEntry(StateEntry::V) && st2->hasEntry(StateEntry::V))
         {
             fprintf(stdout, "comparing v\n");
-            cmp_rvecs(stdout, "v", st1->natoms, st1->v.rvec_array(), st2->v.rvec_array(), bRMSD,
-                      ftol, abstol);
+            cmp_rvecs(stdout, "v", st1->numAtoms(), st1->v.rvec_array(), st2->v.rvec_array(), bRMSD, ftol, abstol);
         }
     }
 }
 
-rvec* makeRvecArray(gmx::ArrayRef<const gmx::RVec> v, gmx::index n)
+rvec* makeRvecArray(gmx::ArrayRef<const gmx::RVec> v, gmx::Index n)
 {
     GMX_ASSERT(v.ssize() >= n, "We can't copy more elements than the vector size");
 
@@ -276,7 +274,7 @@ rvec* makeRvecArray(gmx::ArrayRef<const gmx::RVec> v, gmx::index n)
     snew(dest, n);
 
     const rvec* vPtr = as_rvec_array(v.data());
-    for (gmx::index i = 0; i < n; i++)
+    for (gmx::Index i = 0; i < n; i++)
     {
         copy_rvec(vPtr[i], dest[i]);
     }
@@ -285,13 +283,13 @@ rvec* makeRvecArray(gmx::ArrayRef<const gmx::RVec> v, gmx::index n)
 }
 
 t_state::t_state() :
-    natoms(0),
+    numAtoms_(0),
+    flags_(0),
     ngtc(0),
     nnhpres(0),
     nhchainlength(0),
-    flags(0),
     fep_state(0),
-    lambda(),
+    lambda{ { 0 } },
 
     baros_integral(0),
     veta(0),
@@ -299,17 +297,12 @@ t_state::t_state() :
 
     ekinstate(),
     hist(),
-    dfhist(nullptr),
+    dfhist(),
     awhHistory(nullptr),
     ddp_count(0),
     ddp_count_cg_gl(0)
 
 {
-    // It would be nicer to initialize these with {} or {{0}} in the
-    // above initialization list, but uncrustify doesn't understand
-    // that.
-    // TODO Fix this if we switch to clang-format some time.
-    lambda = { { 0 } };
     clear_mat(box);
     clear_mat(box_rel);
     clear_mat(boxv);
@@ -325,23 +318,26 @@ void set_box_rel(const t_inputrec* ir, t_state* state)
 
     clear_mat(state->box_rel);
 
-    if (inputrecPreserveShape(ir))
+    if (shouldPreserveBoxShape(ir->pressureCouplingOptions, ir->deform))
     {
-        const int ndim = ir->epct == epctSEMIISOTROPIC ? 2 : 3;
+        const int ndim = ir->pressureCouplingOptions.epct == PressureCouplingType::SemiIsotropic ? 2 : 3;
         do_box_rel(ndim, ir->deform, state->box_rel, state->box, true);
     }
 }
 
-void preserve_box_shape(const t_inputrec* ir, matrix box_rel, matrix box)
+void preserveBoxShape(const PressureCouplingOptions& pressureCouplingOptions,
+                      const tensor                   deform,
+                      matrix                         box_rel,
+                      matrix                         box)
 {
-    if (inputrecPreserveShape(ir))
+    if (shouldPreserveBoxShape(pressureCouplingOptions, deform))
     {
-        const int ndim = ir->epct == epctSEMIISOTROPIC ? 2 : 3;
-        do_box_rel(ndim, ir->deform, box_rel, box, false);
+        const int ndim = pressureCouplingOptions.epct == PressureCouplingType::SemiIsotropic ? 2 : 3;
+        do_box_rel(ndim, deform, box_rel, box, false);
     }
 }
 
-void printLambdaStateToLog(FILE* fplog, const gmx::ArrayRef<real> lambda, const bool isInitialOutput)
+void printLambdaStateToLog(FILE* fplog, gmx::ArrayRef<const real> lambda, const bool isInitialOutput)
 {
     if (fplog != nullptr)
     {
@@ -354,50 +350,49 @@ void printLambdaStateToLog(FILE* fplog, const gmx::ArrayRef<real> lambda, const 
     }
 }
 
-void initialize_lambdas(FILE* fplog, const t_inputrec& ir, bool isMaster, int* fep_state, gmx::ArrayRef<real> lambda)
+void initialize_lambdas(FILE*                            fplog,
+                        const FreeEnergyPerturbationType freeEnergyPerturbationType,
+                        const bool                       haveSimulatedTempering,
+                        const t_lambda&                  fep,
+                        gmx::ArrayRef<const real>        simulatedTemperingTemps,
+                        gmx_ekindata_t*                  ekind,
+                        const bool                       isMain,
+                        int*                             fep_state,
+                        gmx::ArrayRef<real>              lambda)
 {
     /* TODO: Clean up initialization of fep_state and lambda in
        t_state.  This function works, but could probably use a logic
        rewrite to keep all the different types of efep straight. */
 
-    if ((ir.efep == efepNO) && (!ir.bSimTemp))
+    if ((freeEnergyPerturbationType == FreeEnergyPerturbationType::No) && (!haveSimulatedTempering))
     {
         return;
     }
 
-    const t_lambda* fep = ir.fepvals;
-    if (isMaster)
+    if (isMain)
     {
-        *fep_state = fep->init_fep_state; /* this might overwrite the checkpoint
+        *fep_state = fep.init_fep_state; /* this might overwrite the checkpoint
                                              if checkpoint is set -- a kludge is in for now
                                              to prevent this.*/
     }
 
-    for (int i = 0; i < efptNR; i++)
+    for (auto couplingType : gmx::EnumerationWrapper<FreeEnergyPerturbationCouplingType>{})
     {
-        double thisLambda;
-        /* overwrite lambda state with init_lambda for now for backwards compatibility */
-        if (fep->init_lambda >= 0) /* if it's -1, it was never initialized */
+        if (isMain)
         {
-            thisLambda = fep->init_lambda;
-        }
-        else
-        {
-            thisLambda = fep->all_lambda[i][fep->init_fep_state];
-        }
-        if (isMaster)
-        {
-            lambda[i] = thisLambda;
+            lambda[static_cast<int>(couplingType)] = fep.initialLambda(couplingType);
         }
     }
-    if (ir.bSimTemp)
+    if (haveSimulatedTempering)
     {
+        GMX_RELEASE_ASSERT(ekind, "Need ekind with simulated tempering");
+
         /* need to rescale control temperatures to match current state */
-        for (int i = 0; i < ir.opts.ngtc; i++)
+        for (int i = 0; i < ekind->numTemperatureCouplingGroups(); i++)
         {
-            if (ir.opts.ref_t[i] > 0)
+            if (ekind->currentReferenceTemperature(i) > 0)
             {
-                ir.opts.ref_t[i] = ir.simtempvals->temperatures[fep->init_fep_state];
+                ekind->setCurrentReferenceTemperature(i, simulatedTemperingTemps[fep.init_fep_state]);
             }
         }
     }

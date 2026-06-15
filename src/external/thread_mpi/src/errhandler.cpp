@@ -102,6 +102,7 @@ static const char *tmpi_errmsg[] =
     "Error in MPI_Status",
     "Error getting/setting processor layout/affinity",
     "Transmission failure",
+    "Invalid datatype argument",
     "Unknown tMPI error"
 };
 
@@ -123,7 +124,7 @@ int tMPI_Error(tMPI_Comm comm, int tmpi_errno)
 }
 
 
-int tMPI_Error_string(int errorcode, char *strn, size_t *resultlen)
+int tMPI_Error_string(int errorcode, char *strn, int *resultlen)
 {
     if (errorcode < 0 || errorcode >= N_TMPI_ERR)
     {
@@ -212,7 +213,7 @@ int tMPI_Comm_get_errhandler(tMPI_Comm comm, tMPI_Errhandler *errhandler)
 void tmpi_errors_are_fatal_fn(tMPI_Comm *comm, int *err)
 {
     char   errstr[TMPI_MAX_ERROR_STRING];
-    size_t len;
+    int len;
 
     tMPI_Error_string(*err, errstr, &len);
     if (comm)
@@ -230,7 +231,7 @@ void tmpi_errors_are_fatal_fn(tMPI_Comm *comm, int *err)
 void tmpi_errors_return_fn(tMPI_Comm *comm, int *err)
 {
     char   errstr[TMPI_MAX_ERROR_STRING];
-    size_t len;
+    int len;
 
     tMPI_Error_string(*err, errstr, &len);
     if (comm)

@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2016,2017,2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2016- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 
 /*! \internal \file
@@ -53,7 +52,7 @@
  * should be revisited.
  *
  */
-#define NTHREAD_Z GMX_NBNXN_PRUNE_KERNEL_J4_CONCURRENCY
+#define NTHREAD_Z GMX_NBNXN_PRUNE_KERNEL_JPACKED_CONCURRENCY
 
 __attribute__((reqd_work_group_size(CL_SIZE, CL_SIZE, NTHREAD_Z)))
 #ifdef HAVE_FRESH_LIST
@@ -67,13 +66,13 @@ nbnxn_kernel_prune_rolling_opencl
          const __global float4* restrict xq,
          const __global float* restrict shift_vec,
          const __global nbnxn_sci_t* pl_sci,
-         __global nbnxn_cj4_t* pl_cj4,
+         __global nbnxn_cj_packed_t* pl_cjPacked,
 #if !defined HAVE_FRESH_LIST
          const
 #endif
          __global unsigned int* restrict prePrunedImask,
-         int                             numParts,
-         int                             part,
+         int             numParts,
+         int             part,
          __local float4* xib)
 {
     /* convenience variables */
@@ -89,7 +88,7 @@ nbnxn_kernel_prune_rolling_opencl
 #if NTHREAD_Z == 1
     const int tidxz = 0;
 #else
-    const int          tidxz         = get_local_id(2);
+    const int tidxz = get_local_id(2);
 #endif
     const int bidx = get_group_id(0);
     const int widx = tidx / WARP_SIZE;
@@ -97,7 +96,7 @@ nbnxn_kernel_prune_rolling_opencl
 #ifdef HAVE_FRESH_LIST
     const bool haveFreshList = true;
 #else
-    const bool         haveFreshList = false;
+    const bool haveFreshList = false;
 #endif
 
     // TODO move these consts to utils and unify their use with the nonbonded kernels
@@ -133,18 +132,21 @@ nbnxn_kernel_prune_rolling_opencl
         warp_any[warpVoteSlot] = 0;
     }
 #else
-    __local int* const warp_any      = 0;
-    const int          warpVoteSlot  = 0;
+    __local int* const warp_any     = 0;
+    const int          warpVoteSlot = 0;
 #endif
 #undef LOCAL_OFFSET
 
     const nbnxn_sci_t nb_sci =
             pl_sci[bidx * numParts + part]; /* my i super-cluster's index = sciOffset + current bidx * numParts + part */
-    const int sci        = nb_sci.sci;           /* super-cluster */
-    const int cij4_start = nb_sci.cj4_ind_start; /* first ...*/
-    const int cij4_end   = nb_sci.cj4_ind_end;   /* and last index of j clusters */
+    const int sci           = nb_sci.sci;           /* super-cluster */
+    const int cjPackedBegin = nb_sci.cjPackedBegin; /* first ...*/
+    const int cjPackedEnd   = nb_sci.cjPackedEnd;   /* and last index of j clusters */
 
-    if (tidxz == 0)
+    // We may need only a subset of threads active for preloading i-atoms
+    // depending on the super-cluster and cluster / thread-block size.
+    const bool c_loadUsingAllXYThreads = (c_clSize == c_nbnxnGpuNumClusterPerSupercluster);
+    if (tidxz == 0 && (c_loadUsingAllXYThreads || tidxj < c_nbnxnGpuNumClusterPerSupercluster))
     {
         for (int i = 0; i < c_nbnxnGpuNumClusterPerSupercluster; i += CL_SIZE)
         {
@@ -155,8 +157,10 @@ nbnxn_kernel_prune_rolling_opencl
             /* We don't need q, but using float4 in shmem avoids bank conflicts */
             const float4 tmp = xq[ai];
             const float4 xi  = tmp
-                              + (float4)(shift_vec[3 * nb_sci.shift], shift_vec[3 * nb_sci.shift + 1],
-                                         shift_vec[3 * nb_sci.shift + 2], 0.0F);
+                              + (float4)(shift_vec[3 * nb_sci.shift],
+                                         shift_vec[3 * nb_sci.shift + 1],
+                                         shift_vec[3 * nb_sci.shift + 2],
+                                         0.0F);
             xib[(tidxj + i) * c_clSize + tidxi] = xi;
         }
     }
@@ -164,14 +168,14 @@ nbnxn_kernel_prune_rolling_opencl
 
 
     /* loop over the j clusters = seen by any of the atoms in the current super-cluster */
-    for (int j4 = cij4_start + tidxz; j4 < cij4_end; j4 += NTHREAD_Z)
+    for (int jPacked = cjPackedBegin + tidxz; jPacked < cjPackedEnd; jPacked += NTHREAD_Z)
     {
         unsigned int imaskFull = 0, imaskCheck = 0, imaskNew = 0;
 
         if (haveFreshList)
         {
             /* Read the mask from the list transferred from the CPU */
-            imaskFull = pl_cj4[j4].imei[widx].imask;
+            imaskFull = pl_cjPacked[jPacked].imei[widx].imask;
             /* We attempt to prune all pairs present in the original list */
             imaskCheck = imaskFull;
             imaskNew   = 0;
@@ -179,32 +183,32 @@ nbnxn_kernel_prune_rolling_opencl
         else
         {
             /* Read the mask from the "warp-pruned" by rlistOuter mask array */
-            imaskFull = prePrunedImask[j4 * c_nbnxnGpuClusterpairSplit + widx];
+            imaskFull = prePrunedImask[jPacked * c_nbnxnGpuClusterpairSplit + widx];
             /* Read the old rolling pruned mask, use as a base for new */
-            imaskNew = pl_cj4[j4].imei[widx].imask;
+            imaskNew = pl_cjPacked[jPacked].imei[widx].imask;
             /* We only need to check pairs with different mask */
             imaskCheck = (imaskNew ^ imaskFull);
         }
 
-        preloadCj4(&cjs, pl_cj4[j4].cj, tidxi, tidxj, imaskCheck != 0U);
+        preloadCjPacked(&cjs, pl_cjPacked[jPacked].cj, tidxi, tidxj, imaskCheck != 0U);
 
         if (imaskCheck)
         {
-#pragma unroll 4
+#pragma unroll c_nbnxnGpuJgroupSize
             for (int jm = 0; jm < c_nbnxnGpuJgroupSize; jm++)
             {
                 if (imaskCheck & (superClInteractionMask << (jm * c_nbnxnGpuNumClusterPerSupercluster)))
                 {
                     unsigned int mask_ji = (1U << (jm * c_nbnxnGpuNumClusterPerSupercluster));
 
-                    const int cj = loadCj(cjs, pl_cj4[j4].cj, jm, tidxi, tidxj);
+                    const int cj = loadCj(cjs, pl_cjPacked[jPacked].cj, jm, tidxi, tidxj);
                     const int aj = cj * c_clSize + tidxj;
 
                     /* load j atom data */
                     const float4 tmp = xq[aj];
                     const float3 xj  = (float3)(tmp.xyz);
 
-#pragma unroll 8
+#pragma unroll c_nbnxnGpuNumClusterPerSupercluster
                     for (int i = 0; i < c_nbnxnGpuNumClusterPerSupercluster; i++)
                     {
                         if (imaskCheck & mask_ji)
@@ -243,11 +247,11 @@ nbnxn_kernel_prune_rolling_opencl
 #ifdef HAVE_FRESH_LIST
             {
                 /* copy the list pruned to rlistOuter to a separate buffer */
-                prePrunedImask[j4 * c_nbnxnGpuClusterpairSplit + widx] = imaskFull;
+                prePrunedImask[jPacked * c_nbnxnGpuClusterpairSplit + widx] = imaskFull;
             }
 #endif
             /* update the imask with only the pairs up to rlistInner */
-            pl_cj4[j4].imei[widx].imask = imaskNew;
+            pl_cjPacked[jPacked].imei[widx].imask = imaskNew;
         }
     }
 }

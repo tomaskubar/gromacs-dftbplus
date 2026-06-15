@@ -1,10 +1,9 @@
 #
 # This file is part of the GROMACS molecular simulation package.
 #
-# Copyright (c) 2020, by the GROMACS development team, led by
-# Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
-# and including many others, as listed in the AUTHORS file in the
-# top-level source directory and at http://www.gromacs.org.
+# Copyright 2020- The GROMACS Authors
+# and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+# Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
 #
 # GROMACS is free software; you can redistribute it and/or
 # modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
 #
 # You should have received a copy of the GNU Lesser General Public
 # License along with GROMACS; if not, see
-# http://www.gnu.org/licenses, or write to the Free Software Foundation,
+# https://www.gnu.org/licenses, or write to the Free Software Foundation,
 # Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
 #
 # If you want to redistribute modifications to GROMACS, please
@@ -27,55 +26,32 @@
 # consider code for inclusion in the official distribution, but
 # derived work must not be called official GROMACS. Details are found
 # in the README & COPYING files - if they are missing, get the
-# official version at http://www.gromacs.org.
+# official version at https://www.gromacs.org.
 #
 # To help us fund GROMACS development, we humbly ask that you cite
-# the research papers on the package. Check out http://www.gromacs.org.
-#
+# the research papers on the package. Check out https://www.gromacs.org.
+
 # \author Victor Holanda <victor.holanda@cscs.ch>
 # \author Joe Jordan <ejjordan@kth.se>
 # \author Prashanth Kanduri <kanduri@cscs.ch>
 # \author Sebastian Keller <keller@cscs.ch>
 #
 
-# The following are copied directly from src/CMakeLists.txt
-set(IGNORED_CLANG_ALL_WARNINGS
-        "-Wno-c++98-compat -Wno-c++98-compat-pedantic" #No intention of C++98 compability
-        "-Wno-source-uses-openmp" #Don't warn for no-omp build
-        "-Wno-c++17-extensions"   #Allowed in attributes (compilers are required to ignore unknown attributes)
-        "-Wno-documentation-unknown-command" #Custom commands are used
-        "-Wno-covered-switch-default" #GCC gives maybe-uninitialized without default label and checks for illegal enum values.
-        "-Wno-switch-enum" # default statement for enum is OK
-
-        # These are all needed, mostly for testing code
-        "-Wno-conversion"
-        "-Wno-documentation"
-        "-Wno-double-promotion"
-        "-Wno-exit-time-destructors"
-        "-Wno-float-equal"
-        "-Wno-global-constructors"
-        "-Wno-padded"
-        "-Wno-reserved-id-macro"
-        "-Wno-shadow"
-        "-Wno-unused-macros"
-        "-Wno-weak-vtables"
+add_custom_target(nblib-tests
+        COMMENT "Target to build all nblib tests including samples"
         )
-
-string(REPLACE " " ";" IGNORED_CLANG_ALL_WARNINGS "${IGNORED_CLANG_ALL_WARNINGS}")
-
-set(TESTUTILS_DIR ${PROJECT_SOURCE_DIR}/src/testutils)
+# Ensure that "make tests" builds all nblib tests so the top-level
+# "make check" will work.
 if (BUILD_TESTING)
-    if(NOT GMX_DEVELOPER_BUILD)
-        set(UNITTEST_TARGET_OPTIONS EXCLUDE_FROM_ALL)
-    endif()
-    include(${TESTUTILS_DIR}/TestMacros.cmake)
-endif()
+        add_dependencies(tests nblib-tests)
 
-# this allows all nblib tests to be run with "make check-nblib"
-add_custom_target(check-nblib
-        COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure -R NbLib
-        COMMENT "Running nblib tests"
-        USES_TERMINAL VERBATIM)
+        # this allows all nblib tests to be run with "make check-nblib"
+        add_custom_target(check-nblib
+                COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure -R NbLib
+                COMMENT "Running nblib tests"
+                USES_TERMINAL VERBATIM)
+        add_dependencies(check-nblib nblib-tests)
+endif()
 
 set(NBLIB_MAJOR 0)
 set(NBLIB_MINOR 1)
@@ -89,33 +65,71 @@ set_target_properties(nblib PROPERTIES
         RELEASE ${NBLIB_RELEASE}
         VERSION ${NBLIB_RELEASE}
         LINKER_LANGUAGE CXX
-        OUTPUT_NAME "nblib")
+        OUTPUT_NAME "nblib_gmx")
+
+if (GMX_GPU_CUDA)
+    target_link_libraries(nblib PRIVATE CUDA::cudart_static)
+    if(GMX_USE_cuFFTMp OR GMX_NVSHMEM)
+        # We need to PUBLIC link to the stub libraries nvml/cuda to WAR an issue
+        # with `bfd` linker which expects you always have dependencies on the link line.
+        # Also leaking path via the -rpath does not work with a stub library as the SONAME
+        # present inside these stub library (used by runtime) is *.so.1 instead of *.so as these
+        # stub library are meant only for compile time and the runtime version is a driver provided
+        # version which is not present on the system where driver is not installed.
+        # At some future release cmake will provide a workaround for this under the hood at which
+        # point we can use PRIVATE linking for these libs until then we stick with PUBLIC linking.
+        target_link_libraries(nblib PUBLIC CUDA::nvml CUDA::cuda_driver)
+    endif()
+endif()
+
+# Workaround for #4922
+target_link_libraries(nblib PUBLIC ${GMX_PUBLIC_LIBRARIES})
 
 target_sources(nblib
         PRIVATE
         box.cpp
-        forcecalculator.cpp
-        gmxcalculator.cpp
-        gmxsetup.cpp
+        gmxcalculatorcpu.cpp
         integrator.cpp
         interactions.cpp
         molecules.cpp
+        nbnxmsetuphelpers.cpp
+        particlesequencer.cpp
         particletype.cpp
         simulationstate.cpp
         topologyhelpers.cpp
         topology.cpp
+        tpr.cpp
+        virials.cpp
         )
 
 gmx_target_compile_options(nblib)
 
 target_link_libraries(nblib PRIVATE libgromacs)
-target_include_directories(nblib PRIVATE ${PROJECT_SOURCE_DIR}/api)
-include_directories(BEFORE ${CMAKE_SOURCE_DIR}/api)
+target_include_directories(nblib PUBLIC
+                           $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+                           $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
+                           $<INSTALL_INTERFACE:include>)
 target_link_libraries(nblib PRIVATE common)
-# There are transitive dependencies on the legacy GROMACS headers.
+target_link_libraries(nblib PRIVATE
+                      fileio
+                      gmxlib
+                      listed_forces
+                      math
+                      mdtypes
+                      mdlib
+                      pbcutil
+                      simd
+                      topology
+                      utility)
+
+# There are transitive interface dependencies on the legacy GROMACS headers.
+# TODO(#3288): Explicitly link specific modules for public API dependencies as legacy_api is removed.
 target_link_libraries(nblib PUBLIC legacy_api)
 # TODO: Explicitly link specific modules.
 target_link_libraries(nblib PRIVATE legacy_modules)
+if (GMX_OPENMP)
+    target_link_libraries(nblib PUBLIC OpenMP::OpenMP_CXX)
+endif()
 
 install(TARGETS nblib
         EXPORT nblib
@@ -126,22 +140,7 @@ install(TARGETS nblib
         )
 
 if(GMX_INSTALL_NBLIB_API)
-    install(FILES
-            basicdefinitions.h
-            box.h
-            exception.h
-            forcecalculator.h
-            integrator.h
-            interactions.h
-            molecules.h
-            kerneloptions.h
-            nblib.h
-            particletype.h
-            ppmap.h
-            simulationstate.h
-            topology.h
-            topologyhelpers.h
-            DESTINATION include/nblib)
+    install(DIRECTORY include/nblib DESTINATION include)
 endif()
 
 add_subdirectory(listed_forces)

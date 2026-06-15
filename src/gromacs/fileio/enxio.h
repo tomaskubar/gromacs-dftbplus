@@ -1,13 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
- * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2016,2017 by the GROMACS development team.
- * Copyright (c) 2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 1991- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -21,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -30,13 +26,17 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 #ifndef GMX_FILEIO_ENXIO_H
 #define GMX_FILEIO_ENXIO_H
+
+#include <cstdint>
+
+#include <filesystem>
 
 #include "gromacs/fileio/xdr_datatype.h"
 #include "gromacs/utility/basedefinitions.h"
@@ -95,15 +95,15 @@ enum
 };
 
 /* names for the above enum */
-extern const char* enx_block_id_name[];
+extern const char* const enx_block_id_name[];
 
 
 /* the subblocks that are contained in energy file blocks. Each of these
    has a number of values of a single data type in a .edr file. */
 struct t_enxsubblock
 {
-    int          nr;   /* number of items in subblock */
-    xdr_datatype type; /* the block type */
+    int         nr;   /* number of items in subblock */
+    XdrDataType type; /* the block type */
 
     /* the values: pointers for each type */
     float*         fval;
@@ -160,7 +160,7 @@ void init_enxframe(t_enxframe* ef);
 void free_enxframe(t_enxframe* ef);
 
 
-ener_file_t open_enx(const char* fn, const char* mode);
+ener_file_t open_enx(const std::filesystem::path& fn, const char* mode);
 
 struct t_fileio* enx_file_pointer(const ener_file* ef);
 
@@ -178,7 +178,11 @@ void free_enxnms(int n, gmx_enxnm_t* nms);
 gmx_bool do_enx(ener_file_t ef, t_enxframe* fr);
 /* Reads enx_frames, memory in fr is (re)allocated if necessary */
 
-void get_enx_state(const char* fn, real t, const SimulationGroups& groups, t_inputrec* ir, t_state* state);
+void get_enx_state(const std::filesystem::path& fn,
+                   real                         t,
+                   const SimulationGroups&      groups,
+                   t_inputrec*                  ir,
+                   t_state*                     state);
 /*
  * Reads state variables from enx file fn at time t.
  * atoms and ir are required for determining which things must be read.
@@ -201,7 +205,11 @@ t_enxblock* find_block_id_enxframe(t_enxframe* ef, int id, t_enxblock* prev);
    subbblocks. */
 void add_subblocks_enxblock(t_enxblock* eb, int n);
 
-void comp_enx(const char* fn1, const char* fn2, real ftol, real abstol, const char* lastener);
+void comp_enx(const std::filesystem::path& fn1,
+              const std::filesystem::path& fn2,
+              real                         ftol,
+              real                         abstol,
+              const char*                  lastener);
 /* Compare two binary energy files */
 
 #endif

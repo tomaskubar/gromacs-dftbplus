@@ -1,11 +1,9 @@
 #
 # This file is part of the GROMACS molecular simulation package.
 #
-# Copyright (c) 2010,2012,2013,2014,2015 by the GROMACS development team.
-# Copyright (c) 2016,2019,2020, by the GROMACS development team, led by
-# Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
-# and including many others, as listed in the AUTHORS file in the
-# top-level source directory and at http://www.gromacs.org.
+# Copyright 2010- The GROMACS Authors
+# and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+# Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
 #
 # GROMACS is free software; you can redistribute it and/or
 # modify it under the terms of the GNU Lesser General Public License
@@ -19,7 +17,7 @@
 #
 # You should have received a copy of the GNU Lesser General Public
 # License along with GROMACS; if not, see
-# http://www.gnu.org/licenses, or write to the Free Software Foundation,
+# https://www.gnu.org/licenses, or write to the Free Software Foundation,
 # Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
 #
 # If you want to redistribute modifications to GROMACS, please
@@ -28,15 +26,13 @@
 # consider code for inclusion in the official distribution, but
 # derived work must not be called official GROMACS. Details are found
 # in the README & COPYING files - if they are missing, get the
-# official version at http://www.gromacs.org.
+# official version at https://www.gromacs.org.
 #
 # To help us fund GROMACS development, we humbly ask that you cite
-# the research papers on the package. Check out http://www.gromacs.org.
+# the research papers on the package. Check out https://www.gromacs.org.
 
 # Set up the module library
-add_library(options INTERFACE)
-
-gmx_add_libgromacs_sources(
+add_library(options OBJECT
     abstractoption.cpp
     abstractsection.cpp
     basicoptions.cpp
@@ -51,47 +47,27 @@ gmx_add_libgromacs_sources(
     treesupport.cpp
     )
 
-if(GMX_INSTALL_LEGACY_API)
-    install(FILES
-	    abstractoption.h
-	    basicoptions.h
-	    filenameoption.h
-	    filenameoptionmanager.h
-	    ioptionsbehavior.h
-	    ioptionscontainer.h
-	    ioptionscontainerwithsections.h
-	    ivaluestore.h
-	    optionfiletype.h
-	    optionflags.h
-	    options.h
-	    timeunitmanager.h
-            DESTINATION include/gromacs/options)
-endif()
+gmx_target_compile_options(options)
+target_compile_definitions(options PRIVATE HAVE_CONFIG_H)
 
 # Source files have the following private module dependencies.
 target_link_libraries(options PRIVATE
-		)
+                legacy_api
+                legacy_modules
+                utility
+                )
 
 # Public interface for modules, including dependencies and interfaces
 #target_include_directories(options PUBLIC
-target_include_directories(options INTERFACE
-		$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>)
-#target_link_libraries(options PUBLIC
-target_link_libraries(options INTERFACE
-		legacy_api
-		)
+#        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>)
 
-# TODO: when options is an OBJECT target
-#target_link_libraries(options PUBLIC legacy_api)
-#target_link_libraries(options PRIVATE common)
+target_link_libraries(options PRIVATE common)
 
-# Module dependencies
-# options interfaces convey transitive dependence on these modules.
-#target_link_libraries(options PUBLIC
-target_link_libraries(options INTERFACE
-                      utility
-		)
+if (BUILD_SHARED_LIBS)  
+    set_target_properties(options PROPERTIES POSITION_INDEPENDENT_CODE ON)
+endif()
 
 if (BUILD_TESTING)
     add_subdirectory(tests)
 endif()
+

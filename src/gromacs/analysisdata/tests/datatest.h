@@ -1,11 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2011,2012,2013,2014,2015 by the GROMACS development team.
- * Copyright (c) 2016,2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2011- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -19,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -28,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \libinternal \file
  * \brief
@@ -53,11 +51,6 @@
 #include "gromacs/utility/real.h"
 
 #include "testutils/refdata.h"
-
-// currently the bug manifests itself only in AbstractAnalysisData testing
-#if defined __PATHSCALE__
-#    define STATIC_ANON_NAMESPACE_BUG // see #1558 for details
-#endif
 
 namespace gmx
 {
@@ -86,31 +79,31 @@ class AnalysisDataTestInputPointSet
 {
 public:
     //! Returns zero-based index of this point set in its frame.
-    int index() const { return index_; }
+    size_t index() const { return index_; }
     //! Returns zero-based index of the data set of this point set.
-    int dataSetIndex() const { return dataSetIndex_; }
+    size_t dataSetIndex() const { return dataSetIndex_; }
     //! Returns zero-based index of the first column in this point set.
-    int firstColumn() const { return firstColumn_; }
+    size_t firstColumn() const { return firstColumn_; }
     //! Returns zero-based index of the last column in this point set.
-    int lastColumn() const { return firstColumn_ + size() - 1; }
+    size_t lastColumn() const { return firstColumn_ + size() - 1; }
     //! Returns the number of columns in the point set.
-    int size() const { return values_.size(); }
+    size_t size() const { return values_.size(); }
     //! Returns the value in column \p i.
-    real y(int i) const { return values_[i].y; }
+    real y(int i) const { return values_[i].y_; }
     //! Returns whether the error is present for column \p i.
-    bool hasError(int i) const { return values_[i].bError; }
+    bool hasError(int i) const { return values_[i].bError_; }
     //! Returns the error in column \p i.
-    real error(int i) const { return values_[i].error; }
+    real error(int i) const { return values_[i].error_; }
     //! Returns whether the value in column \p i is present.
     static bool present(int /*i*/) { return true; }
     //! Returns an AnalysisDataValue for column \p i.
-    AnalysisDataValue value(int i) const
+    AnalysisDataValue value(size_t i) const
     {
         AnalysisDataValue result;
-        result.setValue(values_[i].y);
-        if (values_[i].bError)
+        result.setValue(values_[i].y_);
+        if (values_[i].bError_)
         {
-            result.setError(values_[i].error);
+            result.setError(values_[i].error_);
         }
         return result;
     }
@@ -122,22 +115,22 @@ public:
 
 private:
     //! Creates an empty point set.
-    AnalysisDataTestInputPointSet(int index, int dataSetIndex, int firstColumn);
+    AnalysisDataTestInputPointSet(size_t index, size_t dataSetIndex, size_t firstColumn);
 
     struct Value
     {
-        Value() : y(0.0), error(0.0), bError(false) {}
-        explicit Value(real y) : y(y), error(0.0), bError(false) {}
-        Value(real y, real error) : y(y), error(error), bError(true) {}
+        Value() : y_(0.0), error_(0.0), bError_(false) {}
+        explicit Value(real y) : y_(y), error_(0.0), bError_(false) {}
+        Value(real y, real error) : y_(y), error_(error), bError_(true) {}
 
-        real y;
-        real error;
-        bool bError;
+        real y_;
+        real error_;
+        bool bError_;
     };
 
-    int                index_;
-    int                dataSetIndex_;
-    int                firstColumn_;
+    size_t             index_;
+    size_t             dataSetIndex_;
+    size_t             firstColumn_;
     std::vector<Value> values_;
 
     //! For constructing new point sets.
@@ -154,14 +147,14 @@ class AnalysisDataTestInputFrame
 {
 public:
     //! Returns zero-based index for the frame.
-    int index() const { return index_; }
+    size_t index() const { return index_; }
     //! Returns x coordinate for the frame.
     real x() const { return x_; }
     //! Returns error in the x coordinate for the frame.
     static real dx() { return 0.0; }
 
     //! Number of individual point sets in the frame.
-    int pointSetCount() const { return pointSets_.size(); }
+    size_t pointSetCount() const { return pointSets_.size(); }
     //! Returns a point set object for a given point set.
     const AnalysisDataTestInputPointSet& pointSet(int index) const
     {
@@ -171,19 +164,19 @@ public:
     }
 
     //! Appends an empty point set to this frame.
-    AnalysisDataTestInputPointSet& addPointSet(int dataSet, int firstColumn);
+    AnalysisDataTestInputPointSet& addPointSet(size_t dataSet, size_t firstColumn);
     //! Adds a point set with given values to this frame.
-    void addPointSetWithValues(int dataSet, int firstColumn, real y1);
+    void addPointSetWithValues(size_t dataSet, size_t firstColumn, real y1);
     //! Adds a point set with given values to this frame.
-    void addPointSetWithValues(int dataSet, int firstColumn, real y1, real y2);
+    void addPointSetWithValues(size_t dataSet, size_t firstColumn, real y1, real y2);
     //! Adds a point set with given values to this frame.
-    void addPointSetWithValues(int dataSet, int firstColumn, real y1, real y2, real y3);
+    void addPointSetWithValues(size_t dataSet, size_t firstColumn, real y1, real y2, real y3);
     //! Adds a point set with given values to this frame.
-    void addPointSetWithValueAndError(int dataSet, int firstColumn, real y1, real e1);
+    void addPointSetWithValueAndError(size_t dataSet, size_t firstColumn, real y1, real e1);
 
 private:
     //! Constructs a new frame object with the given values.
-    AnalysisDataTestInputFrame(int index, real x);
+    AnalysisDataTestInputFrame(size_t index, real x);
 
     int                                        index_;
     real                                       x_;
@@ -216,22 +209,22 @@ public:
      * The column count for each data set must be set with
      * setColumnCount().
      */
-    AnalysisDataTestInput(int dataSetCount, bool bMultipoint);
+    AnalysisDataTestInput(size_t dataSetCount, bool bMultipoint);
     ~AnalysisDataTestInput();
 
     //! Whether the input data is multipoint.
     bool isMultipoint() const { return bMultipoint_; }
     //! Returns the number of data sets in the input data.
-    int dataSetCount() const { return columnCounts_.size(); }
+    size_t dataSetCount() const { return columnCounts_.size(); }
     //! Returns the number of columns in a given data set.
-    int columnCount(int dataSet) const { return columnCounts_[dataSet]; }
+    size_t columnCount(size_t dataSet) const { return columnCounts_[dataSet]; }
     //! Returns the number of frames in the input data.
-    int frameCount() const { return frames_.size(); }
+    size_t frameCount() const { return frames_.size(); }
     //! Returns a frame object for the given input frame.
-    const AnalysisDataTestInputFrame& frame(int index) const;
+    const AnalysisDataTestInputFrame& frame(size_t index) const;
 
     //! Sets the number of columns in a data set.
-    void setColumnCount(int dataSet, int columnCount);
+    void setColumnCount(size_t dataSet, size_t columnCount);
     //! Appends an empty frame to this data.
     AnalysisDataTestInputFrame& addFrame(real x);
     //! Adds a frame with a single point set and the given values.
@@ -244,7 +237,7 @@ public:
     void addFrameWithValueAndError(real x, real y1, real e1);
 
 private:
-    std::vector<int>                        columnCounts_;
+    std::vector<size_t>                     columnCounts_;
     bool                                    bMultipoint_;
     std::vector<AnalysisDataTestInputFrame> frames_;
 };
@@ -466,14 +459,14 @@ void AnalysisDataTestFixture::setupArrayData(const AnalysisDataTestInput& input,
     data->setColumnCount(input.columnCount(0));
     data->setRowCount(input.frameCount());
     data->allocateValues();
-    for (int row = 0; row < input.frameCount(); ++row)
+    for (size_t row = 0; row < input.frameCount(); ++row)
     {
         const AnalysisDataTestInputFrame& frame = input.frame(row);
         EXPECT_FLOAT_EQ(frame.x(), data->xvalue(row));
         GMX_RELEASE_ASSERT(frame.pointSetCount() == 1,
                            "Multiple point sets not supported by array data");
         const AnalysisDataTestInputPointSet& points = frame.pointSet(0);
-        for (int column = 0; column < points.size(); ++column)
+        for (size_t column = 0; column < points.size(); ++column)
         {
             data->value(row, column + points.firstColumn()) = points.value(column);
         }

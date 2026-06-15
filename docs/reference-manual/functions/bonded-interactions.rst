@@ -20,23 +20,22 @@ Harmonic potential
 ^^^^^^^^^^^^^^^^^^
 
 The bond stretching between two covalently bonded atoms :math:`i` and
-:math:`j` is represented by a harmonic potential:
+:math:`j` is represented by a harmonic potential (see also :numref:`Fig. %s <fig-bstretch1>`):
+
+.. math:: V_b~({r_{ij}}) = {\frac{1}{2}}k^b_{ij}({r_{ij}}-b_{ij})^2
+          :label: eqnharmbondstretch
+
+With the corresponding force given by:
+
+.. math:: \mathbf{F}_i(\mathbf{r}_{ij}) = k^b_{ij}({r_{ij}}-b_{ij}) {\frac{{\mathbf{r}_{ij}}}{{r_{ij}}}}
+          :label: eqnharmbondstretchforce
 
 .. _fig-bstretch1:
 
 .. figure:: plots/bstretch.*
    :width: 7.00000cm
 
-   Principle of bond stretching (left), and the bond stretching
-   potential (right).
-
-.. math:: V_b~({r_{ij}}) = {\frac{1}{2}}k^b_{ij}({r_{ij}}-b_{ij})^2
-          :label: eqnharmbondstretch
-
-See also :numref:`Fig. %s <fig-bstretch1>`, with the force given by:
-
-.. math:: \mathbf{F}_i(\mathbf{r}_{ij}) = k^b_{ij}({r_{ij}}-b_{ij}) {\frac{{\mathbf{r}_{ij}}}{{r_{ij}}}}
-          :label: eqnharmbondstretchforce
+   Principle of bond stretching.
 
 .. _g96bond:
 
@@ -51,7 +50,7 @@ potential is, for reasons of computational efficiency, written as:
 
 The corresponding force is:
 
-.. math:: \mathbf{F}_i(\mathbf{r}_{ij}) = k^b_{ij}({r_{ij}}^2-b_{ij}^2)~\mathbf{r}_ij
+.. math:: \mathbf{F}_i(\mathbf{r}_{ij}) = k^b_{ij}({r_{ij}}^2-b_{ij}^2)~\mathbf{r}_{ij}
           :label: eqng96bondforce
 
 The force constants for this form of the potential are related to the
@@ -144,9 +143,9 @@ harmonic form:
 .. math:: V_b~({r_{ij}}) = k^b_{ij}({r_{ij}}-b_{ij})^2 + k^b_{ij}k^{cub}_{ij}({r_{ij}}-b_{ij})^3
           :label: eqncubicbond
 
-A flexible water model (based on the SPC water model \ :ref:`80 <refBerendsen81>`)
+A flexible water model (based on the SPC water model :ref:`80 <refBerendsen81>`)
 including a cubic bond stretching potential for the O-H bond was
-developed by Ferguson \ :ref:`81 <refFerguson95>`. This model was found to yield a
+developed by Ferguson :ref:`81 <refFerguson95>`. This model was found to yield a
 reasonable infrared spectrum. The Ferguson water model is available in
 the |Gromacs| library (``flexwat-ferguson.itp``). It should be noted that the
 potential is asymmetric: overstretching leads to infinitely low
@@ -184,22 +183,21 @@ Harmonic angle potential
 ~~~~~~~~~~~~~~~~~~~~~~~~
 
 The bond-angle vibration between a triplet of atoms :math:`i` -
-:math:`j` - :math:`k` is also represented by a harmonic potential on the
-angle :math:`{\theta_{ijk}}`
+:math:`j` - :math:`k` (:numref:`Fig. %s <fig-bstretch1>`) is also represented by a harmonic
+potential on the angle :math:`{\theta_{ijk}}`
 
 .. _fig-angle:
 
 .. figure:: plots/angle.*
    :width: 7.00000cm
 
-   Principle of angle vibration (left) and the bond angle potential.
+   Principle of angle vibration.
 
 .. math:: V_a({\theta_{ijk}}) = {\frac{1}{2}}k^{\theta}_{ijk}({\theta_{ijk}}-{\theta_{ijk}}^0)^2
           :label: eqnharmangle
 
 As the bond-angle vibration is represented by a harmonic potential, the
-form is the same as the bond stretching
-(:numref:`Fig. %s <fig-bstretch1>`).
+form is the same as the bond stretching.
 
 The force equations are given by the chain rule:
 
@@ -253,7 +251,7 @@ force constants in kJ/mol.
 Restricted bending potential
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-The restricted bending (ReB) potential \ :ref:`83 <refMonicaGoga2013>` prevents the
+The restricted bending (ReB) potential :ref:`83 <refMonicaGoga2013>` prevents the
 bending angle :math:`\theta` from reaching the :math:`180^{\circ}`
 value. In this way, the numerical instabilities due to the calculation
 of the torsion angle and potential are eliminated when performing
@@ -289,14 +287,14 @@ a safe interval, far from instabilities. The power :math:`2` of
 :math:`\sin\theta_i` in the denominator has been chosen to guarantee
 this behavior and allows an elegant differentiation:
 
-.. math:: F_{\rm ReB}(\theta_i) = \frac{2k_{\theta}}{\sin^4\theta_i}(\cos\theta_i - \cos\theta_0) (1 - \cos\theta_i\cos\theta_0) \frac{\partial \cos\theta_i}{\partial \vec r_{k}}.
+.. math:: F_{\rm ReB}(\theta_i) = -\frac{k_{\theta}}{\sin^4\theta_i}(\cos\theta_i - \cos\theta_0) (1 - \cos\theta_i\cos\theta_0) \frac{\partial \cos\theta_i}{\partial \vec r_{k}}.
           :label: eqdiffReB
 
 Due to its construction, the restricted bending potential cannot be
 used for equilibrium :math:`\theta_0` values too close to
 :math:`0^{\circ}` or :math:`180^{\circ}` (from experience, at least
 :math:`10^{\circ}` difference is recommended). It is very important
-that, in the starting configuration, all the bending angles have to be
+that, in the starting configuration, all the bending angles are
 in the safe interval to avoid initial instabilities. This bending
 potential can be used in combination with any form of torsion potential.
 It will always prevent three consecutive particles from becoming
@@ -314,14 +312,38 @@ on the angle :math:`{\theta_{ijk}}` and a harmonic correction term on
 the distance between the atoms :math:`i` and :math:`k`. Although this
 can be easily written as a simple sum of two terms, it is convenient to
 have it as a single entry in the topology file and in the output as a
-separate energy term. It is used mainly in the CHARMm force
-field \ :ref:`84 <refBBrooks83>`. The energy is given by:
+separate energy term. It is used mainly in the CHARMM force
+field :ref:`84 <refBBrooks83>`. The energy is given by:
 
 .. math:: V_a({\theta_{ijk}}) = {\frac{1}{2}}k^{\theta}_{ijk}({\theta_{ijk}}-{\theta_{ijk}}^0)^2 + {\frac{1}{2}}k^{UB}_{ijk}(r_{ik}-r_{ik}^0)^2
           :label: eqnUBAngle
 
 The force equations can be deduced from sections :ref:`harmonicbond`
 and :ref:`harmonicangle`.
+
+Linear Angle potential
+~~~~~~~~~~~~~~~~~~~~~~
+
+The linear angle potential was designed especially for linear compounds
+such as nitriles and for carbon dioxide :ref:`190 <refSpoel2020>`.
+It avoids the calculation of the angle per se, since the angle force
+is not well-defined if the angle is 180 degrees. Rather, it computes the
+deviation of a central atom in a triplet *i,j,k* from a reference position
+
+.. math:: \mathbf{x}_j^0 = a \mathbf{x}_i + (1-a) \mathbf{x}_k
+
+where a is defined by the bond-length *i-j* and *j-k*, in a symmetric
+molecule such as carbon dioxide *a = 1/2*. If the compound has different
+bond lengths :math:`b_{ij}` and :math:`b_{jk}` respectively, we instead have
+
+.. math:: a = \frac{b_{jk}}{b_{ij}+b_{jk}}.
+
+If the order of atoms is changed to *k,j,i*, *a* needs to be 
+replaced by *1-a*. The energy is now given by
+
+.. math:: V_{lin} = \frac{k_{lin}}{2}\left(\mathbf{x}_j - \mathbf{x}_j^0\right)^2
+
+with :math:`k_{lin}` the force constant. For examples, and a derivation of the forces from the energy function, see ref. \ :ref:`190 <refSpoel2020>`. 
 
 Bond-Bond cross term
 ~~~~~~~~~~~~~~~~~~~~
@@ -388,7 +410,7 @@ Quartic angle potential
 For special purposes there is an angle potential that uses a fourth
 order polynomial:
 
-.. math:: V_q({\theta_{ijk}}) ~=~ \sum_{n=0}^5 C_n ({\theta_{ijk}}-{\theta_{ijk}}^0)^n
+.. math:: V_q({\theta_{ijk}}) ~=~ \sum_{n=0}^4 C_n ({\theta_{ijk}}-{\theta_{ijk}}^0)^n
           :label: eqnquarticangle
 
 .. _imp:
@@ -504,6 +526,13 @@ Proper dihedrals: Ryckaert-Bellemans function
   by multiplying every coefficient :math:`\displaystyle C_n` by
   :math:`\displaystyle (-1)^n`.
 
+**Note:** In a force field, the :math:`\displaystyle C_n` coefficients for 
+each Ryckaert-Bellemans dihedral should sum to the same value, ideally zero,
+to ensure consistency in the zero point of the potential energy.
+Failing that, energy values and free energy determination (through
+:math:`\partial H/\partial \lambda`) might have an undesirable offset,
+though the dynamics itself will be unaffected.
+
 An example of constants for :math:`C` is given in :numref:`Table %s <tab-crb>`.
 
 .. _tab-crb:
@@ -577,7 +606,7 @@ Proper dihedrals: Fourier function
 
 | Internally, |Gromacs| uses the Ryckaert-Bellemans code to compute
   Fourier dihedrals (see above), because this is more efficient.
-| **Note:** Mind the conversion from *k*\ cal mol\ :math:`^{-1}` for
+| **Note:** Mind the conversion from **kcal mol**\ :math:`^{-1}` for
   literature OPLS parameters to **kJ mol**\ :math:`^{-1}` in |Gromacs|.
 
 Proper dihedrals: Restricted torsion potential
@@ -691,12 +720,33 @@ the torsion potential) but the next step would be singular
 (:math:`\theta` is not :math:`180^{\circ}` and :math:`\phi` is very
 close to :math:`180^{\circ}`).
 
+Bonded pair and 1-4 interactions
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Most force fields do not use normal Lennard-Jones and Coulomb interactions
+for atoms separated by three bonds, the so-called 1-4 interactions. These
+interactions are still affected by the modified electronic distributions
+due to the chemical bonds and they are modified in the force field by
+the dihedral terms. For this reason the Lennard-Jones and Coulomb 1-4
+interactions are often scaled down, by a fixed factor given by the force field.
+These factors can be supplied in the topology and the parameters can also
+be overriden per 1-4 interaction or atom type pair. The pair interactions
+can be used for any atom pair in a molecule, not only 1-4 pairs.
+The non-bonded interactions between such pairs should be excluded to avoid double
+interactions. Plain Lennard-Jones and Coulomb interactions are used which
+are not affected by the non-bonded interaction treatment and potential
+modifiers.
+
 Tabulated bonded interaction functions
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-| For full flexibility, any functional shape can be used for bonds,
-  angles and dihedrals through user-supplied tabulated functions. The
-  functional shapes are:
+Tabulated bonded interactions are currently (since version 2020) disabled in
+|Gromacs|. The aim is to re-enable this functionality in the future.
+The section below is kept for reference.
+
+For full flexibility, any functional shape can be used for bonds,
+angles and dihedrals through user-supplied tabulated functions. The
+functional shapes are:
 
   .. math:: \begin{aligned}
             V_b(r_{ij})      &=& k \, f^b_n(r_{ij}) \\

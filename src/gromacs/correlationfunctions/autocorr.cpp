@@ -1,13 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
- * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2016,2017 by the GROMACS development team.
- * Copyright (c) 2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 1991- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -21,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -30,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \internal \file
  * \brief
@@ -51,6 +47,9 @@
 #include <cstring>
 
 #include <algorithm>
+#include <filesystem>
+#include <string>
+#include <vector>
 
 #include "gromacs/correlationfunctions/expfit.h"
 #include "gromacs/correlationfunctions/integrate.h"
@@ -58,13 +57,14 @@
 #include "gromacs/correlationfunctions/polynomials.h"
 #include "gromacs/fileio/xvgr.h"
 #include "gromacs/math/functions.h"
-#include "gromacs/math/vec.h"
 #include "gromacs/utility/arraysize.h"
 #include "gromacs/utility/fatalerror.h"
 #include "gromacs/utility/futil.h"
 #include "gromacs/utility/real.h"
 #include "gromacs/utility/smalloc.h"
 #include "gromacs/utility/strconvert.h"
+#include "gromacs/utility/vec.h"
+#include "gromacs/utility/vectypes.h"
 
 /*! \brief Shortcut macro to select modes. */
 #define MODE(x) ((mode & (x)) == (x))
@@ -78,9 +78,11 @@ typedef struct
 } t_acf;
 
 /*! \brief Global variable set true if initialization routines are called. */
+// NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)
 static gmx_bool bACFinit = FALSE;
 
 /*! \brief Data structure for storing command line variables. */
+// NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)
 static t_acf acf;
 
 enum
@@ -108,13 +110,13 @@ static void low_do_four_core(int nframes, real c1[], real cfour[], int nCos)
         case enCos:
             for (i = 0; (i < nframes); i++)
             {
-                data[0][i] = cos(c1[i]);
+                data[0][i] = std::cos(c1[i]);
             }
             break;
         case enSin:
             for (i = 0; (i < nframes); i++)
             {
-                data[0][i] = sin(c1[i]);
+                data[0][i] = std::sin(c1[i]);
             }
             break;
         default: gmx_fatal(FARGS, "nCos = %d, %s %d", nCos, __FILE__, __LINE__);
@@ -132,7 +134,6 @@ static void do_ac_core(int nframes, int nout, real corr[], real c1[], int nresta
 {
     int  j, k, j3, jk3, m, n;
     real ccc, cth;
-    rvec xj, xk;
 
     if (nrestart < 1)
     {
@@ -141,8 +142,7 @@ static void do_ac_core(int nframes, int nout, real corr[], real c1[], int nresta
     }
     if (debug)
     {
-        fprintf(debug, "Starting do_ac_core: nframes=%d, nout=%d, nrestart=%d,mode=%lu\n", nframes,
-                nout, nrestart, mode);
+        fprintf(debug, "Starting do_ac_core: nframes=%d, nout=%d, nrestart=%d,mode=%lu\n", nframes, nout, nrestart, mode);
     }
 
     for (j = 0; (j < nout); j++)
@@ -182,6 +182,7 @@ static void do_ac_core(int nframes, int nout, real corr[], real c1[], int nresta
             {
                 unsigned int mmm;
 
+                rvec xj, xk;
                 for (m = 0; (m < DIM); m++)
                 {
                     xj[m] = c1[j3 + m];
@@ -191,8 +192,15 @@ static void do_ac_core(int nframes, int nout, real corr[], real c1[], int nresta
 
                 if (cth - 1.0 > 1.0e-15)
                 {
-                    printf("j: %d, k: %d, xj:(%g,%g,%g), xk:(%g,%g,%g)\n", j, k, xj[XX], xj[YY],
-                           xj[ZZ], xk[XX], xk[YY], xk[ZZ]);
+                    printf("j: %d, k: %d, xj:(%g,%g,%g), xk:(%g,%g,%g)\n",
+                           j,
+                           k,
+                           xj[XX],
+                           xj[YY],
+                           xj[ZZ],
+                           xk[XX],
+                           xk[YY],
+                           xk[ZZ]);
                 }
                 mmm = 1;
                 if (MODE(eacP2))
@@ -219,6 +227,7 @@ static void do_ac_core(int nframes, int nout, real corr[], real c1[], int nresta
             }
             else if (MODE(eacVector))
             {
+                rvec xj, xk;
                 for (m = 0; (m < DIM); m++)
                 {
                     xj[m] = c1[j3 + m];
@@ -237,7 +246,7 @@ static void do_ac_core(int nframes, int nout, real corr[], real c1[], int nresta
     /* Correct for the number of points and copy results to the data array */
     for (j = 0; (j < nout); j++)
     {
-        n     = (nframes - j + (nrestart - 1)) / nrestart;
+        n     = gmx::divideRoundUp(nframes - j, nrestart);
         c1[j] = corr[j] / n;
     }
 }
@@ -260,7 +269,7 @@ static void normalize_acf(int nout, real corr[])
     /* Normalisation makes that c[0] = 1.0 and that other points are scaled
      * accordingly.
      */
-    if (fabs(corr[0]) < 1e-5)
+    if (std::fabs(corr[0]) < 1e-5)
     {
         c0 = 1.0;
     }
@@ -323,7 +332,7 @@ static void norm_and_scale_vectors(int nframes, real c1[], real scale)
 }
 
 /*! \brief Debugging */
-static void dump_tmp(char* s, int n, real c[])
+static void dump_tmp(const char* s, int n, real c[])
 {
     FILE* fp;
     int   i;
@@ -545,7 +554,6 @@ void low_do_autocorr(const char*             fn,
                      int                     eFitFn)
 {
     FILE *   fp, *gp = nullptr;
-    int      i;
     real*    csum;
     real *   ctmp, *fit;
     real     sum, Ct2av, Ctav;
@@ -582,10 +590,11 @@ void low_do_autocorr(const char*             fn,
     /* Print flags and parameters */
     if (bVerbose)
     {
-        printf("Will calculate %s of %d thingies for %d frames\n",
-               title ? title : "autocorrelation", nitem, nframes);
-        printf("bAver = %s, bFour = %s bNormalize= %s\n", gmx::boolToString(bAver),
-               gmx::boolToString(bFour), gmx::boolToString(bNormalize));
+        printf("Will calculate %s of %d thingies for %d frames\n", title ? title : "autocorrelation", nitem, nframes);
+        printf("bAver = %s, bFour = %s bNormalize= %s\n",
+               gmx::boolToString(bAver),
+               gmx::boolToString(bFour),
+               gmx::boolToString(bNormalize));
         printf("mode = %lu, dt = %g, nrestart = %d\n", mode, dt, nrestart);
     }
     /* Allocate temp arrays */
@@ -601,7 +610,7 @@ void low_do_autocorr(const char*             fn,
         if (bVerbose && (((i % 100) == 0) || (i == nitem - 1)))
         {
             fprintf(stderr, "\rThingie %d", i + 1);
-            fflush(stderr);
+            std::fflush(stderr);
         }
 
         if (bFour)
@@ -664,7 +673,7 @@ void low_do_autocorr(const char*             fn,
         {
             gp = xvgropen("ct-distr.xvg", "Correlation times", "item", "time (ps)", oenv);
         }
-        for (i = 0; i < nitem; i++)
+        for (int i = 0; i < nitem; i++)
         {
             if (bNormalize)
             {
@@ -685,12 +694,12 @@ void low_do_autocorr(const char*             fn,
             }
             Ctav += sum;
             Ct2av += sum * sum;
-            if (debug)
+            if (gp)
             {
                 fprintf(gp, "%5d  %.3f\n", i, sum);
             }
         }
-        if (debug)
+        if (gp)
         {
             xvgrclose(gp);
         }
@@ -698,7 +707,8 @@ void low_do_autocorr(const char*             fn,
         {
             Ctav /= nitem;
             Ct2av /= nitem;
-            printf("Average correlation time %.3f Std. Dev. %.3f Error %.3f (ps)\n", Ctav,
+            printf("Average correlation time %.3f Std. Dev. %.3f Error %.3f (ps)\n",
+                   Ctav,
                    std::sqrt((Ct2av - gmx::square(Ctav))),
                    std::sqrt((Ct2av - gmx::square(Ctav)) / (nitem - 1)));
         }
@@ -711,6 +721,7 @@ void low_do_autocorr(const char*             fn,
 }
 
 /*! \brief Legend for selecting Legendre polynomials. */
+// NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)
 static const char* Leg[] = { nullptr, "0", "1", "2", "3", nullptr };
 
 t_pargs* add_acf_pargs(int* npargs, t_pargs* pa)
@@ -803,8 +814,22 @@ void do_autocorr(const char*             fn,
         default: break;
     }
 
-    low_do_autocorr(fn, oenv, title, nframes, nitem, acf.nout, c1, dt, mode, acf.nrestart, bAver,
-                    acf.bNormalize, bDebugMode(), acf.tbeginfit, acf.tendfit, acf.fitfn);
+    low_do_autocorr(fn,
+                    oenv,
+                    title,
+                    nframes,
+                    nitem,
+                    acf.nout,
+                    c1,
+                    dt,
+                    mode,
+                    acf.nrestart,
+                    bAver,
+                    acf.bNormalize,
+                    bDebugMode(),
+                    acf.tbeginfit,
+                    acf.tendfit,
+                    acf.fitfn);
 }
 
 int get_acfnout()

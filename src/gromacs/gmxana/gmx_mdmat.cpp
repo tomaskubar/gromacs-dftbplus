@@ -1,13 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
- * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2017,2018 by the GROMACS development team.
- * Copyright (c) 2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 1991- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -21,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -30,36 +26,50 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 #include "gmxpre.h"
 
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 
 #include <algorithm>
+#include <array>
+#include <filesystem>
+#include <string>
 
 #include "gromacs/commandline/filenm.h"
 #include "gromacs/commandline/pargs.h"
 #include "gromacs/fileio/confio.h"
+#include "gromacs/fileio/filetypes.h"
 #include "gromacs/fileio/matio.h"
+#include "gromacs/fileio/rgb.h"
 #include "gromacs/fileio/trxio.h"
 #include "gromacs/fileio/xvgr.h"
 #include "gromacs/gmxana/gmx_ana.h"
 #include "gromacs/math/functions.h"
-#include "gromacs/math/vec.h"
 #include "gromacs/pbcutil/pbc.h"
 #include "gromacs/pbcutil/rmpbc.h"
+#include "gromacs/topology/atoms.h"
 #include "gromacs/topology/index.h"
 #include "gromacs/topology/topology.h"
+#include "gromacs/utility/arrayref.h"
 #include "gromacs/utility/arraysize.h"
+#include "gromacs/utility/basedefinitions.h"
 #include "gromacs/utility/cstringutil.h"
 #include "gromacs/utility/fatalerror.h"
 #include "gromacs/utility/futil.h"
+#include "gromacs/utility/real.h"
 #include "gromacs/utility/smalloc.h"
+#include "gromacs/utility/vec.h"
+#include "gromacs/utility/vectypes.h"
+
+enum class PbcType : int;
+struct gmx_output_env_t;
 
 
 #define FARAWAY 10000
@@ -229,8 +239,8 @@ int gmx_mdmat(int argc, char* argv[])
     gmx_output_env_t* oenv;
     gmx_rmpbc_t       gpbc = nullptr;
 
-    if (!parse_common_args(&argc, argv, PCA_CAN_TIME, NFILE, fnm, asize(pa), pa, asize(desc), desc,
-                           0, nullptr, &oenv))
+    if (!parse_common_args(
+                &argc, argv, PCA_CAN_TIME, NFILE, fnm, asize(pa), pa, asize(desc), desc, 0, nullptr, &oenv))
     {
         return 0;
     }
@@ -268,9 +278,13 @@ int gmx_mdmat(int argc, char* argv[])
             useatoms.resinfo[i] = top.atoms.resinfo[prevres];
             if (debug)
             {
-                fprintf(debug, "New residue: atom %5s %5s %6d, index entry %5d, newres %5d\n",
+                fprintf(debug,
+                        "New residue: atom %5s %5s %6d, index entry %5d, newres %5d\n",
                         *(top.atoms.resinfo[top.atoms.atom[ii].resind].name),
-                        *(top.atoms.atomname[ii]), ii, i, newres);
+                        *(top.atoms.atomname[ii]),
+                        ii,
+                        i,
+                        newres);
             }
         }
         useatoms.atom[i].resind = newres;
@@ -321,7 +335,7 @@ int gmx_mdmat(int argc, char* argv[])
     }
     do
     {
-        gmx_rmpbc(gpbc, trxnat, box, x);
+        gmx_rmpbc_apply(gpbc, trxnat, box, x);
         nframes++;
         calc_mat(nres, natoms, rndx, x, index, truncate, mdmat, nmat, pbcType, box);
         for (i = 0; (i < nres); i++)
@@ -344,8 +358,22 @@ int gmx_mdmat(int argc, char* argv[])
         if (bFrames)
         {
             sprintf(label, "t=%.0f ps", t);
-            write_xpm(out, 0, label, "Distance (nm)", "Residue Index", "Residue Index", nres, nres,
-                      resnr, resnr, mdmat, 0, truncate, rlo, rhi, &nlevels);
+            write_xpm(out,
+                      0,
+                      label,
+                      "Distance (nm)",
+                      "Residue Index",
+                      "Residue Index",
+                      nres,
+                      nres,
+                      resnr,
+                      resnr,
+                      mdmat,
+                      0,
+                      truncate,
+                      rlo,
+                      rhi,
+                      &nlevels);
         }
     } while (read_next_x(oenv, status, &t, x, box));
     fprintf(stderr, "\n");
@@ -365,28 +393,33 @@ int gmx_mdmat(int argc, char* argv[])
             totmdmat[i][j] /= nframes;
         }
     }
-    write_xpm(opt2FILE("-mean", NFILE, fnm, "w"), 0, "Mean smallest distance", "Distance (nm)",
-              "Residue Index", "Residue Index", nres, nres, resnr, resnr, totmdmat, 0, truncate,
-              rlo, rhi, &nlevels);
+    write_xpm(opt2FILE("-mean", NFILE, fnm, "w"),
+              0,
+              "Mean smallest distance",
+              "Distance (nm)",
+              "Residue Index",
+              "Residue Index",
+              nres,
+              nres,
+              resnr,
+              resnr,
+              totmdmat,
+              0,
+              truncate,
+              rlo,
+              rhi,
+              &nlevels);
 
     if (bCalcN)
     {
-        char** legend;
+        std::array<std::string, 5> legend = {
+            "Total/mean", "Total", "Mean", "# atoms", "Mean/# atoms"
+        };
 
-        snew(legend, 5);
-        for (i = 0; i < 5; i++)
-        {
-            snew(legend[i], STRLEN);
-        }
         tot_nmat(nres, natoms, nframes, totnmat, tot_n, mean_n);
-        fp = xvgropen(ftp2fn(efXVG, NFILE, fnm), "Increase in number of contacts", "Residue",
-                      "Ratio", oenv);
-        sprintf(legend[0], "Total/mean");
-        sprintf(legend[1], "Total");
-        sprintf(legend[2], "Mean");
-        sprintf(legend[3], "# atoms");
-        sprintf(legend[4], "Mean/# atoms");
-        xvgr_legend(fp, 5, legend, oenv);
+        fp = xvgropen(
+                ftp2fn(efXVG, NFILE, fnm), "Increase in number of contacts", "Residue", "Ratio", oenv);
+        xvgrLegend(fp, legend, oenv);
         for (i = 0; (i < nres); i++)
         {
             if (mean_n[i] == 0)
@@ -397,8 +430,14 @@ int gmx_mdmat(int argc, char* argv[])
             {
                 ratio = tot_n[i] / mean_n[i];
             }
-            fprintf(fp, "%3d  %8.3f  %3d  %8.3f  %3d  %8.3f\n", i + 1, ratio, tot_n[i], mean_n[i],
-                    natm[i], mean_n[i] / natm[i]);
+            fprintf(fp,
+                    "%3d  %8.3f  %3d  %8.3f  %3d  %8.3f\n",
+                    i + 1,
+                    ratio,
+                    tot_n[i],
+                    mean_n[i],
+                    natm[i],
+                    mean_n[i] / natm[i]);
         }
         xvgrclose(fp);
     }

@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2019- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \internal \file
  * \brief Defines the constraint element for the modular simulator
@@ -43,7 +42,6 @@
 
 #include "constraintelement.h"
 
-#include "gromacs/math/vec.h"
 #include "gromacs/mdlib/mdatoms.h"
 #include "gromacs/mdtypes/commrec.h"
 #include "gromacs/mdtypes/enerdata.h"
@@ -51,6 +49,7 @@
 #include "gromacs/mdtypes/mdatom.h"
 #include "gromacs/mdtypes/state.h"
 #include "gromacs/utility/fatalerror.h"
+#include "gromacs/utility/vec.h"
 
 #include "energydata.h"
 #include "freeenergyperturbationdata.h"
@@ -61,18 +60,18 @@
 namespace gmx
 {
 template<ConstraintVariable variable>
-ConstraintsElement<variable>::ConstraintsElement(Constraints*                constr,
-                                                 StatePropagatorData*        statePropagatorData,
-                                                 EnergyData*                 energyData,
+ConstraintsElement<variable>::ConstraintsElement(Constraints*         constr,
+                                                 StatePropagatorData* statePropagatorData,
+                                                 EnergyData*          energyData,
                                                  FreeEnergyPerturbationData* freeEnergyPerturbationData,
-                                                 bool                        isMaster,
-                                                 FILE*                       fplog,
-                                                 const t_inputrec*           inputrec,
-                                                 const t_mdatoms*            mdAtoms) :
+                                                 bool              isMain,
+                                                 FILE*             fplog,
+                                                 const t_inputrec* inputrec,
+                                                 const t_mdatoms*  mdAtoms) :
     nextVirialCalculationStep_(-1),
     nextEnergyWritingStep_(-1),
     nextLogWritingStep_(-1),
-    isMasterRank_(isMaster),
+    isMainRank_(isMain),
     statePropagatorData_(statePropagatorData),
     energyData_(energyData),
     freeEnergyPerturbationData_(freeEnergyPerturbationData),
@@ -88,23 +87,30 @@ template<ConstraintVariable variable>
 void ConstraintsElement<variable>::elementSetup()
 {
     if (!inputrec_->bContinuation
-        && ((variable == ConstraintVariable::Positions && inputrec_->eI == eiMD)
-            || (variable == ConstraintVariable::Velocities && inputrec_->eI == eiVV)))
+        && ((variable == ConstraintVariable::Positions && inputrec_->eI == IntegrationAlgorithm::MD)
+            || (variable == ConstraintVariable::Velocities && inputrec_->eI == IntegrationAlgorithm::VV)))
     {
-        const real lambdaBonded = freeEnergyPerturbationData_
-                                          ? freeEnergyPerturbationData_->constLambdaView()[efptBONDED]
-                                          : 0;
+        const real lambdaBonded =
+                freeEnergyPerturbationData_
+                        ? freeEnergyPerturbationData_->constLambdaView()[static_cast<int>(
+                                  FreeEnergyPerturbationCouplingType::Bonded)]
+                        : 0;
         // Constrain the initial coordinates and velocities
-        do_constrain_first(
-                fplog_, constr_, inputrec_, statePropagatorData_->totalNumAtoms(),
-                statePropagatorData_->localNumAtoms(), statePropagatorData_->positionsView(),
-                statePropagatorData_->velocitiesView(), statePropagatorData_->box(), lambdaBonded);
+        do_constrain_first(fplog_,
+                           constr_,
+                           *inputrec_,
+                           statePropagatorData_->localNumAtoms(),
+                           statePropagatorData_->positionsView(),
+                           statePropagatorData_->velocitiesView(),
+                           statePropagatorData_->box(),
+                           lambdaBonded);
 
-        if (isMasterRank_)
+        if (isMainRank_)
         {
-            if (inputrec_->eConstrAlg == econtLINCS)
+            if (inputrec_->eConstrAlg == ConstraintAlgorithm::Lincs)
             {
-                fprintf(fplog_, "RMS relative constraint deviation after constraining: %.2e\n",
+                fprintf(fplog_,
+                        "RMS relative constraint deviation after constraining: %.2e\n",
                         constr_->rmsd());
             }
         }
@@ -112,7 +118,7 @@ void ConstraintsElement<variable>::elementSetup()
 }
 
 template<ConstraintVariable variable>
-void ConstraintsElement<variable>::scheduleTask(Step step,
+void ConstraintsElement<variable>::scheduleTask(Step                       step,
                                                 Time gmx_unused            time,
                                                 const RegisterRunFunction& registerRunFunction)
 {
@@ -121,9 +127,8 @@ void ConstraintsElement<variable>::scheduleTask(Step step,
     bool writeEnergy     = (step == nextEnergyWritingStep_);
 
     // register constraining
-    registerRunFunction([this, step, calculateVirial, writeLog, writeEnergy]() {
-        apply(step, calculateVirial, writeLog, writeEnergy);
-    });
+    registerRunFunction([this, step, calculateVirial, writeLog, writeEnergy]()
+                        { apply(step, calculateVirial, writeLog, writeEnergy); });
 }
 
 template<ConstraintVariable variable>
@@ -137,7 +142,10 @@ void ConstraintsElement<variable>::apply(Step step, bool calculateVirial, bool w
     ArrayRefWithPadding<RVec> v;
 
     const real lambdaBonded =
-            freeEnergyPerturbationData_ ? freeEnergyPerturbationData_->constLambdaView()[efptBONDED] : 0;
+            freeEnergyPerturbationData_
+                    ? freeEnergyPerturbationData_
+                              ->constLambdaView()[static_cast<int>(FreeEnergyPerturbationCouplingType::Bonded)]
+                    : 0;
     real dvdlambda = 0;
 
     switch (variable)
@@ -155,12 +163,24 @@ void ConstraintsElement<variable>::apply(Step step, bool calculateVirial, bool w
         default: gmx_fatal(FARGS, "Constraint algorithm not implemented for modular simulator.");
     }
 
-    constr_->apply(writeLog, writeEnergy, step, 1, 1.0, x, xprime, min_proj, statePropagatorData_->box(),
-                   lambdaBonded, &dvdlambda, v, calculateVirial, vir_con, variable);
+    constr_->apply(writeLog || writeEnergy,
+                   step,
+                   1,
+                   1.0,
+                   x,
+                   xprime,
+                   min_proj,
+                   statePropagatorData_->box(),
+                   lambdaBonded,
+                   &dvdlambda,
+                   v,
+                   calculateVirial,
+                   vir_con,
+                   variable);
 
     if (calculateVirial)
     {
-        if (inputrec_->eI == eiVV)
+        if (inputrec_->eI == IntegrationAlgorithm::VV)
         {
             // For some reason, the shake virial in VV is reset twice a step.
             // Energy element will only do this once per step.
@@ -178,7 +198,8 @@ void ConstraintsElement<variable>::apply(Step step, bool calculateVirial, bool w
      * Cf. Issue #1255
      */
     const real c_dvdlConstraintCorrectionFactor = EI_VV(inputrec_->eI) ? 2.0 : 1.0;
-    energyData_->enerdata()->term[F_DVDL_CONSTR] += c_dvdlConstraintCorrectionFactor * dvdlambda;
+    energyData_->enerdata()->term[InteractionFunction::dHdLambdaConstraint] +=
+            c_dvdlConstraintCorrectionFactor * dvdlambda;
 }
 
 template<ConstraintVariable variable>
@@ -214,12 +235,18 @@ ISimulatorElement* ConstraintsElement<variable>::getElementPointerImpl(
         StatePropagatorData*                    statePropagatorData,
         EnergyData*                             energyData,
         FreeEnergyPerturbationData*             freeEnergyPerturbationData,
-        GlobalCommunicationHelper gmx_unused* globalCommunicationHelper)
+        GlobalCommunicationHelper gmx_unused*   globalCommunicationHelper,
+        ObservablesReducer* /*observablesReducer*/)
 {
     return builderHelper->storeElement(std::make_unique<ConstraintsElement<variable>>(
-            legacySimulatorData->constr, statePropagatorData, energyData,
-            freeEnergyPerturbationData, MASTER(legacySimulatorData->cr), legacySimulatorData->fplog,
-            legacySimulatorData->inputrec, legacySimulatorData->mdAtoms->mdatoms()));
+            legacySimulatorData->constr_,
+            statePropagatorData,
+            energyData,
+            freeEnergyPerturbationData,
+            legacySimulatorData->cr_->commMyGroup.isMainRank(),
+            legacySimulatorData->fpLog_,
+            legacySimulatorData->inputRec_,
+            legacySimulatorData->mdAtoms_->mdatoms()));
 }
 
 // Explicit template initializations

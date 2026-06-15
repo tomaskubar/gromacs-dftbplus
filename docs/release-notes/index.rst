@@ -8,22 +8,166 @@ releases of |Gromacs|. Major releases contain changes to the
 functionality supported, whereas patch releases contain only fixes for
 issues identified in the corresponding major releases.
 
-Two versions of |Gromacs| are under active maintenance, the 2022
-series and the 2021 series. In the latter, only highly conservative
-fixes will be made, and only to address issues that affect scientific
+Two version series of |Gromacs| are under active maintenance and
+within support lifetime at any time. In 2026, they are the 2026 series
+and the 2025 series. In the latter, only highly conservative fixes
+will be made, and only to address issues that affect scientific
 correctness. Naturally, some of those releases will be made after the
-year 2021 ends, but we keep 2021 in the name so users understand how
-up to date their version is. Such fixes will also be incorporated into
-the 2022 release series, as appropriate. Around the time the 2023
-release is made, the 2021 series will no longer be maintained.
+year 2025 ends, but we keep the year of the original release in the
+version name so that users understand how up to date their version
+is. Such fixes will also be incorporated into the more recent release
+series, as appropriate. Around the time the 2027 release is made, the
+2025 series will no longer be maintained.
 
 Where issue numbers are reported in these release notes, more details
 can be found on the `issue tracker`_ at that issue number.
 
-|Gromacs| 2022 series
+|Gromacs| 2026 series
 ---------------------
 
 .. todolist::
+
+Patch releases
+^^^^^^^^^^^^^^
+.. toctree::
+   :maxdepth: 1
+
+   2026/2026.3
+   2026/2026.2
+   2026/2026.1
+
+Major release
+^^^^^^^^^^^^^
+
+.. toctree::
+   :maxdepth: 1
+
+   2026/major/highlights
+   2026/major/features
+   2026/major/performance
+   2026/major/bugs-fixed
+   2026/major/deprecated-functionality
+   2026/major/removed-functionality
+   2026/major/portability
+   2026/major/miscellaneous
+
+|Gromacs| 2025 series
+---------------------
+
+.. todolist::
+
+Patch releases
+^^^^^^^^^^^^^^
+.. toctree::
+   :maxdepth: 1
+
+   2025/2025.5
+   2025/2025.4
+   2025/2025.3
+   2025/2025.2
+   2025/2025.1
+
+Major release
+^^^^^^^^^^^^^
+
+.. toctree::
+   :maxdepth: 1
+
+   2025/major/highlights
+   2025/major/features
+   2025/major/performance
+   2025/major/tools
+   2025/major/bugs-fixed
+   2025/major/deprecated-functionality
+   2025/major/removed-functionality
+   2025/major/portability
+   2025/major/miscellaneous
+
+Older (unmaintained) |Gromacs| series
+-------------------------------------------------------
+
+|Gromacs| 2024 series
+---------------------
+
+.. todolist::
+
+Patch releases
+^^^^^^^^^^^^^^
+.. toctree::
+   :maxdepth: 1
+
+   2024/2024.7
+   2024/2024.6
+   2024/2024.5
+   2024/2024.4
+   2024/2024.3
+   2024/2024.2
+   2024/2024.1
+
+Major release
+^^^^^^^^^^^^^
+
+.. toctree::
+   :maxdepth: 1
+
+   2024/major/highlights
+   2024/major/features
+   2024/major/performance
+   2024/major/tools
+   2024/major/bugs-fixed
+   2024/major/deprecated-functionality
+   2024/major/portability
+   2024/major/miscellaneous
+
+
+|Gromacs| 2023 series
+---------------------
+
+.. todolist::
+
+Patch releases
+^^^^^^^^^^^^^^
+.. toctree::
+   :maxdepth: 1
+
+   2023/2023.5
+   2023/2023.4
+   2023/2023.3
+   2023/2023.2
+   2023/2023.1
+
+
+Major release
+^^^^^^^^^^^^^
+
+.. toctree::
+   :maxdepth: 1
+
+   2023/major/highlights
+   2023/major/features
+   2023/major/performance
+   2023/major/api
+   2023/major/tools
+   2023/major/bugs-fixed
+   2023/major/deprecated-functionality
+   2023/major/removed-functionality
+   2023/major/portability
+   2023/major/miscellaneous
+
+|Gromacs| 2022 series
+---------------------
+
+Patch releases
+^^^^^^^^^^^^^^
+.. toctree::
+   :maxdepth: 1
+
+   2022/2022.6
+   2022/2022.5
+   2022/2022.4
+   2022/2022.3
+   2022/2022.2
+   2022/2022.1
 
 Major release
 ^^^^^^^^^^^^^
@@ -34,6 +178,7 @@ Major release
    2022/major/highlights
    2022/major/features
    2022/major/performance
+   2022/major/api
    2022/major/tools
    2022/major/bugs-fixed
    2022/major/deprecated-functionality
@@ -44,6 +189,21 @@ Major release
 
 |Gromacs| 2021 series
 ---------------------
+
+Patch releases
+^^^^^^^^^^^^^^
+
+.. toctree::
+   :maxdepth: 1
+
+   2021/2021.7
+   2021/2021.6
+   2021/2021.5
+   2021/2021.4
+   2021/2021.3
+   2021/2021.2
+   2021/2021.1
+
 
 Major release
 ^^^^^^^^^^^^^
@@ -62,9 +222,6 @@ Major release
    2021/major/miscellaneous
 
 
-Older (unmaintained) |Gromacs| series
--------------------------------------------------------
-
 |Gromacs| 2020 series
 ---------------------
 
@@ -74,6 +231,8 @@ Patch releases
 .. toctree::
    :maxdepth: 1
 
+   2020/2020.7
+   2020/2020.6
    2020/2020.5
    2020/2020.4
    2020/2020.3

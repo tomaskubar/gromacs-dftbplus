@@ -1,11 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2011,2012,2013,2014,2015 by the GROMACS development team.
- * Copyright (c) 2016,2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2011- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -19,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -28,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \file
  * \brief
@@ -85,10 +83,10 @@ class IExceptionInfo
 {
 public:
     virtual ~IExceptionInfo();
-    IExceptionInfo()                          = default;
-    IExceptionInfo(const IExceptionInfo&)     = default;
-    IExceptionInfo(IExceptionInfo&&) noexcept = default;
-    IExceptionInfo& operator=(const IExceptionInfo&) = default;
+    IExceptionInfo()                                     = default;
+    IExceptionInfo(const IExceptionInfo&)                = default;
+    IExceptionInfo(IExceptionInfo&&) noexcept            = default;
+    IExceptionInfo& operator=(const IExceptionInfo&)     = default;
     IExceptionInfo& operator=(IExceptionInfo&&) noexcept = default;
 };
 
@@ -142,7 +140,8 @@ private:
 struct ThrowLocation
 {
     //! Creates an object for storing the throw location.
-    ThrowLocation(const char* func, const char* file, int line) : func(func), file(file), line(line)
+    ThrowLocation(const char* function, const char* fileName, int lineNumber) :
+        func(function), file(fileName), line(lineNumber)
     {
     }
 
@@ -253,10 +252,10 @@ public:
     // about missing noexcept otherwise.
     ~GromacsException() noexcept override {}
 
-    GromacsException()                            = default;
-    GromacsException(const GromacsException&)     = default;
-    GromacsException(GromacsException&&) noexcept = default;
-    GromacsException& operator=(const GromacsException&) = default;
+    GromacsException()                                       = default;
+    GromacsException(const GromacsException&)                = default;
+    GromacsException(GromacsException&&) noexcept            = default;
+    GromacsException& operator=(const GromacsException&)     = default;
     GromacsException& operator=(GromacsException&&) noexcept = default;
 
     /*! \brief
@@ -377,11 +376,9 @@ private:
  * other overloads of `operator<<` for ExceptionInfo objects, in case someone
  * would like to declare those.  But currently we do not have such overloads, so
  * if the enable_if causes problems with some compilers, it can be removed.
- *
- * \todo Use std::is_base_of_v when CUDA 11 is a requirement.
  */
 template<class Exception, class Tag, class T>
-inline std::enable_if_t<std::is_base_of<GromacsException, Exception>::value, Exception>
+inline std::enable_if_t<std::is_base_of_v<GromacsException, Exception>, Exception>
 operator<<(Exception ex, const ExceptionInfo<Tag, T>& item)
 {
     ex.setInfo(item);
@@ -588,6 +585,25 @@ public:
 };
 
 /*! \brief
+ * Exception class for MD module setup/initialization failures.
+ *
+ * Used when an MD module fails to complete its required setup,
+ * e.g. missing notifications, unreported decisions, or
+ * inconsistent initialization state.
+ *
+ * \inpublicapi
+ */
+class MDModuleSetupError : public GromacsException
+{
+public:
+    //! \copydoc FileIOError::FileIOError()
+    explicit MDModuleSetupError(const ExceptionInitializer& details) : GromacsException(details) {}
+
+    int errorCode() const override;
+};
+
+
+/*! \brief
  * Macro for throwing an exception.
  *
  * \param[in] e    Exception object to throw.
@@ -741,8 +757,11 @@ int processExceptionAtExit(const std::exception& ex);
    GMX_CATCH_ALL_AND_EXIT_WITH_FATAL_ERROR;
    \endcode
  */
-#define GMX_CATCH_ALL_AND_EXIT_WITH_FATAL_ERROR \
-    catch (const std::exception& ex) { ::gmx::processExceptionAsFatalError(ex); }
+#define GMX_CATCH_ALL_AND_EXIT_WITH_FATAL_ERROR  \
+    catch (const std::exception& ex)             \
+    {                                            \
+        ::gmx::processExceptionAsFatalError(ex); \
+    }
 
 //! \}
 

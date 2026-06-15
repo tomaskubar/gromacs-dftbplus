@@ -1,10 +1,9 @@
 #
 # This file is part of the GROMACS molecular simulation package.
 #
-# Copyright (c) 2019,2020, by the GROMACS development team, led by
-# Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
-# and including many others, as listed in the AUTHORS file in the
-# top-level source directory and at http://www.gromacs.org.
+# Copyright 2019- The GROMACS Authors
+# and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+# Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
 #
 # GROMACS is free software; you can redistribute it and/or
 # modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
 #
 # You should have received a copy of the GNU Lesser General Public
 # License along with GROMACS; if not, see
-# http://www.gnu.org/licenses, or write to the Free Software Foundation,
+# https://www.gnu.org/licenses, or write to the Free Software Foundation,
 # Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
 #
 # If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
 # consider code for inclusion in the official distribution, but
 # derived work must not be called official GROMACS. Details are found
 # in the README & COPYING files - if they are missing, get the
-# official version at http://www.gromacs.org.
+# official version at https://www.gromacs.org.
 #
 # To help us fund GROMACS development, we humbly ask that you cite
-# the research papers on the package. Check out http://www.gromacs.org.
+# the research papers on the package. Check out https://www.gromacs.org.
 
 # Stub file for future higher-level CMake management. Ultimately, we want to
 # drive building and testing from the repository-level CMake configuration, but
@@ -60,26 +59,17 @@
 #    current ``PYTHONPATH`` environment variable or after ``sys.path.append()``.
 #  * "To build a package" means to create a package from sources that may need
 #    to be configured or compiled before the package can be imported. Reference
-#    the ``distutils`` ``build`` and ``build_ext`` commands. For example, when
-#    scikit-build is directed to build a package through the ``setuptools`` interface,
-#    it invokes CMake to build **and install** a CMake library target for the C++
-#    extension module in the Python package.
+#    the ``distutils`` ``build`` and ``build_ext`` commands.
 #
 # For basic building and testing of the Python package, we don't necessarily
 # need to create a distribution archive or install the Python package outside
 # of the build tree. We can use a CMake ExternalProject to build and install the
-# ``_gmxapi`` binary extension module from `python_packaging/src` into the main
+# ``_gmxapi`` binary extension module from `python_packaging/gmxapi` into the main
 # project build tree (note ``ExternalProject_add()`` option ``INSTALL_DIR``).
 # If avoiding Python packaging tools in this way, the Python source files (``.py`` files)
 # will have to be copied explicitly in additional CMake ``install(FILES)`` directives,
 # and the ExternalProject installation directory will have to be added to the
 # PYTHONPATH environment variable where the package needs to be available.
-#
-# Such an ExternalProject could be used as part of the process of packaging a
-# distribution archive through arguments to the Python side of ``skbuild``,
-# but coupling that machinery is not necessary. The packaging infrastructure may
-# be simplest and most maintainable by using scikit-build with its default
-# behavior (letting it maintain its own environment and artifacts).
 #
 # Note that a binary distribution needs to be built for a specific major and minor
 # Python release, and is often sensitive to a particular Python distribution or
@@ -94,10 +84,10 @@
 #
 # To drive the packaging of a Python package distribution archive
 # by a higher-level CMake configuration, a CMakeLists.txt file at this level would
-# 1. configure: copy the contents of `src` to the build directory, potentially
+# 1. configure: copy the contents of `gmxapi` to the build directory, potentially
 #    configuring version info and CMakeToolchain for GROMACS
-# 2. build: run (cd $CMAKE_CURRENT_BINARY_DIR/src && python setup.py sdist),
-#    producing $CMAKE_CURRENT_BINARY_DIR/src/dist/gmxapi-0.1.0.dev0+fr7.tar.gz or similar
+# 2. build: run (cd $CMAKE_CURRENT_BINARY_DIR/gmxapi && python setup.py sdist),
+#    producing $CMAKE_CURRENT_BINARY_DIR/gmxapi/dist/gmxapi-0.1.0.dev0+fr7.tar.gz or similar
 #    (add_custom_command(OUTPUT $sdist_name ...) where sdist_name is determined with
 #    `python setup.py --full-name` and a choice of argument for `python setup.py sdist --formats`
 # 3. install: copy the source distribution to $GROMACS_INSTALL_DIR/sdist/ or something
@@ -109,5 +99,5 @@
 #    4. run `pytest copy_of_src/test`
 
 set(PYBIND11_PYTHON_VERSION "3")
-add_subdirectory(src)
+add_subdirectory(gmxapi)
 add_subdirectory(sample_restraint)

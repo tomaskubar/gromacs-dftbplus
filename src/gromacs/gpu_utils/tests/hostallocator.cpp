@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2017,2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2017- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \internal \file
  * \brief
@@ -44,24 +43,36 @@
 
 #include "config.h"
 
+#include <cstddef>
+#include <cstdint>
+
+#include <memory>
+#include <string>
 #include <type_traits>
 #include <vector>
 
 #include <gtest/gtest.h>
 
+#include "gromacs/gpu_utils/device_context.h"
 #include "gromacs/gpu_utils/gpu_utils.h"
 #include "gromacs/hardware/device_management.h"
-#include "gromacs/math/vectypes.h"
+#include "gromacs/math/tests/testarrayrefs.h"
 #include "gromacs/utility/arrayref.h"
 #include "gromacs/utility/real.h"
+#include "gromacs/utility/vectypes.h"
 
-#include "gromacs/math/tests/testarrayrefs.h"
+#include "testutils/test_device.h"
 #include "testutils/test_hardware_environment.h"
 
 #include "devicetransfers.h"
 
 namespace gmx
 {
+namespace detail
+{
+template<typename T>
+struct PaddingTraits;
+} // namespace detail
 
 namespace test
 {
@@ -98,7 +109,7 @@ ArrayRef<char> charArrayRefFromArray(T* data, size_t size)
 
 //! Does a device transfer of \c input to the device in \c gpuInfo, and back to \c output.
 template<typename T>
-void runTest(const DeviceInformation& deviceInfo, ArrayRef<T> input, ArrayRef<T> output)
+void runTest(const DeviceContext& deviceContext, ArrayRef<T> input, ArrayRef<T> output)
 {
     // Convert the views of input and output to flat non-const chars,
     // so that there's no templating when we call doDeviceTransfers.
@@ -106,21 +117,20 @@ void runTest(const DeviceInformation& deviceInfo, ArrayRef<T> input, ArrayRef<T>
     auto outputRef = charArrayRefFromArray(output.data(), output.size());
 
     ASSERT_EQ(inputRef.size(), outputRef.size());
-
-    doDeviceTransfers(deviceInfo, inputRef, outputRef);
+    doDeviceTransfers(deviceContext, inputRef, outputRef);
     compareViews(input, output);
 }
 
 struct MoveOnly
 {
-    MoveOnly(real x = 0) : x(x) {}
-    MoveOnly(const MoveOnly&) = delete;
-    MoveOnly(MoveOnly&&)      = default;
+    MoveOnly(real x = 0) : x_(x) {}
+    MoveOnly(const MoveOnly&)            = delete;
+    MoveOnly(MoveOnly&&)                 = default;
     MoveOnly& operator=(const MoveOnly&) = delete;
-    MoveOnly& operator=(MoveOnly&&) = default;
-    bool      operator==(const MoveOnly& o) const { return x == o.x; }
-    real      operator*=(int scaleFactor) { return x *= scaleFactor; }
-    real      x;
+    MoveOnly& operator=(MoveOnly&&)      = default;
+    bool      operator==(const MoveOnly& o) const { return x_ == o.x_; }
+    real      operator*=(int scaleFactor) { return x_ *= scaleFactor; }
+    real      x_;
 };
 
 } // namespace test
@@ -149,7 +159,7 @@ struct HostAllocatorTest : HostMemoryTest<T>
 {
     using VectorType = PaddedHostVector<T>; //!< PaddedHostVector of type tested
 };
-TYPED_TEST_CASE(HostAllocatorTest, TestTypes);
+TYPED_TEST_SUITE(HostAllocatorTest, TestTypes);
 
 //! Typed test fixture (no mem/gpu initializtion - much faster)
 template<typename T>
@@ -157,7 +167,7 @@ struct HostAllocatorTestNoMem : ::testing::Test
 {
     using VectorType = PaddedHostVector<T>; //!< PaddedHostVector of type tested
 };
-TYPED_TEST_CASE(HostAllocatorTestNoMem, TestTypes);
+TYPED_TEST_SUITE(HostAllocatorTestNoMem, TestTypes);
 
 //! Typed test fixture for tests requiring a copyable type
 template<typename T>
@@ -167,12 +177,12 @@ struct HostAllocatorTestNoMemCopyable : HostAllocatorTestNoMem<T>
 //! The types used in testing minus move only types
 using TestTypesCopyable = ::testing::Types<int32_t, real, RVec>;
 
-TYPED_TEST_CASE(HostAllocatorTestNoMemCopyable, TestTypesCopyable);
+TYPED_TEST_SUITE(HostAllocatorTestNoMemCopyable, TestTypesCopyable);
 
 //! Typed test fixture for tests requiring a copyable type
 template<typename T>
 using HostAllocatorTestCopyable = HostAllocatorTest<T>;
-TYPED_TEST_CASE(HostAllocatorTestCopyable, TestTypesCopyable);
+TYPED_TEST_SUITE(HostAllocatorTestCopyable, TestTypesCopyable);
 
 // Note that in GoogleTest typed tests, the use of TestFixture:: and
 // this-> is sometimes required to get access to things in the fixture
@@ -202,13 +212,13 @@ TYPED_TEST(HostAllocatorTestCopyable, TransfersWithoutPinningWork)
 {
     for (const auto& testDevice : getTestHardwareEnvironment()->getTestDeviceList())
     {
-        setActiveDevice(testDevice->deviceInfo());
+        testDevice->deviceContext().activate();
         typename TestFixture::VectorType input;
-        fillInput(&input, 1);
+        resizeAndFillInput(&input, 3, 1);
         typename TestFixture::VectorType output;
         output.resizeWithPadding(input.size());
 
-        runTest(testDevice->deviceInfo(), makeArrayRef(input), makeArrayRef(output));
+        runTest(testDevice->deviceContext(), makeArrayRef(input), makeArrayRef(output));
     }
 }
 
@@ -216,7 +226,7 @@ TYPED_TEST(HostAllocatorTestCopyable, FillInputAlsoWorksAfterCallingReserve)
 {
     typename TestFixture::VectorType input;
     input.reserveWithPadding(3);
-    fillInput(&input, 1);
+    resizeAndFillInput(&input, 3, 1);
 }
 
 TYPED_TEST(HostAllocatorTestNoMem, CreateVector)
@@ -272,6 +282,39 @@ TYPED_TEST(HostAllocatorTestNoMemCopyable, CopyConstruction)
     EXPECT_FALSE(input4.get_allocator().pinningPolicy() == PinningPolicy::PinnedIfSupported);
 }
 
+template<typename T>
+struct HoldsHostVector
+{
+    HoldsHostVector(HostAllocationPolicy p) : v(1, p) {}
+    HostVector<T> v;
+};
+
+TYPED_TEST(HostAllocatorTestNoMemCopyable, CopyConstructionOfStructHoldingAHostVectorDoesNotCopyTheAllocator)
+{
+    using Holder = HoldsHostVector<typename TestFixture::VectorType::value_type>;
+    for (const auto& testDevice : getTestHardwareEnvironment()->getTestDeviceList())
+    {
+        testDevice->deviceContext().activate();
+        SCOPED_TRACE("By default allocator does not propagate");
+        {
+            Holder c{ { PinningPolicy::PinnedIfSupported } };
+            EXPECT_EQ(c.v.get_allocator().pinningPolicy(), PinningPolicy::PinnedIfSupported);
+            std::vector<Holder> v(2, c);
+            const auto          defaultPolicy = PinningPolicy::CannotBePinned;
+            EXPECT_EQ(v[0].v.get_allocator().pinningPolicy(), defaultPolicy);
+            EXPECT_EQ(v[1].v.get_allocator().pinningPolicy(), defaultPolicy);
+        }
+        SCOPED_TRACE("Allocator can propagate");
+        {
+            Holder c{ { PinningPolicy::PinnedIfSupported, true } };
+            EXPECT_EQ(c.v.get_allocator().pinningPolicy(), PinningPolicy::PinnedIfSupported);
+            std::vector<Holder> v(2, c);
+            EXPECT_EQ(v[0].v.get_allocator().pinningPolicy(), c.v.get_allocator().pinningPolicy());
+            EXPECT_EQ(v[1].v.get_allocator().pinningPolicy(), c.v.get_allocator().pinningPolicy());
+        }
+    }
+}
+
 TYPED_TEST(HostAllocatorTestNoMem, Swap)
 {
     typename TestFixture::VectorType input1;
@@ -287,51 +330,63 @@ TYPED_TEST(HostAllocatorTestNoMem, Swap)
 TYPED_TEST(HostAllocatorTestNoMem, Comparison)
 {
     using AllocatorType = typename TestFixture::VectorType::allocator_type;
-    EXPECT_EQ(AllocatorType{}, AllocatorType{});
-    // Should be false for different pinning policy
-    EXPECT_NE(AllocatorType{}, AllocatorType{ PinningPolicy::PinnedIfSupported });
+    {
+        SCOPED_TRACE("Allocators with identical policy objects compare equal");
+        EXPECT_EQ(AllocatorType{}, AllocatorType{});
+    }
+    {
+        SCOPED_TRACE("Allocators with different policy objects may or may not compare equal");
+        EXPECT_NE(AllocatorType{}, AllocatorType{ PinningPolicy::PinnedIfSupported });
+        EXPECT_EQ(AllocatorType{ PinningPolicy::PinnedIfSupported },
+                  AllocatorType{ PinningPolicy::PinnedIfSupported });
+    }
 }
 
-#if GMX_GPU_CUDA
+#if GMX_GPU_CUDA || GMX_GPU_SYCL || GMX_GPU_HIP
 
-// Policy suitable for pinning is only supported for a CUDA build
+// Policy suitable for pinning is supported for a CUDA, HIP or SYCL build
 
-TYPED_TEST(HostAllocatorTestCopyable, TransfersWithPinningWorkWithCuda)
+TYPED_TEST(HostAllocatorTestCopyable, TransfersWithPinningWorkWithDevice)
 {
     for (const auto& testDevice : getTestHardwareEnvironment()->getTestDeviceList())
     {
-        setActiveDevice(testDevice->deviceInfo());
+        testDevice->deviceContext().activate();
         typename TestFixture::VectorType input;
         changePinningPolicy(&input, PinningPolicy::PinnedIfSupported);
-        fillInput(&input, 1);
+        resizeAndFillInput(&input, 3, 1);
         typename TestFixture::VectorType output;
         changePinningPolicy(&output, PinningPolicy::PinnedIfSupported);
         output.resizeWithPadding(input.size());
 
-        runTest(testDevice->deviceInfo(), makeArrayRef(input), makeArrayRef(output));
+        runTest(testDevice->deviceContext(), makeArrayRef(input), makeArrayRef(output));
     }
 }
+
+#endif
+
+#if GMX_GPU_CUDA || GMX_GPU_HIP
+
+// While we can allocate pinned memory with SYCL, we don't support isHostMemoryPinned yet. See #4522
 
 //! Helper function for wrapping a call to isHostMemoryPinned.
 template<typename VectorType>
 bool isPinned(const VectorType& v)
 {
-    void* data = const_cast<void*>(static_cast<const void*>(v.data()));
-    return isHostMemoryPinned(data);
+    return isHostMemoryPinned(v.data());
 }
 
-TYPED_TEST(HostAllocatorTestCopyable, ManualPinningOperationsWorkWithCuda)
+TYPED_TEST(HostAllocatorTestCopyable, ManualPinningOperationsWork)
 {
     for (const auto& testDevice : getTestHardwareEnvironment()->getTestDeviceList())
     {
-        setActiveDevice(testDevice->deviceInfo());
+        testDevice->deviceContext().activate();
         typename TestFixture::VectorType input;
         changePinningPolicy(&input, PinningPolicy::PinnedIfSupported);
         EXPECT_TRUE(input.get_allocator().pinningPolicy() == PinningPolicy::PinnedIfSupported);
         EXPECT_TRUE(input.empty());
-        fillInput(&input, 1);
+        resizeAndFillInput(&input, 3, 1);
         // realloc and copy).
-        auto oldInputData = input.data();
+        auto* oldInputData = input.data();
         changePinningPolicy(&input, PinningPolicy::CannotBePinned);
         EXPECT_FALSE(isPinned(input));
         // These cannot be equal as both had to be allocated at the same
@@ -362,15 +417,26 @@ TYPED_TEST(HostAllocatorTest, StatefulAllocatorUsesMemory)
 
 TEST(HostAllocatorUntypedTest, Comparison)
 {
-    // Should always be true for the same policy, indpendent of value_type
-    EXPECT_EQ(HostAllocator<float>{}, HostAllocator<double>{});
+    {
+        SCOPED_TRACE(
+                "Allocators with identical policy types compare equal independently of the type of "
+                "object allocated");
+        EXPECT_EQ(HostAllocator<float>{}, HostAllocator<double>{});
+    }
+    {
+        SCOPED_TRACE(
+                "Allocators with different policy types do not compare equal regardless of type of "
+                "object allocated");
+        EXPECT_NE(HostAllocator<float>{}, PageAlignedAllocator<float>{});
+        EXPECT_NE(HostAllocator<float>{}, PageAlignedAllocator<double>{});
+    }
 }
 
 //! Declare allocator types to test.
 using AllocatorTypesToTest =
         ::testing::Types<HostAllocator<real>, HostAllocator<int32_t>, HostAllocator<RVec>, HostAllocator<MoveOnly>>;
 
-TYPED_TEST_CASE(AllocatorTest, AllocatorTypesToTest);
+TYPED_TEST_SUITE(AllocatorTest, AllocatorTypesToTest);
 
 } // namespace test
 } // namespace gmx

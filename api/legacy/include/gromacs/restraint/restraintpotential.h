@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2018- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 
 #ifndef GROMACS_RESTRAINT_RESTRAINTPOTENTIAL_H
@@ -59,9 +58,9 @@
 #include <ostream>
 #include <vector>
 
-#include "gromacs/math/vectypes.h"
+#include "gromacs/utility/vectypes.h"
 
-// TODO: Get from a header once the public API settles down a bit.
+// TODO(3152): Get from a header once the public API settles down a bit.
 namespace gmxapi
 {
 class SessionResources;
@@ -74,6 +73,10 @@ namespace gmx
  * \brief Provide a vector type name with a more stable interface than RVec and a more stable
  * implementation than vec3<>.
  *
+ * \warning ABI depends on compile-time value of GMX_DOUBLE, which is usually provided
+ * through the build system by `target_link_libraries(... Gromacs::libgromacs)` in the
+ * client's `CMakeLists.txt`.
+ *
  * \ingroup module_restraint
  *
  * \internal
@@ -83,6 +86,10 @@ using Vector = ::gmx::RVec;
 
 /*!
  * \brief Structure to hold the results of IRestraintPotential::evaluate().
+ *
+ * \warning ABI depends on compile-time value of GMX_DOUBLE, which is usually provided
+ * through the build system by `target_link_libraries(... Gromacs::libgromacs)` in the
+ * client's `CMakeLists.txt`.
  *
  * \ingroup module_restraint
  */
@@ -149,6 +156,10 @@ public:
  * \todo Template headers can help to build compatible calculation methods with different input
  * requirements. For reference, see https://github.com/kassonlab/sample_restraint
  *
+ * \warning ABI depends on compile-time value of GMX_DOUBLE, which is usually provided
+ * through the build system by `target_link_libraries(... Gromacs::libgromacs)` in the
+ * client's `CMakeLists.txt`.
+ *
  * \ingroup module_restraint
  */
 class IRestraintPotential
@@ -173,9 +184,9 @@ public:
     /*!
      * \brief Call-back hook for restraint implementations.
      *
-     * An update function to be called on the simulation master rank/thread periodically
+     * An update function to be called on the simulation main rank/thread periodically
      * by the Restraint framework.
-     * Receives the same input as the evaluate() method, but is only called on the master
+     * Receives the same input as the evaluate() method, but is only called on the main
      * rank of a simulation to allow implementation code to be thread-safe without knowing
      * anything about the domain decomposition.
      *
@@ -204,7 +215,7 @@ public:
      * \brief Find out what sites this restraint is configured to act on.
      * \return
      */
-    virtual std::vector<int> sites() const = 0;
+    [[nodiscard]] virtual std::vector<int> sites() const = 0;
 
     /*!
      * \brief Allow Session-mediated interaction with other resources or workflow elements.

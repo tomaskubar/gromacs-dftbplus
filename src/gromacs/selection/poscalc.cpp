@@ -1,12 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2009,2010,2011,2012,2013 by the GROMACS development team.
- * Copyright (c) 2014,2015,2016,2017,2018 by the GROMACS development team.
- * Copyright (c) 2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2009- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -20,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -29,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \internal \file
  * \brief
@@ -70,16 +67,17 @@
 #include <algorithm>
 #include <vector>
 
-#include "gromacs/math/vec.h"
 #include "gromacs/selection/indexutil.h"
+#include "gromacs/selection/position.h"
+#include "gromacs/topology/block.h"
 #include "gromacs/trajectory/trajectoryframe.h"
 #include "gromacs/utility/arrayref.h"
 #include "gromacs/utility/exceptions.h"
 #include "gromacs/utility/gmxassert.h"
 #include "gromacs/utility/smalloc.h"
+#include "gromacs/utility/vec.h"
 
 #include "centerofmass.h"
-#include "position.h"
 
 namespace gmx
 {
@@ -139,7 +137,7 @@ public:
         for (int i = 0; i < size; ++i)
         {
             const int ii = index[i];
-            GMX_ASSERT(ii >= 0 && ii <= ssize(mapToFrameAtoms_) && mapToFrameAtoms_[ii] != -1,
+            GMX_ASSERT(ii >= 0 && ii <= gmx::ssize(mapToFrameAtoms_) && mapToFrameAtoms_[ii] != -1,
                        "Invalid input atom index");
             tmpFrameAtoms_[i] = mapToFrameAtoms_[ii];
         }
@@ -328,7 +326,7 @@ void PositionCalculationCollection::typeFromEnum(const char* post, e_poscalc_t* 
     {
         GMX_THROW(InternalError("Unknown position calculation type"));
     }
-    if (strlen(ptr) < 7)
+    if (std::strlen(ptr) < 7)
     {
         GMX_THROW(InternalError("Unknown position calculation type"));
     }
@@ -361,21 +359,26 @@ PositionCalculationCollection::requiredTopologyInfoForType(const char* post, boo
  */
 
 PositionCalculationCollection::Impl::Impl() :
-    top_(nullptr),
-    first_(nullptr),
-    last_(nullptr),
-    bInit_(false)
+    top_(nullptr), first_(nullptr), last_(nullptr), bInit_(false)
 {
 }
 
 PositionCalculationCollection::Impl::~Impl()
 {
-    // Loop backwards, because there can be internal references in that are
+    // Loop backwards, because there can be internal references that are
     // correctly handled by this direction.
     while (last_ != nullptr)
     {
-        GMX_ASSERT(last_->refcount == 1, "Dangling references to position calculations");
-        gmx_ana_poscalc_free(last_);
+        if (last_->refcount != 1)
+        {
+            std::fprintf(stderr,
+                         "Warning: Dangling references to position calculations. Refcount = %d\n",
+                         last_->refcount);
+        }
+        else
+        {
+            gmx_ana_poscalc_free(last_);
+        }
     }
 }
 
@@ -1341,17 +1344,17 @@ void gmx_ana_poscalc_update(gmx_ana_poscalc_t* pc,
                 break;
             default:
                 // TODO: It would probably be better to do this without the type casts.
-                gmx_calc_comg_block(top, fr->x, reinterpret_cast<t_block*>(&pc->b), index.data(),
-                                    bMass, p->x);
+                gmx_calc_comg_block(
+                        top, fr->x, reinterpret_cast<t_block*>(&pc->b), index.data(), bMass, p->x);
                 if (p->v && fr->bV)
                 {
-                    gmx_calc_comg_block(top, fr->v, reinterpret_cast<t_block*>(&pc->b),
-                                        index.data(), bMass, p->v);
+                    gmx_calc_comg_block(
+                            top, fr->v, reinterpret_cast<t_block*>(&pc->b), index.data(), bMass, p->v);
                 }
                 if (p->f && fr->bF)
                 {
-                    gmx_calc_comg_f_block(top, fr->f, reinterpret_cast<t_block*>(&pc->b),
-                                          index.data(), bMass, p->f);
+                    gmx_calc_comg_f_block(
+                            top, fr->f, reinterpret_cast<t_block*>(&pc->b), index.data(), bMass, p->f);
                 }
                 break;
         }

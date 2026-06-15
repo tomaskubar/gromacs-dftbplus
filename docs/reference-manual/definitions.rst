@@ -29,8 +29,8 @@ We define the *lowercase* subscripts :math:`i`, :math:`j`, :math:`k` and
 *position vector* of particle :math:`i`, and using this notation:
 
 .. math:: \begin{aligned}
-          \mathbf{r}_{ij}	=	\mathbf{r}_j-\mathbf{r}_i\\
-          r_{ij}=	| \mathbf{r}_{ij} | \end{aligned}
+          \mathbf{r}_{ij} = \mathbf{r}_j-\mathbf{r}_i \\
+          r_{ij}          = | \mathbf{r}_{ij} |       \end{aligned}
           :label: eqnnotation
 
 The force on particle :math:`i` is denoted by
@@ -151,7 +151,7 @@ the factor :math:`f` in expressions that evaluate :math:`\Phi` and
 :math:`\mathbf{E}`:
 
 .. math:: \begin{aligned}
-          \Phi(\mathbf{r}) = f \sum_j \frac{q_j}{| \mathbf{r}-\mathbf{r}_j | } 	\\
+          \Phi(\mathbf{r}) = f \sum_j \frac{q_j}{| \mathbf{r}-\mathbf{r}_j | } \\
           \mathbf{E}(\mathbf{r}) = f \sum_j q_j \frac{(\mathbf{r}-\mathbf{r}_j)}{| \mathbf{r}-\mathbf{r}_j| ^3}\end{aligned}
           :label: eqnelecfacinclude
 
@@ -275,7 +275,7 @@ many parts of the code we managed to avoid double precision for
 arithmetic, by paying attention to summation order or reorganization of
 mathematical expressions. The default configuration uses mixed
 precision, but it is easy to turn on double precision by adding the
-option ``-DGMX\_DOUBLE=on`` to ``cmake``. Double precision will be 20 to 100%
+option ``-DGMX_DOUBLE=on`` to ``cmake``. Double precision will be 20 to 100%
 slower than mixed precision depending on the architecture you are
 running on. Double precision will use somewhat more memory and run
 input, energy and full-precision trajectory files will be almost twice

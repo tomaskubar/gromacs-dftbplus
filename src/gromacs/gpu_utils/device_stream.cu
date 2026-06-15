@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2020- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \internal \file
  *
@@ -44,6 +43,8 @@
 
 #include "device_stream.h"
 
+#include <cstdio>
+
 #include "gromacs/gpu_utils/cudautils.cuh"
 #include "gromacs/utility/exceptions.h"
 #include "gromacs/utility/gmxassert.h"
@@ -54,21 +55,27 @@ DeviceStream::DeviceStream(const DeviceContext& /* deviceContext */,
                            const bool /* useTiming */)
 {
     cudaError_t stat;
+    // Note that the device we're running on does not have to
+    // support priorities, because we are querying the priority
+    // range, which in that case will be a single value.
+    int lowestPriority;
+    int highestPriority;
+    stat = cudaDeviceGetStreamPriorityRange(&lowestPriority, &highestPriority);
+    gmx::checkDeviceError(stat, "Could not query CUDA stream priority range.");
+    int middlePriority = (lowestPriority + highestPriority) / 2;
 
-    if (priority == DeviceStreamPriority::Normal)
+    if (priority == DeviceStreamPriority::Low)
     {
-        stat = cudaStreamCreate(&stream_);
-        gmx::checkDeviceError(stat, "Could not create CUDA stream.");
+        stat = cudaStreamCreateWithPriority(&stream_, cudaStreamDefault, lowestPriority);
+        gmx::checkDeviceError(stat, "Could not create CUDA stream with low priority.");
+    }
+    else if (priority == DeviceStreamPriority::Normal)
+    {
+        stat = cudaStreamCreateWithPriority(&stream_, cudaStreamDefault, middlePriority);
+        gmx::checkDeviceError(stat, "Could not create CUDA streami with middle pirority.");
     }
     else if (priority == DeviceStreamPriority::High)
     {
-        // Note that the device we're running on does not have to
-        // support priorities, because we are querying the priority
-        // range, which in that case will be a single value.
-        int highestPriority;
-        stat = cudaDeviceGetStreamPriorityRange(nullptr, &highestPriority);
-        gmx::checkDeviceError(stat, "Could not query CUDA stream priority range.");
-
         stat = cudaStreamCreateWithPriority(&stream_, cudaStreamDefault, highestPriority);
         gmx::checkDeviceError(stat, "Could not create CUDA stream with high priority.");
     }
@@ -79,8 +86,13 @@ DeviceStream::~DeviceStream()
     if (isValid())
     {
         cudaError_t stat = cudaStreamDestroy(stream_);
-        GMX_RELEASE_ASSERT(stat == cudaSuccess,
-                           ("Failed to release CUDA stream. " + gmx::getDeviceErrorString(stat)).c_str());
+        if (stat != cudaSuccess)
+        {
+            // Don't throw in the destructor, just print a warning
+            std::fprintf(stderr,
+                         "Failed to release CUDA stream. %s\n",
+                         gmx::getDeviceErrorString(stat).c_str());
+        }
         stream_ = nullptr;
     }
 }
@@ -101,3 +113,5 @@ void DeviceStream::synchronize() const
     GMX_RELEASE_ASSERT(stat == cudaSuccess,
                        ("cudaStreamSynchronize failed. " + gmx::getDeviceErrorString(stat)).c_str());
 }
+
+void issueClFlushInStream(const DeviceStream& /*deviceStream*/) {}

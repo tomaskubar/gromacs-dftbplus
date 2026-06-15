@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2019- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \internal \file
  * \brief Defines the checkpoint helper for the modular simulator
@@ -43,6 +42,9 @@
 
 #include "checkpointhelper.h"
 
+#include <functional>
+#include <type_traits>
+
 #include "gromacs/domdec/domdec.h"
 #include "gromacs/mdlib/mdoutf.h"
 #include "gromacs/mdtypes/checkpointdata.h"
@@ -51,6 +53,8 @@
 #include "gromacs/mdtypes/observableshistory.h"
 #include "gromacs/mdtypes/pullhistory.h"
 #include "gromacs/mdtypes/state.h"
+#include "gromacs/modularsimulator/modularsimulatorinterfaces.h"
+#include "gromacs/utility/basedefinitions.h"
 #include "gromacs/utility/stringutil.h"
 
 #include "trajectoryelement.h"
@@ -62,7 +66,7 @@ CheckpointHelper::CheckpointHelper(std::vector<std::tuple<std::string, ICheckpoi
                                    int                                initStep,
                                    TrajectoryElement*                 trajectoryElement,
                                    FILE*                              fplog,
-                                   t_commrec*                         cr,
+                                   const t_commrec*                   cr,
                                    ObservablesHistory*                observablesHistory,
                                    gmx_walltime_accounting*           walltime_accounting,
                                    t_state*                           state_global,
@@ -117,15 +121,17 @@ void CheckpointHelper::writeCheckpoint(Step step, Time time)
     WriteCheckpointDataHolder checkpointDataHolder;
     for (const auto& [key, client] : clients_)
     {
-        client->saveCheckpointState(
-                MASTER(cr_) ? std::make_optional(checkpointDataHolder.checkpointData(key)) : std::nullopt,
-                cr_);
+        client->saveCheckpointState(cr_->commMyGroup.isMainRank()
+                                            ? std::make_optional(checkpointDataHolder.checkpointData(key))
+                                            : std::nullopt,
+                                    cr_->commMyGroup,
+                                    cr_->dd);
     }
 
-    if (MASTER(cr_))
+    if (cr_->commMyGroup.isMainRank())
     {
-        mdoutf_write_checkpoint(trajectoryElement_->outf_, fplog_, cr_, step, time, state_global_,
-                                observablesHistory_, &checkpointDataHolder);
+        mdoutf_write_checkpoint(
+                trajectoryElement_->outf_, fplog_, cr_, step, time, state_global_, observablesHistory_, &checkpointDataHolder);
     }
 }
 
@@ -136,7 +142,7 @@ std::optional<SignallerCallback> CheckpointHelper::registerLastStepCallback()
 
 CheckpointHelperBuilder::CheckpointHelperBuilder(std::unique_ptr<ReadCheckpointDataHolder> checkpointDataHolder,
                                                  StartingBehavior startingBehavior,
-                                                 t_commrec*       cr) :
+                                                 const t_commrec* cr) :
     resetFromCheckpoint_(startingBehavior != StartingBehavior::NewSimulation),
     checkpointDataHolder_(std::move(checkpointDataHolder)),
     checkpointHandler_(nullptr),
@@ -164,18 +170,22 @@ void CheckpointHelperBuilder::registerClient(ICheckpointHelperClient* client)
     clientsMap_[key] = client;
     if (resetFromCheckpoint_)
     {
-        if (MASTER(cr_) && !checkpointDataHolder_->keyExists(key))
+        if (cr_->commMyGroup.isMainRank() && !checkpointDataHolder_->keyExists(key))
         {
             throw SimulationAlgorithmSetupError(
                     formatString(
                             "CheckpointHelper client with key %s registered for checkpointing, "
                             "but %s does not exist in the input checkpoint file.",
-                            key.c_str(), key.c_str())
+                            key.c_str(),
+                            key.c_str())
                             .c_str());
         }
         client->restoreCheckpointState(
-                MASTER(cr_) ? std::make_optional(checkpointDataHolder_->checkpointData(key)) : std::nullopt,
-                cr_);
+                cr_->commMyGroup.isMainRank()
+                        ? std::make_optional(checkpointDataHolder_->checkpointData(key))
+                        : std::nullopt,
+                cr_->commMyGroup,
+                cr_->dd);
     }
 }
 

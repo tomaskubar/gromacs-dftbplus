@@ -1,8 +1,8 @@
-GROMACS 2020.2 release notes
-----------------------------
+|Gromacs| 2020.2 release notes
+------------------------------
 
 This version was released on April 30th, 2020. These release notes
-document the changes that have taken place in GROMACS since the
+document the changes that have taken place in |Gromacs| since the
 previous 2020.1 version, to fix known issues. It also incorporates all
 fixes made in version 2019.6 and earlier, which you can find described
 in the :ref:`release-notes`.
@@ -67,14 +67,14 @@ Fixes for ``gmx`` tools
 ^^^^^^^^^^^^^^^^^^^^^^^
 
 Time output unit fixes
-^^^^^^^^^^^^^^^^^^^^^^
+""""""""""""""""""""""
 
 When selecting a time unit of microseconds or larger,
 ``gmx tool -tu`` now produces the correct string in .xvg and
 particularly .xvgr plots
 
 Fix do_dssp
-^^^^^^^^^^^
+"""""""""""
 
 The tool would fail with a segmentation fault.
 
@@ -84,7 +84,7 @@ Fixes that affect portability
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 Give clearer message about not detecting IBM_VSX support in gcc > 9
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+"""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
 
 CMake would fail with a confusing error message.
 

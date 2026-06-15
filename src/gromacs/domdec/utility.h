@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2018- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \internal \file
  *
@@ -42,10 +41,21 @@
 #ifndef GMX_DOMDEC_DOMDEC_UTILITY_H
 #define GMX_DOMDEC_DOMDEC_UTILITY_H
 
-#include "gromacs/math/vectypes.h"
-#include "gromacs/mdtypes/forcerec.h"
+#include <cstddef>
+
+#include <array>
+#include <vector>
+
+#include "gromacs/domdec/domdec.h"
+#include "gromacs/mdtypes/atominfo.h"
+#include "gromacs/utility/arrayref.h"
+#include "gromacs/utility/real.h"
+#include "gromacs/utility/vectypes.h"
 
 #include "domdec_internal.h"
+
+class t_state;
+struct t_forcerec;
 
 namespace gmx
 {
@@ -54,9 +64,9 @@ class ArrayRef;
 }
 
 /*! \brief Returns true if the DLB state indicates that the balancer is on. */
-static inline bool isDlbOn(const gmx_domdec_comm_t* comm)
+static inline bool isDlbOn(const DlbState& dlbState)
 {
-    return (comm->dlbState == DlbState::onCanTurnOff || comm->dlbState == DlbState::onUser);
+    return (dlbState == DlbState::onCanTurnOff || dlbState == DlbState::onUser);
 };
 
 /*! \brief Returns true if the DLB state indicates that the balancer is off/disabled.
@@ -64,13 +74,6 @@ static inline bool isDlbOn(const gmx_domdec_comm_t* comm)
 static inline bool isDlbDisabled(const DlbState& dlbState)
 {
     return (dlbState == DlbState::offUser || dlbState == DlbState::offForever);
-};
-
-/*! \brief Returns true if the DLB state indicates that the balancer is off/disabled.
- */
-static inline bool isDlbDisabled(const gmx_domdec_comm_t* comm)
-{
-    return isDlbDisabled(comm->dlbState);
 };
 
 /*! \brief Returns the character, x/y/z, corresponding to dimension dim */
@@ -82,17 +85,21 @@ void make_tric_corr_matrix(int npbcdim, const matrix box, matrix tcm);
 /*! \brief Ensure box obeys the screw restrictions, fatal error if not */
 void check_screw_box(const matrix box);
 
-/*! \brief Return the charge group information flags for charge group cg */
-static inline int ddcginfo(gmx::ArrayRef<const cginfo_mb_t> cginfo_mb, int cg)
+/*! \brief Return the atom information flags for atom a */
+static inline int ddGetAtomInfo(gmx::ArrayRef<const gmx::AtomInfoWithinMoleculeBlock> atomInfoForEachMoleculeBlock,
+                                int a)
 {
+    GMX_ASSERT(isValidGlobalAtom(a), "We should only look up real atoms (not fillers, value -1)");
+
     size_t index = 0;
-    while (cg >= cginfo_mb[index].cg_end)
+    while (a >= atomInfoForEachMoleculeBlock[index].indexOfLastAtomInMoleculeBlock)
     {
         index++;
     }
-    const cginfo_mb_t& cgimb = cginfo_mb[index];
+    const gmx::AtomInfoWithinMoleculeBlock& atomInfoOfMoleculeBlock = atomInfoForEachMoleculeBlock[index];
 
-    return cgimb.cginfo[(cg - cgimb.cg_start) % cgimb.cg_mod];
+    return atomInfoOfMoleculeBlock.atomInfo[(a - atomInfoOfMoleculeBlock.indexOfFirstAtomInMoleculeBlock)
+                                            % atomInfoOfMoleculeBlock.atomInfo.size()];
 };
 
 /*! \brief Returns the number of MD steps for which load has been recorded */

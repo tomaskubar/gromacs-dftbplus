@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2020- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \internal \file
  * \brief
@@ -48,11 +47,15 @@
 #define NBLIB_LISTEDFORCES_TRANSFORMATIONS_H
 
 #include <algorithm>
+#include <array>
+#include <type_traits>
 
-#include "definitions.h"
+#include "nblib/listed_forces/definitions.h"
 
 namespace nblib
 {
+template<class T, class TL>
+struct Contains;
 
 namespace detail
 {
@@ -112,13 +115,17 @@ inline std::array<int, 5> nblibOrdering(const std::array<int, 5>& t)
 } // namespace detail
 
 //! \brief sort key function object to sort 2-center interactions
-inline bool interactionSortKey(const TwoCenterInteractionIndex& lhs, const TwoCenterInteractionIndex& rhs)
+template<class Interaction>
+std::enable_if_t<Contains<Interaction, SupportedTwoCenterTypes>{}, bool>
+interactionSortKey(const InteractionIndex<Interaction>& lhs, const InteractionIndex<Interaction>& rhs)
 {
     return lhs < rhs;
 }
 
 //! \brief sort key function object to sort 3-center interactions
-inline bool interactionSortKey(const ThreeCenterInteractionIndex& lhs, const ThreeCenterInteractionIndex& rhs)
+template<class Interaction>
+std::enable_if_t<Contains<Interaction, SupportedThreeCenterTypes>{}, bool>
+interactionSortKey(const InteractionIndex<Interaction>& lhs, const InteractionIndex<Interaction>& rhs)
 {
     // position [1] is the center atom of the angle and is the only sort key
     // to allow use of std::equal_range to obtain a range of all angles with a given central atom
@@ -126,7 +133,9 @@ inline bool interactionSortKey(const ThreeCenterInteractionIndex& lhs, const Thr
 }
 
 //! \brief sort key function object to sort 4-center interactions
-inline bool interactionSortKey(const FourCenterInteractionIndex& lhs, const FourCenterInteractionIndex& rhs)
+template<class Interaction>
+std::enable_if_t<Contains<Interaction, SupportedFourCenterTypes>{}, bool>
+interactionSortKey(const InteractionIndex<Interaction>& lhs, const InteractionIndex<Interaction>& rhs)
 {
     // we only take the first center-axis-particle into account
     // this allows use of std::equal_range to find all four-center interactions with a given j-index
@@ -136,7 +145,10 @@ inline bool interactionSortKey(const FourCenterInteractionIndex& lhs, const Four
 }
 
 //! \brief sort key function object to sort 5-center interactions
-inline bool interactionSortKey(const FiveCenterInteractionIndex& lhs, const FiveCenterInteractionIndex& rhs)
+//! \brief sort key function object to sort 4-center interactions
+template<class Interaction>
+std::enable_if_t<Contains<Interaction, SupportedFiveCenterTypes>{}, bool>
+interactionSortKey(const InteractionIndex<Interaction>& lhs, const InteractionIndex<Interaction>& rhs)
 {
     return lhs < rhs;
 }

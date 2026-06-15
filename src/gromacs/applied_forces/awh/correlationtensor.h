@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2015,2016,2017,2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2015- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 
 /*! \internal \file
@@ -58,6 +57,25 @@ namespace gmx
 {
 
 struct CorrelationBlockDataHistory;
+
+/*! \brief
+ * Returns the volume element of the correlation metric.
+ *
+ * The matrix of the metric equals the time-integrated correlation matrix. The volume element of
+ * the metric therefore equals the square-root of the absolute value of its determinant
+ * according to the standard formula for a volume element in a metric space.
+ *
+ * The order of the tensor elements is:
+ * 1-dimensional tensor: [0]
+ * 2-dimensional tensor: [0 1; 1 2]
+ * 3-dimensional tensor: [0 1 3; 1 2 4; 3 4 5]
+ *
+ * \param[in] correlationIntegral  A pre-filled vector of time integral elements. The correlation
+ * index lists the elements of the upper-triangular correlation matrix row-wise, so e.g. in 3D:
+ * 0 (0,0), 1 (1,0), 2 (1,1), 3 (2,0), 4 (2,1), 5 (2,2).
+ * \returns the volume element.
+ */
+double getSqrtDeterminant(gmx::ArrayRef<const double> correlationIntegral);
 
 /*! \internal \brief Correlation block averaging weight-only data.
  */
@@ -160,13 +178,13 @@ public:
     const std::vector<double>& correlationIntegral() const { return correlationIntegral_; }
 
 private:
-    /* Weight sum data, indentical for all dimensions */
+    /* Weight sum data, identical for all dimensions */
     double blockSumWeight_;                 /**< Sum weights for current block. */
     double blockSumSquareWeight_;           /**< Sum weights^2 for current block. */
     double sumOverBlocksSquareBlockWeight_; /**< Sum over all blocks in the simulation of block weight^2. */
     double sumOverBlocksBlockSquareWeight_; /**< Sum over all blocks in the simulation of weight^2. */
     double blockLength_; /**< The length of each block used for block averaging */
-    int    previousBlockIndex_; /**< The last block index data was added to (needed only for block length in terms of time). */
+    int previousBlockIndex_; /**< The last block index data was added to (needed only for block length in terms of time). */
 
     /* Sums for each coordinate dimension. */
     std::vector<CoordData> coordData_; /**< Array with sums for each coordinate dimension. */
@@ -251,7 +269,8 @@ public:
      * \param[in] weight               The weight of the data.
      * \param[in] data                 One data point for each grid dimension.
      * \param[in] blockLengthInWeight  If true, a block is measured in probability weight, otherwise
-     * in time. \param[in] t                    The simulation time.
+     *                                 in time.
+     * \param[in] t                    The simulation time.
      */
     void addData(double weight, gmx::ArrayRef<const double> data, bool blockLengthInWeight, double t);
 

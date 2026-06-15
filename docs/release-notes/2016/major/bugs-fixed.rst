@@ -140,7 +140,7 @@ The trr header-reading routine returned an "OK" value even if the
 magic number was wrong, which might lead to chaotic results
 everywhere.  This led to problems if other code (e.g. cpptraj)
 mistakenly wrote a wrong-endian trr file, which was then used with
-GROMACS. (This should never be a thing for XDR files, which are
+|Gromacs|. (This should never be a thing for XDR files, which are
 defined to be big endian, but such code has existed.)
 
 :issue:`1926`
@@ -160,7 +160,8 @@ These document fixes for issues that were identified as having been
 introduced into the release-2016 branch since it diverged from
 release-5-1. These will not appear in the final release notes, because
 no formal release is thought to have had the problem. Of course, the
-tracked `issues <issue tracker>`_ remain available should further discussion arise.
+tracked `issues <https://gitlab.com/gromacs/gromacs/-/issues/>`_
+remain available should further discussion arise.
 
 Fixed bug in v-rescale thermostat & replica exchange
 """"""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
@@ -208,7 +209,7 @@ Note that we still have 3 different sources for this count left.
 
 Added support for linking against external TinyXML-2
 """"""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
-This permits convenient packaging of GROMACS by distributions, but
+This permits convenient packaging of |Gromacs| by distributions, but
 it got lost from gerrit while rebasing.
 
 :issue:`1956`

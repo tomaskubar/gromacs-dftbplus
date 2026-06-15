@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2015,2016,2017,2018,2019, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2015- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 
 /*! \libinternal \file
@@ -47,13 +46,17 @@
 #ifndef GMX_MDTYPES_AWHHISTORY_H
 #define GMX_MDTYPES_AWHHISTORY_H
 
+#include <cstdint>
+
 #include <vector>
 
 #include "gromacs/mdtypes/awh_correlation_history.h"
-#include "gromacs/utility/basedefinitions.h"
 
 namespace gmx
 {
+enum class CheckpointDataOperation;
+template<CheckpointDataOperation operation>
+class CheckpointData;
 
 /*! \cond INTERNAL */
 
@@ -71,19 +74,20 @@ struct AwhPointStateHistory
     double  log_pmfsum;          /**< Logarithm of the PMF histogram (for 1 replica) */
     double  visits_iteration;    /**< Visits to this bin this iteration (1 replica) */
     double  visits_tot;          /**< Accumulated visits to this bin */
+    double  localWeightSum;      /**< The weight contribution from the local walker */
 };
 
 //! The global AWH bias history state, contains most data of the corresponding struct in awh.h.
 struct AwhBiasStateHistory
 {
-    int     umbrellaGridpoint; /**< Index for the current umbrella reference coordinate point (for umbrella potential type) */
-    int     origin_index_updatelist; /**< Point index of the origin of the subgrid that has been touched since last update. */
-    int     end_index_updatelist; /**< Point index of the end of the subgrid that has been touched since last update. */
-    bool    in_initial;           /**< True if in the intial stage. */
-    bool    equilibrateHistogram; /**< True if histogram needs equilibration. */
-    double  histSize;             /**< Size of reference weight histogram. */
-    double  logScaledSampleWeight; /**< The log of the current sample weight, scaled because of the histogram rescaling. */
-    double  maxLogScaledSampleWeight; /**< Maximum sample weight obtained for previous (smaller) histogram sizes. */
+    int umbrellaGridpoint; /**< Index for the current umbrella reference coordinate point (for umbrella potential type) */
+    int origin_index_updatelist; /**< Point index of the origin of the subgrid that has been touched since last update. */
+    int end_index_updatelist; /**< Point index of the end of the subgrid that has been touched since last update. */
+    bool   in_initial;           /**< True if in the initial stage. */
+    bool   equilibrateHistogram; /**< True if histogram needs equilibration. */
+    double histSize;             /**< Size of reference weight histogram. */
+    double logScaledSampleWeight; /**< The log of the current sample weight, scaled because of the histogram rescaling. */
+    double maxLogScaledSampleWeight; /**< Maximum sample weight obtained for previous (smaller) histogram sizes. */
     int64_t numUpdates; /**< The number of updates. */
 
     /*! \brief Constructor. */
@@ -118,6 +122,14 @@ struct AwhHistory
 
     /*! \brief Constructor. */
     AwhHistory() : potentialOffset(0) {}
+
+    /*! \brief Allows to read and write checkpoint within modular simulator
+     *
+     * \tparam operation  Whether we're reading or writing
+     * \param checkpointData  The CheckpointData object
+     */
+    template<CheckpointDataOperation operation>
+    void doCheckpoint(CheckpointData<operation> checkpointData);
 };
 
 /*! \endcond */

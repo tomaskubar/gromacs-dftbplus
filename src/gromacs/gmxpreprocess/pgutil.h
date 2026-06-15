@@ -1,12 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
- * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 1991- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -20,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -29,14 +26,16 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 
 #ifndef GMX_GMXPREPROCESS_PGUTIL_H
 #define GMX_GMXPREPROCESS_PGUTIL_H
+
+#include <optional>
 
 #include "gromacs/utility/arrayref.h"
 #include "gromacs/utility/basedefinitions.h"
@@ -46,34 +45,39 @@ struct t_atom;
 struct t_atoms;
 
 /*! \brief
- * Search an atom in array of pointers to strings
+ * Search for an atom named \c atomName in \c atoms
  *
- * If \p type starts with '-', start from \p start.
+ * If \p atomName starts with '-', start from \p start.
  * Will search backwards from that.
  *
  * \p bondtype is only used for printing the error/warning string,
  * when \p bondtype ="check" no error/warning is issued.
  * When \p bAllowMissing = FALSE an fatal error is issued, otherwise a warning.
  *
- * \param[in] type             Atom type string to parse
- * \param[in] start            Possible position to begin search from.
+ * \param[in] atomName         Atom name string to match.
+ * \param[in] start            Possible atom index within \c atoms from which to begin search.
  * \param[in] atoms            Global topology atoms information.
  * \param[in] bondtype         Information what kind of bond, used for error messages.
  * \param[in] bAllowMissing    If true, missing bond types are allowed.
  *                             AKA allow cartoon physics.
  * \param[in] cyclicBondsIndex Information about bonds creating cyclic molecules,
  *                             empty if no such bonds exist.
+ * \return Atom index within \c atoms matching \c atomName, or std::nullopt if none found.
  */
-int search_atom(const char*              type,
-                int                      start,
-                const t_atoms*           atoms,
-                const char*              bondtype,
-                bool                     bAllowMissing,
-                gmx::ArrayRef<const int> cyclicBondsIndex);
+std::optional<int> search_atom(const char*              atomName,
+                               int                      start,
+                               const t_atoms*           atoms,
+                               const char*              bondtype,
+                               bool                     bAllowMissing,
+                               gmx::ArrayRef<const int> cyclicBondsIndex);
 
-/* Similar to search_atom, but this routine searches for the specified
- * atom in residue resind.
+/* Similar to search_atom, but this routine searches for the named
+ * atom in residue with index \c resind.
  */
-int search_res_atom(const char* type, int resind, const t_atoms* atoms, const char* bondtype, bool bAllowMissing);
+std::optional<int> search_res_atom(const char*    atomName,
+                                   int            resind,
+                                   const t_atoms* atoms,
+                                   const char*    bondtype,
+                                   bool           bAllowMissing);
 
 #endif

@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2016,2017,2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2016- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,29 +26,38 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 #include "gmxpre.h"
 
-#include "keyvaluetreetransform.h"
+#include "gromacs/utility/keyvaluetreetransform.h"
 
 #include <functional>
 #include <map>
 #include <memory>
+#include <string>
 #include <typeindex>
+#include <utility>
 #include <vector>
 
+#include "gromacs/utility/any.h"
 #include "gromacs/utility/exceptions.h"
+#include "gromacs/utility/gmxassert.h"
 #include "gromacs/utility/ikeyvaluetreeerror.h"
+#include "gromacs/utility/keyvaluetree.h"
 #include "gromacs/utility/keyvaluetreebuilder.h"
 #include "gromacs/utility/stringcompare.h"
 #include "gromacs/utility/stringutil.h"
 
 namespace gmx
 {
+namespace internal
+{
+class KeyValueTreeTransformerImpl;
+} // namespace internal
 
 /********************************************************************
  * IKeyValueTreeTransformRules
@@ -65,8 +73,7 @@ class KeyValueTreeTransformRulesScoped::Impl : public IKeyValueTreeTransformRule
 {
 public:
     Impl(internal::KeyValueTreeTransformerImpl* impl, const KeyValueTreePath& prefix) :
-        impl_(impl),
-        prefix_(prefix)
+        impl_(impl), prefix_(prefix)
     {
     }
 
@@ -97,8 +104,8 @@ KeyValueTreeTransformRulesScoped::KeyValueTreeTransformRulesScoped(internal::Key
 
 KeyValueTreeTransformRulesScoped::KeyValueTreeTransformRulesScoped(KeyValueTreeTransformRulesScoped&&) noexcept = default;
 
-KeyValueTreeTransformRulesScoped& KeyValueTreeTransformRulesScoped::
-                                  operator=(KeyValueTreeTransformRulesScoped&&) noexcept = default;
+KeyValueTreeTransformRulesScoped&
+KeyValueTreeTransformRulesScoped::operator=(KeyValueTreeTransformRulesScoped&&) noexcept = default;
 
 KeyValueTreeTransformRulesScoped::~KeyValueTreeTransformRulesScoped() {}
 
@@ -198,8 +205,7 @@ public:
         typedef std::map<std::string, Rule, StringCompare> ChildRuleMap;
 
         explicit Rule(StringCompareType keyMatchType) :
-            expectedType_(typeid(void)),
-            childRules_(keyMatchType)
+            expectedType_(typeid(void)), childRules_(keyMatchType)
         {
         }
 
@@ -257,8 +263,7 @@ public:
     {
     public:
         explicit Transformer(IKeyValueTreeErrorHandler* errorHandler) :
-            errorHandler_(errorHandler),
-            backMapping_(new KeyValueTreeBackMapping)
+            errorHandler_(errorHandler), backMapping_(new KeyValueTreeBackMapping)
         {
             if (errorHandler_ == nullptr)
             {
@@ -507,8 +512,7 @@ public:
 
 KeyValueTreeTransformRuleBuilder::KeyValueTreeTransformRuleBuilder(internal::KeyValueTreeTransformerImpl* impl,
                                                                    const KeyValueTreePath& prefix) :
-    impl_(impl),
-    data_(new Data(prefix))
+    impl_(impl), data_(new Data(prefix))
 {
 }
 
@@ -548,15 +552,15 @@ void KeyValueTreeTransformRuleBuilder::setKeyMatchType(StringCompareType keyMatc
 
 void KeyValueTreeTransformRuleBuilder::addTransformToAny(const std::function<Any(const Any&)>& transform)
 {
-    data_->transform_ = [transform](KeyValueTreeValueBuilder* builder, const KeyValueTreeValue& value) {
-        builder->setAnyValue(transform(value.asAny()));
-    };
+    data_->transform_ = [transform](KeyValueTreeValueBuilder* builder, const KeyValueTreeValue& value)
+    { builder->setAnyValue(transform(value.asAny())); };
 }
 
 void KeyValueTreeTransformRuleBuilder::addTransformToObject(
         const std::function<void(KeyValueTreeObjectBuilder*, const Any&)>& transform)
 {
-    data_->transform_ = [transform](KeyValueTreeValueBuilder* builder, const KeyValueTreeValue& value) {
+    data_->transform_ = [transform](KeyValueTreeValueBuilder* builder, const KeyValueTreeValue& value)
+    {
         KeyValueTreeObjectBuilder obj = builder->createObject();
         transform(&obj, value.asAny());
     };

@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2019- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \internal \file
  * \brief
@@ -44,12 +43,19 @@
 #include "gromacs/math/coordinatetransformation.h"
 
 #include <array>
+#include <string>
+#include <vector>
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
+#include "gromacs/math/matrix.h"
+#include "gromacs/math/multidimarray.h"
+#include "gromacs/mdspan/extents.h"
+#include "gromacs/mdspan/layouts.h"
 #include "gromacs/utility/arrayref.h"
 #include "gromacs/utility/real.h"
+#include "gromacs/utility/vectypes.h"
 
 #include "testutils/testasserts.h"
 #include "testutils/testmatchers.h"
@@ -67,10 +73,10 @@ protected:
     RVec              identityScale_       = { 1, 1, 1 };
     RVec              identityTranslation_ = { 0, 0, 0 };
     std::vector<RVec> testVectors_         = { { 0, 0, 0 },
-                                       { 1, 0, 0 },
-                                       { 0, -1, -1 },
-                                       { 1e10, 1e1, 1e-2 },
-                                       { 3, -6, 2.5 } };
+                                               { 1, 0, 0 },
+                                               { 0, -1, -1 },
+                                               { 1e10, 1e1, 1e-2 },
+                                               { 3, -6, 2.5 } };
 };
 
 class AffineTransformationTest : public ::testing::Test
@@ -196,7 +202,7 @@ TEST_F(TranslateAndScaleTest, scalingInverseWithOneScaleDimensionZeroSingleVecto
 
 TEST_F(AffineTransformationTest, identityTransformYieldsSameVectors)
 {
-    const AffineTransformation identityTransformation(identityMatrix<real, 3>(), { 0, 0, 0 });
+    const AffineTransformation identityTransformation(identityMatrix<real>(), { 0, 0, 0 });
     for (const auto& vector : testVectors_)
     {
         RVec vectorTransformed = vector;
@@ -226,13 +232,35 @@ TEST_F(AffineTransformationTest, applyTransformationToVectors)
         RVec vectorTransformed = vector;
         affineTransformation(&vectorTransformed);
         // need relaxed tolerance here, due to the number of operations involved
-        EXPECT_REAL_EQ_TOL((*expected)[XX], vectorTransformed[XX],
+        EXPECT_REAL_EQ_TOL((*expected)[XX],
+                           vectorTransformed[XX],
                            relativeToleranceAsFloatingPoint((*expected)[XX], 1e-5));
-        EXPECT_REAL_EQ_TOL((*expected)[YY], vectorTransformed[YY],
+        EXPECT_REAL_EQ_TOL((*expected)[YY],
+                           vectorTransformed[YY],
                            relativeToleranceAsFloatingPoint((*expected)[YY], 1e-5));
-        EXPECT_REAL_EQ_TOL((*expected)[ZZ], vectorTransformed[ZZ],
+        EXPECT_REAL_EQ_TOL((*expected)[ZZ],
+                           vectorTransformed[ZZ],
                            relativeToleranceAsFloatingPoint((*expected)[ZZ], 1e-5));
         ++expected;
+    }
+}
+
+TEST_F(AffineTransformationTest, retrieveGradient)
+{
+    const Matrix3x3            transformMatrix({ 0.1, 1, 0.1, 0.4, 1, 0.6, 0.7, 0.8, 0.9 });
+    const RVec                 transformVector = { 1, -1e5, 1e4 };
+    const AffineTransformation affineTransformation(transformMatrix, transformVector);
+
+    const Matrix3x3 gradient = affineTransformation.gradient();
+
+    const Matrix3x3 expectedResult({ 0.1, 0.4, 0.7, 1, 1, 0.8, 0.1, 0.6, 0.9 });
+
+    for (int row = 0; row < 3; row++)
+    {
+        for (int column = 0; column < 3; column++)
+        {
+            EXPECT_REAL_EQ(gradient(row, column), expectedResult(row, column));
+        }
     }
 }
 

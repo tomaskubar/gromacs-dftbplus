@@ -2,10 +2,9 @@
 #
 # This file is part of the GROMACS molecular simulation package.
 #
-# Copyright (c) 2014,2015,2018,2019,2020, by the GROMACS development team, led by
-# Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
-# and including many others, as listed in the AUTHORS file in the
-# top-level source directory and at http://www.gromacs.org.
+# Copyright 2014- The GROMACS Authors
+# and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+# Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
 #
 # GROMACS is free software; you can redistribute it and/or
 # modify it under the terms of the GNU Lesser General Public License
@@ -19,7 +18,7 @@
 #
 # You should have received a copy of the GNU Lesser General Public
 # License along with GROMACS; if not, see
-# http://www.gnu.org/licenses, or write to the Free Software Foundation,
+# https://www.gnu.org/licenses, or write to the Free Software Foundation,
 # Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
 #
 # If you want to redistribute modifications to GROMACS, please
@@ -28,10 +27,10 @@
 # consider code for inclusion in the official distribution, but
 # derived work must not be called official GROMACS. Details are found
 # in the README & COPYING files - if they are missing, get the
-# official version at http://www.gromacs.org.
+# official version at https://www.gromacs.org.
 #
 # To help us fund GROMACS development, we humbly ask that you cite
-# the research papers on the package. Check out http://www.gromacs.org.
+# the research papers on the package. Check out https://www.gromacs.org.
 
 """Check source code and Doxygen documentation for issues
 
@@ -58,21 +57,22 @@ from optparse import OptionParser
 
 import gmxtree
 from gmxtree import GromacsTree, DocType
-from includesorter import IncludeSorter
 from reporter import Reporter
+
 
 def check_file(fileobj, tree, reporter):
     """Check file-level issues."""
-    if not fileobj.is_external() and fileobj.get_relpath().startswith('src/'):
+    if not fileobj.is_external() and fileobj.get_relpath().startswith("src/"):
         includes = fileobj.get_includes()
         if fileobj.is_source_file():
             if includes:
                 firstinclude = includes[0].get_file()
                 if not firstinclude or firstinclude.get_name() != "gmxpre.h":
-                    reporter.code_issue(includes[0],
-                                        "does not include \"gmxpre.h\" first")
+                    reporter.code_issue(
+                        includes[0], 'does not include "gmxpre.h" first'
+                    )
             else:
-                reporter.code_issue(fileobj, "does not include \"gmxpre.h\"")
+                reporter.code_issue(fileobj, 'does not include "gmxpre.h"')
         used_define_files = fileobj.get_used_define_files()
         for define_file in tree.get_checked_define_files():
             includes_file = False
@@ -82,17 +82,21 @@ def check_file(fileobj, tree, reporter):
                     break
             if includes_file:
                 if not define_file in used_define_files:
-                    reporter.code_issue(fileobj,
-                            "includes \"{0}\" unnecessarily".format(define_file.get_name()))
+                    reporter.code_issue(
+                        fileobj,
+                        'includes "{0}" unnecessarily'.format(define_file.get_name()),
+                    )
             else:
                 if define_file in used_define_files:
                     used_defines = list(fileobj.get_used_defines(define_file))
                     if len(used_defines) > 3:
-                        used_defines = used_defines[:3] + ['...']
-                    used_defines = ', '.join(used_defines)
-                    reporter.code_issue(fileobj,
-                            "should include \"{0}\"".format(define_file.get_name()),
-                            details=["uses " + used_defines])
+                        used_defines = used_defines[:3] + ["..."]
+                    used_defines = ", ".join(used_defines)
+                    reporter.code_issue(
+                        fileobj,
+                        'should include "{0}"'.format(define_file.get_name()),
+                        details=["uses " + used_defines],
+                    )
 
     if not fileobj.is_documented():
         # TODO: Add rules for required documentation
@@ -101,18 +105,23 @@ def check_file(fileobj, tree, reporter):
     if fileobj.is_source_file():
         # TODO: Add rule to exclude examples from this check
         if fileobj.get_doc_type() != DocType.internal:
-            reporter.file_error(fileobj,
-                    "source file documentation appears outside full documentation")
+            reporter.file_error(
+                fileobj, "source file documentation appears outside full documentation"
+            )
         elif fileobj.get_api_type() != DocType.internal:
             reporter.file_error(fileobj, "source file marked as non-internal")
         elif fileobj.get_doc_type() < fileobj.get_api_type():
-            reporter.file_error(fileobj,
-                    "API type ({0}) conflicts with documentation visibility ({1})"
-                    .format(fileobj.get_api_type(), fileobj.get_doc_type()))
+            reporter.file_error(
+                fileobj,
+                "API type ({0}) conflicts with documentation visibility ({1})".format(
+                    fileobj.get_api_type(), fileobj.get_doc_type()
+                ),
+            )
 
     if not fileobj.has_brief_description():
-        reporter.file_error(fileobj,
-                "is documented, but does not have brief description")
+        reporter.file_error(
+            fileobj, "is documented, but does not have brief description"
+        )
 
     expectedmod = fileobj.get_expected_module()
     if expectedmod:
@@ -120,13 +129,20 @@ def check_file(fileobj, tree, reporter):
         if docmodules:
             for module in docmodules:
                 if module != expectedmod:
-                    reporter.file_error(fileobj,
-                            "is documented in incorrect module: {0}"
-                            .format(module.get_name()))
+                    reporter.file_error(
+                        fileobj,
+                        "is documented in incorrect module: {0}".format(
+                            module.get_name()
+                        ),
+                    )
         elif expectedmod.is_documented():
-            reporter.file_error(fileobj,
-                    "is not documented in any module, but {0} exists"
-                    .format(expectedmod.get_name()))
+            reporter.file_error(
+                fileobj,
+                "is not documented in any module, but {0} exists".format(
+                    expectedmod.get_name()
+                ),
+            )
+
 
 def check_include(fileobj, includedfile, reporter):
     """Check an #include directive."""
@@ -134,8 +150,9 @@ def check_include(fileobj, includedfile, reporter):
     if includedfile.is_system():
         if not otherfile:
             return
-        reporter.code_issue(includedfile,
-                "includes local file as {0}".format(includedfile))
+        reporter.code_issue(
+            includedfile, "includes local file as {0}".format(includedfile)
+        )
     # To report compiler flags in the log file, include files must be
     # generated by CMake, with a name that is only known at generation
     # time (not even configuration time). This looks like the
@@ -150,8 +167,9 @@ def check_include(fileobj, includedfile, reporter):
     if "compilerflaginfo" in str(includedfile):
         return
     if not otherfile:
-        reporter.code_issue(includedfile,
-                "includes non-local file as {0}".format(includedfile))
+        reporter.code_issue(
+            includedfile, "includes non-local file as {0}".format(includedfile)
+        )
     if not otherfile:
         return
     filemodule = fileobj.get_module()
@@ -160,17 +178,23 @@ def check_include(fileobj, includedfile, reporter):
         filetype = fileobj.get_doc_type()
         othertype = otherfile.get_doc_type()
         if filetype > othertype:
-            reporter.code_issue(includedfile,
-                    "{0} file includes {1} file {2}"
-                    .format(filetype, othertype, includedfile))
-    check_api = (otherfile.api_type_is_reliable() and filemodule != othermodule)
+            reporter.code_issue(
+                includedfile,
+                "{0} file includes {1} file {2}".format(
+                    filetype, othertype, includedfile
+                ),
+            )
+    check_api = otherfile.api_type_is_reliable() and filemodule != othermodule
+
 
 def check_entity(entity, reporter):
     """Check documentation for a code construct."""
     if entity.is_documented():
         if not entity.has_brief_description():
-            reporter.doc_error(entity,
-                    "is documented, but does not have brief description")
+            reporter.doc_error(
+                entity, "is documented, but does not have brief description"
+            )
+
 
 def check_class(classobj, reporter):
     """Check documentation for a class/struct/union."""
@@ -179,212 +203,58 @@ def check_class(classobj, reporter):
         classtype = classobj.get_doc_type()
         filetype = classobj.get_file_doc_type()
         if filetype is not DocType.none and classtype > filetype:
-            reporter.doc_error(classobj,
-                    "is in {0} file(s), but appears in {1} documentation"
-                    .format(filetype, classtype))
+            reporter.doc_error(
+                classobj,
+                "is in {0} file(s), but appears in {1} documentation".format(
+                    filetype, classtype
+                ),
+            )
+
 
 def check_member(member, reporter, check_ignored):
     """Check documentation for a generic member."""
     check_entity(member, reporter)
     if member.is_documented():
         if check_ignored and not member.is_visible():
-            reporter.doc_note(member,
-                    "is documented, but is ignored by Doxygen, because its scope is not documented")
+            reporter.doc_note(
+                member,
+                "is documented, but is ignored by Doxygen, because its scope is not documented",
+            )
         if member.has_inbody_description():
             reporter.doc_note(member, "has in-body comments, which are ignored")
 
-def check_cycles(graph, reporter):
-    """Check cyclic dependencies in a dependency graph.
-
-    The graph parameter provides the graph to check.  It should be an object
-    that has three methods:
-      iternodes():
-        Return the list of nodes in the graph.
-      iteredges(node):
-        Return the list of edges from a given node.
-        The list should contain (node, edge) pairs, where node is an object
-        returned by iternodes() and edge is any object.
-      report_cycle(cycle, reporter):
-        Process a found cycle. cycle contains a list of (node, edge) pairs
-        that describe the cycle.  edge is the edge object that leads _to_
-        the node in the cycle.
-
-    This is implemented using an extended DFS-based strongly connected
-    component (SCC) search, written using a stack instead of recursion.
-    The base algorithm is Tarjan's SCC search:
-      http://en.wikipedia.org/wiki/Tarjan's_strongly_connected_components_algorithm
-
-    Each back edge that is encountered during the search is reported as a
-    cycle.  Additionally, if a cross edge is encountered that is within the
-    current SCC, the target node and all its children in the current SCC will
-    be visited again to find all cycles.  All steps except cycle detection are
-    omitted for such re-traversal.
-
-    To avoid duplicates from cycles that do not include all nodes in an SCC,
-    a cycle is only reported if the target of the back edge is still active
-    in the search, i.e., all edges from it have not yet been traversed.
-    """
-    # The DFS stack; next node is always popped from the end.
-    # Stores (node, edge) pairs.
-    # edge is None for start nodes and for post-order processing.
-    dfsstack = []
-    for node in graph.iternodes():
-        dfsstack.append((node, None))
-    # Stack of visited nodes that have not yet been assigned to a strongly
-    # connected component.
-    visitstack = []
-    # List of nodes in the DFS recursion stack.
-    currlist = []
-    # Set of nodes in currlist for more efficient searching.
-    currset = set()
-    # Counter for initializing preorder.
-    visit_count = 0
-    # DFS pre-order for nodes: initialized when a node is first encountered
-    # in the search.
-    preorder = dict()
-    # Lowest pre-order index reachable from this node.
-    # Initialized to pre-order, and updated during post-order processing.
-    linkorder = dict()
-    # Set to True for a node when first encountered, and set to False when
-    # a strongly connected component has been processed.
-    in_progress = dict()
-    # The DFS search
-    while dfsstack:
-        currnode, curredge = dfsstack.pop()
-        # curredge is None if this is a start node or post-order traversal.
-        # currlist is empty if this is a start node.
-        if curredge is None and currlist:
-            # All children visited: post-order processing.
-            done = currlist.pop()[0]
-            assert done == currnode
-            currset.remove(currnode)
-            # If this is the first time this node is encountered, fill
-            # linkorder and check for strongly connected components.
-            if linkorder[currnode] == preorder[currnode]:
-                children = [x for x, dummy in graph.iteredges(currnode) if in_progress[x]]
-                if children:
-                    linkorder[currnode] = min([linkorder[x] for x in children])
-                if preorder[currnode] <= linkorder[currnode]:
-                    # This is a root of a strongly connected component.
-                    while visitstack:
-                        node = visitstack.pop()
-                        in_progress[node] = False
-                        if node == currnode:
-                            break
-                    else:
-                        assert False
-            continue
-        if currnode not in preorder:
-            # First encounter of this node: pre-order processing.
-            preorder[currnode] = visit_count
-            linkorder[currnode] = visit_count
-            visitstack.append(currnode)
-            visit_count += 1
-            in_progress[currnode] = True
-        elif not in_progress[currnode]:
-            # Do not enter processed components again.
-            continue
-        currlist.append((currnode, curredge))
-        currset.add(currnode)
-        # add entry for post-order traversal
-        dfsstack.append((currnode, None))
-        for nextnode, edge in graph.iteredges(currnode):
-            if nextnode not in preorder:
-                # Not seen previously: push
-                dfsstack.append((nextnode, edge))
-            else:
-                # If an already visited node is in the same component, it is
-                # either part of a cycle, or we need to traverse it again to
-                # find all cycles.
-                if in_progress[nextnode]:
-                    if nextnode not in currset:
-                        dfsstack.append((nextnode, edge))
-                    # Only report cycles to nodes that haven't been processed
-                    # yet to avoid duplicates.
-                    elif linkorder[nextnode] == preorder[nextnode]:
-                        for index, node in enumerate(currlist):
-                            if node[0] == nextnode:
-                                cycle = [(nextnode, edge)]
-                                cycle.extend(currlist[index+1:])
-                                graph.report_cycle(cycle, reporter)
-                                break
-                        else:
-                            assert False
-
-class ModuleDependencyGraph(object):
-
-    """Module dependency graph representation for check_cycles().
-
-    In the reported graph, the nodes are gmxtree.Module objects and the edges
-    are gmxtree.ModuleDependency objects.
-    """
-
-    def __init__(self, tree):
-        self._tree = tree
-
-    def iternodes(self):
-        return self._tree.get_modules()
-
-    def iteredges(self, module):
-        for dependency in module.get_dependencies():
-            if not dependency.is_test_only_dependency():
-                yield (dependency.get_other_module(), dependency)
-
-    def report_cycle(self, cycle, reporter):
-        if any([x[1].is_cycle_suppressed() for x in cycle]):
-            # TODO: Report unused suppressions.
-            return
-        modulelist = ' -> '.join([x[0].get_name()[7:] for x in cycle])
-        summary = 'module-level cyclic dependency: ' + modulelist
-        reporter.cyclic_issue(summary)
 
 def check_all(tree, reporter, check_ignored):
     """Do all checks for the GROMACS tree."""
-    # Include sorting is disabled pending resolution of
-    # https://gitlab.com/gromacs/gromacs/-/issues/3288 and
-    # https://gitlab.com/gromacs/gromacs/-/issues/3659
-    # includesorter = IncludeSorter()
-    # for fileobj in tree.get_files():
-    #     if isinstance(fileobj, gmxtree.GeneratorSourceFile):
-    #         continue
-    #     check_file(fileobj, tree, reporter)
-    #     for includedfile in fileobj.get_includes():
-    #         check_include(fileobj, includedfile, reporter)
-    #     if fileobj.should_includes_be_sorted():
-    #         is_sorted, details = includesorter.check_sorted(fileobj)
-    #         if not is_sorted:
-    #             details.append("You can use includesorter.py to do the sorting automatically; see docs/dev-manual/gmxtree.rst")
-    #             reporter.code_issue(fileobj,
-    #                     "include style/order is not consistent; see docs/dev-manual/includestyle.rst", details)
-
     for classobj in tree.get_classes():
         check_class(classobj, reporter)
 
     for memberobj in tree.get_members():
         check_member(memberobj, reporter, check_ignored)
 
-    check_cycles(ModuleDependencyGraph(tree), reporter)
-    tree.report_unused_cycle_suppressions(reporter)
 
 def main():
     """Run the checking script."""
     parser = OptionParser()
-    parser.add_option('-S', '--source-root',
-                      help='Source tree root directory')
-    parser.add_option('-B', '--build-root',
-                      help='Build tree root directory')
-    parser.add_option('-l', '--log',
-                      help='Write issues into a given log file in addition to stderr')
-    parser.add_option('--ignore',
-                      help='Set file with patterns for messages to ignore')
-    parser.add_option('--ignore-cycles',
-                      help='Set file with module dependencies to ignore in cycles')
-    parser.add_option('--check-ignored', action='store_true',
-                      help='Issue notes for comments ignored by Doxygen')
-    parser.add_option('-q', '--quiet', action='store_true',
-                      help='Do not write status messages')
-    parser.add_option('--exitcode', action='store_true',
-                      help='Return non-zero exit code if there are warnings')
+    parser.add_option("-S", "--source-root", help="Source tree root directory")
+    parser.add_option("-B", "--build-root", help="Build tree root directory")
+    parser.add_option(
+        "-l", "--log", help="Write issues into a given log file in addition to stderr"
+    )
+    parser.add_option("--ignore", help="Set file with patterns for messages to ignore")
+    parser.add_option(
+        "--check-ignored",
+        action="store_true",
+        help="Issue notes for comments ignored by Doxygen",
+    )
+    parser.add_option(
+        "-q", "--quiet", action="store_true", help="Do not write status messages"
+    )
+    parser.add_option(
+        "--exitcode",
+        action="store_true",
+        help="Return non-zero exit code if there are warnings",
+    )
     options, args = parser.parse_args()
 
     reporter = Reporter(options.log)
@@ -392,26 +262,24 @@ def main():
         reporter.load_filters(options.ignore)
 
     if not options.quiet:
-        sys.stderr.write('Scanning source tree...\n')
+        sys.stderr.write("Scanning source tree...\n")
     tree = GromacsTree(options.source_root, options.build_root, reporter)
     tree.load_git_attributes()
     if not options.quiet:
-        sys.stderr.write('Reading source files...\n')
+        sys.stderr.write("Reading source files...\n")
     # TODO: The checking should be possible without storing everything in memory
     tree.scan_files(keep_contents=True)
     if not options.quiet:
-        sys.stderr.write('Finding config.h and other preprocessor macro uses...\n')
+        sys.stderr.write("Finding config.h and other preprocessor macro uses...\n")
     tree.find_define_file_uses()
-    if options.ignore_cycles:
-        tree.load_cycle_suppression_list(options.ignore_cycles)
     if not options.quiet:
-        sys.stderr.write('Reading Doxygen XML files...\n')
+        sys.stderr.write("Reading Doxygen XML files...\n")
     tree.load_xml()
 
     reporter.write_pending()
 
     if not options.quiet:
-        sys.stderr.write('Checking...\n')
+        sys.stderr.write("Checking...\n")
 
     check_all(tree, reporter, options.check_ignored)
 
@@ -421,5 +289,6 @@ def main():
 
     if options.exitcode and reporter.had_warnings():
         sys.exit(1)
+
 
 main()

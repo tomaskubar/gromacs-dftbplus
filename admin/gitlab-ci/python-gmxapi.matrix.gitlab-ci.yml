@@ -1,0 +1,7 @@
+# Build, test, and install Python gmxapi package.
+#
+# Job configurations are inside python-gmxapi.matrix/ directory.
+
+include:
+  - local: '/admin/gitlab-ci/python-gmxapi.matrix/python-gmxapi-current-gromacs.gitlab-ci.yml'
+  - local: '/admin/gitlab-ci/python-gmxapi.matrix/python-gmxapi-current-gromacs-mpi.gitlab-ci.yml'

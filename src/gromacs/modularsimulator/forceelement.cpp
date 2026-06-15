@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2019- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \internal \file
  * \brief Defines the force element for the modular simulator
@@ -44,18 +43,25 @@
 #include "forceelement.h"
 
 #include "gromacs/domdec/mdsetup.h"
-#include "gromacs/math/vectypes.h"
+#include "gromacs/listed_forces/listed_forces_gpu.h"
 #include "gromacs/mdlib/constr.h"
 #include "gromacs/mdlib/force.h"
 #include "gromacs/mdlib/force_flags.h"
 #include "gromacs/mdlib/mdatoms.h"
 #include "gromacs/mdrun/shellfc.h"
+#include "gromacs/mdtypes/commrec.h"
 #include "gromacs/mdtypes/forcebuffers.h"
+#include "gromacs/mdtypes/forcerec.h"
 #include "gromacs/mdtypes/inputrec.h"
+#include "gromacs/mdtypes/interaction_const.h"
 #include "gromacs/mdtypes/mdatom.h"
 #include "gromacs/mdtypes/mdrunoptions.h"
+#include "gromacs/mdtypes/multipletimestepping.h"
 #include "gromacs/mdtypes/simulation_workload.h"
 #include "gromacs/pbcutil/pbc.h"
+#include "gromacs/taskassignment/include/gromacs/taskassignment/decidesimulationworkload.h"
+#include "gromacs/topology/topology.h"
+#include "gromacs/utility/vectypes.h"
 
 #include "energydata.h"
 #include "freeenergyperturbationdata.h"
@@ -74,28 +80,27 @@ ForceElement::ForceElement(StatePropagatorData*        statePropagatorData,
                            EnergyData*                 energyData,
                            FreeEnergyPerturbationData* freeEnergyPerturbationData,
                            bool                        isVerbose,
-                           bool                        isDynamicBox,
                            FILE*                       fplog,
                            const t_commrec*            cr,
                            const t_inputrec*           inputrec,
+                           const MDModulesNotifiers&   mdModulesNotifiers,
                            const MDAtoms*              mdAtoms,
                            t_nrnb*                     nrnb,
                            t_forcerec*                 fr,
-
-                           gmx_wallcycle*         wcycle,
-                           MdrunScheduleWorkload* runScheduleWork,
-                           VirtualSitesHandler*   vsite,
-                           ImdSession*            imdSession,
-                           pull_t*                pull_work,
-                           Constraints*           constr,
-                           const gmx_mtop_t*      globalTopology,
-                           gmx_enfrot*            enforcedRotation) :
+                           gmx_wallcycle*              wcycle,
+                           MdrunScheduleWorkload*      runScheduleWork,
+                           VirtualSitesHandler*        vsite,
+                           ImdSession*                 imdSession,
+                           pull_t*                     pull_work,
+                           Constraints*                constr,
+                           const gmx_mtop_t&           globalTopology,
+                           gmx_enfrot*                 enforcedRotation) :
     shellfc_(init_shell_flexcon(fplog,
                                 globalTopology,
                                 constr ? constr->numFlexibleConstraints() : 0,
                                 inputrec->nstcalcenergy,
-                                DOMAINDECOMP(cr),
-                                runScheduleWork->simulationWork.useGpuPme)),
+                                haveDDAtomOrdering(*cr),
+                                runScheduleWork->simulationWork)),
     doShellFC_(shellfc_ != nullptr),
     nextNSStep_(-1),
     nextEnergyCalculationStep_(-1),
@@ -105,14 +110,24 @@ ForceElement::ForceElement(StatePropagatorData*        statePropagatorData,
     energyData_(energyData),
     freeEnergyPerturbationData_(freeEnergyPerturbationData),
     localTopology_(nullptr),
-    isDynamicBox_(isDynamicBox),
     isVerbose_(isVerbose),
     nShellRelaxationSteps_(0),
-    ddBalanceRegionHandler_(cr),
+    ddBalanceRegionHandler_(cr->dd),
+    longRangeNonbondeds_(std::make_unique<CpuPpLongRangeNonbondeds>(fr->n_tpi,
+                                                                    fr->ic->coulomb.ewaldCoeff,
+                                                                    fr->ic->coulomb.epsilon_r,
+                                                                    fr->qsum,
+                                                                    fr->ic->coulomb.type,
+                                                                    fr->ic->vdw.type,
+                                                                    *inputrec,
+                                                                    nrnb,
+                                                                    wcycle,
+                                                                    fplog)),
     lambda_(),
     fplog_(fplog),
     cr_(cr),
     inputrec_(inputrec),
+    mdModulesNotifiers_(mdModulesNotifiers),
     mdAtoms_(mdAtoms),
     nrnb_(nrnb),
     wcycle_(wcycle),
@@ -124,35 +139,39 @@ ForceElement::ForceElement(StatePropagatorData*        statePropagatorData,
     constr_(constr),
     enforcedRotation_(enforcedRotation)
 {
-    lambda_.fill(0);
+    std::fill(lambda_.begin(), lambda_.end(), 0);
 
-    if (doShellFC_ && !DOMAINDECOMP(cr))
+    if (doShellFC_ && !haveDDAtomOrdering(*cr))
     {
         // This was done in mdAlgorithmsSetupAtomData(), but shellfc
         // won't be available outside this element.
-        make_local_shells(cr, mdAtoms->mdatoms(), shellfc_);
+        make_local_shells(cr->dd, *mdAtoms->mdatoms(), shellfc_);
     }
 }
 
+ForceElement::~ForceElement() = default;
+
 void ForceElement::scheduleTask(Step step, Time time, const RegisterRunFunction& registerRunFunction)
 {
-    unsigned int flags =
-            (GMX_FORCE_STATECHANGED | GMX_FORCE_ALLFORCES | (isDynamicBox_ ? GMX_FORCE_DYNAMICBOX : 0)
-             | (nextVirialCalculationStep_ == step ? GMX_FORCE_VIRIAL : 0)
-             | (nextEnergyCalculationStep_ == step ? GMX_FORCE_ENERGY : 0)
-             | (nextFreeEnergyCalculationStep_ == step ? GMX_FORCE_DHDL : 0)
-             | (!doShellFC_ && nextNSStep_ == step ? GMX_FORCE_NS : 0));
+    unsigned int flags = (GMX_FORCE_STATECHANGED | GMX_FORCE_ALLFORCES
+                          | (doShellFC_ && isVerbose_ ? GMX_FORCE_ENERGY : 0)
+                          | (nextVirialCalculationStep_ == step ? GMX_FORCE_VIRIAL : 0)
+                          | (nextEnergyCalculationStep_ == step ? GMX_FORCE_ENERGY : 0)
+                          | (nextFreeEnergyCalculationStep_ == step ? GMX_FORCE_DHDL : 0)
+                          | (nextNSStep_ == step ? GMX_FORCE_NS : 0));
 
-    registerRunFunction([this, step, time, flags]() {
-        if (doShellFC_)
-        {
-            run<true>(step, time, flags);
-        }
-        else
-        {
-            run<false>(step, time, flags);
-        }
-    });
+    registerRunFunction(
+            [this, step, time, flags]()
+            {
+                if (doShellFC_)
+                {
+                    run<true>(step, time, flags);
+                }
+                else
+                {
+                    run<false>(step, time, flags);
+                }
+            });
 }
 
 void ForceElement::elementSetup()
@@ -163,43 +182,81 @@ void ForceElement::elementSetup()
 template<bool doShellFC>
 void ForceElement::run(Step step, Time time, unsigned int flags)
 {
-    // Disabled functionality
-    gmx_multisim_t* ms = nullptr;
-
-
-    if (!DOMAINDECOMP(cr_) && (flags & GMX_FORCE_NS) && inputrecDynamicBox(inputrec_))
+    if (!haveDDAtomOrdering(*cr_) && (flags & GMX_FORCE_NS) && inputrecDynamicBox(inputrec_))
     {
         // TODO: Correcting the box is done in DomDecHelper (if using DD) or here (non-DD simulations).
         //       Think about unifying this responsibility, could this be done in one place?
-        auto box = statePropagatorData_->box();
+        auto* box = statePropagatorData_->box();
         correct_box(fplog_, step, box);
     }
+
+    if (flags & GMX_FORCE_NS)
+    {
+        if (fr_->listedForcesGpu)
+        {
+            fr_->listedForcesGpu->updateHaveInteractions(localTopology_->idef);
+        }
+        gmx_edsam* ed                = nullptr; // disabled
+        runScheduleWork_->domainWork = setupDomainLifetimeWorkload(
+                *inputrec_, *fr_, pull_work_, ed, *mdAtoms_->mdatoms(), runScheduleWork_->simulationWork);
+    }
+
+    runScheduleWork_->stepWork = setupStepWorkload(
+            flags, inputrec_->mtsLevels, step, runScheduleWork_->domainWork, runScheduleWork_->simulationWork);
 
     /* The coordinates (x) are shifted (to get whole molecules)
      * in do_force.
      * This is parallelized as well, and does communication too.
      * Check comments in sim_util.c
      */
-    auto       x      = statePropagatorData_->positionsView();
-    auto&      forces = statePropagatorData_->forcesView();
-    auto       box    = statePropagatorData_->constBox();
-    history_t* hist   = nullptr; // disabled
+    auto        x      = statePropagatorData_->positionsView();
+    auto&       forces = statePropagatorData_->forcesView();
+    const auto* box    = statePropagatorData_->constBox();
+    history_t*  hist   = nullptr; // disabled
 
     tensor force_vir = { { 0 } };
     // TODO: Make lambda const (needs some adjustments in lower force routines)
     ArrayRef<real> lambda =
             freeEnergyPerturbationData_ ? freeEnergyPerturbationData_->lambdaView() : lambda_;
 
+    longRangeNonbondeds_->updateAfterPartition(*mdAtoms_->mdatoms());
+
     if (doShellFC)
     {
         auto v = statePropagatorData_->velocitiesView();
 
-        relax_shell_flexcon(
-                fplog_, cr_, ms, isVerbose_, enforcedRotation_, step, inputrec_, imdSession_,
-                pull_work_, step == nextNSStep_, static_cast<int>(flags), localTopology_, constr_,
-                energyData_->enerdata(), statePropagatorData_->localNumAtoms(), x, v, box, lambda,
-                hist, &forces, force_vir, mdAtoms_->mdatoms(), nrnb_, wcycle_, shellfc_, fr_,
-                runScheduleWork_, time, energyData_->muTot(), vsite_, ddBalanceRegionHandler_);
+        relax_shell_flexcon(fplog_,
+                            cr_,
+                            isVerbose_,
+                            enforcedRotation_,
+                            step,
+                            inputrec_,
+                            mdModulesNotifiers_,
+                            imdSession_,
+                            pull_work_,
+                            step == nextNSStep_,
+                            localTopology_,
+                            constr_,
+                            energyData_->enerdata(),
+                            statePropagatorData_->localNumAtoms(),
+                            x,
+                            v,
+                            box,
+                            lambda,
+                            hist,
+                            &forces,
+                            force_vir,
+                            *mdAtoms_->mdatoms(),
+                            longRangeNonbondeds_.get(),
+                            nrnb_,
+                            wcycle_,
+                            shellfc_,
+                            fr_,
+                            *runScheduleWork_,
+                            time,
+                            energyData_->muTot(),
+                            vsite_,
+                            ddBalanceRegionHandler_);
         nShellRelaxationSteps_++;
     }
     else
@@ -208,10 +265,37 @@ void ForceElement::run(Step step, Time time, unsigned int flags)
         Awh*       awh = nullptr;
         gmx_edsam* ed  = nullptr;
 
-        do_force(fplog_, cr_, ms, inputrec_, awh, enforcedRotation_, imdSession_, pull_work_, step,
-                 nrnb_, wcycle_, localTopology_, box, x, hist, &forces, force_vir,
-                 mdAtoms_->mdatoms(), energyData_->enerdata(), lambda, fr_, runScheduleWork_, vsite_,
-                 energyData_->muTot(), time, ed, static_cast<int>(flags), ddBalanceRegionHandler_);
+        auto v = statePropagatorData_->velocitiesView();
+
+        do_force(fplog_,
+                 cr_,
+                 *inputrec_,
+                 mdModulesNotifiers_,
+                 awh,
+                 enforcedRotation_,
+                 imdSession_,
+                 pull_work_,
+                 step,
+                 nrnb_,
+                 wcycle_,
+                 localTopology_,
+                 box,
+                 x,
+                 v.unpaddedArrayRef(),
+                 hist,
+                 &forces,
+                 force_vir,
+                 mdAtoms_->mdatoms(),
+                 energyData_->enerdata(),
+                 lambda,
+                 fr_,
+                 *runScheduleWork_,
+                 vsite_,
+                 energyData_->muTot(),
+                 time,
+                 ed,
+                 longRangeNonbondeds_.get(),
+                 ddBalanceRegionHandler_);
     }
     energyData_->addToForceVirial(force_vir, step);
 }
@@ -251,22 +335,40 @@ std::optional<SignallerCallback> ForceElement::registerEnergyCallback(EnergySign
     return std::nullopt;
 }
 
+DomDecCallback ForceElement::registerDomDecCallback()
+{
+    return [this]() { longRangeNonbondeds_->updateAfterPartition(*mdAtoms_->mdatoms()); };
+}
+
 ISimulatorElement*
 ForceElement::getElementPointerImpl(LegacySimulatorData*                    legacySimulatorData,
                                     ModularSimulatorAlgorithmBuilderHelper* builderHelper,
                                     StatePropagatorData*                    statePropagatorData,
                                     EnergyData*                             energyData,
                                     FreeEnergyPerturbationData* freeEnergyPerturbationData,
-                                    GlobalCommunicationHelper gmx_unused* globalCommunicationHelper)
+                                    GlobalCommunicationHelper gmx_unused* globalCommunicationHelper,
+                                    ObservablesReducer* /*observablesReducer*/)
 {
-    const bool isVerbose    = legacySimulatorData->mdrunOptions.verbose;
-    const bool isDynamicBox = inputrecDynamicBox(legacySimulatorData->inputrec);
-    return builderHelper->storeElement(std::make_unique<ForceElement>(
-            statePropagatorData, energyData, freeEnergyPerturbationData, isVerbose, isDynamicBox,
-            legacySimulatorData->fplog, legacySimulatorData->cr, legacySimulatorData->inputrec,
-            legacySimulatorData->mdAtoms, legacySimulatorData->nrnb, legacySimulatorData->fr,
-            legacySimulatorData->wcycle, legacySimulatorData->runScheduleWork, legacySimulatorData->vsite,
-            legacySimulatorData->imdSession, legacySimulatorData->pull_work, legacySimulatorData->constr,
-            legacySimulatorData->top_global, legacySimulatorData->enforcedRotation));
+    const bool isVerbose = legacySimulatorData->mdrunOptions_.verbose;
+    return builderHelper->storeElement(
+            std::make_unique<ForceElement>(statePropagatorData,
+                                           energyData,
+                                           freeEnergyPerturbationData,
+                                           isVerbose,
+                                           legacySimulatorData->fpLog_,
+                                           legacySimulatorData->cr_,
+                                           legacySimulatorData->inputRec_,
+                                           legacySimulatorData->mdModulesNotifiers_,
+                                           legacySimulatorData->mdAtoms_,
+                                           legacySimulatorData->nrnb_,
+                                           legacySimulatorData->fr_,
+                                           legacySimulatorData->wallCycleCounters_,
+                                           legacySimulatorData->runScheduleWork_,
+                                           legacySimulatorData->virtualSites_,
+                                           legacySimulatorData->imdSession_,
+                                           legacySimulatorData->pullWork_,
+                                           legacySimulatorData->constr_,
+                                           legacySimulatorData->topGlobal_,
+                                           legacySimulatorData->enforcedRotation_));
 }
 } // namespace gmx

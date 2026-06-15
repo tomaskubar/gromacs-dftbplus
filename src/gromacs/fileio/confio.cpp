@@ -1,13 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
- * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2016,2017 by the GROMACS development team.
- * Copyright (c) 2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 1991- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -21,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -30,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 #include "gmxpre.h"
 
@@ -41,6 +37,9 @@
 
 #include <cstdio>
 #include <cstring>
+
+#include <filesystem>
+#include <string>
 
 #include "gromacs/fileio/espio.h"
 #include "gromacs/fileio/filetypes.h"
@@ -50,27 +49,30 @@
 #include "gromacs/fileio/pdbio.h"
 #include "gromacs/fileio/tpxio.h"
 #include "gromacs/fileio/trxio.h"
-#include "gromacs/math/vec.h"
+#include "gromacs/mdtypes/md_enums.h"
 #include "gromacs/topology/atoms.h"
 #include "gromacs/topology/block.h"
 #include "gromacs/topology/mtop_util.h"
 #include "gromacs/topology/symtab.h"
 #include "gromacs/topology/topology.h"
 #include "gromacs/trajectory/trajectoryframe.h"
+#include "gromacs/utility/basedefinitions.h"
 #include "gromacs/utility/cstringutil.h"
 #include "gromacs/utility/fatalerror.h"
 #include "gromacs/utility/gmxassert.h"
 #include "gromacs/utility/smalloc.h"
+#include "gromacs/utility/vec.h"
+#include "gromacs/utility/vectypes.h"
 
-void write_sto_conf_indexed(const char*    outfile,
-                            const char*    title,
-                            const t_atoms* atoms,
-                            const rvec     x[],
-                            const rvec*    v,
-                            PbcType        pbcType,
-                            const matrix   box,
-                            int            nindex,
-                            int            index[])
+void write_sto_conf_indexed(const std::filesystem::path& outfile,
+                            const char*                  title,
+                            const t_atoms*               atoms,
+                            const rvec                   x[],
+                            const rvec*                  v,
+                            PbcType                      pbcType,
+                            const matrix                 box,
+                            int                          nindex,
+                            int                          index[])
 {
     FILE*      out;
     int        ftp;
@@ -107,8 +109,8 @@ void write_sto_conf_indexed(const char*    outfile,
         case efENT:
         case efPQR:
             out = gmx_fio_fopen(outfile, "w");
-            write_pdbfile_indexed(out, title, atoms, x, pbcType, box, ' ', -1, nindex, index,
-                                  nullptr, ftp == efPQR);
+            write_pdbfile_indexed(
+                    out, title, atoms, x, pbcType, box, ' ', -1, nindex, index, nullptr, ftp == efPQR);
             gmx_fio_fclose(out);
             break;
         case efESP:
@@ -116,18 +118,19 @@ void write_sto_conf_indexed(const char*    outfile,
             write_espresso_conf_indexed(out, title, atoms, nindex, index, x, v, box);
             gmx_fio_fclose(out);
             break;
-        case efTPR: gmx_fatal(FARGS, "Sorry, can not write a topology to %s", outfile);
+        case efTPR:
+            gmx_fatal(FARGS, "Sorry, can not write a topology to %s", outfile.string().c_str());
         default: gmx_incons("Not supported in write_sto_conf_indexed");
     }
 }
 
-void write_sto_conf(const char*    outfile,
-                    const char*    title,
-                    const t_atoms* atoms,
-                    const rvec     x[],
-                    const rvec*    v,
-                    PbcType        pbcType,
-                    const matrix   box)
+void write_sto_conf(const std::filesystem::path& outfile,
+                    const char*                  title,
+                    const t_atoms*               atoms,
+                    const rvec                   x[],
+                    const rvec*                  v,
+                    PbcType                      pbcType,
+                    const matrix                 box)
 {
     FILE*      out;
     int        ftp;
@@ -167,18 +170,19 @@ void write_sto_conf(const char*    outfile,
             write_espresso_conf_indexed(out, title, atoms, atoms->nr, nullptr, x, v, box);
             gmx_fio_fclose(out);
             break;
-        case efTPR: gmx_fatal(FARGS, "Sorry, can not write a topology to %s", outfile);
+        case efTPR:
+            gmx_fatal(FARGS, "Sorry, can not write a topology to %s", outfile.string().c_str());
         default: gmx_incons("Not supported in write_sto_conf");
     }
 }
 
-void write_sto_conf_mtop(const char*       outfile,
-                         const char*       title,
-                         const gmx_mtop_t* mtop,
-                         const rvec        x[],
-                         const rvec*       v,
-                         PbcType           pbcType,
-                         const matrix      box)
+void write_sto_conf_mtop(const std::filesystem::path& outfile,
+                         const char*                  title,
+                         const gmx_mtop_t&            mtop,
+                         const rvec                   x[],
+                         const rvec*                  v,
+                         PbcType                      pbcType,
+                         const matrix                 box)
 {
     int     ftp;
     FILE*   out;
@@ -205,7 +209,7 @@ void write_sto_conf_mtop(const char*       outfile,
     }
 }
 
-static void get_stx_coordnum(const char* infile, int* natoms)
+static void get_stx_coordnum(const std::filesystem::path& infile, int* natoms)
 {
     FILE*      in;
     int        ftp;
@@ -264,44 +268,41 @@ private:
 
 void ChainIdFiller::fill(t_atoms* atoms, const int startAtomIndex, const int endAtomIndex)
 {
-    // TODO remove these some time, extra braces added for review convenience
+    // We always assign a new chain number, but only assign a chain id
+    // characters for larger molecules.
+    char chainIdToAssign;
+    if (endAtomIndex - startAtomIndex >= s_chainMinAtoms && !outOfIds_)
     {
-        // We always assign a new chain number, but only assign a chain id
-        // characters for larger molecules.
-        int chainIdToAssign;
-        if (endAtomIndex - startAtomIndex >= s_chainMinAtoms && !outOfIds_)
+        /* Set the chain id for the output */
+        chainIdToAssign = nextChainId_;
+        /* Here we allow for the max possible 2*26+10=62 chain ids */
+        if (nextChainId_ == 'Z')
         {
-            /* Set the chain id for the output */
-            chainIdToAssign = nextChainId_;
-            /* Here we allow for the max possible 2*26+10=62 chain ids */
-            if (nextChainId_ == 'Z')
-            {
-                nextChainId_ = 'a';
-            }
-            else if (nextChainId_ == 'z')
-            {
-                nextChainId_ = '0';
-            }
-            else if (nextChainId_ == '9')
-            {
-                outOfIds_ = true;
-            }
-            else
-            {
-                nextChainId_++;
-            }
+            nextChainId_ = 'a';
+        }
+        else if (nextChainId_ == 'z')
+        {
+            nextChainId_ = '0';
+        }
+        else if (nextChainId_ == '9')
+        {
+            outOfIds_ = true;
         }
         else
         {
-            chainIdToAssign = ' ';
+            nextChainId_++;
         }
-        for (int a = startAtomIndex; a < endAtomIndex; a++)
-        {
-            atoms->resinfo[atoms->atom[a].resind].chainnum = nextChainNumber_;
-            atoms->resinfo[atoms->atom[a].resind].chainid  = chainIdToAssign;
-        }
-        nextChainNumber_++;
     }
+    else
+    {
+        chainIdToAssign = ' ';
+    }
+    for (int a = startAtomIndex; a < endAtomIndex; a++)
+    {
+        atoms->resinfo[atoms->atom[a].resind].chainnum = nextChainNumber_;
+        atoms->resinfo[atoms->atom[a].resind].chainid  = chainIdToAssign;
+    }
+    nextChainNumber_++;
 }
 
 void ChainIdFiller::clearIfNeeded(t_atoms* atoms) const
@@ -338,14 +339,14 @@ static void tpx_make_chain_identifiers(t_atoms* atoms, const t_block* mols)
     filler.clearIfNeeded(atoms);
 }
 
-static void read_stx_conf(const char* infile,
-                          t_symtab*   symtab,
-                          char**      name,
-                          t_atoms*    atoms,
-                          rvec        x[],
-                          rvec*       v,
-                          PbcType*    pbcType,
-                          matrix      box)
+static void read_stx_conf(const std::filesystem::path& infile,
+                          t_symtab*                    symtab,
+                          char**                       name,
+                          t_atoms*                     atoms,
+                          rvec                         x[],
+                          rvec*                        v,
+                          PbcType*                     pbcType,
+                          matrix                       box)
 {
     FILE*      in;
     t_trxframe fr;
@@ -354,7 +355,7 @@ static void read_stx_conf(const char* infile,
 
     if (atoms->nr == 0)
     {
-        fprintf(stderr, "Warning: Number of atoms in %s is 0\n", infile);
+        fprintf(stderr, "Warning: Number of atoms in %s is 0\n", infile.string().c_str());
     }
     else if (atoms->atom == nullptr)
     {
@@ -389,17 +390,15 @@ static void read_stx_conf(const char* infile,
     }
 }
 
-void readConfAndAtoms(const char* infile,
-                      t_symtab*   symtab,
-                      char**      name,
-                      t_atoms*    atoms,
-                      PbcType*    pbcType,
-                      rvec**      x,
-                      rvec**      v,
-                      matrix      box)
+void readConfAndAtoms(const std::filesystem::path& infile,
+                      t_symtab*                    symtab,
+                      char**                       name,
+                      t_atoms*                     atoms,
+                      PbcType*                     pbcType,
+                      rvec**                       x,
+                      rvec**                       v,
+                      matrix                       box)
 {
-    GMX_RELEASE_ASSERT(infile, "Need a valid file name string");
-
     if (fn2ftp(infile) == efTPR)
     {
         bool       haveTopology;
@@ -407,7 +406,7 @@ void readConfAndAtoms(const char* infile,
         readConfAndTopology(infile, &haveTopology, &mtop, pbcType, x, v, box);
         *symtab                          = mtop.symtab;
         *name                            = gmx_strdup(*mtop.name);
-        *atoms                           = gmx_mtop_global_atoms(&mtop);
+        *atoms                           = gmx_mtop_global_atoms(mtop);
         gmx::RangePartitioning molecules = gmx_mtop_molecules(mtop);
         makeChainIdentifiersAfterTprReading(atoms, molecules);
 
@@ -445,13 +444,13 @@ void readConfAndAtoms(const char* infile,
     }
 }
 
-void readConfAndTopology(const char* infile,
-                         bool*       haveTopology,
-                         gmx_mtop_t* mtop,
-                         PbcType*    pbcType,
-                         rvec**      x,
-                         rvec**      v,
-                         matrix      box)
+void readConfAndTopology(const std::filesystem::path& infile,
+                         bool*                        haveTopology,
+                         gmx_mtop_t*                  mtop,
+                         PbcType*                     pbcType,
+                         rvec**                       x,
+                         rvec**                       v,
+                         matrix                       box)
 {
     GMX_RELEASE_ASSERT(mtop != nullptr, "readConfAndTopology requires mtop!=NULL");
 
@@ -473,8 +472,8 @@ void readConfAndTopology(const char* infile,
             snew(*v, header.natoms);
         }
         int     natoms;
-        PbcType pbcType_tmp = read_tpx(infile, nullptr, box, &natoms, (x == nullptr) ? nullptr : *x,
-                                       (v == nullptr) ? nullptr : *v, mtop);
+        PbcType pbcType_tmp = read_tpx(
+                infile, nullptr, box, &natoms, (x == nullptr) ? nullptr : *x, (v == nullptr) ? nullptr : *v, mtop);
         if (pbcType != nullptr)
         {
             *pbcType = pbcType_tmp;
@@ -495,7 +494,13 @@ void readConfAndTopology(const char* infile,
     }
 }
 
-gmx_bool read_tps_conf(const char* infile, t_topology* top, PbcType* pbcType, rvec** x, rvec** v, matrix box, gmx_bool requireMasses)
+gmx_bool read_tps_conf(const std::filesystem::path& infile,
+                       t_topology*                  top,
+                       PbcType*                     pbcType,
+                       rvec**                       x,
+                       rvec**                       v,
+                       matrix                       box,
+                       gmx_bool                     requireMasses)
 {
     bool       haveTopology;
     gmx_mtop_t mtop;
@@ -504,7 +509,12 @@ gmx_bool read_tps_conf(const char* infile, t_topology* top, PbcType* pbcType, rv
 
     *top = gmx_mtop_t_to_t_topology(&mtop, true);
 
-    tpx_make_chain_identifiers(&top->atoms, &top->mols);
+    // We can only generate chain identifiers when we have a list of molecules (haveTopology).
+    // This conditional has the side effect of preserving chain identifiers read from a PDB file.
+    if (haveTopology)
+    {
+        tpx_make_chain_identifiers(&top->atoms, &top->mols);
+    }
 
     if (requireMasses && !top->atoms.haveMass)
     {

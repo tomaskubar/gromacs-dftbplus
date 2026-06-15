@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2016,2017,2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2016- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 
 /*! \internal \file
@@ -44,11 +43,14 @@
 #include <cassert>
 
 #include "gromacs/gpu_utils/cuda_kernel_utils.cuh"
-#include "gromacs/gpu_utils/typecasts.cuh"
+#include "gromacs/gpu_utils/gputraits.cuh"
+#include "gromacs/gpu_utils/typecasts_cuda_hip.h"
 
-#include "pme.cuh"
 #include "pme_gpu_calculate_splines.cuh"
 #include "pme_grid.h"
+#if GMX_NVSHMEM
+#    include <nvshmemx.h>
+#endif
 
 /*! \brief
  * An inline CUDA function: unroll the dynamic index accesses to the constant grid sizes to avoid local memory operations.
@@ -61,16 +63,16 @@ __device__ __forceinline__ float read_grid_size(const float* realGridSizeFP, con
         case YY: return realGridSizeFP[YY];
         case ZZ: return realGridSizeFP[ZZ];
     }
-    assert(false);
-    return 0.0f;
+    GMX_DEVICE_ASSERT(false);
+    return 0.0F;
 }
 
 /*! \brief Reduce the partial force contributions.
  *
- * \tparam[in] order              The PME order (must be 4).
- * \tparam[in] atomDataSize       The number of partial force contributions for each atom (currently
+ * \tparam     order              The PME order (must be 4).
+ * \tparam     atomDataSize       The number of partial force contributions for each atom (currently
  *                                order^2 == 16)
- * \tparam[in] blockSize          The CUDA block size
+ * \tparam     blockSize          The CUDA block size
  *
  * \param[out] sm_forces          Shared memory array with the output forces (number of elements
  *                                is number of atoms per block)
@@ -88,11 +90,11 @@ __device__ __forceinline__ void reduce_atom_forces(float3* __restrict__ sm_force
                                                    const int    splineIndex,
                                                    const int    lineIndex,
                                                    const float* realGridSizeFP,
-                                                   float&       fx,
-                                                   float&       fy,
-                                                   float&       fz)
+                                                   float& fx, // NOLINT(google-runtime-references)
+                                                   float& fy, // NOLINT(google-runtime-references)
+                                                   float& fz) // NOLINT(google-runtime-references)
 {
-    if (!(order & (order - 1))) // Only for orders of power of 2
+    if (gmx::isPowerOfTwo(order)) // Only for orders of power of 2
     {
         const unsigned int activeMask = c_fullWarpMask;
 
@@ -134,7 +136,9 @@ __device__ __forceinline__ void reduce_atom_forces(float3* __restrict__ sm_force
         if (dimIndex < DIM)
         {
             const float n = read_grid_size(realGridSizeFP, dimIndex);
-            *((float*)(&sm_forces[atomIndexLocal]) + dimIndex) = fx * n;
+            float* __restrict__ sm_forcesAtomIndexOffset =
+                    reinterpret_cast<float*>(&sm_forces[atomIndexLocal]);
+            sm_forcesAtomIndexOffset[dimIndex] = fx * n;
         }
     }
     else
@@ -180,8 +184,7 @@ __device__ __forceinline__ void reduce_atom_forces(float3* __restrict__ sm_force
             __syncthreads();
         }
 
-        assert((blockSize / warp_size) >= DIM);
-        // assert (atomsPerBlock <= warp_size);
+        GMX_DEVICE_ASSERT((blockSize / warp_size) >= DIM);
 
         const int warpIndex = lineIndex / warp_size;
         const int dimIndex  = warpIndex;
@@ -206,7 +209,9 @@ __device__ __forceinline__ void reduce_atom_forces(float3* __restrict__ sm_force
 
             if (sourceIndex == minStride * atomIndex)
             {
-                *((float*)(&sm_forces[atomIndex]) + dimIndex) =
+                float* __restrict__ sm_forcesAtomIndexOffset =
+                        reinterpret_cast<float*>(&sm_forces[atomIndex]);
+                sm_forcesAtomIndexOffset[dimIndex] =
                         (sm_forceTemp[dimIndex][sourceIndex] + sm_forceTemp[dimIndex][sourceIndex + 1]) * n;
             }
         }
@@ -215,10 +220,10 @@ __device__ __forceinline__ void reduce_atom_forces(float3* __restrict__ sm_force
 
 /*! \brief Calculate the sum of the force partial components (in X, Y and Z)
  *
- * \tparam[in] order              The PME order (must be 4).
- * \tparam[in] atomsPerWarp       The number of atoms per GPU warp.
- * \tparam[in] wrapX              Tells if the grid is wrapped in the X dimension.
- * \tparam[in] wrapY              Tells if the grid is wrapped in the Y dimension.
+ * \tparam     order              The PME order (must be 4).
+ * \tparam     atomsPerWarp       The number of atoms per GPU warp.
+ * \tparam     wrapX              Tells if the grid is wrapped in the X dimension.
+ * \tparam     wrapY              Tells if the grid is wrapped in the Y dimension.
  * \param[out] fx                 The force partial component in the X dimension.
  * \param[out] fy                 The force partial component in the Y dimension.
  * \param[out] fz                 The force partial component in the Z dimension.
@@ -232,7 +237,7 @@ __device__ __forceinline__ void reduce_atom_forces(float3* __restrict__ sm_force
  * \param[in] pnz                 The padded grid real size in the Z dimension.
  * \param[in] atomIndexLocal      The atom index for this thread.
  * \param[in] splineIndexBase     The base value of the spline parameter index.
- * \param[in] tdz                 The theta and dtheta in the Z dimension.
+ * \param[in] splineIndexZ        The theta and dtheta in the Z dimension.
  * \param[in] sm_gridlineIndices  Shared memory array of grid line indices.
  * \param[in] sm_theta            Shared memory array of atom theta values.
  * \param[in] sm_dtheta           Shared memory array of atom dtheta values.
@@ -242,17 +247,17 @@ template<int order, int atomsPerWarp, bool wrapX, bool wrapY>
 __device__ __forceinline__ void sumForceComponents(float* __restrict__ fx,
                                                    float* __restrict__ fy,
                                                    float* __restrict__ fz,
-                                                   const int    ithyMin,
-                                                   const int    ithyMax,
-                                                   const int    ixBase,
-                                                   const int    iz,
-                                                   const int    nx,
-                                                   const int    ny,
-                                                   const int    pny,
-                                                   const int    pnz,
-                                                   const int    atomIndexLocal,
-                                                   const int    splineIndexBase,
-                                                   const float2 tdz,
+                                                   const int ithyMin,
+                                                   const int ithyMax,
+                                                   const int ixBase,
+                                                   const int iz,
+                                                   const int nx,
+                                                   const int ny,
+                                                   const int pny,
+                                                   const int pnz,
+                                                   const int atomIndexLocal,
+                                                   const int splineIndexBase,
+                                                   const int splineIndexZ,
                                                    const int* __restrict__ sm_gridlineIndices,
                                                    const float* __restrict__ sm_theta,
                                                    const float* __restrict__ sm_dtheta,
@@ -262,7 +267,7 @@ __device__ __forceinline__ void sumForceComponents(float* __restrict__ fx,
     for (int ithy = ithyMin; ithy < ithyMax; ithy++)
     {
         const int splineIndexY = getSplineParamIndex<order, atomsPerWarp>(splineIndexBase, YY, ithy);
-        const float2 tdy       = make_float2(sm_theta[splineIndexY], sm_dtheta[splineIndexY]);
+        const float2 tdy = make_float2(sm_theta[splineIndexY], sm_dtheta[splineIndexY]);
 
         int iy = sm_gridlineIndices[atomIndexLocal * DIM + YY] + ithy;
         if (wrapY & (iy >= ny))
@@ -280,13 +285,13 @@ __device__ __forceinline__ void sumForceComponents(float* __restrict__ fx,
                 ix -= nx;
             }
             const int gridIndexGlobal = ix * pny * pnz + constOffset;
-            assert(gridIndexGlobal >= 0);
+            GMX_DEVICE_ASSERT(gridIndexGlobal >= 0);
             const float gridValue = gm_grid[gridIndexGlobal];
-            assert(isfinite(gridValue));
+            GMX_DEVICE_ASSERT(isfinite(gridValue));
             const int splineIndexX = getSplineParamIndex<order, atomsPerWarp>(splineIndexBase, XX, ithx);
-            const float2 tdx       = make_float2(sm_theta[splineIndexX], sm_dtheta[splineIndexX]);
-            const float  fxy1      = tdz.x * gridValue;
-            const float  fz1       = tdz.y * gridValue;
+            const float2 tdx  = make_float2(sm_theta[splineIndexX], sm_dtheta[splineIndexX]);
+            const float  fxy1 = sm_theta[splineIndexZ] * gridValue;
+            const float  fz1  = sm_dtheta[splineIndexZ] * gridValue;
             *fx += tdx.y * tdy.x * fxy1;
             *fy += tdx.x * tdy.y * fxy1;
             *fz += tdx.x * tdy.x * fz1;
@@ -305,8 +310,6 @@ __device__ __forceinline__ void sumForceComponents(float* __restrict__ fx,
  * \param[in] gm_coefficients     Global memory array of the coefficients to use for an unperturbed
  * or FEP in state A if a single grid is used (\p multiCoefficientsSingleGrid == true).If two
  * separate grids are used this should be the coefficients of the grid in question.
- * \param[in] gm_coefficientsB    Global memory array of the coefficients to use for FEP in state B.
- * Should be nullptr if two separate grids are used.
  */
 __device__ __forceinline__ void calculateAndStoreGridForces(float3* __restrict__ sm_forces,
                                                             const int   forceIndexLocal,
@@ -326,31 +329,144 @@ __device__ __forceinline__ void calculateAndStoreGridForces(float3* __restrict__
     sm_forces[forceIndexLocal] = result;
 }
 
+
+template<int numIter, int iterThreads, int blockForcesSize>
+__device__ void findPPRankAndPutForces(const int threadLocalId,
+                                       const int ppRank,
+                                       const int startAtoms,
+                                       const int endAtoms,
+                                       float* __restrict__ gm_forces, // NOLINT(readability-non-const-parameter)
+                                       float* sm_forces) // NOLINT(readability-non-const-parameter)
+{
+#if GMX_NVSHMEM
+    int       haveAnyWorkFromThread = 0;
+    const int blockIndex            = blockIdx.y * gridDim.x + blockIdx.x;
+
+#    pragma unroll
+    for (int i = 0; i < numIter; i++)
+    {
+        const int outputIndexLocal  = i * iterThreads + threadLocalId;
+        const int outputIndexGlobal = blockIndex * blockForcesSize + outputIndexLocal;
+        int isValidRange = ((outputIndexGlobal < endAtoms) && (outputIndexGlobal >= startAtoms)
+                            && (threadLocalId < iterThreads));
+        haveAnyWorkFromThread |= (isValidRange << i);
+    }
+
+    const int haveAnyWorkInWarp = __any_sync(c_fullWarpMask, haveAnyWorkFromThread > 0);
+
+    if (haveAnyWorkInWarp)
+    {
+        float* gm_forcesRemote = (float*)nvshmem_ptr(gm_forces, ppRank);
+        // if gm_forcesRemote is non-null it implies the given ppRank is in the local node
+        // so we can use normal ld/st over the remote ppRank memory with gm_forcesRemote
+        const bool isPpRankIntraNode = (gm_forcesRemote != nullptr);
+        const int  remoteOffset      = isPpRankIntraNode ? startAtoms : 0;
+        float*     gm_forcesDest     = isPpRankIntraNode ? gm_forcesRemote : gm_forces;
+        int        totalAtomsThread  = 0;
+
+#    pragma unroll
+        for (int i = 0; i < numIter; i++)
+        {
+            const int outputIndexLocal  = i * iterThreads + threadLocalId;
+            const int outputIndexGlobal = blockIndex * blockForcesSize + outputIndexLocal;
+            int       isValidRange      = 1 & (haveAnyWorkFromThread >> i);
+            if (isValidRange)
+            {
+                float outputForceComponent                      = sm_forces[outputIndexLocal];
+                gm_forcesDest[outputIndexGlobal - remoteOffset] = outputForceComponent;
+                totalAtomsThread++;
+            }
+        }
+
+        if (!isPpRankIntraNode)
+        {
+            int totalAtomsWarpProcessed = totalAtomsThread;
+            // reduce to find total atoms processed by this block for this PP rank.
+            for (int mask = warp_size / 2; mask > 0; mask /= 2)
+            {
+                totalAtomsWarpProcessed += __shfl_xor_sync(c_fullWarpMask, totalAtomsWarpProcessed, mask);
+            }
+
+            // Use threadfence_block to make sure the previous update to `gm_forcesDest`
+            // is observed by all the threads in the block before nvshmemx_float_put_nbi_warp
+            // does the remote writes.
+            __threadfence_block();
+
+            // start offset for source buffer.
+            const int startOffsetSrc = (startAtoms > (blockIndex * blockForcesSize))
+                                               ? startAtoms
+                                               : (blockIndex * blockForcesSize);
+            // start offset for dest buffer.
+            const int startOffsetDst = ((blockIndex * blockForcesSize) - startAtoms);
+
+            nvshmemx_float_put_nbi_warp(gm_forces + startOffsetDst,     // dest buffer
+                                        &gm_forcesDest[startOffsetSrc], // src buffer
+                                        totalAtomsWarpProcessed,
+                                        ppRank);
+        }
+    }
+#else
+    GMX_UNUSED_VALUE(threadLocalId);
+    GMX_UNUSED_VALUE(ppRank);
+    GMX_UNUSED_VALUE(startAtoms);
+    GMX_UNUSED_VALUE(endAtoms);
+    GMX_UNUSED_VALUE(gm_forces);
+    GMX_UNUSED_VALUE(sm_forces);
+#endif
+}
+
+// Add this prototype to fix clang warnings.
+__global__ void nvshmemSignalKernel(PmeGpuKernelParams kernelParams);
+
+/*! \brief
+ * A CUDA kernel which signals to the corresponding PP ranks of pme forces transfer completion.
+ * This kernel should only be called after pme_gather kernel in the same stream.
+ * \param[in]  kernelParams         All the PME GPU data.
+ */
+__global__ void nvshmemSignalKernel(const PmeGpuKernelParams kernelParams)
+{
+#if GMX_NVSHMEM
+    if (kernelParams.useNvshmem)
+    {
+        nvshmem_fence();
+        for (int rankId = threadIdx.x; rankId < kernelParams.ppRanksInfoSize; rankId += blockDim.x)
+        {
+            auto ppRankInfo = kernelParams.ppRanksInfo[rankId];
+            nvshmemx_signal_op(kernelParams.forcesReadyNvshmemFlags,
+                               kernelParams.forcesReadyNvshmemFlagsCounter,
+                               NVSHMEM_SIGNAL_SET,
+                               ppRankInfo.rankId);
+        }
+    }
+#else
+    GMX_UNUSED_VALUE(kernelParams);
+#endif
+}
+
 /*! \brief
  * A CUDA kernel which gathers the atom forces from the grid.
  * The grid is assumed to be wrapped in dimension Z.
  *
- * \tparam[in] order                The PME order (must be 4 currently).
- * \tparam[in] wrapX                Tells if the grid is wrapped in the X dimension.
- * \tparam[in] wrapY                Tells if the grid is wrapped in the Y dimension.
- * \tparam[in] numGrids             The number of grids to use in the kernel. Can be 1 or 2.
- * \tparam[in] readGlobal           Tells if we should read spline values from global memory
- * \tparam[in] threadsPerAtom       How many threads work on each atom
+ * \tparam     order                The PME order (must be 4 currently).
+ * \tparam     wrapX                Tells if the grid is wrapped in the X dimension.
+ * \tparam     wrapY                Tells if the grid is wrapped in the Y dimension.
+ * \tparam     numGrids             The number of grids to use in the kernel. Can be 1 or 2.
+ * \tparam     readGlobal           Tells if we should read spline values from global memory
+ * \tparam     threadsPerAtom       How many threads work on each atom
  *
  * \param[in]  kernelParams         All the PME GPU data.
  */
 template<int order, bool wrapX, bool wrapY, int numGrids, bool readGlobal, ThreadsPerAtom threadsPerAtom>
 __launch_bounds__(c_gatherMaxThreadsPerBlock, c_gatherMinBlocksPerMP) __global__
-        void pme_gather_kernel(const PmeGpuCudaKernelParams kernelParams)
+        void pme_gather_kernel(const PmeGpuKernelParams kernelParams)
 {
-    assert(numGrids == 1 || numGrids == 2);
+    GMX_DEVICE_ASSERT(numGrids == 1 || numGrids == 2);
 
     /* Global memory pointers */
     const float* __restrict__ gm_coefficientsA = kernelParams.atoms.d_coefficients[0];
-    const float* __restrict__ gm_coefficientsB = kernelParams.atoms.d_coefficients[1];
     const float* __restrict__ gm_gridA         = kernelParams.grid.d_realGrid[0];
-    const float* __restrict__ gm_gridB         = kernelParams.grid.d_realGrid[1];
-    float* __restrict__ gm_forces              = kernelParams.atoms.d_forces;
+    static_assert(sizeof(*kernelParams.atoms.d_forces) == 3 * sizeof(float));
+    float* __restrict__ gm_forces = reinterpret_cast<float*>(kernelParams.atoms.d_forces);
 
     /* Global memory pointers for readGlobal */
     const float* __restrict__ gm_theta         = kernelParams.atoms.d_theta;
@@ -364,13 +480,13 @@ __launch_bounds__(c_gatherMaxThreadsPerBlock, c_gatherMinBlocksPerMP) __global__
 
     /* Number of data components and threads for a single atom */
     const int threadsPerAtomValue = (threadsPerAtom == ThreadsPerAtom::Order) ? order : order * order;
-    const int atomDataSize        = threadsPerAtomValue;
-    const int atomsPerBlock       = c_gatherMaxThreadsPerBlock / atomDataSize;
+    const int atomDataSize  = threadsPerAtomValue;
+    const int atomsPerBlock = c_gatherMaxThreadsPerBlock / atomDataSize;
     // Number of atoms processed by a single warp in spread and gather
     const int atomsPerWarp = warp_size / atomDataSize;
 
     const int blockSize = atomsPerBlock * atomDataSize;
-    assert(blockSize == blockDim.x * blockDim.y * blockDim.z);
+    GMX_DEVICE_ASSERT(blockSize == blockDim.x * blockDim.y * blockDim.z);
 
     /* These are the atom indices - for the shared and global memory */
     const int atomIndexLocal  = threadIdx.z;
@@ -411,7 +527,7 @@ __launch_bounds__(c_gatherMaxThreadsPerBlock, c_gatherMinBlocksPerMP) __global__
         if (localGridlineIndicesIndex < gridlineIndicesSize)
         {
             sm_gridlineIndices[localGridlineIndicesIndex] = gm_gridlineIndices[globalGridlineIndicesIndex];
-            assert(sm_gridlineIndices[localGridlineIndicesIndex] >= 0);
+            GMX_DEVICE_ASSERT(sm_gridlineIndices[localGridlineIndicesIndex] >= 0);
         }
         /* The loop needed for order threads per atom to make sure we load all data values, as each thread must load multiple values
            with order*order threads per atom, it is only required for each thread to load one data value */
@@ -429,8 +545,8 @@ __launch_bounds__(c_gatherMaxThreadsPerBlock, c_gatherMinBlocksPerMP) __global__
             {
                 sm_theta[localSplineParamsIndex]  = gm_theta[globalSplineParamsIndex];
                 sm_dtheta[localSplineParamsIndex] = gm_dtheta[globalSplineParamsIndex];
-                assert(isfinite(sm_theta[localSplineParamsIndex]));
-                assert(isfinite(sm_dtheta[localSplineParamsIndex]));
+                GMX_DEVICE_ASSERT(isfinite(sm_theta[localSplineParamsIndex]));
+                GMX_DEVICE_ASSERT(isfinite(sm_dtheta[localSplineParamsIndex]));
             }
         }
         __syncthreads();
@@ -439,7 +555,7 @@ __launch_bounds__(c_gatherMaxThreadsPerBlock, c_gatherMinBlocksPerMP) __global__
     {
         const float3* __restrict__ gm_coordinates = asFloat3(kernelParams.atoms.d_coordinates);
         /* Recalculate  Splines  */
-        if (c_useAtomDataPrefetch)
+        if constexpr (c_useAtomDataPrefetch)
         {
             // charges
             __shared__ float sm_coefficients[atomsPerBlock];
@@ -459,13 +575,13 @@ __launch_bounds__(c_gatherMaxThreadsPerBlock, c_gatherMinBlocksPerMP) __global__
             atomX      = gm_coordinates[atomIndexGlobal];
             atomCharge = gm_coefficientsA[atomIndexGlobal];
         }
-        calculate_splines<order, atomsPerBlock, atomsPerWarp, true, false>(
+        calculate_splines<order, atomsPerBlock, atomsPerWarp, true, false, numGrids>(
                 kernelParams, atomIndexOffset, atomX, atomCharge, sm_theta, sm_dtheta, sm_gridlineIndices);
         __syncwarp();
     }
-    float fx = 0.0f;
-    float fy = 0.0f;
-    float fz = 0.0f;
+    float fx = 0.0F;
+    float fy = 0.0F;
+    float fz = 0.0F;
 
     const int chargeCheck = pme_gpu_check_atom_charge(gm_coefficientsA[atomIndexGlobal]);
 
@@ -479,8 +595,7 @@ __launch_bounds__(c_gatherMaxThreadsPerBlock, c_gatherMinBlocksPerMP) __global__
     const int warpIndex     = atomIndexLocal / atomsPerWarp;
 
     const int splineIndexBase = getSplineParamIndexBase<order, atomsPerWarp>(warpIndex, atomWarpIndex);
-    const int    splineIndexZ = getSplineParamIndex<order, atomsPerWarp>(splineIndexBase, ZZ, ithz);
-    const float2 tdz          = make_float2(sm_theta[splineIndexZ], sm_dtheta[splineIndexZ]);
+    const int splineIndexZ = getSplineParamIndex<order, atomsPerWarp>(splineIndexBase, ZZ, ithz);
 
     int       iz     = sm_gridlineIndices[atomIndexLocal * DIM + ZZ] + ithz;
     const int ixBase = sm_gridlineIndices[atomIndexLocal * DIM + XX];
@@ -494,14 +609,29 @@ __launch_bounds__(c_gatherMaxThreadsPerBlock, c_gatherMinBlocksPerMP) __global__
     const int ithyMax = (threadsPerAtom == ThreadsPerAtom::Order) ? order : threadIdx.y + 1;
     if (chargeCheck)
     {
-        sumForceComponents<order, atomsPerWarp, wrapX, wrapY>(
-                &fx, &fy, &fz, ithyMin, ithyMax, ixBase, iz, nx, ny, pny, pnz, atomIndexLocal,
-                splineIndexBase, tdz, sm_gridlineIndices, sm_theta, sm_dtheta, gm_gridA);
+        sumForceComponents<order, atomsPerWarp, wrapX, wrapY>(&fx,
+                                                              &fy,
+                                                              &fz,
+                                                              ithyMin,
+                                                              ithyMax,
+                                                              ixBase,
+                                                              iz,
+                                                              nx,
+                                                              ny,
+                                                              pny,
+                                                              pnz,
+                                                              atomIndexLocal,
+                                                              splineIndexBase,
+                                                              splineIndexZ,
+                                                              sm_gridlineIndices,
+                                                              sm_theta,
+                                                              sm_dtheta,
+                                                              gm_gridA);
     }
     // Reduction of partial force contributions
     __shared__ float3 sm_forces[atomsPerBlock];
-    reduce_atom_forces<order, atomDataSize, blockSize>(sm_forces, atomIndexLocal, splineIndex, lineIndex,
-                                                       kernelParams.grid.realGridSizeFP, fx, fy, fz);
+    reduce_atom_forces<order, atomDataSize, blockSize>(
+            sm_forces, atomIndexLocal, splineIndex, lineIndex, kernelParams.grid.realGridSizeFP, fx, fy, fz);
     __syncthreads();
 
     /* Calculating the final forces with no component branching, atomsPerBlock threads */
@@ -510,68 +640,118 @@ __launch_bounds__(c_gatherMaxThreadsPerBlock, c_gatherMinBlocksPerMP) __global__
     const float scale            = kernelParams.current.scale;
     if (forceIndexLocal < atomsPerBlock)
     {
-        calculateAndStoreGridForces(sm_forces, forceIndexLocal, forceIndexGlobal,
-                                    kernelParams.current.recipBox, scale, gm_coefficientsA);
+        calculateAndStoreGridForces(
+                sm_forces, forceIndexLocal, forceIndexGlobal, kernelParams.current.recipBox, scale, gm_coefficientsA);
     }
 
     __syncwarp();
-    assert(atomsPerBlock <= warp_size);
+    GMX_DEVICE_ASSERT(atomsPerBlock <= warp_size);
 
     /* Writing or adding the final forces component-wise, single warp */
-    const int blockForcesSize = atomsPerBlock * DIM;
-    const int numIter         = (blockForcesSize + warp_size - 1) / warp_size;
-    const int iterThreads     = blockForcesSize / numIter;
-    if (threadLocalId < iterThreads)
-    {
-#pragma unroll
-        for (int i = 0; i < numIter; i++)
-        {
-            int   outputIndexLocal       = i * iterThreads + threadLocalId;
-            int   outputIndexGlobal      = blockIndex * blockForcesSize + outputIndexLocal;
-            float outputForceComponent   = ((float*)sm_forces)[outputIndexLocal];
-            gm_forces[outputIndexGlobal] = outputForceComponent;
-        }
-    }
+    constexpr int blockForcesSize = atomsPerBlock * DIM;
+    constexpr int numIter         = (blockForcesSize + warp_size - 1) / warp_size;
+    constexpr int iterThreads     = blockForcesSize / numIter;
 
-    if (numGrids == 2)
+    if constexpr (numGrids == 2)
     {
+        __shared__ float3 sm_forces_numGrids2[atomsPerBlock];
+        const float* __restrict__ gm_coefficientsB = kernelParams.atoms.d_coefficients[1];
+        const float* __restrict__ gm_gridB         = kernelParams.grid.d_realGrid[1];
+
         /* We must sync here since the same shared memory is used as above. */
         __syncthreads();
-        fx                    = 0.0f;
-        fy                    = 0.0f;
-        fz                    = 0.0f;
-        const int chargeCheck = pme_gpu_check_atom_charge(gm_coefficientsB[atomIndexGlobal]);
-        if (chargeCheck)
+        fx                     = 0.0F;
+        fy                     = 0.0F;
+        fz                     = 0.0F;
+        const int chargeCheckB = pme_gpu_check_atom_charge(gm_coefficientsB[atomIndexGlobal]);
+        if (chargeCheckB)
         {
-            sumForceComponents<order, atomsPerWarp, wrapX, wrapY>(
-                    &fx, &fy, &fz, ithyMin, ithyMax, ixBase, iz, nx, ny, pny, pnz, atomIndexLocal,
-                    splineIndexBase, tdz, sm_gridlineIndices, sm_theta, sm_dtheta, gm_gridB);
+            sumForceComponents<order, atomsPerWarp, wrapX, wrapY>(&fx,
+                                                                  &fy,
+                                                                  &fz,
+                                                                  ithyMin,
+                                                                  ithyMax,
+                                                                  ixBase,
+                                                                  iz,
+                                                                  nx,
+                                                                  ny,
+                                                                  pny,
+                                                                  pnz,
+                                                                  atomIndexLocal,
+                                                                  splineIndexBase,
+                                                                  splineIndexZ,
+                                                                  sm_gridlineIndices,
+                                                                  sm_theta,
+                                                                  sm_dtheta,
+                                                                  gm_gridB);
         }
         // Reduction of partial force contributions
-        reduce_atom_forces<order, atomDataSize, blockSize>(sm_forces, atomIndexLocal, splineIndex,
-                                                           lineIndex, kernelParams.grid.realGridSizeFP,
-                                                           fx, fy, fz);
+        reduce_atom_forces<order, atomDataSize, blockSize>(sm_forces_numGrids2,
+                                                           atomIndexLocal,
+                                                           splineIndex,
+                                                           lineIndex,
+                                                           kernelParams.grid.realGridSizeFP,
+                                                           fx,
+                                                           fy,
+                                                           fz);
         __syncthreads();
 
         /* Calculating the final forces with no component branching, atomsPerBlock threads */
         if (forceIndexLocal < atomsPerBlock)
         {
-            calculateAndStoreGridForces(sm_forces, forceIndexLocal, forceIndexGlobal,
-                                        kernelParams.current.recipBox, 1.0F - scale, gm_coefficientsB);
+            calculateAndStoreGridForces(sm_forces_numGrids2,
+                                        forceIndexLocal,
+                                        forceIndexGlobal,
+                                        kernelParams.current.recipBox,
+                                        1.0F - scale,
+                                        gm_coefficientsB);
         }
 
         __syncwarp();
 
-        /* Writing or adding the final forces component-wise, single warp */
+        if (threadLocalId < iterThreads)
+        {
+            for (int i = 0; i < numIter; i++)
+            {
+                int   outputIndexLocal = i * iterThreads + threadLocalId;
+                float outputForceComponent =
+                        (reinterpret_cast<float*>(sm_forces_numGrids2)[outputIndexLocal]);
+                reinterpret_cast<float*>(sm_forces)[outputIndexLocal] += outputForceComponent;
+            }
+        }
+        __syncwarp();
+    }
+
+#if GMX_NVSHMEM
+    if (!kernelParams.isVirialStep && kernelParams.useNvshmem)
+    {
+        __syncthreads();
+        for (int rankId = 0; rankId < kernelParams.ppRanksInfoSize; rankId++)
+        {
+            const auto ppRankInfo    = kernelParams.ppRanksInfo[rankId];
+            const int  endAtomOffset = ppRankInfo.startAtomOffset + ppRankInfo.numAtoms;
+
+            findPPRankAndPutForces<numIter, iterThreads, blockForcesSize>(
+                    threadLocalId,
+                    ppRankInfo.rankId,
+                    ppRankInfo.startAtomOffset * DIM,
+                    endAtomOffset * DIM,
+                    gm_forces,
+                    reinterpret_cast<float*>(sm_forces));
+        }
+    }
+    else
+#endif
+    {
         if (threadLocalId < iterThreads)
         {
 #pragma unroll
             for (int i = 0; i < numIter; i++)
             {
-                int   outputIndexLocal     = i * iterThreads + threadLocalId;
-                int   outputIndexGlobal    = blockIndex * blockForcesSize + outputIndexLocal;
-                float outputForceComponent = ((float*)sm_forces)[outputIndexLocal];
-                gm_forces[outputIndexGlobal] += outputForceComponent;
+                int outputIndexLocal  = i * iterThreads + threadLocalId;
+                int outputIndexGlobal = blockIndex * blockForcesSize + outputIndexLocal;
+                float outputForceComponent = (reinterpret_cast<float*>(sm_forces)[outputIndexLocal]);
+                gm_forces[outputIndexGlobal] = outputForceComponent;
             }
         }
     }
@@ -579,12 +759,12 @@ __launch_bounds__(c_gatherMaxThreadsPerBlock, c_gatherMinBlocksPerMP) __global__
 
 //! Kernel instantiations
 // clang-format off
-template __global__ void pme_gather_kernel<4, true, true, 1, true, ThreadsPerAtom::Order>        (const PmeGpuCudaKernelParams);
-template __global__ void pme_gather_kernel<4, true, true, 1, true, ThreadsPerAtom::OrderSquared> (const PmeGpuCudaKernelParams);
-template __global__ void pme_gather_kernel<4, true, true, 1, false, ThreadsPerAtom::Order>       (const PmeGpuCudaKernelParams);
-template __global__ void pme_gather_kernel<4, true, true, 1, false, ThreadsPerAtom::OrderSquared>(const PmeGpuCudaKernelParams);
-template __global__ void pme_gather_kernel<4, true, true, 2, true, ThreadsPerAtom::Order>        (const PmeGpuCudaKernelParams);
-template __global__ void pme_gather_kernel<4, true, true, 2, true, ThreadsPerAtom::OrderSquared> (const PmeGpuCudaKernelParams);
-template __global__ void pme_gather_kernel<4, true, true, 2, false, ThreadsPerAtom::Order>       (const PmeGpuCudaKernelParams);
-template __global__ void pme_gather_kernel<4, true, true, 2, false, ThreadsPerAtom::OrderSquared>(const PmeGpuCudaKernelParams);
+template __global__ void pme_gather_kernel<4, true, true, 1, true, ThreadsPerAtom::Order>        (const PmeGpuKernelParams);
+template __global__ void pme_gather_kernel<4, true, true, 1, true, ThreadsPerAtom::OrderSquared> (const PmeGpuKernelParams);
+template __global__ void pme_gather_kernel<4, true, true, 1, false, ThreadsPerAtom::Order>       (const PmeGpuKernelParams);
+template __global__ void pme_gather_kernel<4, true, true, 1, false, ThreadsPerAtom::OrderSquared>(const PmeGpuKernelParams);
+template __global__ void pme_gather_kernel<4, true, true, 2, true, ThreadsPerAtom::Order>        (const PmeGpuKernelParams);
+template __global__ void pme_gather_kernel<4, true, true, 2, true, ThreadsPerAtom::OrderSquared> (const PmeGpuKernelParams);
+template __global__ void pme_gather_kernel<4, true, true, 2, false, ThreadsPerAtom::Order>       (const PmeGpuKernelParams);
+template __global__ void pme_gather_kernel<4, true, true, 2, false, ThreadsPerAtom::OrderSquared>(const PmeGpuKernelParams);
 // clang-format on

@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2019- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \internal \file
  * \brief
@@ -44,19 +43,33 @@
 
 #include "extract_cluster.h"
 
-#include <algorithm>
+#include <cstdio>
+
+#include <filesystem>
+#include <memory>
+#include <optional>
+#include <string>
+#include <vector>
 
 #include "gromacs/coordinateio/coordinatefile.h"
 #include "gromacs/coordinateio/requirements.h"
 #include "gromacs/fileio/trxio.h"
 #include "gromacs/options/filenameoption.h"
 #include "gromacs/options/ioptionscontainer.h"
+#include "gromacs/options/optionfiletype.h"
+#include "gromacs/selection/selection.h"
 #include "gromacs/selection/selectionoption.h"
+#include "gromacs/topology/atoms.h"
 #include "gromacs/topology/index.h"
 #include "gromacs/trajectoryanalysis/analysissettings.h"
 #include "gromacs/trajectoryanalysis/topologyinformation.h"
+#include "gromacs/utility/arrayref.h"
+#include "gromacs/utility/basedefinitions.h"
 #include "gromacs/utility/path.h"
 #include "gromacs/utility/stringutil.h"
+
+struct t_pbc;
+struct t_trxframe;
 
 namespace gmx
 {
@@ -75,8 +88,6 @@ class ExtractCluster : public TrajectoryAnalysisModule
 {
 public:
     ExtractCluster();
-
-    ~ExtractCluster() override;
 
     void initOptions(IOptionsContainer* options, TrajectoryAnalysisSettings* settings) override;
     void optionsFinished(TrajectoryAnalysisSettings* settings) override;
@@ -98,33 +109,10 @@ private:
     //! Storage of requirements for creating output files.
     OutputRequirementOptionDirector requirementsBuilder_;
     //! Stores the index information for the clusters. TODO refactor this!
-    t_cluster_ndx* clusterIndex_ = nullptr;
+    std::optional<t_cluster_ndx> clusterIndex_;
 };
 
 ExtractCluster::ExtractCluster() {}
-
-ExtractCluster::~ExtractCluster()
-{
-    if (clusterIndex_ != nullptr)
-    {
-        if (clusterIndex_->grpname != nullptr)
-        {
-            for (int i = 0; i < clusterIndex_->clust->nr; i++)
-            {
-                sfree(clusterIndex_->grpname[i]);
-            }
-            sfree(clusterIndex_->grpname);
-        }
-        if (clusterIndex_->clust != nullptr)
-        {
-            sfree(clusterIndex_->inv_clust);
-            done_blocka(clusterIndex_->clust);
-            sfree(clusterIndex_->clust);
-        }
-        sfree(clusterIndex_);
-    }
-}
-
 
 void ExtractCluster::initOptions(IOptionsContainer* options, TrajectoryAnalysisSettings* settings)
 {
@@ -140,7 +128,7 @@ void ExtractCluster::initOptions(IOptionsContainer* options, TrajectoryAnalysisS
     };
 
     options->addOption(FileNameOption("clusters")
-                               .filetype(eftIndex)
+                               .filetype(OptionFileType::AtomIndex)
                                .inputFile()
                                .required()
                                .store(&indexFileName_)
@@ -152,7 +140,7 @@ void ExtractCluster::initOptions(IOptionsContainer* options, TrajectoryAnalysisS
             "Selection of atoms to write to the file"));
 
     options->addOption(FileNameOption("o")
-                               .filetype(eftTrajectory)
+                               .filetype(OptionFileType::Trajectory)
                                .outputFile()
                                .store(&outputNamePrefix_)
                                .defaultBasename("trajout")
@@ -180,12 +168,13 @@ void ExtractCluster::optionsFinished(TrajectoryAnalysisSettings* settings)
 void ExtractCluster::initAnalysis(const TrajectoryAnalysisSettings& /*settings*/,
                                   const TopologyInformation& top)
 {
-    int numberOfClusters = clusterIndex_->clust->nr;
-    for (int i = 0; i < numberOfClusters; i++)
+    for (const auto& cluster : clusterIndex_->clusters)
     {
-        std::string outputName = Path::concatenateBeforeExtension(
-                outputNamePrefix_, formatString("_%s", clusterIndex_->grpname[i]));
-        writers_.emplace_back(createTrajectoryFrameWriter(top.mtop(), sel_, outputName,
+        auto outputName = gmx::concatenateBeforeExtension(
+                outputNamePrefix_, formatString("_%s", cluster.name.c_str()));
+        writers_.emplace_back(createTrajectoryFrameWriter(top.mtop(),
+                                                          sel_,
+                                                          outputName.string(),
                                                           top.hasTopology() ? top.copyAtoms() : nullptr,
                                                           requirementsBuilder_.process()));
     }
@@ -196,17 +185,26 @@ void ExtractCluster::analyzeFrame(int               frameNumber,
                                   t_pbc* /* pbc */,
                                   TrajectoryAnalysisModuleData* /*pdata*/)
 {
-    // modify frame to write out correct number of coords
-    // and actually write out
-    int clusterToWriteTo = clusterIndex_->inv_clust[frameNumber];
-    // Check for valid entry in cluster list, otherwise skip frame.
-    if (clusterToWriteTo != -1 && clusterToWriteTo < clusterIndex_->clust->nr)
+    // We have to also accept manual files that might contain fewer frames
+    // than a provided trajectory. In this case, we only try to match frames
+    // to clusters if the actual frame number is lower or equal to the highest
+    // number in the cluster file.
+
+    const int maxframe = clusterIndex_->maxframe;
+    if (frameNumber <= maxframe)
     {
-        writers_[clusterToWriteTo]->prepareAndWriteFrame(frameNumber, frame);
-    }
-    else
-    {
-        printf("Frame %d was not found in any cluster!", frameNumber);
+        // modify frame to write out correct number of coords
+        // and actually write out
+        int clusterToWriteTo = clusterIndex_->inv_clust[frameNumber];
+        // Check for valid entry in cluster list, otherwise skip frame.
+        if (clusterToWriteTo != -1 && clusterToWriteTo < gmx::ssize(clusterIndex_->clusters))
+        {
+            writers_[clusterToWriteTo]->prepareAndWriteFrame(frameNumber, frame);
+        }
+        else
+        {
+            printf("Frame %d was not found in any cluster!\n", frameNumber);
+        }
     }
 }
 

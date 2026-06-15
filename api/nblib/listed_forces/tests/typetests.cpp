@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2020- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \internal \file
  * \brief
@@ -41,83 +40,171 @@
  * \author Prashanth Kanduri <kanduri@cscs.ch>
  * \author Sebastian Keller <keller@cscs.ch>
  */
-#include "nblib/listed_forces/dataflow.hpp"
+#include <string>
+#include <type_traits>
+#include <vector>
+
+#include <gtest/gtest.h>
+
+#include "listed_forces/dataflow.hpp"
+#include "listed_forces/tests/listedtesthelpers.h"
+
+#include "gromacs/mdtypes/md_enums.h"
+#include "gromacs/utility/arrayref.h"
+#include "gromacs/utility/vectypes.h"
 
 #include "testutils/refdata.h"
 #include "testutils/testasserts.h"
 
+#include "nblib/box.h"
+#include "nblib/listed_forces/bondtypes.h"
+#include "nblib/listed_forces/definitions.h"
+
+#include "pbc.hpp"
+#include "testhelpers.h"
+
 namespace nblib
 {
-
-//! Number of atoms used in these tests.
-constexpr int c_numAtoms = 4;
+template<class T, class TL>
+struct Contains;
 
 //! Coordinates for testing
-std::vector<std::vector<gmx::RVec>> c_coordinatesForTests = {
-    { { 0.0, 0.0, 0.0 }, { 0.0, 0.0, 0.2 }, { 0.005, 0.0, 0.1 }, { -0.001, 0.1, 0.0 } },
-    { { 0.5, 0.0, 0.0 }, { 0.5, 0.0, 0.15 }, { 0.5, 0.07, 0.22 }, { 0.5, 0.18, 0.22 } },
-    { { -0.1143, -0.0282, 0.0 }, { 0.0, 0.0434, 0.0 }, { 0.1185, -0.0138, 0.0 }, { -0.0195, 0.1498, 0.0 } }
+static const std::vector<gmx::RVec> c_coordinatesForDihTests = { { 0.0, 0.0, 0.0 },
+                                                                 { 0.0, 0.0, 0.2 },
+                                                                 { 0.005, 0.0, 0.1 },
+                                                                 { -0.001, 0.1, 0.0 } };
+
+//! Coordinates for testing angles
+static const std::vector<gmx::RVec> c_coordinatesForAngleTests = { { 1.382, 1.573, 1.482 },
+                                                                   { 1.281, 1.559, 1.596 },
+                                                                   { 1.292, 1.422, 1.663 } };
+
+//! Coordinates for testing bonds
+static const std::vector<gmx::RVec> c_coordinatesForBondTests = { { 1.382, 1.573, 1.482 },
+                                                                  { 1.281, 1.559, 1.596 } };
+
+//! Function types for testing Harmonic bonds
+static const std::vector<HarmonicBondType> c_InputHarmonicBonds = { { HarmonicBondType(500.0, 0.15) } };
+
+//! Function types for testing G96 bonds
+static const std::vector<G96BondType> c_InputG96Bonds = { { G96BondType(50.0, 0.15) } };
+
+//! Function types for testing cubic bonds
+static const std::vector<CubicBondType> c_InputCubicBonds = { { CubicBondType(50.0, 2.0, 0.16) } };
+
+//! Function types for testing Morse bonds
+static const std::vector<MorseBondType> c_InputMorseBonds = { { MorseBondType(30.0, 2.7, 0.15) } };
+
+//! Function types for testing FENE bonds
+static const std::vector<FENEBondType> c_InputFeneBonds = { { FENEBondType(5.0, 0.4) } };
+
+//! Function types for testing Harmonic angles
+static const std::vector<HarmonicAngle> c_InputHarmonicAngles = { { HarmonicAngle(50.0, Degrees(100)) } };
+
+//! Function types for testing Linear angles
+static const std::vector<LinearAngle> c_InputLinearAngles = { { LinearAngle(50.0, 0.4) } };
+
+//! Function types for testing G96 angles
+static const std::vector<G96Angle> c_InputG96Angles = { { G96Angle(50.0, Degrees(100)) } };
+
+//! Function types for testing Restricted angles
+static const std::vector<RestrictedAngle> c_InputRestrictedAngles = { { RestrictedAngle(50.0, Degrees(100)) } };
+
+//! Function types for testing Quartic angles
+static const std::vector<QuarticAngle> c_InputQuarticAngles = {
+    { QuarticAngle(1.1, 2.3, 4.6, 7.8, 9.2, Degrees(87)) }
 };
 
-//! Function types for testing dihedrals. Add new terms at the end.
-std::vector<std::vector<ProperDihedral>> c_InputDihs = { { { ProperDihedral(Degrees(-105.0), 15.0, 2) } } /*, { ImproperDihedral(100.0, 50.0) }*/ };
-// Todo: update test setup to allow more than one interaction type and add the following to the inputs
-// std::vector<std::vector<RyckaertBellemanDihedral>> c_InputDihs = { { RyckaertBellemanDihedral({ -7.35, 13.6, 8.4, -16.7, 1.3, 12.4 }) } };
+//! Function types for testing cross bond-bond interaction
+static const std::vector<CrossBondBond> c_InputCrossBondBond = { { CrossBondBond(45.0, 0.8, 0.7) } };
 
-template<class Interaction>
-class ListedForcesBase
+//! Function types for testing cross bond-angle interaction
+static const std::vector<CrossBondAngle> c_InputCrossBondAngle = { { CrossBondAngle(45.0, 0.8, 0.7, 0.3) } };
+
+//! Function types for testing dihedrals
+static const std::vector<ProperDihedral> c_InputDihs = { { ProperDihedral(Degrees(-105.0), 15.0, 2) } };
+
+template<class Interaction, std::enable_if_t<Contains<Interaction, SupportedListedTypes>{}>* = nullptr>
+void checkForcesAndEnergiesWithRefData(std::vector<Interaction> input, gmx::ArrayRef<const gmx::RVec> x)
 {
-public:
-    std::vector<Interaction>                   input_;
-    std::vector<gmx::RVec>                     x_;
-    std::vector<InteractionIndex<Interaction>> indices_;
-    PbcHolder                                  pbcHolder_;
-    gmx::test::TestReferenceData               refData_;
-    gmx::test::TestReferenceChecker            checker_;
-    std::vector<gmx::RVec>                     forces_;
-    real                                       energy_;
+    auto                   indices = indexVector<Interaction>();
+    PbcHolder              pbcHolder(PbcType::Xyz, Box(1.5));
+    test::RefDataChecker   refDataChecker(1e-4);
+    std::vector<gmx::RVec> forces(x.size(), gmx::RVec{ 0, 0, 0 });
 
-    ListedForcesBase(std::vector<Interaction>                   input,
-                     std::vector<gmx::RVec>                     coordinates,
-                     std::vector<InteractionIndex<Interaction>> indices) :
-        input_(std::move(input)),
-        x_(std::move(coordinates)),
-        indices_(std::move(indices)),
-        pbcHolder_(Box(1.5)),
-        checker_(refData_.rootChecker()),
-        forces_(c_numAtoms, gmx::RVec{ 0, 0, 0 })
-    {
-        energy_ = computeForces(indices_, input_, x_, &forces_, pbcHolder_);
-    }
+    auto energy = computeForces(gmx::ArrayRef<const InteractionIndex<Interaction>>(indices),
+                                gmx::ArrayRef<const Interaction>(input),
+                                x,
+                                &forces,
+                                pbcHolder);
 
-    void checkForcesAndEnergies()
-    {
-        checker_.checkReal(energy_, "Epot");
-        checker_.checkSequence(std::begin(forces_), std::end(forces_), "forces");
-    }
-};
-
-class ListedForcesProperDihedralTest :
-    public ListedForcesBase<ProperDihedral>,
-    public testing::TestWithParam<std::tuple<std::vector<ProperDihedral>, std::vector<gmx::RVec>>>
-{
-    using Base = ListedForcesBase<ProperDihedral>;
-
-public:
-    ListedForcesProperDihedralTest() :
-        Base(std::get<0>(GetParam()), std::get<1>(GetParam()), { { 0, 1, 2, 3, 0 } })
-    {
-    }
-};
-
-TEST_P(ListedForcesProperDihedralTest, CheckListed)
-{
-    checkForcesAndEnergies();
+    refDataChecker.testReal(energy, "Epot");
+    refDataChecker.testArrays<gmx::RVec>(forces, "forces");
 }
 
-INSTANTIATE_TEST_CASE_P(FourCenter,
-                        ListedForcesProperDihedralTest,
-                        ::testing::Combine(::testing::ValuesIn(c_InputDihs),
-                                           ::testing::ValuesIn(c_coordinatesForTests)));
+TEST(FourCenter, ListedForcesProperDihedralTest)
+{
+    checkForcesAndEnergiesWithRefData(c_InputDihs, c_coordinatesForDihTests);
+}
+
+TEST(ThreeCenter, ListedForcesG96AngleTest)
+{
+    checkForcesAndEnergiesWithRefData(c_InputG96Angles, c_coordinatesForAngleTests);
+}
+
+TEST(ThreeCenter, ListedForcesHarmonicAngleTest)
+{
+    checkForcesAndEnergiesWithRefData(c_InputHarmonicAngles, c_coordinatesForAngleTests);
+}
+
+TEST(ThreeCenter, ListedForcesLinearAngleTest)
+{
+    checkForcesAndEnergiesWithRefData(c_InputLinearAngles, c_coordinatesForAngleTests);
+}
+
+TEST(ThreeCenter, ListedForcesCrossBondBondTest)
+{
+    checkForcesAndEnergiesWithRefData(c_InputCrossBondBond, c_coordinatesForAngleTests);
+}
+
+TEST(ThreeCenter, ListedForcesCrossBondAngleTest)
+{
+    checkForcesAndEnergiesWithRefData(c_InputCrossBondAngle, c_coordinatesForAngleTests);
+}
+
+TEST(ThreeCenter, ListedForcesQuarticAngleTest)
+{
+    checkForcesAndEnergiesWithRefData(c_InputQuarticAngles, c_coordinatesForAngleTests);
+}
+
+TEST(ThreeCenter, ListedForcesRestrictedAngleTest)
+{
+    checkForcesAndEnergiesWithRefData(c_InputRestrictedAngles, c_coordinatesForAngleTests);
+}
+
+TEST(TwoCenter, ListedForcesHarmonicBondTest)
+{
+    checkForcesAndEnergiesWithRefData(c_InputHarmonicBonds, c_coordinatesForBondTests);
+}
+
+TEST(TwoCenter, ListedForcesG96BondTest)
+{
+    checkForcesAndEnergiesWithRefData(c_InputG96Bonds, c_coordinatesForBondTests);
+}
+
+TEST(TwoCenter, ListedForcesCubicBondTest)
+{
+    checkForcesAndEnergiesWithRefData(c_InputCubicBonds, c_coordinatesForBondTests);
+}
+
+TEST(TwoCenter, ListedForcesMorseBondTest)
+{
+    checkForcesAndEnergiesWithRefData(c_InputMorseBonds, c_coordinatesForBondTests);
+}
+
+TEST(TwoCenter, ListedForcesFeneBondTest)
+{
+    checkForcesAndEnergiesWithRefData(c_InputFeneBonds, c_coordinatesForBondTests);
+}
 
 } // namespace nblib

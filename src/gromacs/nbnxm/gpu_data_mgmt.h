@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2014,2015,2017,2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2014- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \libinternal \file
  *  \brief Declare interface for GPU data transfer for NBNXN module
@@ -46,44 +45,66 @@
 
 #include <memory>
 
-#include "gromacs/gpu_utils/devicebuffer_datatype.h"
 #include "gromacs/gpu_utils/gpu_macros.h"
+#include "gromacs/mdtypes/interaction_const.h"
 #include "gromacs/mdtypes/locality.h"
 
 #include "nbnxm.h"
 
-struct NbnxmGpu;
-struct DeviceInformation;
 struct gmx_wallclock_gpu_nbnxn_t;
-struct nbnxn_atomdata_t;
-struct NbnxnPairlistGpu;
-struct PairlistParams;
 struct interaction_const_t;
-
 class DeviceStream;
+class AtomPairlist;
 
 namespace gmx
 {
+struct NbnxmGpu;
+struct NBAtomDataGpu;
+struct nbnxn_atomdata_t;
+struct NbnxnPairlistGpu;
+struct PairlistParams;
 class DeviceStreamManager;
-}
 
-namespace Nbnxm
-{
+class GpuPairlist;
+class GridSet;
+
+/** Copy FEP parameters to GPU. */
+GPU_FUNC_QUALIFIER
+void copy_gpu_fepparams(
+        NbnxmGpu gmx_unused* nb,
+        bool gmx_unused      bFepGpuNonBonded,
+        float gmx_unused     alphaCoul,
+        float gmx_unused     alphaVdw,
+        int gmx_unused       lambdaPower,
+        float gmx_unused     sigma6WithInvalidSigma,
+        float gmx_unused     sigma6Minimum,
+        float gmx_unused     lambdaCoul,
+        float gmx_unused     lambdaVdw,
+        int gmx_unused       nLambda,
+        const EnumerationArray<FreeEnergyPerturbationCouplingType, std::vector<double>> gmx_unused& all_lambda) GPU_FUNC_TERM;
 
 /** Initializes the data structures related to GPU nonbonded calculations. */
 GPU_FUNC_QUALIFIER
-NbnxmGpu* gpu_init(const gmx::DeviceStreamManager gmx_unused& deviceStreamManager,
+NbnxmGpu* gpu_init(const DeviceStreamManager gmx_unused& deviceStreamManager,
                    const interaction_const_t gmx_unused* ic,
-                   const PairlistParams gmx_unused& listParams,
-                   const nbnxn_atomdata_t gmx_unused* nbat,
+                   const PairlistParams gmx_unused&      listParams,
+                   const nbnxn_atomdata_t gmx_unused*    nbat,
                    /* true if both local and non-local are done on GPU */
-                   bool gmx_unused bLocalAndNonlocal) GPU_FUNC_TERM_WITH_RETURN(nullptr);
+                   bool gmx_unused                     bLocalAndNonlocal,
+                   const std::optional<int> gmx_unused nLambda) GPU_FUNC_TERM_WITH_RETURN(nullptr);
 
 /** Initializes pair-list data for GPU, called at every pair search step. */
 GPU_FUNC_QUALIFIER
-void gpu_init_pairlist(NbnxmGpu gmx_unused*          nb,
+void gpu_init_pairlist(NbnxmGpu gmx_unused*                      nb,
                        const struct NbnxnPairlistGpu gmx_unused* h_nblist,
-                       gmx::InteractionLocality gmx_unused iloc) GPU_FUNC_TERM;
+                       InteractionLocality gmx_unused            iloc) GPU_FUNC_TERM;
+
+/** Initializes fep pair-list data for GPU, called at every pair search step. */
+GPU_FUNC_QUALIFIER
+void gpu_init_feppairlist(NbnxmGpu gmx_unused*           nb,
+                          const AtomPairlist gmx_unused& h_feplist,
+                          InteractionLocality gmx_unused iloc,
+                          const GridSet gmx_unused&      gridSet) GPU_FUNC_TERM;
 
 /** Initializes atom-data on the GPU, called at every pair search step. */
 GPU_FUNC_QUALIFIER
@@ -93,8 +114,8 @@ void gpu_init_atomdata(NbnxmGpu gmx_unused* nb, const nbnxn_atomdata_t gmx_unuse
  *  electrostatic type switching to twin cut-off (or back) if needed.
  */
 GPU_FUNC_QUALIFIER
-void gpu_pme_loadbal_update_param(const struct nonbonded_verlet_t gmx_unused* nbv,
-                                  const interaction_const_t gmx_unused* ic) GPU_FUNC_TERM;
+void gpu_pme_loadbal_update_param(struct nonbonded_verlet_t gmx_unused* nbv,
+                                  const interaction_const_t gmx_unused& ic) GPU_FUNC_TERM;
 
 /** Uploads shift vector to the GPU if the box is dynamic (otherwise just returns). */
 GPU_FUNC_QUALIFIER
@@ -126,43 +147,33 @@ int gpu_min_ci_balanced(NbnxmGpu gmx_unused* nb) GPU_FUNC_TERM_WITH_RETURN(-1);
 GPU_FUNC_QUALIFIER
 bool gpu_is_kernel_ewald_analytical(const NbnxmGpu gmx_unused* nb) GPU_FUNC_TERM_WITH_RETURN(FALSE);
 
-/** Return the enum value of electrostatics kernel type for given interaction parameters \p ic. */
+/** Returns an opaque pointer to the GPU NBNXM atom data.
+ */
 GPU_FUNC_QUALIFIER
-enum ElecType nbnxmGpuPickElectrostaticsKernelType(const interaction_const_t gmx_unused* ic)
-        GPU_FUNC_TERM_WITH_RETURN(ElecType::Count);
+NBAtomDataGpu* gpuGetNBAtomData(NbnxmGpu gmx_unused* nb) GPU_FUNC_TERM_WITH_RETURN(nullptr);
 
-/** Return the enum value of VdW kernel type for given \p ic and \p combRule. */
+/** Returns forces device buffer.
+ */
 GPU_FUNC_QUALIFIER
-enum VdwType nbnxmGpuPickVdwKernelType(const interaction_const_t gmx_unused* ic, int gmx_unused combRule)
-        GPU_FUNC_TERM_WITH_RETURN(VdwType::Count);
+DeviceBuffer<RVec> gpu_get_f(NbnxmGpu gmx_unused* nb) GPU_FUNC_TERM_WITH_RETURN(DeviceBuffer<RVec>{});
 
-/** Returns an opaque pointer to the GPU command stream
- *  Note: CUDA only.
- */
-CUDA_FUNC_QUALIFIER
-const DeviceStream* gpu_get_command_stream(NbnxmGpu gmx_unused* nb, gmx::InteractionLocality gmx_unused iloc)
-        CUDA_FUNC_TERM_WITH_RETURN(nullptr);
+/*! \brief Calculates working memory required for exclusive sum, used in neighbour list sorting on GPU.
+ *
+ * This is only used for CUDA/HIP, where the actual size is calculate based on the list.
+ * For SYCL, the default value of 0 is important for the code to work correctly, this is why we have it set here.
+ * */
+CUDA_HIP_FUNC_QUALIFIER
+size_t getExclusiveScanWorkingArraySize(GpuPairlist*        CUDA_HIP_FUNC_ARGUMENT(plist),
+                                        const DeviceStream& CUDA_HIP_FUNC_ARGUMENT(deviceStream))
+        CUDA_HIP_FUNC_TERM_WITH_RETURN(0);
 
-/** Returns an opaque pointer to the GPU coordinate+charge array
- *  Note: CUDA only.
- */
-CUDA_FUNC_QUALIFIER
-void* gpu_get_xq(NbnxmGpu gmx_unused* nb) CUDA_FUNC_TERM_WITH_RETURN(nullptr);
+/*! \brief Perform exclusive scan to obtain input for sci sorting. */
+CUDA_HIP_FUNC_QUALIFIER
+void performExclusiveScan(size_t       CUDA_HIP_FUNC_ARGUMENT(temporaryBufferSize),
+                          char*        CUDA_HIP_FUNC_ARGUMENT(temporaryBuffer),
+                          GpuPairlist* CUDA_HIP_FUNC_ARGUMENT(plist),
+                          const DeviceStream& CUDA_HIP_FUNC_ARGUMENT(deviceStream)) CUDA_HIP_FUNC_TERM;
 
-/** Returns an opaque pointer to the GPU force array
- *  Note: CUDA only.
- */
-CUDA_FUNC_QUALIFIER
-DeviceBuffer<gmx::RVec> gpu_get_f(NbnxmGpu gmx_unused* nb)
-        CUDA_FUNC_TERM_WITH_RETURN(DeviceBuffer<gmx::RVec>{});
-
-/** Returns an opaque pointer to the GPU shift force array
- *  Note: CUDA only.
- */
-CUDA_FUNC_QUALIFIER
-DeviceBuffer<gmx::RVec> gpu_get_fshift(NbnxmGpu gmx_unused* nb)
-        CUDA_FUNC_TERM_WITH_RETURN(DeviceBuffer<gmx::RVec>{});
-
-} // namespace Nbnxm
+} // namespace gmx
 
 #endif

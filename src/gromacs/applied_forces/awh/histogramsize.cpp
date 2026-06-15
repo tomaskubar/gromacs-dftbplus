@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2015,2016,2017,2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2015- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 
 /*! \internal \file
@@ -46,11 +45,13 @@
 
 #include "histogramsize.h"
 
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 
 #include <algorithm>
+#include <string>
 
 #include "gromacs/mdtypes/awh_history.h"
 #include "gromacs/mdtypes/awh_params.h"
@@ -67,8 +68,10 @@ namespace gmx
 HistogramSize::HistogramSize(const AwhBiasParams& awhBiasParams, double histogramSizeInitial) :
     numUpdates_(0),
     histogramSize_(histogramSizeInitial),
-    inInitialStage_(awhBiasParams.eGrowth == eawhgrowthEXP_LINEAR),
-    equilibrateHistogram_(awhBiasParams.equilibrateHistogram),
+    inInitialStage_(awhBiasParams.growthType() == AwhHistogramGrowthType::ExponentialLinear),
+    growthFactor_(awhBiasParams.growthFactor()),
+    equilibrateHistogram_(awhBiasParams.equilibrateHistogram()),
+    histogramTolerance_(awhBiasParams.histogramTolerance()),
     logScaledSampleWeight_(0),
     maxLogScaledSampleWeight_(0),
     havePrintedAboutCovering_(false)
@@ -102,17 +105,13 @@ double HistogramSize::newHistogramSizeInitialStage(const BiasParams& params,
        (ensuring that the sample weights at the end of each covering stage are monotonically
        increasing). If we cannot, exit the initial stage without changing the histogram size. */
 
-    /* The scale factor. The value is not very critical but should obviously be > 1 (or the exit
-       will happen very late) and probably < 5 or so (or there will be no initial stage). */
-    static const double growthFactor = 3;
-
     /* The scale factor is in most cases very close to the histogram growth factor. */
     double scaleFactor =
-            growthFactor / (1. + params.updateWeight * params.localWeightScaling / histogramSize_);
+            growthFactor_ / (1. + params.updateWeight * params.localWeightScaling / histogramSize_);
 
     bool exitInitialStage =
             (logScaledSampleWeight_ - std::log(scaleFactor) <= prevMaxLogScaledSampleWeight);
-    double newHistogramSize = exitInitialStage ? histogramSize_ : histogramSize_ * growthFactor;
+    double newHistogramSize = exitInitialStage ? histogramSize_ : histogramSize_ * growthFactor_;
 
     /* Update the AWH bias about the exit. */
     inInitialStage_ = !exitInitialStage;
@@ -120,7 +119,7 @@ double HistogramSize::newHistogramSizeInitialStage(const BiasParams& params,
     /* Print information about coverings and if there was an exit. */
     if (fplog != nullptr)
     {
-        std::string prefix = gmx::formatString("\nawh%d:", params.biasIndex + 1);
+        std::string prefix = gmx::formatString("\nawh%d:", params.biasIndex_ + 1);
         fprintf(fplog, "%s covering at t = %g ps. Decreased the update size.\n", prefix.c_str(), t);
 
         if (exitInitialStage)
@@ -132,7 +131,7 @@ double HistogramSize::newHistogramSizeInitialStage(const BiasParams& params,
                is easy to calculate, but how the former depends on the histogram size
                is not known. */
         }
-        fflush(fplog);
+        std::fflush(fplog);
     }
     return newHistogramSize;
 }
@@ -147,15 +146,16 @@ namespace
  * the target region, the relative error of the sampled weight relative
  * to the target is less than a tolerance value.
  *
- * \param[in] pointStates  The state of the bias points.
+ * \param[in] pointStates     The state of the bias points.
+ * \param[in] errorTolerance  The histogram needs to be within this tolerance over 80% of the range
  * \returns true if the histogram is equilibrated.
  */
-bool histogramIsEquilibrated(const std::vector<PointState>& pointStates)
+bool histogramIsEquilibrated(ArrayRef<const PointState> pointStates, const double errorTolerance)
 {
     /* Get the total weight of the total weight histogram; needed for normalization. */
     double totalWeight     = 0;
     int    numTargetPoints = 0;
-    for (auto& pointState : pointStates)
+    for (const auto& pointState : pointStates)
     {
         if (!pointState.inTargetRegion())
         {
@@ -171,13 +171,10 @@ bool histogramIsEquilibrated(const std::vector<PointState>& pointStates)
     static const double minTargetCutoff = 0.05;
     double              minTargetWeight = 1. / numTargetPoints * minTargetCutoff;
 
-    /* Points with error less than this tolerance pass the check.*/
-    static const double errorTolerance = 0.2;
-
     /* Sum up weight of points that do or don't pass the check. */
     double equilibratedWeight    = 0;
     double notEquilibratedWeight = 0;
-    for (auto& pointState : pointStates)
+    for (const auto& pointState : pointStates)
     {
         double targetWeight  = pointState.target();
         double sampledWeight = pointState.weightSumTot() * inverseTotalWeight;
@@ -207,12 +204,12 @@ bool histogramIsEquilibrated(const std::vector<PointState>& pointStates)
 
 } // namespace
 
-double HistogramSize::newHistogramSize(const BiasParams&              params,
-                                       double                         t,
-                                       bool                           covered,
-                                       const std::vector<PointState>& pointStates,
-                                       ArrayRef<double>               weightsumCovering,
-                                       FILE*                          fplog)
+double HistogramSize::newHistogramSize(const BiasParams&          params,
+                                       double                     t,
+                                       bool                       covered,
+                                       ArrayRef<const PointState> pointStates,
+                                       ArrayRef<double>           weightsumCovering,
+                                       FILE*                      fplog)
 {
     double newHistogramSize;
     if (inInitialStage_)
@@ -221,19 +218,21 @@ double HistogramSize::newHistogramSize(const BiasParams&              params,
         if (equilibrateHistogram_ && covered)
         {
             /* The histogram is equilibrated at most once. */
-            equilibrateHistogram_ = !histogramIsEquilibrated(pointStates);
+            equilibrateHistogram_ = !histogramIsEquilibrated(pointStates, histogramTolerance_);
 
             if (fplog != nullptr)
             {
-                std::string prefix = gmx::formatString("\nawh%d:", params.biasIndex + 1);
+                std::string prefix = gmx::formatString("\nawh%d:", params.biasIndex_ + 1);
                 if (!equilibrateHistogram_)
                 {
                     fprintf(fplog, "%s equilibrated histogram at t = %g ps.\n", prefix.c_str(), t);
                 }
                 else if (!havePrintedAboutCovering_)
                 {
-                    fprintf(fplog, "%s covered but histogram not equilibrated at t = %g ps.\n",
-                            prefix.c_str(), t);
+                    fprintf(fplog,
+                            "%s covered but histogram not equilibrated at t = %g ps.\n",
+                            prefix.c_str(),
+                            t);
                     havePrintedAboutCovering_ = true; /* Just print once. */
                 }
             }

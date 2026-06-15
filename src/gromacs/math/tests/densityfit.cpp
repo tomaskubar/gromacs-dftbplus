@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2019, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2019- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \internal \file
  * \brief
@@ -43,11 +42,24 @@
 
 #include "gromacs/math/densityfit.h"
 
+#include <algorithm>
+#include <array>
+#include <iterator>
 #include <numeric>
+#include <string>
+#include <vector>
 
+#include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
 #include "gromacs/math/multidimarray.h"
+#include "gromacs/mdspan/extensions.h"
+#include "gromacs/mdspan/extents.h"
+#include "gromacs/mdspan/layouts.h"
+#include "gromacs/mdspan/mdspan.h"
+#include "gromacs/utility/arrayref.h"
+#include "gromacs/utility/exceptions.h"
+#include "gromacs/utility/real.h"
 
 #include "testutils/refdata.h"
 #include "testutils/testasserts.h"
@@ -88,8 +100,7 @@ TEST(DensitySimilarityTest, InnerProductGradientIsCorrect)
     std::iota(begin(comparedDensity), end(comparedDensity), -18);
 
     std::vector<float> expectedSimilarityGradient;
-    std::copy(begin(referenceDensity), end(referenceDensity),
-              std::back_inserter(expectedSimilarityGradient));
+    std::copy(begin(referenceDensity), end(referenceDensity), std::back_inserter(expectedSimilarityGradient));
     for (auto& x : expectedSimilarityGradient)
     {
         x /= comparedDensity.asConstView().mapping().required_span_size();
@@ -285,6 +296,39 @@ TEST(DensitySimilarityTest, CrossCorrelationGradientIsCorrect)
     TestReferenceChecker checker(refData.rootChecker());
     checker.setDefaultTolerance(defaultFloatTolerance());
     checker.checkSequence(gradientView.begin(), gradientView.end(), "cross-correlation-gradient");
+}
+
+TEST(DensitySimilarityTest, NormalizationCorrect)
+{
+    // normalize -22,-21,..,0,1,2,3,4 so that all positive elements sum to unity
+    // expect -22/10., -21/10. ,...,1/10.,2/10.,3/10.,4/10. (1+2+3+4 = 10)
+    std::array<float, 27> arrayToNormalize = {};
+    std::iota(begin(arrayToNormalize), end(arrayToNormalize), -22);
+    normalizeSumPositiveValuesToUnity(makeArrayRef(arrayToNormalize));
+
+    std::array<float, 27> expectedNormalizsationResult = {};
+    std::iota(std::begin(expectedNormalizsationResult), std::end(expectedNormalizsationResult), -22);
+
+    std::transform(std::begin(expectedNormalizsationResult),
+                   std::end(expectedNormalizsationResult),
+                   std::begin(expectedNormalizsationResult),
+                   [](float& c) { return c / 10.; });
+
+    EXPECT_THAT(expectedNormalizsationResult,
+                Pointwise(FloatEq(defaultFloatTolerance()), arrayToNormalize));
+}
+
+TEST(DensitySimilarityTest, NormalizationAllNonPositive)
+{
+    // normalize -50,...,-23 so that all positive elements sum to one,
+    // should not do anything to the array
+    std::array<float, 27> array = {};
+    std::iota(begin(array), end(array), -50);
+
+    const std::array<float, 27> expected = array;
+    normalizeSumPositiveValuesToUnity(makeArrayRef(array));
+
+    EXPECT_THAT(expected, Pointwise(FloatEq(defaultFloatTolerance()), array));
 }
 
 } // namespace test

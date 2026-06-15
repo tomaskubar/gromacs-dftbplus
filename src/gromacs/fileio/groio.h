@@ -1,13 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
- * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2016,2017 by the GROMACS development team.
- * Copyright (c) 2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 1991- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -21,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -30,26 +26,34 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 #ifndef GMX_FILEIO_GROIO_H
 #define GMX_FILEIO_GROIO_H
 
-#include <stdio.h>
+#include <cstdio>
 
-#include "gromacs/math/vectypes.h"
+#include <filesystem>
+
 #include "gromacs/utility/basedefinitions.h"
+#include "gromacs/utility/vectypes.h"
 
 struct gmx_mtop_t;
 struct t_atoms;
 struct t_symtab;
 struct t_trxframe;
 
-void get_coordnum(const char* infile, int* natoms);
-void gmx_gro_read_conf(const char* infile, t_symtab* symtab, char** name, t_atoms* atoms, rvec x[], rvec* v, matrix box);
+void get_coordnum(const std::filesystem::path& infile, int* natoms);
+void gmx_gro_read_conf(const std::filesystem::path& infile,
+                       t_symtab*                    symtab,
+                       char**                       name,
+                       t_atoms*                     atoms,
+                       rvec                         x[],
+                       rvec*                        v,
+                       matrix                       box);
 /* If name is not nullptr, gmx_strdup the title string into it. */
 
 gmx_bool gro_next_x_or_v(FILE* status, struct t_trxframe* fr);
@@ -65,17 +69,17 @@ void write_hconf_indexed_p(FILE*          out,
                            const rvec*    v,
                            const matrix   box);
 
-void write_hconf_mtop(FILE* out, const char* title, const gmx_mtop_t* mtop, const rvec* x, const rvec* v, const matrix box);
+void write_hconf_mtop(FILE* out, const char* title, const gmx_mtop_t& mtop, const rvec* x, const rvec* v, const matrix box);
 
 void write_hconf_p(FILE* out, const char* title, const t_atoms* atoms, const rvec* x, const rvec* v, const matrix box);
 /* Write a Gromos file with precision ndec: number of decimal places in x,
  * v has one place more. */
 
-void write_conf_p(const char*    outfile,
-                  const char*    title,
-                  const t_atoms* atoms,
-                  const rvec*    x,
-                  const rvec*    v,
-                  const matrix   box);
+void write_conf_p(const std::filesystem::path& outfile,
+                  const char*                  title,
+                  const t_atoms*               atoms,
+                  const rvec*                  x,
+                  const rvec*                  v,
+                  const matrix                 box);
 
 #endif

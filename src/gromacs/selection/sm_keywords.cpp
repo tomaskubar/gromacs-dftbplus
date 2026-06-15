@@ -1,12 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2009,2010,2011,2012,2013 by the GROMACS development team.
- * Copyright (c) 2014,2015,2016,2017,2018 by the GROMACS development team.
- * Copyright (c) 2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2009- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -20,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -29,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \internal \file
  * \brief
@@ -47,22 +44,30 @@
 #include <cctype>
 #include <cstring>
 
+#include <memory>
 #include <regex>
 #include <string>
+#include <vector>
 
+#include "gromacs/selection/indexutil.h"
+#include "gromacs/selection/position.h"
+#include "gromacs/selection/selparam.h"
+#include "gromacs/selection/selvalue.h"
 #include "gromacs/utility/arraysize.h"
 #include "gromacs/utility/cstringutil.h"
 #include "gromacs/utility/exceptions.h"
 #include "gromacs/utility/gmxassert.h"
+#include "gromacs/utility/real.h"
 #include "gromacs/utility/smalloc.h"
 #include "gromacs/utility/stringutil.h"
 
 #include "keywords.h"
 #include "parsetree.h"
-#include "position.h"
 #include "scanner.h"
 #include "selelem.h"
 #include "selmethod.h"
+
+struct gmx_mtop_t;
 
 /*! \brief
  * Allocates data for integer keyword evaluation.
@@ -109,7 +114,6 @@ static void init_kwint(const gmx_mtop_t* top, int npar, gmx_ana_selparam_t* para
  * \param[in] npar  Not used (should be 2).
  * \param[in] param Method parameters (should point to \ref smparams_keyword_real).
  * \param[in] data  Should point to \ref t_methoddata_kwreal.
- * \returns   0 (the initialization always succeeds).
  */
 static void init_kwreal(const gmx_mtop_t* top, int npar, gmx_ana_selparam_t* param, void* data);
 /*! \brief
@@ -349,7 +353,6 @@ gmx_ana_selmethod_t sm_keyword_str = {
  * \param[in] npar  Not used.
  * \param[in] param Not used.
  * \param[in] data  Should point to \ref t_methoddata_kweval.
- * \returns   0 on success, a non-zero error code on return.
  *
  * Calls the initialization method of the wrapped keyword.
  */
@@ -360,7 +363,6 @@ static void init_kweval(const gmx_mtop_t* top, int npar, gmx_ana_selparam_t* par
  * \param[in]     top   Not used.
  * \param[in,out] out   Pointer to output data structure.
  * \param[in,out] data  Should point to \c t_methoddata_kweval.
- * \returns       0 for success.
  */
 static void init_output_kweval(const gmx_mtop_t* top, gmx_ana_selvalue_t* out, void* data);
 /** Frees the data allocated for keyword evaluation in an arbitrary group. */

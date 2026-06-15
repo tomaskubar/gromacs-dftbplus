@@ -1,13 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
- * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2016,2018 by the GROMACS development team.
- * Copyright (c) 2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 1991- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -21,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -30,27 +26,25 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 #include "gmxpre.h"
 
 #include "xtcio.h"
 
+#include <cstdio>
 #include <cstring>
 
 #include "gromacs/fileio/gmxfio.h"
 #include "gromacs/fileio/gmxfio_xdr.h"
 #include "gromacs/fileio/xdrf.h"
-#include "gromacs/math/vec.h"
 #include "gromacs/utility/fatalerror.h"
 #include "gromacs/utility/futil.h"
 #include "gromacs/utility/smalloc.h"
-
-#define XTC_MAGIC 1995
-
+#include "gromacs/utility/vec.h"
 
 static int xdr_r2f(XDR* xdrs, real* r, gmx_bool gmx_unused bRead)
 {
@@ -75,7 +69,7 @@ static int xdr_r2f(XDR* xdrs, real* r, gmx_bool gmx_unused bRead)
 }
 
 
-t_fileio* open_xtc(const char* fn, const char* mode)
+t_fileio* open_xtc(const std::filesystem::path& fn, const char* mode)
 {
     return gmx_fio_open(fn, mode);
 }
@@ -87,9 +81,9 @@ void close_xtc(t_fileio* fio)
 
 static void check_xtc_magic(int magic)
 {
-    if (magic != XTC_MAGIC)
+    if (magic != XTC_MAGIC && magic != XTC_NEW_MAGIC)
     {
-        gmx_fatal(FARGS, "Magic Number Error in XTC file (read %d, should be %d)", magic, XTC_MAGIC);
+        gmx_fatal(FARGS, "Magic Number Error in XTC file (read %d, should be %d or %d)", magic, XTC_MAGIC, XTC_NEW_MAGIC);
     }
 }
 
@@ -102,7 +96,9 @@ static int xtc_check(const char* str, gmx_bool bResult, const char* file, int li
             fprintf(debug,
                     "\nXTC error: read/write of %s failed, "
                     "source file %s, line %d\n",
-                    str, file, line);
+                    str,
+                    file,
+                    line);
         }
         return 0;
     }
@@ -138,7 +134,7 @@ static int xtc_header(XDR* xd, int* magic, int* natoms, int64_t* step, real* tim
     return result;
 }
 
-static int xtc_coord(XDR* xd, int* natoms, rvec* box, rvec* x, real* prec, gmx_bool bRead)
+static int xtc_coord(XDR* xd, int* natoms, rvec* box, rvec* x, real* prec, int magic_number, gmx_bool bRead)
 {
     int i, j, result;
 #if GMX_DOUBLE
@@ -163,7 +159,7 @@ static int xtc_coord(XDR* xd, int* natoms, rvec* box, rvec* x, real* prec, gmx_b
 
 #if GMX_DOUBLE
     /* allocate temp. single-precision array */
-    snew(ftmp, (*natoms) * DIM);
+    snew(ftmp, static_cast<std::size_t>(*natoms) * DIM);
 
     /* Copy data to temp. array if writing */
     if (!bRead)
@@ -176,7 +172,7 @@ static int xtc_coord(XDR* xd, int* natoms, rvec* box, rvec* x, real* prec, gmx_b
         }
         fprec = *prec;
     }
-    result = XTC_CHECK("x", xdr3dfcoord(xd, ftmp, natoms, &fprec));
+    result = XTC_CHECK("x", xdr3dfcoord(xd, ftmp, natoms, &fprec, magic_number));
 
     /* Copy from temp. array if reading */
     if (bRead)
@@ -191,7 +187,7 @@ static int xtc_coord(XDR* xd, int* natoms, rvec* box, rvec* x, real* prec, gmx_b
     }
     sfree(ftmp);
 #else
-    result = XTC_CHECK("x", xdr3dfcoord(xd, x[0], natoms, prec));
+    result = XTC_CHECK("x", xdr3dfcoord(xd, x[0], natoms, prec, magic_number));
 #endif
 
     return result;
@@ -200,7 +196,11 @@ static int xtc_coord(XDR* xd, int* natoms, rvec* box, rvec* x, real* prec, gmx_b
 
 int write_xtc(t_fileio* fio, int natoms, int64_t step, real time, const rvec* box, const rvec* x, real prec)
 {
-    int      magic_number = XTC_MAGIC;
+    // By default we only write the new format for very large systems, but since the reading code
+    // will adapt to whatever magic number is present in the header you could generate frames
+    // for small systems that use the new format (which is useful for testing), and those should
+    // be readable by normal implementations no matter how many atoms are present in the file.
+    int      magic_number = (natoms > XTC_1995_MAX_NATOMS) ? XTC_NEW_MAGIC : XTC_MAGIC;
     XDR*     xd;
     gmx_bool bDum;
     int      bOK;
@@ -221,8 +221,7 @@ int write_xtc(t_fileio* fio, int natoms, int64_t step, real time, const rvec* bo
     }
 
     /* write data */
-    bOK = xtc_coord(xd, &natoms, const_cast<rvec*>(box), const_cast<rvec*>(x), &prec,
-                    FALSE); /* bOK will be 1 if writing went well */
+    bOK = xtc_coord(xd, &natoms, const_cast<rvec*>(box), const_cast<rvec*>(x), &prec, magic_number, FALSE); /* bOK will be 1 if writing went well */
 
     if (bOK)
     {
@@ -253,7 +252,7 @@ int read_first_xtc(t_fileio* fio, int* natoms, int64_t* step, real* time, matrix
 
     snew(*x, *natoms);
 
-    *bOK = (xtc_coord(xd, natoms, box, *x, prec, TRUE) != 0);
+    *bOK = (xtc_coord(xd, natoms, box, *x, prec, magic, TRUE) != 0);
 
     return static_cast<int>(*bOK);
 }
@@ -281,7 +280,7 @@ int read_next_xtc(t_fileio* fio, int natoms, int64_t* step, real* time, matrix b
         gmx_fatal(FARGS, "Frame contains more atoms (%d) than expected (%d)", n, natoms);
     }
 
-    *bOK = (xtc_coord(xd, &natoms, box, x, prec, TRUE) != 0);
+    *bOK = (xtc_coord(xd, &natoms, box, x, prec, magic, TRUE) != 0);
 
     return static_cast<int>(*bOK);
 }

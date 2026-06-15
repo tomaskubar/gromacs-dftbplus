@@ -3,6 +3,11 @@ Source tree checker scripts
 
 .. highlight:: bash
 
+.. warning::
+
+    This section is out of date. Several of the checks described are no longer performed
+    or are deprecated per :issue:`3288` and related issues.
+
 There is a set of Python scripts, currently under ``docs/doxygen/``, that check
 various aspects of the source tree for consistency.  The script is based on
 producing an abstract representation of the source tree from various sources:
@@ -26,17 +31,13 @@ This representation is then used for various purposes:
   that is documented as internal to a module should not be used outside that
   module.
 * Checking for module-level cyclic dependencies
-* Checking for consistent style and order of #include directives
-  (see :doc:`includestyle`)
-* Actually sorting and reformatting #include directives to adhere to the
-  checked style
 * Generating dependency graphs between modules and for files within modules
 
 The checks are run as part of a single ``check-source`` target, but are described
 in separate sections below.  In addition to printing the issues to ``stderr``,
 the script also writes them into ``docs/doxygen/check-source.log`` for later
-inspection.  Jenkins runs the checks as part of the Documentation job, and the
-build is marked unstable if any issues are found.
+inspection.  CI runs the checks as part of all pipelines and CI will fail
+if any issues are found.
 
 For correct functionality, the scripts depend on correct usage of Doxygen
 annotations described in :doc:`doxygen`, in particular the visibility and
@@ -79,7 +80,7 @@ module and documenting it.
 
   * Consistent usage of ::
 
-        #include "..." // This should be used for GROMACS headers
+        #include "..." // This should be used for internal (gromacs) headers
 
     and ::
 
@@ -92,9 +93,6 @@ module and documenting it.
   * A source/header file should include "config.h," "gromacs/simd/simd.h",
     or "gromacs/ewald/pme_simd.h" if and only if it uses a macro declared
     in such files.
-  * If the file has a git attribute to identify it as a candidate for include
-    sorting, the include sorter described below should not produce any
-    changes (i.e., the file should follow :doc:`includestyle`).
 
 * For documented files:
 
@@ -152,45 +150,6 @@ copied into ``suppressions.txt``, and the line number (if any) removed.  If the
 issue does not have a file name (or a pseudo-file) associated, a leading ``:``
 must be added.  To cover many similar issues, parts of the line can then be
 replaced with wildcards.
-
-A separate suppression mechanism is in place for cyclic dependencies: to
-suppress a cycle between moduleA and moduleB, add a line with format ::
-
-    moduleA -> moduleB
-
-into ``doxygen/cycle-suppressions.txt``.  This suppresses all cycles that contain
-the mentioned edge.  Since a cycle contains multiple edges, the suppression
-should be made for the edge that is determined to be an incorrect dependency.
-This also affects the layout of the include dependency graphs (see below): the
-suppressed edge is not considered when determining the dependency order, and is
-shown as invalid in the graph.
-
-.. _dev-include-sorter:
-
-Include order sorting
----------------------
-
-The script checks include ordering according to :doc:`includestyle`.
-If it is not obvious how the includes should be changed to make the script
-happy, or bulk changes are needed in multiple files, e.g., because of a header
-rename or making a previously public header private, it is possible to run a
-Python script that does the sorting::
-
-    docs/doxygen/includesorter.py -S . -B ../build <files>
-
-The script needs to know the location of the source tree (given with ``-S``) and
-the build tree (given with ``-B``), and sorts the given files.  To sort the whole
-source tree, one can also use::
-
-    admin/reformat_all.sh includesort -B=../build
-
-For the sorter to work correctly, the build tree should contain up-to-date list
-of installed files and Doxygen XML documentation.  The former is created
-automatically when ``cmake`` is run, and the latter can be built using the
-``doxygen-xml`` target.
-
-Note that currently, the sorter script does not change between angle brackets
-and quotes in include statements.
 
 Include dependency graphs
 -------------------------

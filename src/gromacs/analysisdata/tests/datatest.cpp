@@ -1,11 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2011,2012,2013,2014,2015 by the GROMACS development team.
- * Copyright (c) 2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2011- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -19,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -28,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \internal \file
  * \brief
@@ -44,15 +42,16 @@
 
 #include "datatest.h"
 
-#include <gmock/gmock.h>
+#include <memory>
+
 #include <gtest/gtest.h>
 
+#include "gromacs/analysisdata/abstractdata.h"
 #include "gromacs/analysisdata/analysisdata.h"
 #include "gromacs/analysisdata/paralleloptions.h"
-#include "gromacs/utility/gmxassert.h"
-#include "gromacs/utility/stringutil.h"
-
 #include "gromacs/analysisdata/tests/mock_datamodule.h"
+#include "gromacs/utility/gmxassert.h"
+
 #include "testutils/refdata.h"
 #include "testutils/testasserts.h"
 
@@ -66,10 +65,8 @@ namespace test
  * AnalysisDataTestInputPointSet
  */
 
-AnalysisDataTestInputPointSet::AnalysisDataTestInputPointSet(int index, int dataSetIndex, int firstColumn) :
-    index_(index),
-    dataSetIndex_(dataSetIndex),
-    firstColumn_(firstColumn)
+AnalysisDataTestInputPointSet::AnalysisDataTestInputPointSet(size_t index, size_t dataSetIndex, size_t firstColumn) :
+    index_(index), dataSetIndex_(dataSetIndex), firstColumn_(firstColumn)
 {
 }
 
@@ -78,28 +75,30 @@ AnalysisDataTestInputPointSet::AnalysisDataTestInputPointSet(int index, int data
  * AnalysisDataTestInputFrame
  */
 
-AnalysisDataTestInputFrame::AnalysisDataTestInputFrame(int index, real x) : index_(index), x_(x) {}
+AnalysisDataTestInputFrame::AnalysisDataTestInputFrame(size_t index, real x) : index_(index), x_(x)
+{
+}
 
-AnalysisDataTestInputPointSet& AnalysisDataTestInputFrame::addPointSet(int dataSet, int firstColumn)
+AnalysisDataTestInputPointSet& AnalysisDataTestInputFrame::addPointSet(size_t dataSet, size_t firstColumn)
 {
     pointSets_.push_back(AnalysisDataTestInputPointSet(pointSets_.size(), dataSet, firstColumn));
     return pointSets_.back();
 }
 
-void AnalysisDataTestInputFrame::addPointSetWithValues(int dataSet, int firstColumn, real y1)
+void AnalysisDataTestInputFrame::addPointSetWithValues(size_t dataSet, size_t firstColumn, real y1)
 {
     AnalysisDataTestInputPointSet& pointSet = addPointSet(dataSet, firstColumn);
     pointSet.addValue(y1);
 }
 
-void AnalysisDataTestInputFrame::addPointSetWithValues(int dataSet, int firstColumn, real y1, real y2)
+void AnalysisDataTestInputFrame::addPointSetWithValues(size_t dataSet, size_t firstColumn, real y1, real y2)
 {
     AnalysisDataTestInputPointSet& pointSet = addPointSet(dataSet, firstColumn);
     pointSet.addValue(y1);
     pointSet.addValue(y2);
 }
 
-void AnalysisDataTestInputFrame::addPointSetWithValues(int dataSet, int firstColumn, real y1, real y2, real y3)
+void AnalysisDataTestInputFrame::addPointSetWithValues(size_t dataSet, size_t firstColumn, real y1, real y2, real y3)
 {
     AnalysisDataTestInputPointSet& pointSet = addPointSet(dataSet, firstColumn);
     pointSet.addValue(y1);
@@ -107,7 +106,7 @@ void AnalysisDataTestInputFrame::addPointSetWithValues(int dataSet, int firstCol
     pointSet.addValue(y3);
 }
 
-void AnalysisDataTestInputFrame::addPointSetWithValueAndError(int dataSet, int firstColumn, real y1, real e1)
+void AnalysisDataTestInputFrame::addPointSetWithValueAndError(size_t dataSet, size_t firstColumn, real y1, real e1)
 {
     AnalysisDataTestInputPointSet& pointSet = addPointSet(dataSet, firstColumn);
     pointSet.addValueWithError(y1, e1);
@@ -118,9 +117,8 @@ void AnalysisDataTestInputFrame::addPointSetWithValueAndError(int dataSet, int f
  * AnalysisDataTestInput
  */
 
-AnalysisDataTestInput::AnalysisDataTestInput(int dataSetCount, bool bMultipoint) :
-    columnCounts_(dataSetCount),
-    bMultipoint_(bMultipoint)
+AnalysisDataTestInput::AnalysisDataTestInput(size_t dataSetCount, bool bMultipoint) :
+    columnCounts_(dataSetCount), bMultipoint_(bMultipoint)
 {
 }
 
@@ -128,16 +126,16 @@ AnalysisDataTestInput::AnalysisDataTestInput(int dataSetCount, bool bMultipoint)
 AnalysisDataTestInput::~AnalysisDataTestInput() {}
 
 
-const AnalysisDataTestInputFrame& AnalysisDataTestInput::frame(int index) const
+const AnalysisDataTestInputFrame& AnalysisDataTestInput::frame(size_t index) const
 {
-    GMX_RELEASE_ASSERT(index >= 0 && index < frameCount(), "Out-of-range frame index");
+    GMX_RELEASE_ASSERT(index < frameCount(), "Out-of-range frame index");
     return frames_[index];
 }
 
 
-void AnalysisDataTestInput::setColumnCount(int dataSet, int columnCount)
+void AnalysisDataTestInput::setColumnCount(size_t dataSet, size_t columnCount)
 {
-    GMX_RELEASE_ASSERT(dataSet >= 0 && dataSet < dataSetCount(), "Out-of-range data set index");
+    GMX_RELEASE_ASSERT(dataSet < dataSetCount(), "Out-of-range data set index");
     columnCounts_[dataSet] = columnCount;
 }
 
@@ -183,7 +181,7 @@ AnalysisDataTestFixture::AnalysisDataTestFixture() {}
 void AnalysisDataTestFixture::setupDataObject(const AnalysisDataTestInput& input, AnalysisData* data)
 {
     data->setDataSetCount(input.dataSetCount());
-    for (int i = 0; i < input.dataSetCount(); ++i)
+    for (size_t i = 0; i < input.dataSetCount(); ++i)
     {
         data->setColumnCount(i, input.columnCount(i));
     }
@@ -195,7 +193,7 @@ void AnalysisDataTestFixture::presentAllData(const AnalysisDataTestInput& input,
 {
     gmx::AnalysisDataParallelOptions options;
     gmx::AnalysisDataHandle          handle = data->startData(options);
-    for (int row = 0; row < input.frameCount(); ++row)
+    for (size_t row = 0; row < input.frameCount(); ++row)
     {
         presentDataFrame(input, row, handle);
         EXPECT_EQ(row + 1, data->frameCount());
@@ -208,20 +206,23 @@ void AnalysisDataTestFixture::presentDataFrame(const AnalysisDataTestInput& inpu
 {
     const AnalysisDataTestInputFrame& frame = input.frame(row);
     handle.startFrame(row, frame.x(), AnalysisDataTestInputFrame::dx());
-    for (int i = 0; i < frame.pointSetCount(); ++i)
+    for (size_t i = 0; i < frame.pointSetCount(); ++i)
     {
         const AnalysisDataTestInputPointSet& points = frame.pointSet(i);
         handle.selectDataSet(points.dataSetIndex());
-        for (int j = 0; j < points.size(); ++j)
+        for (size_t j = 0; j < points.size(); ++j)
         {
             if (points.hasError(j))
             {
-                handle.setPoint(j + points.firstColumn(), points.y(j), points.error(j),
+                handle.setPoint(j + points.firstColumn(),
+                                points.y(j),
+                                points.error(j),
                                 AnalysisDataTestInputPointSet::present(j));
             }
             else
             {
-                handle.setPoint(j + points.firstColumn(), points.y(j),
+                handle.setPoint(j + points.firstColumn(),
+                                points.y(j),
                                 AnalysisDataTestInputPointSet::present(j));
             }
         }

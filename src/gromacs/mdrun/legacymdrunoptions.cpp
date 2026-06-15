@@ -1,12 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
- * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2011-2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 1991- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -20,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -29,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \internal \file
  *
@@ -49,21 +46,17 @@
 
 #include "legacymdrunoptions.h"
 
+#include <cstdlib>
 #include <cstring>
 
+#include <filesystem>
+
+#include "gromacs/fileio/oenv.h"
 #include "gromacs/math/functions.h"
 #include "gromacs/utility/arrayref.h"
 #include "gromacs/utility/arraysize.h"
 #include "gromacs/utility/fatalerror.h"
-
-/* PLUMED */
-#if (GMX_PLUMED)
-#include "../../../Plumed.h"
-extern int    plumedswitch;
-extern plumed plumedmain; 
-extern void(*plumedcmd)(plumed,const char*,const void*);
-#endif
-/* END PLUMED */
+#include "gromacs/utility/vectypes.h"
 
 namespace gmx
 {
@@ -74,7 +67,7 @@ static bool is_multisim_option_set(int argc, const char* const argv[])
 {
     for (int i = 0; i < argc; ++i)
     {
-        if (strcmp(argv[i], "-multidir") == 0)
+        if (std::strcmp(argv[i], "-multidir") == 0)
         {
             return true;
         }
@@ -94,8 +87,18 @@ int LegacyMdrunOptions::updateFromCommandLine(int argc, char** argv, ArrayRef<co
         PCA_Flags |= PCA_DISABLE_INPUT_FILE_CHECKING;
     }
 
-    if (!parse_common_args(&argc, argv, PCA_Flags, ssize(filenames), filenames.data(), asize(pa),
-                           pa, ssize(desc), desc.data(), 0, nullptr, &oenv))
+    if (!parse_common_args(&argc,
+                           argv,
+                           PCA_Flags,
+                           gmx::ssize(filenames),
+                           filenames.data(),
+                           asize(pa),
+                           pa,
+                           ssize(desc),
+                           desc.data(),
+                           0,
+                           nullptr,
+                           &oenv))
     {
         return 0;
     }
@@ -109,21 +112,21 @@ int LegacyMdrunOptions::updateFromCommandLine(int argc, char** argv, ArrayRef<co
         // TODO Argument parsing can't handle std::string. We should
         // fix that by changing the parsing, once more of the roles of
         // handling, validating and implementing defaults for user
-        // command-line options have been seperated.
-        hw_opt.gpuIdsAvailable       = gpuIdsAvailable;
+        // command-line options have been separated.
+        hw_opt.devicesSelectedByUser = devicesSelectedByUser;
         hw_opt.userGpuTaskAssignment = userGpuTaskAssignment;
 
-        const char* env = getenv("GMX_GPU_ID");
+        const char* env = std::getenv("GMX_GPU_ID");
         if (env != nullptr)
         {
-            if (!hw_opt.gpuIdsAvailable.empty())
+            if (!hw_opt.devicesSelectedByUser.empty())
             {
                 gmx_fatal(FARGS, "GMX_GPU_ID and -gpu_id can not be used at the same time");
             }
-            hw_opt.gpuIdsAvailable = env;
+            hw_opt.devicesSelectedByUser = env;
         }
 
-        env = getenv("GMX_GPUTASKS");
+        env = std::getenv("GMX_GPUTASKS");
         if (env != nullptr)
         {
             if (!hw_opt.userGpuTaskAssignment.empty())
@@ -133,41 +136,13 @@ int LegacyMdrunOptions::updateFromCommandLine(int argc, char** argv, ArrayRef<co
             hw_opt.userGpuTaskAssignment = env;
         }
 
-        if (!hw_opt.gpuIdsAvailable.empty() && !hw_opt.userGpuTaskAssignment.empty())
+        if (!hw_opt.devicesSelectedByUser.empty() && !hw_opt.userGpuTaskAssignment.empty())
         {
             gmx_fatal(FARGS, "-gpu_id and -gputasks cannot be used at the same time");
         }
     }
 
     hw_opt.threadAffinity = static_cast<ThreadAffinity>(nenum(thread_aff_opt_choices));
-
-
-    /* PLUMED */
-#if (GMX_PLUMED)
-    plumedswitch=0;
-    if (opt2bSet("-plumed",ssize(filenames),filenames.data())) plumedswitch=1;
-    if(plumedswitch){
-      plumedcmd=plumed_cmd;
-      int real_precision=sizeof(real);
-      real energyUnits=1.0;
-      real lengthUnits=1.0;
-      real timeUnits=1.0;
-  
-      if(!plumed_installed()){
-        gmx_fatal(FARGS,"Plumed is not available. Check your PLUMED_KERNEL variable.");
-      }
-      plumedmain=plumed_create();
-      plumed_cmd(plumedmain,"setRealPrecision",&real_precision);
-      // this is not necessary for gromacs units:
-      plumed_cmd(plumedmain,"setMDEnergyUnits",&energyUnits);
-      plumed_cmd(plumedmain,"setMDLengthUnits",&lengthUnits);
-      plumed_cmd(plumedmain,"setMDTimeUnits",&timeUnits);
-      //
-      plumed_cmd(plumedmain,"setPlumedDat",ftp2fn(efDAT,ssize(filenames),filenames.data()));
-      plumedswitch=1;
-    }
-#endif
-    /* END PLUMED */
 
     if (!opt2parg_bSet("-append", asize(pa), pa))
     {
@@ -185,7 +160,7 @@ int LegacyMdrunOptions::updateFromCommandLine(int argc, char** argv, ArrayRef<co
         }
     }
 
-    mdrunOptions.rerun            = opt2bSet("-rerun", ssize(filenames), filenames.data());
+    mdrunOptions.rerun            = opt2bSet("-rerun", gmx::ssize(filenames), filenames.data());
     mdrunOptions.ntompOptionIsSet = opt2parg_bSet("-ntomp", asize(pa), pa);
 
     domdecOptions.rankOrder    = static_cast<DdRankOrder>(nenum(ddrank_opt_choices));

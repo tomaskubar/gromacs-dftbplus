@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2015,2016,2017,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2015- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \internal \file
  * \brief
@@ -45,6 +44,13 @@
 #include "refdata_xml.h"
 
 #include <tinyxml2.h>
+
+#include <cstring>
+
+#include <list>
+#include <memory>
+#include <utility>
+#include <vector>
 
 #include "gromacs/utility/exceptions.h"
 
@@ -168,7 +174,7 @@ void readChildEntries(XMLNodePtr parentElement, ReferenceDataEntry* entry)
     {
         ReferenceDataEntry::EntryPointer child(createEntry(childElement));
         readEntry(childElement, child.get());
-        entry->addChild(move(child));
+        entry->addChild(std::move(child));
         childElement = childElement->NextSiblingElement();
     }
 }
@@ -207,20 +213,11 @@ ReferenceDataEntry::EntryPointer readReferenceDataFile(const std::string& path)
     document.LoadFile(path.c_str());
     if (document.Error())
     {
-        const char* errorStr1 = document.GetErrorStr1();
-        const char* errorStr2 = document.GetErrorStr2();
+        const char* errorStr = document.ErrorStr();
         std::string errorString("Error was ");
-        if (errorStr1)
+        if (errorStr)
         {
-            errorString += errorStr1;
-        }
-        if (errorStr2)
-        {
-            errorString += errorStr2;
-        }
-        if (!errorStr1 && !errorStr2)
-        {
-            errorString += "not specified.";
+            errorString += errorStr;
         }
         GMX_THROW(TestException("Reference data not parsed successfully: " + path + "\n."
                                 + errorString + "\n"));
@@ -372,7 +369,7 @@ void writeReferenceDataFile(const std::string& path, const ReferenceDataEntry& r
     XMLElementPtr rootElement = createRootElement(&document);
     createChildElements(rootElement, rootEntry);
 
-    if (document.SaveFile(path.c_str()) != tinyxml2::XML_NO_ERROR)
+    if (document.SaveFile(path.c_str()) != tinyxml2::XML_SUCCESS)
     {
         GMX_THROW(TestException("Reference data saving failed in " + path));
     }

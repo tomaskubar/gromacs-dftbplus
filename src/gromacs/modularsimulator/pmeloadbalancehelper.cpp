@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2019- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \internal \file
  * \brief Declares the PME load balancing helper for the modular simulator
@@ -43,12 +42,13 @@
 
 #include "pmeloadbalancehelper.h"
 
+#include "gromacs/domdec/domdec_struct.h"
 #include "gromacs/ewald/pme_load_balancing.h"
-#include "gromacs/mdtypes/commrec.h"
 #include "gromacs/mdtypes/forcerec.h"
 #include "gromacs/mdtypes/inputrec.h"
 #include "gromacs/mdtypes/interaction_const.h"
 #include "gromacs/mdtypes/mdrunoptions.h"
+#include "gromacs/mdtypes/simulation_workload.h"
 #include "gromacs/mdtypes/state.h"
 #include "gromacs/nbnxm/nbnxm.h"
 
@@ -56,30 +56,27 @@
 
 namespace gmx
 {
-bool PmeLoadBalanceHelper::doPmeLoadBalancing(const MdrunOptions& mdrunOptions,
-                                              const t_inputrec*   inputrec,
-                                              const t_forcerec*   fr)
+bool PmeLoadBalanceHelper::doPmeLoadBalancing(const MdrunOptions&       mdrunOptions,
+                                              const t_forcerec*         fr,
+                                              const SimulationWorkload& simWorkload)
 {
-    return (mdrunOptions.tunePme && EEL_PME(fr->ic->eeltype) && !mdrunOptions.reproducible
-            && inputrec->cutoff_scheme != ecutsGROUP);
+    return (mdrunOptions.tunePme
+            && pmeTuningIsSupported(fr->ic->coulomb.type, mdrunOptions.reproducible, simWorkload));
 }
 
-PmeLoadBalanceHelper::PmeLoadBalanceHelper(bool                 isVerbose,
-                                           StatePropagatorData* statePropagatorData,
-                                           FILE*                fplog,
-                                           t_commrec*           cr,
-                                           const MDLogger&      mdlog,
-                                           const t_inputrec*    inputrec,
-                                           gmx_wallcycle*       wcycle,
-                                           t_forcerec*          fr) :
-    pme_loadbal_(nullptr),
+PmeLoadBalanceHelper::PmeLoadBalanceHelper(bool                      isVerbose,
+                                           StatePropagatorData*      statePropagatorData,
+                                           gmx_domdec_t*             dd,
+                                           const MDLogger&           mdlog,
+                                           const t_inputrec*         inputrec,
+                                           gmx_wallcycle*            wcycle,
+                                           t_forcerec*               fr,
+                                           const SimulationWorkload& simWorkload) :
+    pme_loadbal_(dd, mdlog, *inputrec, statePropagatorData->constBox(), *fr->ic, *fr->nbv, fr->pmedata, simWorkload),
     nextNSStep_(-1),
     isVerbose_(isVerbose),
-    bPMETunePrinting_(false),
     statePropagatorData_(statePropagatorData),
-    fplog_(fplog),
-    cr_(cr),
-    mdlog_(mdlog),
+    dd_(dd),
     inputrec_(inputrec),
     wcycle_(wcycle),
     fr_(fr)
@@ -88,11 +85,9 @@ PmeLoadBalanceHelper::PmeLoadBalanceHelper(bool                 isVerbose,
 
 void PmeLoadBalanceHelper::setup()
 {
-    auto box = statePropagatorData_->constBox();
+    const auto* box = statePropagatorData_->constBox();
     GMX_RELEASE_ASSERT(box[0][0] != 0 && box[1][1] != 0 && box[2][2] != 0,
                        "PmeLoadBalanceHelper cannot be initialized with zero box.");
-    pme_loadbal_init(&pme_loadbal_, cr_, mdlog_, *inputrec_, box, *fr_->ic, *fr_->nbv, fr_->pmedata,
-                     fr_->nbv->useGpu());
 }
 
 void PmeLoadBalanceHelper::run(gmx::Step step, gmx::Time gmx_unused time)
@@ -105,23 +100,26 @@ void PmeLoadBalanceHelper::run(gmx::Step step, gmx::Time gmx_unused time)
     // PME grid + cut-off optimization with GPUs or PME nodes
     // TODO pass SimulationWork object into this function, such that last argument can be set as
     // simulationWork.useGpuPmePpCommunication as is done in main MD loop.
-    pme_loadbal_do(pme_loadbal_, cr_, (isVerbose_ && MASTER(cr_)) ? stderr : nullptr, fplog_,
-                   mdlog_, *inputrec_, fr_, statePropagatorData_->constBox(),
-                   statePropagatorData_->constPositionsView().paddedArrayRef(), wcycle_, step,
-                   step - inputrec_->init_step, &bPMETunePrinting_, false);
+    pme_loadbal_.addCycles((isVerbose_ && (dd_ == nullptr || DDMAIN(*dd_))) ? stderr : nullptr,
+                           fr_,
+                           statePropagatorData_->constBox(),
+                           statePropagatorData_->constPositionsView().paddedArrayRef(),
+                           wcycle_,
+                           step,
+                           step - inputrec_->init_step);
 }
 
 void PmeLoadBalanceHelper::teardown()
 {
-    pme_loadbal_done(pme_loadbal_, fplog_, mdlog_, fr_->nbv->useGpu());
+    pme_loadbal_.printSettings();
 }
 
-bool PmeLoadBalanceHelper::pmePrinting()
+bool PmeLoadBalanceHelper::pmePrinting() const
 {
-    return bPMETunePrinting_;
+    return pme_loadbal_.isPrintingLoad();
 }
 
-const pme_load_balancing_t* PmeLoadBalanceHelper::loadBalancingObject()
+const PmeLoadBalancing& PmeLoadBalanceHelper::loadBalancingObject()
 {
     return pme_loadbal_;
 }

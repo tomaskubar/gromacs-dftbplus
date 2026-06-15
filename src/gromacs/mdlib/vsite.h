@@ -1,13 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
- * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2016,2017 The GROMACS development team.
- * Copyright (c) 2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 1991- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -21,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -30,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \libinternal \file
  * \brief Declares the VirtualSitesHandler class and vsite standalone functions
@@ -46,27 +42,30 @@
 #ifndef GMX_MDLIB_VSITE_H
 #define GMX_MDLIB_VSITE_H
 
+#include <array>
 #include <memory>
+#include <optional>
+#include <string>
+#include <vector>
 
-#include "gromacs/math/vectypes.h"
 #include "gromacs/topology/idef.h"
-#include "gromacs/utility/arrayref.h"
-#include "gromacs/utility/basedefinitions.h"
-#include "gromacs/utility/classhelpers.h"
+#include "gromacs/topology/ifunc.h"
 #include "gromacs/utility/real.h"
+#include "gromacs/utility/vectypes.h"
 
 struct gmx_domdec_t;
 struct gmx_mtop_t;
-struct t_commrec;
 struct InteractionList;
-struct t_mdatoms;
 struct t_nrnb;
 struct gmx_wallcycle;
 enum class PbcType : int;
+enum class ParticleType : int;
 
 namespace gmx
 {
 class RangePartitioning;
+template<typename T>
+class ArrayRef;
 
 /*! \brief The start value of the vsite indices in the ftype enum
  *
@@ -74,12 +73,51 @@ class RangePartitioning;
  * This is used to avoid loops over all ftypes just to get the vsite entries.
  * (We should replace the fixed ilist array by only the used entries.)
  */
-static constexpr int c_ftypeVsiteStart = F_VSITE1;
+static constexpr InteractionFunction c_ftypeVsiteStart = InteractionFunction::VirtualSite1;
 //! The start and end value of the vsite indices in the ftype enum
-static constexpr int c_ftypeVsiteEnd = F_VSITEN + 1;
+static constexpr InteractionFunction c_ftypeVsiteEnd =
+        InteractionFunction::CenterOfMassPullingEnergy; // InteractionFunction::VirtualSiteN + 1
+
+static constexpr int numFtypes = static_cast<int>(c_ftypeVsiteEnd) - static_cast<int>(c_ftypeVsiteStart);
+
+const std::array<InteractionFunction, numFtypes> vSiteFunctionTypes = {
+    InteractionFunction::VirtualSite1,
+    InteractionFunction::VirtualSite2,
+    InteractionFunction::VirtualSite2FlexibleDistance,
+    InteractionFunction::VirtualSite3,
+    InteractionFunction::VirtualSite3FlexibleDistance,
+    InteractionFunction::VirtualSite3FlexibleAngleDistance,
+    InteractionFunction::VirtualSite3Outside,
+    InteractionFunction::VirtualSite4FlexibleDistance,
+    InteractionFunction::VirtualSite4FlexibleDistanceNormalization,
+    InteractionFunction::VirtualSiteN
+};
+
+const std::array<InteractionFunction, numFtypes> vSiteFunctionTypesReversed = {
+    InteractionFunction::VirtualSiteN,
+    InteractionFunction::VirtualSite4FlexibleDistanceNormalization,
+    InteractionFunction::VirtualSite4FlexibleDistance,
+    InteractionFunction::VirtualSite3Outside,
+    InteractionFunction::VirtualSite3FlexibleAngleDistance,
+    InteractionFunction::VirtualSite3FlexibleDistance,
+    InteractionFunction::VirtualSite3,
+    InteractionFunction::VirtualSite2FlexibleDistance,
+    InteractionFunction::VirtualSite2,
+    InteractionFunction::VirtualSite1
+};
+
 
 //! Type for storing PBC atom information for all vsite types in the system
-typedef std::array<std::vector<int>, c_ftypeVsiteEnd - c_ftypeVsiteStart> VsitePbc;
+typedef std::array<std::vector<int>, numFtypes> VsitePbc;
+
+//! Whether we calculate vsite positions, velocities, or both
+enum class VSiteOperation
+{
+    Positions,              //!< Calculate only positions
+    Velocities,             //!< Calculate only velocities
+    PositionsAndVelocities, //!< Calculate both positions and velocities
+    Count                   //!< The number of entries
+};
 
 /*! \libinternal
  * \brief Class that handles construction of vsites and spreading of vsite forces
@@ -88,7 +126,10 @@ class VirtualSitesHandler
 {
 public:
     //! Constructor, used only be the makeVirtualSitesHandler() factory function
-    VirtualSitesHandler(const gmx_mtop_t& mtop, gmx_domdec_t* domdec, PbcType pbcType);
+    VirtualSitesHandler(const gmx_mtop_t&                 mtop,
+                        gmx_domdec_t*                     domdec,
+                        PbcType                           pbcType,
+                        ArrayRef<const RangePartitioning> updateGroupingPerMoleculeType);
 
     ~VirtualSitesHandler();
 
@@ -96,16 +137,19 @@ public:
     int numInterUpdategroupVirtualSites() const;
 
     //! Set VSites and distribute VSite work over threads, should be called after each DD partitioning
-    void setVirtualSites(ArrayRef<const InteractionList> ilist, const t_mdatoms& mdatoms);
+    void setVirtualSites(const gmx::EnumerationArray<InteractionFunction, InteractionList>* ilist,
+                         int                          numAtoms,
+                         int                          homenr,
+                         ArrayRef<const ParticleType> ptype);
 
     /*! \brief Create positions of vsite atoms based for the local system
      *
-     * \param[in,out] x        The coordinates
-     * \param[in]     dt       The time step
-     * \param[in,out] v        When not empty, velocities for vsites are set as displacement/dt
-     * \param[in]     box      The box
+     * \param[in,out] x          The coordinates
+     * \param[in,out] v          The velocities, needed if operation requires it
+     * \param[in]     box        The box
+     * \param[in]     operation  Whether we calculate positions, velocities, or both
      */
-    void construct(ArrayRef<RVec> x, real dt, ArrayRef<RVec> v, const matrix box) const;
+    void construct(ArrayRef<RVec> x, ArrayRef<RVec> v, const matrix box, VSiteOperation operation) const;
 
     //! Tells how to handle virial contributions due to virtual sites
     enum class VirialHandling : int
@@ -138,7 +182,7 @@ private:
     //! Implementation type.
     class Impl;
     //! Implementation object.
-    PrivateImplPointer<Impl> impl_;
+    std::unique_ptr<Impl> impl_;
 };
 
 /*! \brief Create positions of vsite atoms based for the local system
@@ -147,9 +191,9 @@ private:
  * \param[in]     ip       Interaction parameters
  * \param[in]     ilist    The interaction list
  */
-void constructVirtualSites(ArrayRef<RVec>                  x,
-                           ArrayRef<const t_iparams>       ip,
-                           ArrayRef<const InteractionList> ilist);
+void constructVirtualSites(ArrayRef<RVec>            x,
+                           ArrayRef<const t_iparams> ip,
+                           const gmx::EnumerationArray<InteractionFunction, InteractionList>* ilist);
 
 /*! \brief Create positions of vsite atoms for the whole system assuming all molecules are wholex
  *
@@ -172,21 +216,34 @@ int countNonlinearVsites(const gmx_mtop_t& mtop);
 /*! \brief Return the number of virtual sites that cross update groups
  *
  * \param[in] mtop                           The global topology
- * \param[in] updateGroupingPerMoleculetype  Update grouping per molecule type, pass empty when not using update groups
+ * \param[in] updateGroupingsPerMoleculeType  Update grouping per molecule type, pass empty when not using update groups
  */
 int countInterUpdategroupVsites(const gmx_mtop_t&                 mtop,
-                                ArrayRef<const RangePartitioning> updateGroupingPerMoleculetype);
+                                ArrayRef<const RangePartitioning> updateGroupingsPerMoleculeType);
 
 /*! \brief Create the virtual site handler
  *
- * \param[in] mtop      The global topology
- * \param[in] cr        The communication record
- * \param[in] pbcType   The type of PBC
+ * \param[in] mtop                           The global topology
+ * \param[in] domdec                         The domain decomposition struct, pass nullptr
+ *                                           when DD is not in use
+ * \param[in] pbcType                        The type of PBC
+ * \param[in] updateGroupingPerMoleculeType  Update grouping per molecule type, pass
+ *                                           empty when not using update groups
  * \returns A valid vsite handler object or nullptr when there are no virtual sites
  */
-std::unique_ptr<VirtualSitesHandler> makeVirtualSitesHandler(const gmx_mtop_t& mtop,
-                                                             const t_commrec*  cr,
-                                                             PbcType           pbcType);
+std::unique_ptr<VirtualSitesHandler>
+makeVirtualSitesHandler(const gmx_mtop_t&                 mtop,
+                        gmx_domdec_t*                     domdec,
+                        PbcType                           pbcType,
+                        ArrayRef<const RangePartitioning> updateGroupingPerMoleculeType);
+
+/*! \brief Checks whether constructing atom are vsites with the same or higher function type
+ *
+ * Also checks whether vsites are used as constructing atoms for VsiteN (not allowed).
+ *
+ * \returns an error string when the restrictions are not satisfied
+ */
+std::optional<std::string> checkVsiteHierarchy(const gmx_mtop_t& mtop);
 
 } // namespace gmx
 

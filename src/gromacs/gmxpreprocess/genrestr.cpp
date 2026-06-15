@@ -1,13 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
- * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2017,2018 by the GROMACS development team.
- * Copyright (c) 2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 1991- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -21,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -30,31 +26,43 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 #include "gmxpre.h"
 
 #include "genrestr.h"
 
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 
 #include <algorithm>
+#include <filesystem>
+#include <string>
 
+#include "gromacs/commandline/filenm.h"
 #include "gromacs/commandline/pargs.h"
 #include "gromacs/fileio/confio.h"
-#include "gromacs/math/vec.h"
+#include "gromacs/fileio/filetypes.h"
+#include "gromacs/fileio/oenv.h"
+#include "gromacs/topology/atoms.h"
 #include "gromacs/topology/index.h"
 #include "gromacs/topology/mtop_util.h"
 #include "gromacs/topology/topology.h"
 #include "gromacs/utility/arraysize.h"
+#include "gromacs/utility/basedefinitions.h"
 #include "gromacs/utility/cstringutil.h"
 #include "gromacs/utility/fatalerror.h"
 #include "gromacs/utility/futil.h"
+#include "gromacs/utility/real.h"
 #include "gromacs/utility/smalloc.h"
+#include "gromacs/utility/vec.h"
+#include "gromacs/utility/vectypes.h"
+
+struct gmx_output_env_t;
 
 int gmx_genrestr(int argc, char* argv[])
 {
@@ -143,7 +151,6 @@ int gmx_genrestr(int argc, char* argv[])
     FILE*             out;
     int               igrp;
     real              d, dd, lo, hi;
-    const char *      xfn, *nfn;
     matrix            box;
     gmx_bool          bFreeze;
     rvec              dx, *x = nullptr, *v = nullptr;
@@ -162,10 +169,10 @@ int gmx_genrestr(int argc, char* argv[])
 
     bFreeze = opt2bSet("-of", NFILE, fnm) || opt2parg_bSet("-freeze", asize(pa), pa);
     bDisre  = bDisre || opt2parg_bSet("-disre_dist", npargs, pa);
-    xfn     = opt2fn_null("-f", NFILE, fnm);
-    nfn     = opt2fn_null("-n", NFILE, fnm);
+    std::optional<std::filesystem::path> xfn = opt2path_optional("-f", NFILE, fnm);
+    std::optional<std::filesystem::path> nfn = opt2path_optional("-n", NFILE, fnm);
 
-    if ((nfn == nullptr) && (xfn == nullptr))
+    if (!nfn && !xfn)
     {
         gmx_fatal(FARGS, "no index file and no structure file supplied");
     }
@@ -185,12 +192,12 @@ int gmx_genrestr(int argc, char* argv[])
     int*        indexGroups     = nullptr;
     char*       indexGroupNames = nullptr;
 
-    if (xfn != nullptr)
+    if (xfn)
     {
         fprintf(stderr, "\nReading structure file\n");
-        readConfAndTopology(xfn, &haveTopology, &mtop, nullptr, &x, &v, box);
+        readConfAndTopology(xfn.value(), &haveTopology, &mtop, nullptr, &x, &v, box);
         title = *mtop.name;
-        atoms = gmx_mtop_global_atoms(&mtop);
+        atoms = gmx_mtop_global_atoms(mtop);
         if (atoms.pdbinfo == nullptr)
         {
             snew(atoms.pdbinfo, atoms.nr);
@@ -202,7 +209,10 @@ int gmx_genrestr(int argc, char* argv[])
     {
         if (!haveTopology || !atoms.pdbinfo)
         {
-            gmx_fatal(FARGS, "No B-factors in input file %s, use a pdb file next time.", xfn);
+            GMX_RELEASE_ASSERT(xfn.has_value(), "Input file must be valid");
+            gmx_fatal(FARGS,
+                      "No B-factors in input file %s, use a pdb file next time.",
+                      xfn.value().string().c_str());
         }
 
         out = opt2FILE("-of", NFILE, fnm, "w");
@@ -232,8 +242,17 @@ int gmx_genrestr(int argc, char* argv[])
         {
             fprintf(out, "; distance restraints for %s of %s\n\n", indexGroupNames, title);
             fprintf(out, "[ distance_restraints ]\n");
-            fprintf(out, ";%4s %5s %1s %5s %10s %10s %10s %10s %10s\n", "i", "j", "?", "label",
-                    "funct", "lo", "up1", "up2", "weight");
+            fprintf(out,
+                    ";%4s %5s %1s %5s %10s %10s %10s %10s %10s\n",
+                    "i",
+                    "j",
+                    "?",
+                    "label",
+                    "funct",
+                    "lo",
+                    "up1",
+                    "up2",
+                    "weight");
         }
         for (i = k = 0; i < igrp; i++)
         {
@@ -259,8 +278,17 @@ int gmx_genrestr(int argc, char* argv[])
                         }
                         lo = std::max(0.0_real, d - dd);
                         hi = d + dd;
-                        fprintf(out, "%5d %5d %1d %5d %10d %10g %10g %10g %10g\n", indexGroups[i] + 1,
-                                indexGroups[j] + 1, 1, k, 1, lo, hi, hi + disre_up2, 1.0);
+                        fprintf(out,
+                                "%5d %5d %1d %5d %10d %10g %10g %10g %10g\n",
+                                indexGroups[i] + 1,
+                                indexGroups[j] + 1,
+                                1,
+                                k,
+                                1,
+                                lo,
+                                hi,
+                                hi + disre_up2,
+                                1.0);
                     }
                 }
             }

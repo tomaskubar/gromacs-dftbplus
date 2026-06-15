@@ -1,12 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
- * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2018,2019, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 1991- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -20,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -29,20 +26,30 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 #ifndef GMX_MDTYPES_GROUP_H
 #define GMX_MDTYPES_GROUP_H
 
+#include <memory>
 #include <vector>
 
-#include "gromacs/math/vectypes.h"
+#include "gromacs/mdtypes/md_enums.h"
 #include "gromacs/utility/basedefinitions.h"
+#include "gromacs/utility/gmxassert.h"
 #include "gromacs/utility/real.h"
-#include "gromacs/utility/smalloc.h"
+#include "gromacs/utility/vectypes.h"
+
+struct t_inputrec;
+
+namespace gmx
+{
+template<typename>
+class ArrayRef;
+} // namespace gmx
 
 struct t_grp_tcstat
 {
@@ -66,18 +73,41 @@ struct t_grp_tcstat
     double vscale_nhc = 0;
 };
 
-struct t_grp_acc
+/*! \brief The momentum and mass of the whole system
+ *
+ * Note that the momentum and mass are stored consecutively in this struct
+ * to enable passing a double pointer for global reduction.
+ */
+struct SystemMomentum
 {
-    //! Number of atoms in this group
-    int nat = 0;
-    //! Mean velocities of home particles
-    rvec u = { 0 };
-    //! Previous mean velocities of home particles
-    rvec uold = { 0 };
-    //! Mass for topology A
-    double mA = 0;
-    //! Mass for topology B
-    double mB = 0;
+    //! Clears the momentum and mass
+    void clear()
+    {
+        momentum = { 0.0, 0.0, 0.0 };
+        mass     = 0.0;
+    }
+
+    //! Returns the number of doubles contained in this struct
+    static constexpr int numDoubles() { return sizeof(SystemMomentum) / sizeof(double); }
+
+    //! Returns a pointer of a list of \p numDoubles() doubles covering all data in this struct
+    double* bufferPtr() { return &momentum[0]; }
+
+    //! The system momentum
+    gmx::DVec momentum = { 0.0, 0.0, 0.0 };
+    //! The system mass
+    double mass = 0.0;
+};
+
+//! System momenta used with with the box deform option
+struct SystemMomenta
+{
+    //! Momentum to be used with ekinh in t_grp_tcstat
+    SystemMomentum momentumHalfStep;
+    //! Momentum to be used with ekinh_old in t_grp_tcstat
+    SystemMomentum momentumOldHalfStep;
+    //! Momentum to be used with ekinf in t_grp_tcstat
+    SystemMomentum momentumFullStep;
 };
 
 struct t_cos_acc
@@ -90,14 +120,78 @@ struct t_cos_acc
     real vcos = 0;
 };
 
-struct gmx_ekindata_t
+class gmx_ekindata_t
 {
-    //! Whether non-equilibrium MD is active (ie. constant or cosine acceleration)
-    gmx_bool bNEMD;
-    //! The number of T-coupling groups
-    int ngtc = 0;
-    //! For size of ekin_work
-    int nthreads = 0;
+public:
+    gmx_ekindata_t(gmx::ArrayRef<const real>  referenceTemperature,
+                   EnsembleTemperatureSetting ensembleTemperatureSetting,
+                   real                       ensembleTemperature,
+                   bool                       haveBoxDeformation,
+                   real                       cosineAcceleration,
+                   int                        numThreads);
+
+    //! Returns the number of T-coupling groups
+    int numTemperatureCouplingGroups() const { return gmx::ssize(currentReferenceTemperature_); }
+
+    //! Returns the reference temperature for T-coupling group \p groupIndex
+    real currentReferenceTemperature(const int groupIndex) const
+    {
+        return currentReferenceTemperature_[groupIndex];
+    }
+
+    //! Set the reference temperature for T-coupling group \p groupIndex
+    void setCurrentReferenceTemperature(const int groupIndex, const real referenceTemperature)
+    {
+        currentReferenceTemperature_[groupIndex] = referenceTemperature;
+
+        // If we have a variable ensemble temperature, all groups should
+        // have equal temperature, so we can set the ensemble temperature
+        // when setting the reference temperature of group 0
+        if (ensembleTemperatureSetting_ == EnsembleTemperatureSetting::Variable && groupIndex == 0)
+        {
+            currentEnsembleTemperature_ = referenceTemperature;
+        }
+    }
+
+    /*! \brief Returns the ensemble temperature of the system
+     *
+     * Should only be called when the system has an ensemble temperature,
+     * i.e. when haveEnsembleTemperature(inputRecord) returns true.
+     */
+    real currentEnsembleTemperature() const
+    {
+        GMX_ASSERT(ensembleTemperatureSetting_ == EnsembleTemperatureSetting::Constant
+                           || ensembleTemperatureSetting_ == EnsembleTemperatureSetting::Variable,
+                   "Should only request ensemble T when available");
+
+        return currentEnsembleTemperature_;
+    }
+
+    /*! \brief Sets the ensemble temperature for the system
+     *
+     * Should only be called when the system has an ensemble temperature,
+     * i.e. when haveEnsembleTemperature(inputRecord) returns true.
+     */
+    void setCurrentEnsembleTemperature(const real ensembleTemperature)
+    {
+        GMX_RELEASE_ASSERT(ensembleTemperatureSetting_ == EnsembleTemperatureSetting::Variable,
+                           "Can only set ensemble temperature when it is variable");
+
+        currentEnsembleTemperature_ = ensembleTemperature;
+    }
+
+private:
+    //! The reference temperatures, can change when using simulated annealing
+    std::vector<real> currentReferenceTemperature_;
+    //! The setting for the ensemble temperature of the system
+    EnsembleTemperatureSetting ensembleTemperatureSetting_;
+    //! The current ensemble temperature
+    real currentEnsembleTemperature_;
+
+public:
+    //! Returns whether  the box is continuously deformed
+    bool haveBoxDeformation() const { return haveBoxDeformation_; }
+
     //! T-coupling data
     std::vector<t_grp_tcstat> tcstat;
     //! Allocated locations for *_work members
@@ -106,10 +200,6 @@ struct gmx_ekindata_t
     tensor** ekin_work = nullptr;
     //! Work location for dekindl per thread
     real** dekindl_work = nullptr;
-    //! The number of acceleration groups
-    int ngacc = 0;
-    //! Acceleration data
-    std::vector<t_grp_acc> grpstat;
     //! overall kinetic energy
     tensor ekin = { { 0 } };
     //! overall 1/2 step kinetic energy
@@ -118,10 +208,22 @@ struct gmx_ekindata_t
     real dekindl = 0;
     //! dEkin/dlambda at old half step
     real dekindl_old = 0;
+    //! The momenta of the system, needed with deform
+    std::unique_ptr<SystemMomenta> systemMomenta;
+    //! Thread work buffer for the momentum of the system
+    std::vector<std::unique_ptr<SystemMomentum>> systemMomentumWork;
     //! Cosine acceleration data
     t_cos_acc cosacc;
+    //! Last step at which kinetic energy terms were accumulated over the ranks
+    int64_t lastComputeGlobalsStep = -2;
 
     ~gmx_ekindata_t();
+
+private:
+    //! Whether the box is continuously deformed
+    bool haveBoxDeformation_;
+    //! For size of ekin_work
+    int nthreads_ = 0;
 };
 
 #define GID(igid, jgid, gnr) \

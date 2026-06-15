@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2019- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \internal \file
  * \brief Defines the signallers for the modular simulator
@@ -43,9 +42,13 @@
 #include "signallers.h"
 
 #include <algorithm>
+#include <functional>
 
 #include "gromacs/mdlib/stat.h"
 #include "gromacs/mdlib/stophandler.h"
+#include "gromacs/mdrunutility/handlerestart.h"
+#include "gromacs/utility/basedefinitions.h"
+#include "gromacs/utility/gmxassert.h"
 
 #include "modularsimulatorinterfaces.h"
 
@@ -64,10 +67,7 @@ NeighborSearchSignaller::NeighborSearchSignaller(std::vector<SignallerCallback> 
                                                  Step                           nstlist,
                                                  Step                           initStep,
                                                  Time                           initTime) :
-    callbacks_(std::move(callbacks)),
-    nstlist_(nstlist),
-    initStep_(initStep),
-    initTime_(initTime)
+    callbacks_(std::move(callbacks)), nstlist_(nstlist), initStep_(initStep), initTime_(initTime)
 {
 }
 
@@ -99,8 +99,7 @@ void LastStepSignaller::signal(Step step, Time time)
     {
         return;
     }
-    bool isNSStep           = (step == nextNSStep_);
-    signalledStopCondition_ = stopHandler_->stoppingAfterCurrentStep(isNSStep);
+    signalledStopCondition_ = stopHandler_->stoppingAfterCurrentStep(step);
     if (step == stopStep_ || signalledStopCondition_)
     {
         runAllCallbacks(callbacks_, step, time);
@@ -122,11 +121,11 @@ std::optional<SignallerCallback> LastStepSignaller::registerNSCallback()
 LoggingSignaller::LoggingSignaller(std::vector<SignallerCallback> callbacks,
                                    Step                           nstlog,
                                    Step                           initStep,
-                                   Time                           initTime) :
+                                   StartingBehavior               startingBehavior) :
     callbacks_(std::move(callbacks)),
     nstlog_(nstlog),
     initStep_(initStep),
-    initTime_(initTime),
+    startingBehavior_(startingBehavior),
     lastStep_(-1),
     lastStepRegistrationDone_(false)
 {
@@ -134,7 +133,8 @@ LoggingSignaller::LoggingSignaller(std::vector<SignallerCallback> callbacks,
 
 void LoggingSignaller::signal(Step step, Time time)
 {
-    if (do_per_step(step, nstlog_) || step == lastStep_)
+    if (do_per_step(step, nstlog_) || step == lastStep_
+        || (step == initStep_ && startingBehavior_ == StartingBehavior::NewSimulation))
     {
         runAllCallbacks(callbacks_, step, time);
     }
@@ -218,13 +218,15 @@ EnergySignaller::EnergySignaller(std::vector<SignallerCallback> calculateEnergyC
                                  std::vector<SignallerCallback> calculateFreeEnergyCallbacks,
                                  int                            nstcalcenergy,
                                  int                            nstcalcfreeenergy,
-                                 int                            nstcalcvirial) :
+                                 int                            nstcalcvirial,
+                                 EnergySignallerVirialMode      virialMode) :
     calculateEnergyCallbacks_(std::move(calculateEnergyCallbacks)),
     calculateVirialCallbacks_(std::move(calculateVirialCallbacks)),
     calculateFreeEnergyCallbacks_(std::move(calculateFreeEnergyCallbacks)),
     nstcalcenergy_(nstcalcenergy),
     nstcalcfreeenergy_(nstcalcfreeenergy),
     nstcalcvirial_(nstcalcvirial),
+    virialMode_(virialMode),
     energyWritingStep_(-1),
     trajectoryRegistrationDone_(false),
     loggingStep_(-1),
@@ -234,16 +236,23 @@ EnergySignaller::EnergySignaller(std::vector<SignallerCallback> calculateEnergyC
 
 void EnergySignaller::signal(Step step, Time time)
 {
-    bool calculateEnergy     = do_per_step(step, nstcalcenergy_);
-    bool calculateFreeEnergy = do_per_step(step, nstcalcfreeenergy_);
-    bool calculateVirial     = do_per_step(step, nstcalcvirial_);
-    bool writeEnergy         = energyWritingStep_ == step;
+    const bool writeEnergy     = (energyWritingStep_ == step);
+    const bool writeLog        = (loggingStep_ == step);
+    const bool calculateEnergy = writeEnergy || writeLog || do_per_step(step, nstcalcenergy_);
+    const bool calculateVirial = calculateEnergy
+                                 || ((virialMode_ == EnergySignallerVirialMode::OnStep
+                                      || virialMode_ == EnergySignallerVirialMode::OnStepAndNext)
+                                     && do_per_step(step, nstcalcvirial_))
+                                 || (virialMode_ == EnergySignallerVirialMode::OnStepAndNext
+                                     && do_per_step(step - 1, nstcalcvirial_));
+    // calculateEnergy is only here for when the last step is not a multiple of nstcalcfreeenergy_
+    const bool calculateFreeEnergy = do_per_step(step, nstcalcfreeenergy_) || calculateEnergy;
 
-    if (calculateEnergy || writeEnergy || step == loggingStep_)
+    if (calculateEnergy)
     {
         runAllCallbacks(calculateEnergyCallbacks_, step, time);
     }
-    if (calculateEnergy || writeEnergy || step == loggingStep_ || calculateVirial)
+    if (calculateVirial)
     {
         runAllCallbacks(calculateVirialCallbacks_, step, time);
     }

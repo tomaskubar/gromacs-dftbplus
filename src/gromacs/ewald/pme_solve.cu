@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2016,2017,2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2016- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 
 /*! \internal \file
@@ -41,44 +40,34 @@
 
 #include "gmxpre.h"
 
-#include <cassert>
-
 #include <math_constants.h>
 
-#include "gromacs/gpu_utils/cuda_arch_utils.cuh"
+#include <cassert>
 
-#include "pme.cuh"
+#include "gromacs/gpu_utils/cuda_arch_utils.cuh"
+#include "gromacs/gpu_utils/cuda_kernel_utils.cuh"
+#include "gromacs/gpu_utils/gputraits.cuh"
+
+#include "pme_gpu_constants.h"
+#include "pme_gpu_internal.h"
+#include "pme_gpu_types.h"
 
 /*! \brief
  * PME complex grid solver kernel function.
  *
- * \tparam[in] gridOrdering             Specifies the dimension ordering of the complex grid.
- * \tparam[in] computeEnergyAndVirial   Tells if the reciprocal energy and virial should be computed.
- * \tparam[in] gridIndex                The index of the grid to use in the kernel.
+ * \tparam     gridOrdering             Specifies the dimension ordering of the complex grid.
+ * \tparam     computeEnergyAndVirial   Tells if the reciprocal energy and virial should be computed.
+ * \tparam     gridIndex                The index of the grid to use in the kernel.
  * \param[in]  kernelParams             Input PME CUDA data in constant memory.
  */
 template<GridOrdering gridOrdering, bool computeEnergyAndVirial, const int gridIndex>
 __launch_bounds__(c_solveMaxThreadsPerBlock) CLANG_DISABLE_OPTIMIZATION_ATTRIBUTE __global__
-        void pme_solve_kernel(const struct PmeGpuCudaKernelParams kernelParams)
+        void pme_solve_kernel(const struct PmeGpuKernelParams kernelParams)
 {
     /* This kernel supports 2 different grid dimension orderings: YZX and XYZ */
-    int majorDim, middleDim, minorDim;
-    switch (gridOrdering)
-    {
-        case GridOrdering::YZX:
-            majorDim  = YY;
-            middleDim = ZZ;
-            minorDim  = XX;
-            break;
-
-        case GridOrdering::XYZ:
-            majorDim  = XX;
-            middleDim = YY;
-            minorDim  = ZZ;
-            break;
-
-        default: assert(false);
-    }
+    constexpr int majorDim  = gridOrdering == GridOrdering::YZX ? YY : XX;
+    constexpr int middleDim = gridOrdering == GridOrdering::YZX ? ZZ : YY;
+    constexpr int minorDim  = gridOrdering == GridOrdering::YZX ? XX : ZZ;
 
     /* Global memory pointers */
     const float* __restrict__ gm_splineValueMajor = kernelParams.grid.d_splineModuli[gridIndex]
@@ -88,20 +77,23 @@ __launch_bounds__(c_solveMaxThreadsPerBlock) CLANG_DISABLE_OPTIMIZATION_ATTRIBUT
     const float* __restrict__ gm_splineValueMinor = kernelParams.grid.d_splineModuli[gridIndex]
                                                     + kernelParams.grid.splineValuesOffset[minorDim];
     float* __restrict__ gm_virialAndEnergy = kernelParams.constants.d_virialAndEnergy[gridIndex];
-    float2* __restrict__ gm_grid           = (float2*)kernelParams.grid.d_fourierGrid[gridIndex];
+    float2* __restrict__ gm_grid =
+            reinterpret_cast<float2*>(kernelParams.grid.d_fftComplexGrid[gridIndex]);
 
     /* Various grid sizes and indices */
-    const int localOffsetMinor = 0, localOffsetMajor = 0, localOffsetMiddle = 0; // unused
-    const int localSizeMinor   = kernelParams.grid.complexGridSizePadded[minorDim];
-    const int localSizeMiddle  = kernelParams.grid.complexGridSizePadded[middleDim];
-    const int localCountMiddle = kernelParams.grid.complexGridSize[middleDim];
-    const int localCountMinor  = kernelParams.grid.complexGridSize[minorDim];
-    const int nMajor           = kernelParams.grid.realGridSize[majorDim];
-    const int nMiddle          = kernelParams.grid.realGridSize[middleDim];
-    const int nMinor           = kernelParams.grid.realGridSize[minorDim];
-    const int maxkMajor        = (nMajor + 1) / 2;  // X or Y
-    const int maxkMiddle       = (nMiddle + 1) / 2; // Y OR Z => only check for !YZX
-    const int maxkMinor        = (nMinor + 1) / 2;  // Z or X => only check for YZX
+    const int localOffsetMinor  = kernelParams.grid.kOffsets[minorDim];
+    const int localOffsetMiddle = kernelParams.grid.kOffsets[middleDim];
+    const int localOffsetMajor  = kernelParams.grid.kOffsets[majorDim];
+    const int localSizeMinor    = kernelParams.grid.localComplexGridSizePadded[minorDim];
+    const int localSizeMiddle   = kernelParams.grid.localComplexGridSizePadded[middleDim];
+    const int localCountMiddle  = kernelParams.grid.localComplexGridSize[middleDim];
+    const int localCountMinor   = kernelParams.grid.localComplexGridSize[minorDim];
+    const int nMajor            = kernelParams.grid.realGridSize[majorDim];
+    const int nMiddle           = kernelParams.grid.realGridSize[middleDim];
+    const int nMinor            = kernelParams.grid.realGridSize[minorDim];
+    const int maxkMajor         = (nMajor + 1) / 2;  // X or Y
+    const int maxkMiddle        = (nMiddle + 1) / 2; // Y OR Z => only check for !YZX
+    const int maxkMinor         = (nMinor + 1) / 2;  // Z or X => only check for YZX
 
     /* Each thread works on one cell of the Fourier space complex 3D grid (gm_grid).
      * Each block handles up to c_solveMaxThreadsPerBlock cells -
@@ -119,15 +111,15 @@ __launch_bounds__(c_solveMaxThreadsPerBlock) CLANG_DISABLE_OPTIMIZATION_ATTRIBUT
     const int indexMajor        = blockIdx.z;
 
     /* Optional outputs */
-    float energy = 0.0f;
-    float virxx  = 0.0f;
-    float virxy  = 0.0f;
-    float virxz  = 0.0f;
-    float viryy  = 0.0f;
-    float viryz  = 0.0f;
-    float virzz  = 0.0f;
+    float energy = 0.0F;
+    float virxx  = 0.0F;
+    float virxy  = 0.0F;
+    float virxz  = 0.0F;
+    float viryy  = 0.0F;
+    float viryz  = 0.0F;
+    float virzz  = 0.0F;
 
-    assert(indexMajor < kernelParams.grid.complexGridSize[majorDim]);
+    GMX_DEVICE_ASSERT(indexMajor < kernelParams.grid.localComplexGridSize[majorDim]);
     if ((indexMiddle < localCountMiddle) & (indexMinor < localCountMinor)
         & (gridLineIndex < gridLinesPerBlock))
     {
@@ -143,76 +135,50 @@ __launch_bounds__(c_solveMaxThreadsPerBlock) CLANG_DISABLE_OPTIMIZATION_ATTRIBUT
         const int kMiddle = indexMiddle + localOffsetMiddle;
         float     mMiddle = kMiddle;
         /* Checking Y in XYZ case */
-        if (gridOrdering == GridOrdering::XYZ)
+        if constexpr (gridOrdering == GridOrdering::XYZ)
         {
             mMiddle = (kMiddle < maxkMiddle) ? kMiddle : (kMiddle - nMiddle);
         }
         const int kMinor = localOffsetMinor + indexMinor;
         float     mMinor = kMinor;
         /* Checking X in YZX case */
-        if (gridOrdering == GridOrdering::YZX)
+        if constexpr (gridOrdering == GridOrdering::YZX)
         {
             mMinor = (kMinor < maxkMinor) ? kMinor : (kMinor - nMinor);
         }
         /* We should skip the k-space point (0,0,0) */
         const bool notZeroPoint = (kMinor > 0) | (kMajor > 0) | (kMiddle > 0);
 
-        float mX, mY, mZ;
-        switch (gridOrdering)
-        {
-            case GridOrdering::YZX:
-                mX = mMinor;
-                mY = mMajor;
-                mZ = mMiddle;
-                break;
+        const float3 mm = (gridOrdering == GridOrdering::YZX) ? make_float3(mMinor, mMajor, mMiddle)
+                                                              : make_float3(mMajor, mMiddle, mMinor);
 
-            case GridOrdering::XYZ:
-                mX = mMajor;
-                mY = mMiddle;
-                mZ = mMinor;
-                break;
-
-            default: assert(false);
-        }
-
+        // We need to apply a correction factor to the first and last component in
+        // the Z direction, so depending on the grid ordering we need to change
+        // the value for the factor
+        const int  maxkZ = (gridOrdering == GridOrdering::YZX ? maxkMiddle : maxkMinor);
+        const int  kZ    = (gridOrdering == GridOrdering::YZX ? kMiddle : kMinor);
+        const bool isFirstOrLastZComponent = (kZ == 0 | kZ == maxkZ);
         /* 0.5 correction factor for the first and last components of a Z dimension */
-        float corner_fac = 1.0f;
-        switch (gridOrdering)
-        {
-            case GridOrdering::YZX:
-                if ((kMiddle == 0) | (kMiddle == maxkMiddle))
-                {
-                    corner_fac = 0.5f;
-                }
-                break;
-
-            case GridOrdering::XYZ:
-                if ((kMinor == 0) | (kMinor == maxkMinor))
-                {
-                    corner_fac = 0.5f;
-                }
-                break;
-
-            default: assert(false);
-        }
+        const float corner_fac = (isFirstOrLastZComponent ? 0.5F : 1.0F);
 
         if (notZeroPoint)
         {
-            const float mhxk = mX * kernelParams.current.recipBox[XX][XX];
-            const float mhyk = mX * kernelParams.current.recipBox[XX][YY]
-                               + mY * kernelParams.current.recipBox[YY][YY];
-            const float mhzk = mX * kernelParams.current.recipBox[XX][ZZ]
-                               + mY * kernelParams.current.recipBox[YY][ZZ]
-                               + mZ * kernelParams.current.recipBox[ZZ][ZZ];
+            const float mhxk = mm.x * kernelParams.current.recipBox[XX][XX];
+            const float mhyk = mm.x * kernelParams.current.recipBox[XX][YY]
+                               + mm.y * kernelParams.current.recipBox[YY][YY];
+            const float mhzk = mm.x * kernelParams.current.recipBox[XX][ZZ]
+                               + mm.y * kernelParams.current.recipBox[YY][ZZ]
+                               + mm.z * kernelParams.current.recipBox[ZZ][ZZ];
 
             const float m2k = mhxk * mhxk + mhyk * mhyk + mhzk * mhzk;
-            assert(m2k != 0.0f);
-            // TODO: use LDG/textures for gm_splineValue
-            float denom = m2k * float(CUDART_PI_F) * kernelParams.current.boxVolume
-                          * gm_splineValueMajor[kMajor] * gm_splineValueMiddle[kMiddle]
-                          * gm_splineValueMinor[kMinor];
-            assert(isfinite(denom));
-            assert(denom != 0.0f);
+            GMX_DEVICE_ASSERT(m2k != 0.0F);
+            float vMajor  = LDG(gm_splineValueMajor + kMajor);
+            float vMiddle = LDG(gm_splineValueMiddle + kMiddle);
+            float vMinor  = LDG(gm_splineValueMinor + kMinor);
+            float denom   = m2k * float(CUDART_PI_F) * kernelParams.current.boxVolume * vMajor
+                          * vMiddle * vMinor;
+            GMX_DEVICE_ASSERT(isfinite(denom));
+            GMX_DEVICE_ASSERT(denom != 0.0F);
 
             const float tmp1   = expf(-kernelParams.grid.ewaldFactor * m2k);
             const float etermk = kernelParams.constants.elFactor * tmp1 / denom;
@@ -223,12 +189,12 @@ __launch_bounds__(c_solveMaxThreadsPerBlock) CLANG_DISABLE_OPTIMIZATION_ATTRIBUT
             gridValue.y *= etermk;
             *gm_gridCell = gridValue;
 
-            if (computeEnergyAndVirial)
+            if constexpr (computeEnergyAndVirial)
             {
                 const float tmp1k =
-                        2.0f * (gridValue.x * oldGridValue.x + gridValue.y * oldGridValue.y);
+                        2.0F * (gridValue.x * oldGridValue.x + gridValue.y * oldGridValue.y);
 
-                float vfactor = (kernelParams.grid.ewaldFactor + 1.0f / m2k) * 2.0f;
+                float vfactor = (kernelParams.grid.ewaldFactor + 1.0F / m2k) * 2.0F;
                 float ets2    = corner_fac * tmp1k;
                 energy        = ets2;
 
@@ -245,7 +211,7 @@ __launch_bounds__(c_solveMaxThreadsPerBlock) CLANG_DISABLE_OPTIMIZATION_ATTRIBUT
     }
 
     /* Optional energy/virial reduction */
-    if (computeEnergyAndVirial)
+    if constexpr (computeEnergyAndVirial)
     {
         /* A tricky shuffle reduction inspired by reduce_force_j_warp_shfl.
          * The idea is to reduce 7 energy/virial components into a single variable (aligned by 8).
@@ -303,7 +269,7 @@ __launch_bounds__(c_solveMaxThreadsPerBlock) CLANG_DISABLE_OPTIMIZATION_ATTRIBUT
         /* Reduce 7 outputs per warp in the shared memory */
         const int stride =
                 8; // this is c_virialAndEnergyCount==7 rounded up to power of 2 for convenience, hence the assert
-        assert(c_virialAndEnergyCount == 7);
+        static_assert(c_virialAndEnergyCount == 7);
         const int        reductionBufferSize = (c_solveMaxThreadsPerBlock / warp_size) * stride;
         __shared__ float sm_virialAndEnergy[reductionBufferSize];
 
@@ -334,7 +300,7 @@ __launch_bounds__(c_solveMaxThreadsPerBlock) CLANG_DISABLE_OPTIMIZATION_ATTRIBUT
          *       To use fewer warps, add to the conditional:
          *       && threadLocalId < activeWarps * stride
          */
-        assert(activeWarps * stride >= warp_size);
+        GMX_DEVICE_ASSERT(activeWarps * stride >= warp_size);
         if (threadLocalId < warp_size)
         {
             float output = sm_virialAndEnergy[threadLocalId];
@@ -346,7 +312,7 @@ __launch_bounds__(c_solveMaxThreadsPerBlock) CLANG_DISABLE_OPTIMIZATION_ATTRIBUT
             /* Final output */
             if (validComponentIndex)
             {
-                assert(isfinite(output));
+                GMX_DEVICE_ASSERT(isfinite(output));
                 atomicAdd(gm_virialAndEnergy + componentIndex, output);
             }
         }
@@ -354,11 +320,11 @@ __launch_bounds__(c_solveMaxThreadsPerBlock) CLANG_DISABLE_OPTIMIZATION_ATTRIBUT
 }
 
 //! Kernel instantiations
-template __global__ void pme_solve_kernel<GridOrdering::YZX, true, 0>(const PmeGpuCudaKernelParams);
-template __global__ void pme_solve_kernel<GridOrdering::YZX, false, 0>(const PmeGpuCudaKernelParams);
-template __global__ void pme_solve_kernel<GridOrdering::XYZ, true, 0>(const PmeGpuCudaKernelParams);
-template __global__ void pme_solve_kernel<GridOrdering::XYZ, false, 0>(const PmeGpuCudaKernelParams);
-template __global__ void pme_solve_kernel<GridOrdering::YZX, true, 1>(const PmeGpuCudaKernelParams);
-template __global__ void pme_solve_kernel<GridOrdering::YZX, false, 1>(const PmeGpuCudaKernelParams);
-template __global__ void pme_solve_kernel<GridOrdering::XYZ, true, 1>(const PmeGpuCudaKernelParams);
-template __global__ void pme_solve_kernel<GridOrdering::XYZ, false, 1>(const PmeGpuCudaKernelParams);
+template __global__ void pme_solve_kernel<GridOrdering::YZX, true, 0>(const PmeGpuKernelParams);
+template __global__ void pme_solve_kernel<GridOrdering::YZX, false, 0>(const PmeGpuKernelParams);
+template __global__ void pme_solve_kernel<GridOrdering::XYZ, true, 0>(const PmeGpuKernelParams);
+template __global__ void pme_solve_kernel<GridOrdering::XYZ, false, 0>(const PmeGpuKernelParams);
+template __global__ void pme_solve_kernel<GridOrdering::YZX, true, 1>(const PmeGpuKernelParams);
+template __global__ void pme_solve_kernel<GridOrdering::YZX, false, 1>(const PmeGpuKernelParams);
+template __global__ void pme_solve_kernel<GridOrdering::XYZ, true, 1>(const PmeGpuKernelParams);
+template __global__ void pme_solve_kernel<GridOrdering::XYZ, false, 1>(const PmeGpuKernelParams);

@@ -1,11 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2009-2017, The GROMACS development team.
- * Copyright (c) 2019, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2009- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -19,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -28,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 
 #ifndef GMX_FFT_FFT5D_H
@@ -73,7 +71,7 @@ struct fft5d_time_t
 typedef struct fft5d_time_t* fft5d_time;
 #else
 #    include "gromacs/timing/wallcycle.h"
-typedef gmx_wallcycle_t fft5d_time;
+typedef gmx_wallcycle* fft5d_time;
 #endif
 
 namespace gmx
@@ -98,9 +96,7 @@ struct fft5d_plan_t
     t_complex *lout, *lout2, *lout3;
     gmx_fft_t* p1d[3]; /*1D plans*/
 #if GMX_FFT_FFTW3
-    FFTW(plan) p2d; /*2D plan: used for 1D decomposition if FFT supports transposed output*/
     FFTW(plan) p3d; /*3D plan: used for 0D decomposition if FFT supports transposed output*/
-    FFTW(plan) mpip[2];
 #endif
     MPI_Comm cart[2];
 
@@ -139,19 +135,6 @@ fft5d_plan fft5d_plan_3d(int         N,
                          t_complex** lout3,
                          int         nthreads,
                          gmx::PinningPolicy realGridAllocationPinningPolicy = gmx::PinningPolicy::CannotBePinned);
-void       fft5d_local_size(fft5d_plan plan, int* N1, int* M0, int* K0, int* K1, int** coor);
 void       fft5d_destroy(fft5d_plan plan);
-fft5d_plan fft5d_plan_3d_cart(int         N,
-                              int         M,
-                              int         K,
-                              MPI_Comm    comm,
-                              int         P0,
-                              int         flags,
-                              t_complex** lin,
-                              t_complex** lin2,
-                              t_complex** lout2,
-                              t_complex** lout3,
-                              int         nthreads);
-void       fft5d_compare_data(const t_complex* lin, const t_complex* in, fft5d_plan plan, int bothLocal, int normarlize);
 
 #endif

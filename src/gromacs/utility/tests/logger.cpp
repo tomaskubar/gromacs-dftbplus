@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2016,2019, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2016- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,14 +26,19 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 #include "gmxpre.h"
 
 #include "gromacs/utility/logger.h"
+
+#include <cstdio>
+
+#include <filesystem>
+#include <string>
 
 #include <gtest/gtest.h>
 
@@ -44,6 +48,10 @@
 #include "testutils/stringtest.h"
 #include "testutils/testfilemanager.h"
 
+namespace gmx
+{
+namespace test
+{
 namespace
 {
 
@@ -79,8 +87,8 @@ TEST_F(LoggerTest, LogsToStream)
 TEST_F(LoggerTest, LogsToFile)
 {
     gmx::test::TestFileManager files;
-    std::string                filename(files.getTemporaryFilePath("log.txt"));
-    FILE*                      fp = fopen(filename.c_str(), "w");
+    std::string                filename(files.getTemporaryFilePath("log.txt").string());
+    FILE*                      fp = std::fopen(filename.c_str(), "w");
     {
         gmx::LoggerBuilder builder;
         builder.addTargetFile(gmx::MDLogger::LogLevel::VerboseDebug, fp);
@@ -93,7 +101,7 @@ TEST_F(LoggerTest, LogsToFile)
         GMX_LOG(logger.debug).appendText("debugline");
         GMX_LOG(logger.verboseDebug).appendText("verbose");
     }
-    fclose(fp);
+    std::fclose(fp);
     checkFileContents(filename, "Output");
 }
 
@@ -145,16 +153,16 @@ TEST_F(LoggerTest, LogsToMultipleStreams)
 TEST_F(LoggerTest, LogsToMultipleFiles)
 {
     gmx::test::TestFileManager files;
-    std::string                filename1(files.getTemporaryFilePath("log.txt"));
-    std::string                filename2(files.getTemporaryFilePath("warn.txt"));
-    std::string                filename3(files.getTemporaryFilePath("error.txt"));
-    std::string                filename4(files.getTemporaryFilePath("debug.txt"));
-    std::string                filename5(files.getTemporaryFilePath("verboseDebug.txt"));
-    FILE*                      fp1 = fopen(filename1.c_str(), "w");
-    FILE*                      fp2 = fopen(filename2.c_str(), "w");
-    FILE*                      fp3 = fopen(filename3.c_str(), "w");
-    FILE*                      fp4 = fopen(filename4.c_str(), "w");
-    FILE*                      fp5 = fopen(filename5.c_str(), "w");
+    std::string                filename1(files.getTemporaryFilePath("log.txt").string());
+    std::string                filename2(files.getTemporaryFilePath("warn.txt").string());
+    std::string                filename3(files.getTemporaryFilePath("error.txt").string());
+    std::string                filename4(files.getTemporaryFilePath("debug.txt").string());
+    std::string                filename5(files.getTemporaryFilePath("verboseDebug.txt").string());
+    FILE*                      fp1 = std::fopen(filename1.c_str(), "w");
+    FILE*                      fp2 = std::fopen(filename2.c_str(), "w");
+    FILE*                      fp3 = std::fopen(filename3.c_str(), "w");
+    FILE*                      fp4 = std::fopen(filename4.c_str(), "w");
+    FILE*                      fp5 = std::fopen(filename5.c_str(), "w");
     {
         gmx::LoggerBuilder builder;
         builder.addTargetFile(gmx::MDLogger::LogLevel::Info, fp1);
@@ -171,11 +179,11 @@ TEST_F(LoggerTest, LogsToMultipleFiles)
         GMX_LOG(logger.debug).appendText("debugline");
         GMX_LOG(logger.verboseDebug).appendText("verbose");
     }
-    fclose(fp1);
-    fclose(fp2);
-    fclose(fp3);
-    fclose(fp4);
-    fclose(fp5);
+    std::fclose(fp1);
+    std::fclose(fp2);
+    std::fclose(fp3);
+    std::fclose(fp4);
+    std::fclose(fp5);
     checkFileContents(filename1, "Output1");
     checkFileContents(filename2, "Output2");
     checkFileContents(filename3, "Output3");
@@ -187,8 +195,8 @@ TEST_F(LoggerTest, LogsToStreamAndFile)
 {
     gmx::test::TestFileManager files;
     gmx::StringOutputStream    stream;
-    std::string                filename(files.getTemporaryFilePath("verboseDebug.txt"));
-    FILE*                      fp = fopen(filename.c_str(), "w");
+    std::string                filename(files.getTemporaryFilePath("verboseDebug.txt").string());
+    FILE*                      fp = std::fopen(filename.c_str(), "w");
     {
         gmx::LoggerBuilder builder;
         builder.addTargetFile(gmx::MDLogger::LogLevel::VerboseDebug, fp);
@@ -202,9 +210,11 @@ TEST_F(LoggerTest, LogsToStreamAndFile)
         GMX_LOG(logger.debug).appendText("debugline");
         GMX_LOG(logger.verboseDebug).appendText("verbose");
     }
-    fclose(fp);
+    std::fclose(fp);
     checkText(stream.toString(), "OutputStream");
     checkFileContents(filename, "OutputFile");
 }
 
 } // namespace
+} // namespace test
+} // namespace gmx

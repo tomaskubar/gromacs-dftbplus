@@ -1,12 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
- * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2018,2019, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 1991- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -20,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -29,24 +26,26 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 
 #ifndef GMX_FILEIO_GMXFIO_H
 #define GMX_FILEIO_GMXFIO_H
 
-#include <stdio.h>
+#include <cstdio>
 
 #include <array>
+#include <filesystem>
 #include <vector>
 
-#include "gromacs/math/vectypes.h"
+#include "gromacs/utility/basedefinitions.h"
 #include "gromacs/utility/cstringutil.h"
 #include "gromacs/utility/futil.h"
 #include "gromacs/utility/real.h"
+#include "gromacs/utility/vectypes.h"
 
 typedef struct t_fileio t_fileio;
 
@@ -61,7 +60,7 @@ typedef struct t_fileio t_fileio;
  * Open and Close
  ********************************************************/
 
-t_fileio* gmx_fio_open(const char* fn, const char* mode);
+t_fileio* gmx_fio_open(const std::filesystem::path& fn, const char* mode);
 /* Open a new file for reading or writing.
  * The file type will be deduced from the file name.
  */
@@ -83,7 +82,7 @@ int gmx_fio_fp_close(t_fileio* fp);
 
 
 /* Open a file, return a stream, record the entry in internal FIO object */
-FILE* gmx_fio_fopen(const char* fn, const char* mode);
+FILE* gmx_fio_fopen(const std::filesystem::path& fn, const char* mode);
 
 /* Close a file previously opened with gmx_fio_fopen.
  * Do not mix these calls with standard fopen/fclose ones!
@@ -95,7 +94,7 @@ int gmx_fio_fclose(FILE* fp);
  * Change properties of the open file
  ********************************************************/
 
-char* gmx_fio_getname(t_fileio* fio);
+std::filesystem::path gmx_fio_getname(t_fileio* fio);
 /* Return the filename corresponding to the fio index */
 
 int gmx_fio_getftp(t_fileio* fio);
@@ -117,21 +116,14 @@ void gmx_fio_rewind(t_fileio* fio);
 int gmx_fio_flush(t_fileio* fio);
 /* Flush the fio, returns 0 on success */
 
-int gmx_fio_fsync(t_fileio* fio);
-/* fsync the fio, returns 0 on success.
-   NOTE: don't use fsync function unless you're absolutely sure you need it
-   because it deliberately interferes with the OS's caching mechanisms and
-   can cause dramatically slowed down IO performance. Some OSes (Linux,
-   for example), may implement fsync as a full sync() point. */
-
 gmx_off_t gmx_fio_ftell(t_fileio* fio);
-/* Return file position if possible */
+/* Return file position if possible; zero if not open */
 
 int gmx_fio_seek(t_fileio* fio, gmx_off_t fpos);
 /* Set file position if possible, quit otherwise */
 
 FILE* gmx_fio_getfp(t_fileio* fio);
-/* Return the file pointer itself */
+/* Return the file pointer itself, or nullptr if none exists */
 
 
 /* Element with information about position in a currently open file.
@@ -154,13 +146,13 @@ struct gmx_file_position_t
 std::vector<gmx_file_position_t> gmx_fio_get_output_file_positions();
 
 t_fileio* gmx_fio_all_output_fsync();
-/* fsync all open output files. This is used for checkpointing, where
+/* fsync all open non-TNG output files. This is used for checkpointing, where
    we need to ensure that all output is actually written out to
    disk.
    This is most important in the case of some networked file systems,
    where data is not synced with the file server until close() or
    fsync(), so data could remain in cache for days.
-   Note the caveats reported with gmx_fio_fsync().
+   Note the caveats reported with gmx_fio_int_fsync().
 
     returns: NULL if no error occurred, or a pointer to the first file that
              failed if an error occurred

@@ -1,11 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2012,2013,2014,2015,2017 by the GROMACS development team.
- * Copyright (c) 2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2012- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -19,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -28,27 +26,41 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 #include "gmxpre.h"
 
+#include <cstdio>
+
+#include <array>
+#include <filesystem>
+#include <string>
+
 #include "gromacs/commandline/filenm.h"
 #include "gromacs/commandline/pargs.h"
+#include "gromacs/fileio/filetypes.h"
 #include "gromacs/fileio/trxio.h"
 #include "gromacs/fileio/xvgr.h"
 #include "gromacs/gmxana/gmx_ana.h"
-#include "gromacs/math/vec.h"
+#include "gromacs/mdtypes/md_enums.h"
 #include "gromacs/pbcutil/pbc.h"
 #include "gromacs/topology/index.h"
 #include "gromacs/trajectory/trajectoryframe.h"
+#include "gromacs/utility/arrayref.h"
 #include "gromacs/utility/arraysize.h"
+#include "gromacs/utility/basedefinitions.h"
 #include "gromacs/utility/fatalerror.h"
 #include "gromacs/utility/futil.h"
 #include "gromacs/utility/pleasecite.h"
+#include "gromacs/utility/real.h"
 #include "gromacs/utility/smalloc.h"
+#include "gromacs/utility/vec.h"
+#include "gromacs/utility/vectypes.h"
+
+struct gmx_output_env_t;
 
 int gmx_dyecoupl(int argc, char* argv[])
 {
@@ -116,17 +128,27 @@ int gmx_dyecoupl(int argc, char* argv[])
     FILE *   rkfp = nullptr, *rhfp = nullptr, *khfp = nullptr, *datfp = nullptr, *iefp = nullptr;
     gmx_bool bRKout, bRhistout, bKhistout, bDatout, bInstEffout, grident;
 
-    const char* rkleg[2] = { "R", "\\f{Symbol}k\\f{}\\S2\\N" };
-    const char* rhleg[1] = { "p(R)" };
-    const char* khleg[1] = { "p(\\f{Symbol}k\\f{}\\S2\\N)" };
-    const char* ieleg[1] = { "E\\sRET\\N(t)" };
+    std::array<std::string, 2> rkleg = { "R", "\\f{Symbol}k\\f{}\\S2\\N" };
+    std::array<std::string, 1> rhleg = { "p(R)" };
+    std::array<std::string, 1> khleg = { "p(\\f{Symbol}k\\f{}\\S2\\N)" };
+    std::array<std::string, 1> ieleg = { "E\\sRET\\N(t)" };
 
     real R, kappa2, insteff, Rs = 0., kappa2s = 0., insteffs = 0., rmax, rmin, kmin = 0., kmax = 4.,
                              rrange, krange, rincr, kincr, Rfrac;
     int rkcount = 0, rblocksallocated = 0, kblocksallocated = 0;
 
-    if (!parse_common_args(&argc, argv, PCA_CAN_BEGIN | PCA_CAN_END | PCA_CAN_VIEW | PCA_TIME_UNIT,
-                           NFILE, fnm, NPA, pa, asize(desc), desc, 0, nullptr, &oenv))
+    if (!parse_common_args(&argc,
+                           argv,
+                           PCA_CAN_BEGIN | PCA_CAN_END | PCA_CAN_VIEW | PCA_TIME_UNIT,
+                           NFILE,
+                           fnm,
+                           NPA,
+                           pa,
+                           asize(desc),
+                           desc,
+                           0,
+                           nullptr,
+                           &oenv))
     {
         return 0;
     }
@@ -228,16 +250,22 @@ int gmx_dyecoupl(int argc, char* argv[])
 
             if (bRKout)
             {
-                rkfp = xvgropen(out_xvgrkfile, "Distance and \\f{Symbol}k\\f{}\\S2\\N trajectory",
-                                "Time (ps)", "Distance (nm) / \\f{Symbol}k\\f{}\\S2\\N", oenv);
-                xvgr_legend(rkfp, 2, rkleg, oenv);
+                rkfp = xvgropen(out_xvgrkfile,
+                                "Distance and \\f{Symbol}k\\f{}\\S2\\N trajectory",
+                                "Time (ps)",
+                                "Distance (nm) / \\f{Symbol}k\\f{}\\S2\\N",
+                                oenv);
+                xvgrLegend(rkfp, rkleg, oenv);
             }
 
             if (bInstEffout)
             {
-                iefp = xvgropen(out_xvginstefffile, "Instantaneous RET Efficiency", "Time (ps)",
-                                "RET Efficiency", oenv);
-                xvgr_legend(iefp, 1, ieleg, oenv);
+                iefp = xvgropen(out_xvginstefffile,
+                                "Instantaneous RET Efficiency",
+                                "Time (ps)",
+                                "RET Efficiency",
+                                oenv);
+                xvgrLegend(iefp, ieleg, oenv);
             }
 
 
@@ -396,15 +424,18 @@ int gmx_dyecoupl(int argc, char* argv[])
                     {
                         rhist[i] /= rkcount * rrange / histbins;
                     }
-                    rhfp = xvgropen(out_xvgrhistfile, "Distance Distribution", "R (nm)",
-                                    "Normalized Probability", oenv);
+                    rhfp = xvgropen(out_xvgrhistfile,
+                                    "Distance Distribution",
+                                    "R (nm)",
+                                    "Normalized Probability",
+                                    oenv);
                 }
                 else
                 {
-                    rhfp = xvgropen(out_xvgrhistfile, "Distance Distribution", "R (nm)",
-                                    "Probability", oenv);
+                    rhfp = xvgropen(
+                            out_xvgrhistfile, "Distance Distribution", "R (nm)", "Probability", oenv);
                 }
-                xvgr_legend(rhfp, 1, rhleg, oenv);
+                xvgrLegend(rhfp, rhleg, oenv);
                 for (i = 0; i < histbins; i++)
                 {
                     fprintf(rhfp, "%12.7f %12.7f\n", (i + 0.5) * rincr + rmin, rhist[i]);
@@ -429,15 +460,21 @@ int gmx_dyecoupl(int argc, char* argv[])
                     {
                         khist[i] /= rkcount * krange / histbins;
                     }
-                    khfp = xvgropen(out_xvgkhistfile, "\\f{Symbol}k\\f{}\\S2\\N Distribution",
-                                    "\\f{Symbol}k\\f{}\\S2\\N", "Normalized Probability", oenv);
+                    khfp = xvgropen(out_xvgkhistfile,
+                                    "\\f{Symbol}k\\f{}\\S2\\N Distribution",
+                                    "\\f{Symbol}k\\f{}\\S2\\N",
+                                    "Normalized Probability",
+                                    oenv);
                 }
                 else
                 {
-                    khfp = xvgropen(out_xvgkhistfile, "\\f{Symbol}k\\f{}\\S2\\N Distribution",
-                                    "\\f{Symbol}k\\f{}\\S2\\N", "Probability", oenv);
+                    khfp = xvgropen(out_xvgkhistfile,
+                                    "\\f{Symbol}k\\f{}\\S2\\N Distribution",
+                                    "\\f{Symbol}k\\f{}\\S2\\N",
+                                    "Probability",
+                                    oenv);
                 }
-                xvgr_legend(khfp, 1, khleg, oenv);
+                xvgrLegend(khfp, khleg, oenv);
                 for (i = 0; i < histbins; i++)
                 {
                     fprintf(khfp, "%12.7f %12.7f\n", (i + 0.5) * kincr + kmin, khist[i]);

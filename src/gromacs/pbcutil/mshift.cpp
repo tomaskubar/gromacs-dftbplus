@@ -1,13 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
- * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2016,2017 by the GROMACS development team.
- * Copyright (c) 2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 1991- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -21,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -30,27 +26,40 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 #include "gmxpre.h"
 
-#include "mshift.h"
+#include "gromacs/pbcutil/mshift.h"
 
+#include <cmath>
+#include <cstdio>
 #include <cstring>
 
 #include <algorithm>
+#include <array>
+#include <filesystem>
+#include <string>
+#include <vector>
 
-#include "gromacs/math/vec.h"
+#include "gromacs/mdtypes/md_enums.h"
 #include "gromacs/pbcutil/pbc.h"
 #include "gromacs/topology/idef.h"
 #include "gromacs/topology/ifunc.h"
 #include "gromacs/topology/topology.h"
+#include "gromacs/utility/arrayref.h"
+#include "gromacs/utility/basedefinitions.h"
 #include "gromacs/utility/fatalerror.h"
+#include "gromacs/utility/gmxassert.h"
+#include "gromacs/utility/listoflists.h"
+#include "gromacs/utility/real.h"
 #include "gromacs/utility/strconvert.h"
 #include "gromacs/utility/stringutil.h"
+#include "gromacs/utility/vec.h"
+#include "gromacs/utility/vectypes.h"
 
 /************************************************************
  *
@@ -101,7 +110,11 @@ void EdgesGenerator::addEdge(const int a0, const int a1)
  * edges are only added when atoms have a different part index.
  */
 template<typename T>
-static bool mk_igraph(EdgesGenerator* edgesG, int ftype, const T& il, int at_end, ArrayRef<const int> part)
+static bool mk_igraph(EdgesGenerator*     edgesG,
+                      InteractionFunction ftype,
+                      const T&            il,
+                      int                 at_end,
+                      ArrayRef<const int> part)
 {
     int  i, j, np;
     int  end;
@@ -124,9 +137,10 @@ static bool mk_igraph(EdgesGenerator* edgesG, int ftype, const T& il, int at_end
                           "You are probably trying to use a trajectory which does "
                           "not match the first %d atoms of the run input file.\n"
                           "You can make a matching run input file with gmx convert-tpr.",
-                          at_end, at_end);
+                          at_end,
+                          at_end);
             }
-            if (ftype == F_SETTLE)
+            if (ftype == InteractionFunction::SETTLE)
             {
                 /* Bond all the atoms in the settle */
                 edgesG->addEdge(il.iatoms[i + 1], il.iatoms[i + 2]);
@@ -186,10 +200,14 @@ void p_graph(FILE* log, const char* title, const t_graph* g)
     {
         if (!g->edges[i].empty())
         {
-            fprintf(log, "%5d%7d%7d%7d %1s%5zu", g->edgeAtomBegin + i + 1,
-                    g->ishift[g->edgeAtomBegin + i][XX], g->ishift[g->edgeAtomBegin + i][YY],
+            fprintf(log,
+                    "%5d%7d%7d%7d %1s%5zu",
+                    g->edgeAtomBegin + i + 1,
+                    g->ishift[g->edgeAtomBegin + i][XX],
+                    g->ishift[g->edgeAtomBegin + i][YY],
                     g->ishift[g->edgeAtomBegin + i][ZZ],
-                    (!g->edgeColor.empty()) ? cc[g->edgeColor[i]] : " ", g->edges[i].size());
+                    (!g->edgeColor.empty()) ? cc[g->edgeColor[i]] : " ",
+                    g->edges[i].size());
             for (const int edge : g->edges[i])
             {
                 fprintf(log, " %5d", edge + 1);
@@ -197,7 +215,7 @@ void p_graph(FILE* log, const char* title, const t_graph* g)
             fprintf(log, "\n");
         }
     }
-    fflush(log);
+    std::fflush(log);
 }
 
 /* Converts the vector of vector of edges to ListOfLists
@@ -270,7 +288,7 @@ static gmx_bool determine_graph_parts(const EdgesGenerator& edgesG, ArrayRef<int
     {
         haveMultipleParts = false;
         numAtomsChanged   = 0;
-        for (gmx::index at_i = 0; at_i < gmx::ssize(edgesG.edges()); at_i++)
+        for (gmx::Index at_i = 0; at_i < gmx::ssize(edgesG.edges()); at_i++)
         {
             for (const int at_i2 : edgesG.edges()[at_i])
             {
@@ -293,7 +311,9 @@ static gmx_bool determine_graph_parts(const EdgesGenerator& edgesG, ArrayRef<int
         }
         if (debug)
         {
-            fprintf(debug, "graph partNr[] numAtomsChanged=%d, bMultiPart=%s\n", numAtomsChanged,
+            fprintf(debug,
+                    "graph partNr[] numAtomsChanged=%d, bMultiPart=%s\n",
+                    numAtomsChanged,
                     gmx::boolToString(haveMultipleParts));
         }
     } while (numAtomsChanged > 0);
@@ -302,7 +322,11 @@ static gmx_bool determine_graph_parts(const EdgesGenerator& edgesG, ArrayRef<int
 }
 
 template<typename T>
-static t_graph mk_graph_ilist(FILE* fplog, const T* ilist, int at_end, gmx_bool bShakeOnly, gmx_bool bSettle)
+static t_graph mk_graph_ilist(FILE*                                                fplog,
+                              const gmx::EnumerationArray<InteractionFunction, T>& ilist,
+                              int                                                  at_end,
+                              gmx_bool                                             bShakeOnly,
+                              gmx_bool                                             bSettle)
 {
     EdgesGenerator edgesG(at_end);
 
@@ -315,7 +339,7 @@ static t_graph mk_graph_ilist(FILE* fplog, const T* ilist, int at_end, gmx_bool 
             /* First add all the real bonds: they should determine the molecular
              * graph.
              */
-            for (int i = 0; (i < F_NRE); i++)
+            for (const auto i : gmx::EnumerationWrapper<InteractionFunction>{})
             {
                 if (interaction_function[i].flags & IF_CHEMBOND)
                 {
@@ -336,7 +360,7 @@ static t_graph mk_graph_ilist(FILE* fplog, const T* ilist, int at_end, gmx_bool 
                  * that are not connected through IF_CHEMBOND interactions.
                  */
                 bool addedEdge = false;
-                for (int i = 0; (i < F_NRE); i++)
+                for (const auto i : gmx::EnumerationWrapper<InteractionFunction>{})
                 {
                     if (!(interaction_function[i].flags & IF_CHEMBOND))
                     {
@@ -358,10 +382,14 @@ static t_graph mk_graph_ilist(FILE* fplog, const T* ilist, int at_end, gmx_bool 
         else
         {
             /* This is a special thing used in splitter.c to generate shake-blocks */
-            mk_igraph(&edgesG, F_CONSTR, ilist[F_CONSTR], at_end, {});
+            mk_igraph(&edgesG,
+                      InteractionFunction::Constraints,
+                      ilist[InteractionFunction::Constraints],
+                      at_end,
+                      {});
             if (bSettle)
             {
-                mk_igraph(&edgesG, F_SETTLE, ilist[F_SETTLE], at_end, {});
+                mk_igraph(&edgesG, InteractionFunction::SETTLE, ilist[InteractionFunction::SETTLE], at_end, {});
             }
         }
     }
@@ -397,19 +425,19 @@ static t_graph mk_graph_ilist(FILE* fplog, const T* ilist, int at_end, gmx_bool 
 
 t_graph mk_graph_moltype(const gmx_moltype_t& moltype)
 {
-    return mk_graph_ilist(nullptr, moltype.ilist.data(), moltype.atoms.nr, FALSE, FALSE);
+    return mk_graph_ilist(nullptr, moltype.ilist, moltype.atoms.nr, FALSE, FALSE);
 }
 
 t_graph mk_graph(const InteractionDefinitions& idef, const int numAtoms)
 {
-    return mk_graph_ilist(nullptr, idef.il.data(), numAtoms, false, false);
+    return mk_graph_ilist(nullptr, idef.il, numAtoms, false, false);
 }
 
 t_graph* mk_graph(FILE* fplog, const InteractionDefinitions& idef, int at_end, gmx_bool bShakeOnly, gmx_bool bSettle)
 {
     t_graph* g = new (t_graph);
 
-    *g = mk_graph_ilist(fplog, idef.il.data(), at_end, bShakeOnly, bSettle);
+    *g = mk_graph_ilist(fplog, idef.il, at_end, bShakeOnly, bSettle);
 
     return g;
 }
@@ -625,8 +653,17 @@ static int mk_grey(ArrayRef<egCol> edgeColor,
                         "mk_grey: shifts for atom %d due to atom %d\n"
                         "are (%d,%d,%d), should be (%d,%d,%d)\n"
                         "dx = (%g,%g,%g)\n",
-                        aj + 1, ai + 1, is_aj[XX], is_aj[YY], is_aj[ZZ], g->ishift[aj][XX],
-                        g->ishift[aj][YY], g->ishift[aj][ZZ], dx[XX], dx[YY], dx[ZZ]);
+                        aj + 1,
+                        ai + 1,
+                        is_aj[XX],
+                        is_aj[YY],
+                        is_aj[ZZ],
+                        g->ishift[aj][XX],
+                        g->ishift[aj][YY],
+                        g->ishift[aj][ZZ],
+                        dx[XX],
+                        dx[YY],
+                        dx[ZZ]);
             }
             (*nerror)++;
         }
@@ -637,9 +674,9 @@ static int mk_grey(ArrayRef<egCol> edgeColor,
 /* Return the first node/atom with colour Col starting at fC.
  * return -1 if none found.
  */
-static gmx::index first_colour(const int fC, const egCol Col, const t_graph* g, ArrayRef<const egCol> edgeColor)
+static gmx::Index first_colour(const int fC, const egCol Col, const t_graph* g, ArrayRef<const egCol> edgeColor)
 {
-    for (gmx::index i = fC; i < gmx::ssize(g->edges); i++)
+    for (gmx::Index i = fC; i < gmx::ssize(g->edges); i++)
     {
         if (!g->edges[i].empty() && edgeColor[i] == Col)
         {
@@ -674,12 +711,13 @@ static real maxEdgeLength(const t_graph& g, PbcType pbcType, const matrix box, c
 
 void mk_mshift(FILE* log, t_graph* g, PbcType pbcType, const matrix box, const rvec x[])
 {
-    static int nerror_tot = 0;
-    int        npbcdim;
-    int        ng, i;
-    int        nW, nG, nB; /* Number of Grey, Black, White	*/
-    int        fW, fG;     /* First of each category	*/
-    int        nerror = 0;
+    static int            nerror_tot = 0;
+    int                   npbcdim;
+    int                   ng, i;
+    int                   nW, nG; /* Number of White and Grey nodes */
+    int gmx_used_in_debug nB;     /* Number of Black nodes */
+    int                   fW, fG; /* First of each category */
+    int                   nerror = 0;
 
     g->useScrewPbc = (pbcType == PbcType::Screw);
 
@@ -715,15 +753,10 @@ void mk_mshift(FILE* log, t_graph* g, PbcType pbcType, const matrix box, const r
 
     fW = 0;
 
-    /* We even have a loop invariant:
-     * nW+nG+nB == g->nbound
-     */
-#ifdef DEBUG2
-    fprintf(log, "Starting W loop\n");
-#endif
     while (nW > 0)
     {
-        /* Find the first white, this will allways be a larger
+        GMX_ASSERT(nW + nG + nB == g->numConnectedAtoms, "Graph coloring inconsistency");
+        /* Find the first white, this will always be a larger
          * number than before, because no nodes are made white
          * in the loop
          */
@@ -739,9 +772,6 @@ void mk_mshift(FILE* log, t_graph* g, PbcType pbcType, const matrix box, const r
 
         /* Initial value for the first grey */
         fG = fW;
-#ifdef DEBUG2
-        fprintf(log, "Starting G loop (nW=%d, nG=%d, nB=%d, total %d)\n", nW, nG, nB, nW + nG + nB);
-#endif
         while (nG > 0)
         {
             if ((fG = first_colour(fG, egcolGrey, g, g->edgeColor)) == -1)
@@ -774,10 +804,10 @@ void mk_mshift(FILE* log, t_graph* g, PbcType pbcType, const matrix box, const r
          */
         constexpr real c_relativeDistanceThreshold = 0.25;
 
-        int npbcdim = numPbcDimensions(pbcType);
-        GMX_RELEASE_ASSERT(npbcdim > 0, "Expect PBC with graph");
+        int nPbcDimErr = numPbcDimensions(pbcType);
+        GMX_RELEASE_ASSERT(nPbcDimErr > 0, "Expect PBC with graph");
         real minBoxSize = norm(box[XX]);
-        for (int d = 1; d < npbcdim; d++)
+        for (int d = 1; d < nPbcDimErr; d++)
         {
             minBoxSize = std::min(minBoxSize, norm(box[d]));
         }
@@ -788,7 +818,9 @@ void mk_mshift(FILE* log, t_graph* g, PbcType pbcType, const matrix box, const r
                     "There are inconsistent shifts over periodic boundaries in a molecule type "
                     "consisting of %d atoms. The longest distance involved in such interactions is "
                     "%.3f nm which is %s half the box length.",
-                    g->shiftAtomEnd, maxDistance, maxDistance >= 0.5 * minBoxSize ? "above" : "close to");
+                    g->shiftAtomEnd,
+                    maxDistance,
+                    maxDistance >= 0.5 * minBoxSize ? "above" : "close to");
 
             switch (g->parts)
             {
@@ -797,7 +829,7 @@ void mk_mshift(FILE* log, t_graph* g, PbcType pbcType, const matrix box, const r
                      * actually between the parts, but that would require
                      * a lot of extra code.
                      */
-                    mesg += " This molecule type consists of muliple parts, e.g. monomers, that "
+                    mesg += " This molecule type consists of multiple parts, e.g. monomers, that "
                             "are connected by interactions that are not chemical bonds, e.g. "
                             "restraints. Such systems can not be treated. The only solution is "
                             "increasing the box size.";

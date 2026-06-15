@@ -1,13 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
- * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2017,2018 by the GROMACS development team.
- * Copyright (c) 2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 1991- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -21,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -30,14 +26,14 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 #include "gmxpre.h"
 
-#include "atomprop.h"
+#include "gromacs/topology/atomprop.h"
 
 #include <cctype>
 #include <cmath>
@@ -45,16 +41,22 @@
 #include <cstring>
 
 #include <algorithm>
+#include <filesystem>
 #include <memory>
+#include <string>
+#include <vector>
 
 #include "gromacs/math/functions.h"
 #include "gromacs/math/utilities.h"
 #include "gromacs/topology/residuetypes.h"
+#include "gromacs/utility/basedefinitions.h"
 #include "gromacs/utility/cstringutil.h"
 #include "gromacs/utility/fatalerror.h"
+#include "gromacs/utility/fileptr.h"
 #include "gromacs/utility/futil.h"
 #include "gromacs/utility/pleasecite.h"
 #include "gromacs/utility/programcontext.h"
+#include "gromacs/utility/real.h"
 #include "gromacs/utility/smalloc.h"
 #include "gromacs/utility/strdb.h"
 
@@ -72,10 +74,7 @@ struct BaseEntry
 {
     //! Default constructor.
     BaseEntry(const std::string& aName, const std::string& rName) :
-        atomName(aName),
-        residueName(rName),
-        isAvailable(false),
-        value(0.0)
+        atomName(aName), residueName(rName), isAvailable(false), value(0.0)
     {
     }
     //! Name for atom.
@@ -106,13 +105,11 @@ class AtomProperties::Impl
 {
 public:
     //! Should user be warned about error.
-    bool bWarned = false;
-    //! Should user be warned about vdW not found.
-    bool bWarnVDW = false;
+    bool hasWarnedAboutGuessedAtomProperties = false;
     //! The different atom properties.
     AtomProperty prop[epropNR];
     //! The residue types.
-    ResidueType restype;
+    ResidueTypeMap residueTypeMap = residueTypeMapFromLibraryFile("residuetypes.dat");
 };
 
 /*! \brief
@@ -154,21 +151,21 @@ static int compareToDatabase(const std::string& search, const std::string& datab
  * Finds the index for the property being searched.
  *
  * \param[in] ap Property to search for.
- * \param[in] restype Residuetypes in database.
+ * \param[in] residueTypeMap Residuetypes in database.
  * \param[in] residueName The name of the residue to look for.
  * \param[in] atomName The name of the atom to look for.
  * \param[in] bExact Do we have the correct match.
  * \returns The index for the property.
  */
-static int findPropertyIndex(AtomProperty*      ap,
-                             ResidueType*       restype,
-                             const std::string& residueName,
-                             const std::string& atomName,
-                             gmx_bool*          bExact)
+static int findPropertyIndex(AtomProperty*         ap,
+                             const ResidueTypeMap& residueTypeMap,
+                             const std::string&    residueName,
+                             const std::string&    atomName,
+                             gmx_bool*             bExact)
 {
     int j = NOTFOUND;
 
-    bool bProtein  = restype->namedResidueHasType(residueName, "Protein");
+    bool bProtein  = namedResidueHasType(residueTypeMap, residueName, "Protein");
     bool bProtWild = residueName == "AAA";
     int  malen     = NOTFOUND;
     int  mrlen     = NOTFOUND;
@@ -211,7 +208,9 @@ static int findPropertyIndex(AtomProperty*      ap,
         }
         else
         {
-            fprintf(debug, " match: %4s %4s\n", ap->entry[j].residueName.c_str(),
+            fprintf(debug,
+                    " match: %4s %4s\n",
+                    ap->entry[j].residueName.c_str(),
                     ap->entry[j].atomName.c_str());
         }
     }
@@ -222,21 +221,21 @@ static int findPropertyIndex(AtomProperty*      ap,
  * Add new property to list.
  *
  * \param[in] ap Atomproperty to add.
- * \param[in] restype Residue type database to use.
+ * \param[in] residueTypeMap Residue type database to use.
  * \param[in] residueName Name of the residue.
  * \param[in] atomName Name of the atom.
  * \param[in] propValue Value of property.
  * \param[in] line Where to add property.
  */
-static void addProperty(AtomProperty*      ap,
-                        ResidueType*       restype,
-                        const std::string& residueName,
-                        const std::string& atomName,
-                        real               propValue,
-                        int                line)
+static void addProperty(AtomProperty*         ap,
+                        const ResidueTypeMap& residueTypeMap,
+                        const std::string&    residueName,
+                        const std::string&    atomName,
+                        real                  propValue,
+                        int                   line)
 {
-    bool bExact;
-    int  j = findPropertyIndex(ap, restype, residueName, atomName, &bExact);
+    bool bExact = false;
+    int  j      = findPropertyIndex(ap, residueTypeMap, residueName, atomName, &bExact);
 
     if (!bExact)
     {
@@ -248,16 +247,26 @@ static void addProperty(AtomProperty*      ap,
     {
         if (ap->entry[j].value == propValue)
         {
-            fprintf(stderr, "Warning double identical entries for %s %s %g on line %d in file %s\n",
-                    residueName.c_str(), atomName.c_str(), propValue, line, ap->db.c_str());
+            fprintf(stderr,
+                    "Warning double identical entries for %s %s %g on line %d in file %s\n",
+                    residueName.c_str(),
+                    atomName.c_str(),
+                    propValue,
+                    line,
+                    ap->db.c_str());
         }
         else
         {
             fprintf(stderr,
                     "Warning double different entries %s %s %g and %g on line %d in file %s\n"
                     "Using last entry (%g)\n",
-                    residueName.c_str(), atomName.c_str(), propValue, ap->entry[j].value, line,
-                    ap->db.c_str(), propValue);
+                    residueName.c_str(),
+                    atomName.c_str(),
+                    propValue,
+                    ap->entry[j].value,
+                    line,
+                    ap->db.c_str(),
+                    propValue);
             ap->entry[j].value = propValue;
         }
     }
@@ -272,10 +281,10 @@ static void addProperty(AtomProperty*      ap,
  * Read property value into structure.
  *
  * \param[in] ap Atomproperty to be read in.
- * \param[in] restype Library of residue types.
+ * \param[in] residueTypeMap Library of residue types.
  * \param[in] factor Scaling factor for property.
  */
-static void readProperty(AtomProperty* ap, ResidueType* restype, double factor)
+static void readProperty(AtomProperty* ap, const ResidueTypeMap& residueTypeMap, double factor)
 {
     char line[STRLEN], resnm[32], atomnm[32];
 
@@ -284,11 +293,11 @@ static void readProperty(AtomProperty* ap, ResidueType* restype, double factor)
     while (get_a_line(fp.get(), line, STRLEN))
     {
         line_no++;
-        double pp;
+        double pp = 0.0;
         if (sscanf(line, "%31s %31s %20lf", resnm, atomnm, &pp) == 3)
         {
             pp *= factor;
-            addProperty(ap, restype, resnm, atomnm, pp, line_no);
+            addProperty(ap, residueTypeMap, resnm, atomnm, pp, line_no);
         }
         else
         {
@@ -302,36 +311,35 @@ static void readProperty(AtomProperty* ap, ResidueType* restype, double factor)
  * Set value for properties.
  *
  * \param[in] ap Atomproperty to set.
- * \param[in] restype Library of residue types.
+ * \param[in] residueTypeMap Library of residue types.
  * \param[in] eprop Which property to set.
- * \param[in] haveBeenWarned If we already set a warning before
- * \returns True of warning should be printed.
+ * \returns True if warning should be printed.
  */
-static bool setProperties(AtomProperty* ap, ResidueType* restype, int eprop, bool haveBeenWarned)
+static bool setProperties(AtomProperty* ap, const ResidueTypeMap& residueTypeMap, int eprop)
 {
-    const char* fns[epropNR] = { "atommass.dat", "vdwradii.dat", "dgsolv.dat", "electroneg.dat",
-                                 "elements.dat" };
-    double      fac[epropNR] = { 1.0, 1.0, 418.4, 1.0, 1.0 };
-    double      def[epropNR] = { 12.011, 0.14, 0.0, 2.2, -1 };
+    const char* fns[epropNR] = {
+        "atommass.dat", "vdwradii.dat", "dgsolv.dat", "electroneg.dat", "elements.dat"
+    };
+    double fac[epropNR] = { 1.0, 1.0, 418.4, 1.0, 1.0 };
+    double def[epropNR] = { 12.011, 0.14, 0.0, 2.2, -1 };
 
-    bool printWarning = false;
     if (!ap->isSet)
     {
         ap->db  = fns[eprop];
         ap->def = def[eprop];
-        readProperty(ap, restype, fac[eprop]);
+        readProperty(ap, residueTypeMap, fac[eprop]);
 
         if (debug)
         {
             fprintf(debug, "Entries in %s: %zu\n", ap->db.c_str(), ap->entry.size());
         }
 
-        if ((!haveBeenWarned && (eprop == epropMass)) || (eprop == epropVDW))
+        if (eprop == epropMass || eprop == epropVDW)
         {
-            printWarning = true;
+            return true;
         }
     }
-    return printWarning;
+    return false;
 }
 
 AtomProperties::AtomProperties() : impl_(new Impl) {}
@@ -343,33 +351,20 @@ AtomProperty* AtomProperties::prop(int eprop)
     return &impl_->prop[eprop];
 }
 
-ResidueType* AtomProperties::restype()
-{
-    return &impl_->restype;
-}
-
 //! Print warning that vdW radii and masses are guessed.
-static void printWarning()
+static void printWarningAboutGuessedAtomProperties()
 {
-    printf("\n"
-           "WARNING: Masses and atomic (Van der Waals) radii will be guessed\n"
-           "         based on residue and atom names, since they could not be\n"
-           "         definitively assigned from the information in your input\n"
-           "         files. These guessed numbers might deviate from the mass\n"
-           "         and radius of the atom type. Please check the output\n"
-           "         files if necessary.\n\n");
-}
-
-static void printvdwWarning(FILE* fp)
-{
-    if (nullptr != fp)
-    {
-        fprintf(fp, "NOTE: From version 5.0 %s uses the Van der Waals radii\n",
-                gmx::getProgramContext().displayName());
-        fprintf(fp, "from the source below. This means the results may be different\n");
-        fprintf(fp, "compared to previous GROMACS versions.\n");
-        please_cite(fp, "Bondi1964a");
-    }
+    fprintf(stdout,
+            "\nWARNING: Masses and atomic (Van der Waals) radii will be guessed\n"
+            "         based on residue and atom names, since they could not be\n"
+            "         definitively assigned from the information in your input\n"
+            "         files. These guessed numbers might deviate from the mass\n"
+            "         and radius of the atom type. Please check the output\n"
+            "         files if necessary. Note, that this functionality may\n"
+            "         be removed in a future GROMACS version. Please, consider\n"
+            "         using another file format for your input.\n\n"
+            "         The atomic radii are set according to:\n");
+    please_cite(stdout, "Bondi1964a");
 }
 
 bool AtomProperties::setAtomProperty(int                eprop,
@@ -377,16 +372,15 @@ bool AtomProperties::setAtomProperty(int                eprop,
                                      const std::string& atomName,
                                      real*              value)
 {
-    int         j;
-    std::string tmpAtomName, tmpResidueName;
-    gmx_bool    bExact;
+    std::string tmpAtomName;
+    bool        bExact = false;
 
-    if (setProperties(prop(eprop), restype(), eprop, impl_->bWarned))
+    if (setProperties(prop(eprop), impl_->residueTypeMap, eprop) && not impl_->hasWarnedAboutGuessedAtomProperties)
     {
-        printWarning();
-        impl_->bWarned = true;
+        printWarningAboutGuessedAtomProperties();
+        impl_->hasWarnedAboutGuessedAtomProperties = true;
     }
-    if (isdigit(atomName[0]))
+    if (std::isdigit(atomName[0]))
     {
         /* put digit after atomname */
         tmpAtomName.append(atomName.substr(1));
@@ -396,13 +390,9 @@ bool AtomProperties::setAtomProperty(int                eprop,
     {
         tmpAtomName = atomName;
     }
-    j = findPropertyIndex(&(impl_->prop[eprop]), &impl_->restype, residueName, tmpAtomName, &bExact);
+    const int j = findPropertyIndex(
+            &(impl_->prop[eprop]), impl_->residueTypeMap, residueName, tmpAtomName, &bExact);
 
-    if (eprop == epropVDW && !impl_->bWarnVDW)
-    {
-        printvdwWarning(stdout);
-        impl_->bWarnVDW = true;
-    }
     if (j >= 0)
     {
         *value = impl_->prop[eprop].entry[j].value;
@@ -418,11 +408,8 @@ bool AtomProperties::setAtomProperty(int                eprop,
 
 std::string AtomProperties::elementFromAtomNumber(int atomNumber)
 {
-    if (setProperties(prop(epropElement), restype(), epropElement, impl_->bWarned))
-    {
-        printWarning();
-        impl_->bWarned = true;
-    }
+    setProperties(prop(epropElement), impl_->residueTypeMap, epropElement);
+
     for (const auto& e : prop(epropElement)->entry)
     {
         if (std::round(e.value) == atomNumber)
@@ -435,11 +422,8 @@ std::string AtomProperties::elementFromAtomNumber(int atomNumber)
 
 int AtomProperties::atomNumberFromElement(const char* element)
 {
-    if (setProperties(prop(epropElement), restype(), epropElement, impl_->bWarned))
-    {
-        printWarning();
-        impl_->bWarned = true;
-    }
+    setProperties(prop(epropElement), impl_->residueTypeMap, epropElement);
+
     for (const auto& e : prop(epropElement)->entry)
     {
         if (gmx_strcasecmp(e.atomName.c_str(), element) == 0)

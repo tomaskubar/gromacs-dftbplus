@@ -1,13 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
- * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2016,2017 by the GROMACS development team.
- * Copyright (c) 2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 1991- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -21,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -30,36 +26,47 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 #include "gmxpre.h"
 
 #include "eneconv.h"
 
 #include <cmath>
+#include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 
 #include <algorithm>
+#include <filesystem>
+#include <string>
+#include <vector>
 
+#include "gromacs/commandline/filenm.h"
 #include "gromacs/commandline/pargs.h"
 #include "gromacs/fileio/enxio.h"
+#include "gromacs/fileio/filetypes.h"
 #include "gromacs/fileio/trxio.h"
 #include "gromacs/listed_forces/disre.h"
 #include "gromacs/math/functions.h"
-#include "gromacs/math/vec.h"
 #include "gromacs/mdtypes/md_enums.h"
 #include "gromacs/trajectory/energyframe.h"
 #include "gromacs/utility/arrayref.h"
 #include "gromacs/utility/arraysize.h"
+#include "gromacs/utility/basedefinitions.h"
 #include "gromacs/utility/cstringutil.h"
 #include "gromacs/utility/fatalerror.h"
 #include "gromacs/utility/int64_to_int.h"
+#include "gromacs/utility/real.h"
 #include "gromacs/utility/smalloc.h"
 #include "gromacs/utility/strconvert.h"
+#include "gromacs/utility/vec.h"
+
+struct gmx_output_env_t;
 
 #define TIME_EXPLICIT 0
 #define TIME_CONTINUE 1
@@ -75,7 +82,7 @@ static int* select_it(int nre, gmx_enxnm_t* nm, int* nset)
     int*      set;
     gmx_bool  bVerbose = TRUE;
 
-    if ((getenv("GMX_ENER_VERBOSE")) != nullptr)
+    if ((std::getenv("GMX_ENER_VERBOSE")) != nullptr)
     {
         bVerbose = FALSE;
     }
@@ -124,10 +131,10 @@ static int* select_it(int nre, gmx_enxnm_t* nm, int* nset)
 
 static void sort_files(gmx::ArrayRef<std::string> files, real* settime)
 {
-    for (gmx::index i = 0; i < files.ssize(); i++)
+    for (gmx::Index i = 0; i < files.ssize(); i++)
     {
-        gmx::index minidx = i;
-        for (gmx::index j = i + 1; j < files.ssize(); j++)
+        gmx::Index minidx = i;
+        for (gmx::Index j = i + 1; j < files.ssize(); j++)
         {
             if (settime[j] < settime[minidx])
             {
@@ -187,19 +194,22 @@ static int scan_ene_files(const std::vector<std::string>& files, real* readtime,
                 fprintf(stderr,
                         "Energy files don't match, different number of energies:\n"
                         " %s: %d\n %s: %d\n",
-                        files[f - 1].c_str(), nresav, files[f].c_str(), fr->nre);
+                        files[f - 1].c_str(),
+                        nresav,
+                        files[f].c_str(),
+                        fr->nre);
                 fprintf(stderr,
                         "\nContinue conversion using only the first %d terms (n/y)?\n"
                         "(you should be sure that the energy terms match)\n",
                         nremin);
-                if (nullptr == fgets(inputstring, STRLEN - 1, stdin))
+                if (nullptr == std::fgets(inputstring, STRLEN - 1, stdin))
                 {
                     gmx_fatal(FARGS, "Error reading user input");
                 }
                 if (inputstring[0] != 'y' && inputstring[0] != 'Y')
                 {
                     fprintf(stderr, "Will not convert\n");
-                    exit(0);
+                    std::exit(0);
                 }
                 nresav = fr->nre;
             }
@@ -252,13 +262,13 @@ static void edit_files(gmx::ArrayRef<std::string> files,
                 "          File             Current start       New start\n"
                 "---------------------------------------------------------\n");
 
-        for (gmx::index i = 0; i < files.ssize(); i++)
+        for (gmx::Index i = 0; i < files.ssize(); i++)
         {
             fprintf(stderr, "%25s   %10.3f             ", files[i].c_str(), readtime[i]);
             ok = FALSE;
             do
             {
-                if (nullptr == fgets(inputstring, STRLEN - 1, stdin))
+                if (nullptr == std::fgets(inputstring, STRLEN - 1, stdin))
                 {
                     gmx_fatal(FARGS, "Error reading user input");
                 }
@@ -280,7 +290,7 @@ static void edit_files(gmx::ArrayRef<std::string> files,
                 }
                 else
                 {
-                    settime[i] = strtod(inputstring, &chptr);
+                    settime[i] = std::strtod(inputstring, &chptr);
                     if (chptr == inputstring)
                     {
                         fprintf(stderr, "Try that again: ");
@@ -301,7 +311,7 @@ static void edit_files(gmx::ArrayRef<std::string> files,
     }
     else
     {
-        for (gmx::index i = 0; i < files.ssize(); i++)
+        for (gmx::Index i = 0; i < files.ssize(); i++)
         {
             settime[i] = readtime[i];
         }
@@ -322,7 +332,7 @@ static void edit_files(gmx::ArrayRef<std::string> files,
             "\nSummary of files and start times used:\n\n"
             "          File                Start time\n"
             "-----------------------------------------\n");
-    for (gmx::index i = 0; i < files.ssize(); i++)
+    for (gmx::Index i = 0; i < files.ssize(); i++)
     {
         switch (cont_type[i])
         {
@@ -442,7 +452,7 @@ int gmx_eneconv(int argc, char* argv[])
         "Reads one energy file and writes another, applying the [TT]-dt[tt],",
         "[TT]-offset[tt], [TT]-t0[tt] and [TT]-settime[tt] options and",
         "converting to a different format if necessary (indicated by file",
-        "extentions).[PAR]",
+        "extensions).[PAR]",
         "[TT]-settime[tt] is applied first, then [TT]-dt[tt]/[TT]-offset[tt]",
         "followed by [TT]-b[tt] and [TT]-e[tt] to select which frames to write."
     };
@@ -462,7 +472,7 @@ int gmx_eneconv(int argc, char* argv[])
     t_energy*         ee_sum;
     int64_t           lastfilestep, laststep, startstep_file = 0;
     int               noutfr;
-    int               nre, nremax, this_nre, i, kkk, nset, *set = nullptr;
+    int               nre, nremax, this_nre, kkk, nset, *set = nullptr;
     double            last_t;
     real *            readtime, *settime, timestep, tadjust;
     char              buf[22], buf2[22];
@@ -500,8 +510,8 @@ int gmx_eneconv(int argc, char* argv[])
         { "-error", FALSE, etBOOL, { &bError }, "Stop on errors in the file" }
     };
 
-    if (!parse_common_args(&argc, argv, 0, NFILE, fnm, asize(pa), pa, asize(desc), desc,
-                           asize(bugs), bugs, &oenv))
+    if (!parse_common_args(
+                &argc, argv, 0, NFILE, fnm, asize(pa), pa, asize(desc), desc, asize(bugs), bugs, &oenv))
     {
         return 0;
     }
@@ -598,8 +608,12 @@ int gmx_eneconv(int argc, char* argv[])
 
             if (debug)
             {
-                fprintf(debug, "fr->step %s, fr->t %.4f, fro->step %s fro->t %.4f, w %s\n",
-                        gmx_step_str(fr->step, buf), fr->t, gmx_step_str(fro->step, buf2), fro->t,
+                fprintf(debug,
+                        "fr->step %s, fr->t %.4f, fro->step %s fro->t %.4f, w %s\n",
+                        gmx_step_str(fr->step, buf),
+                        fr->t,
+                        gmx_step_str(fro->step, buf2),
+                        fro->t,
                         gmx::boolToString(bWrite));
             }
 
@@ -632,12 +646,14 @@ int gmx_eneconv(int argc, char* argv[])
                 if (bNewOutput)
                 {
                     bNewOutput = FALSE;
-                    fprintf(stderr, "\nContinue writing frames from t=%g, step=%s\n", fro->t,
+                    fprintf(stderr,
+                            "\nContinue writing frames from t=%g, step=%s\n",
+                            fro->t,
                             gmx_step_str(fro->step, buf));
                 }
 
                 /* Copy the energies */
-                for (i = 0; i < nre; i++)
+                for (int i = 0; i < nre; i++)
                 {
                     fro->ener[i].e = fr->ener[i].e;
                 }
@@ -653,7 +669,7 @@ int gmx_eneconv(int argc, char* argv[])
                 {
                     fro->nsum = int64_to_int(ee_sum_nsum, "energy average summation");
                     /* Copy the energy sums */
-                    for (i = 0; i < nre; i++)
+                    for (int i = 0; i < nre; i++)
                     {
                         fro->ener[i].esum = ee_sum[i].esum;
                         fro->ener[i].eav  = ee_sum[i].eav;
@@ -689,7 +705,6 @@ int gmx_eneconv(int argc, char* argv[])
                 {
                     if (remove_dh)
                     {
-                        int i;
                         if (!blocks || nblocks_alloc < fr->nblock)
                         {
                             /* we pre-allocate the blocks */
@@ -698,7 +713,7 @@ int gmx_eneconv(int argc, char* argv[])
                         }
                         nblocks = 0; /* number of blocks so far */
 
-                        for (i = 0; i < fr->nblock; i++)
+                        for (int i = 0; i < fr->nblock; i++)
                         {
                             if ((fr->block[i].id != enxDHCOLL) && (fr->block[i].id != enxDH)
                                 && (fr->block[i].id != enxDHHIST))
@@ -716,7 +731,7 @@ int gmx_eneconv(int argc, char* argv[])
                     {
                         if (!warned_about_dh)
                         {
-                            for (i = 0; i < fr->nblock; i++)
+                            for (int i = 0; i < fr->nblock; i++)
                             {
                                 if (fr->block[i].id == enxDH || fr->block[i].id == enxDHHIST)
                                 {
@@ -740,9 +755,10 @@ int gmx_eneconv(int argc, char* argv[])
                                                "want.\n"
                                                "         Use the -rmdh option to throw all delta H "
                                                "samples away.\n"
-                                               "         Use g_energy -odh option to extract these "
-                                               "samples.\n",
-                                               files[f].c_str(), size);
+                                               "         Use gmx energy -odh option to extract "
+                                               "these samples.\n",
+                                               files[f].c_str(),
+                                               size);
                                         warned_about_dh = TRUE;
                                         break;
                                     }
@@ -764,7 +780,9 @@ int gmx_eneconv(int argc, char* argv[])
         {
             f--;
         }
-        printf("\nLast step written from %s: t %g, step %s\n", files[f].c_str(), last_t,
+        printf("\nLast step written from %s: t %g, step %s\n",
+               files[f].c_str(),
+               last_t,
                gmx_step_str(laststep, buf));
         lastfilestep = laststep;
 
@@ -797,8 +815,7 @@ int gmx_eneconv(int argc, char* argv[])
     }
     else
     {
-        fprintf(stderr, "Last frame written was at step %s, time %f\n",
-                gmx_step_str(fro->step, buf), fro->t);
+        fprintf(stderr, "Last frame written was at step %s, time %f\n", gmx_step_str(fro->step, buf), fro->t);
         fprintf(stderr, "Wrote %d frames\n", noutfr);
     }
 

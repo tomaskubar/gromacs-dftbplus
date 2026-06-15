@@ -2,7 +2,7 @@
    This source code file is part of thread_mpi.
    Written by Sander Pronk, Erik Lindahl, and possibly others.
 
-   Copyright (c) 2009,2018, Sander Pronk, Erik Lindahl.
+   Copyright (c) 2009,2018,2021, Sander Pronk, Erik Lindahl.
    All rights reserved.
 
    Redistribution and use in source and binary forms, with or without
@@ -108,7 +108,7 @@ int tMPI_Start_threads(tmpi_bool main_returns, int N,
 
 /* starter function for threads; takes a void pointer to a
       struct tmpi_starter_, which calls main() if tmpi_start_.fn == NULL */
-static void* tMPI_Thread_starter(void *arg);
+static void* tMPI_Thread_start(void *arg);
 
 /* allocate and initialize the data associated with a thread structure */
 static int tMPI_Thread_init(struct tmpi_thread *th);
@@ -325,9 +325,13 @@ static void tMPI_Thread_destroy(struct tmpi_thread *th)
     {
         free(th->argv[i]);
     }
+    if (th->argv)
+    {
+        tMPI_Free(th->argv);
+    }
 }
 
-static int tMPI_Global_init(struct tmpi_global *g, int Nthreads)
+static int tMPI_Global_init(struct tmpi_global *g, int nthreads)
 {
     int ret;
 
@@ -341,7 +345,7 @@ static int tMPI_Global_init(struct tmpi_global *g, int Nthreads)
     }
     tMPI_Spinlock_init(&(g->datatype_lock));
 
-    ret = tMPI_Thread_barrier_init( &(g->barrier), Nthreads);
+    ret = tMPI_Thread_barrier_init( &(g->barrier), nthreads);
     if (ret != 0)
     {
         return tMPI_Error(TMPI_COMM_WORLD, TMPI_ERR_IO);
@@ -369,12 +373,18 @@ static void tMPI_Global_destroy(struct tmpi_global *g)
     tMPI_Thread_barrier_destroy(&(g->barrier));
     tMPI_Thread_mutex_destroy(&(g->timer_mutex));
     tMPI_Thread_mutex_destroy(&(g->comm_link_lock));
+    for (int i = 0; i < g->N_usertypes; i++)
+    {
+        tMPI_Free(g->usertypes[i]->comps);
+        tMPI_Free(g->usertypes[i]);
+    }
+    tMPI_Free(g->usertypes);
 }
 
 
 
 
-static void* tMPI_Thread_starter(void *arg)
+static void* tMPI_Thread_start(void *arg)
 {
     int                 ret;
     struct tmpi_thread *th = (struct tmpi_thread*)arg;
@@ -415,9 +425,9 @@ int tMPI_Start_threads(tmpi_bool main_returns, int N,
 {
     int ret;
 #ifdef TMPI_TRACE
-    tMPI_Trace_print("tMPI_Start_threads(%d, %d, %d, %d, %d, %p, %p, %p, %p)",
+    tMPI_Trace_print("tMPI_Start_threads(%d, %d, %d, %p, %p, %p, %p, %p)",
                      main_returns, N, aff_strategy, argc, argv, start_fn,
-                     start_arg);
+                     start_arg, start_fn_main);
 #endif
     if (N > 0)
     {
@@ -510,7 +520,7 @@ int tMPI_Start_threads(tmpi_bool main_returns, int N,
         for (i = 1; i < N; i++) /* zero is the main thread */
         {
             ret = tMPI_Thread_create(&(threads[i].thread_id),
-                                     tMPI_Thread_starter,
+                                     tMPI_Thread_start,
                                      (void*)&(threads[i]) );
 
             if (set_affinity)
@@ -526,7 +536,7 @@ int tMPI_Start_threads(tmpi_bool main_returns, int N,
            it to return */
         if (!main_returns)
         {
-            tMPI_Thread_starter((void*)&(threads[0]));
+            tMPI_Thread_start((void*)&(threads[0]));
 
         }
         else
@@ -902,7 +912,7 @@ double tMPI_Wtick(void)
 #endif
 }
 
-int tMPI_Get_count(tMPI_Status *status, tMPI_Datatype datatype, int *count)
+int tMPI_Get_count(const tMPI_Status *status, tMPI_Datatype datatype, int *count)
 {
 #ifdef TMPI_TRACE
     tMPI_Trace_print("tMPI_Get_count(%p, %p, %p)", status, datatype, count);

@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2015,2016,2017,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2015- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \internal \file
  * \brief Tests for gmx::ArrayRef for SIMD types.
@@ -40,18 +39,24 @@
  */
 #include "gmxpre.h"
 
+#include <cstddef>
+
+#include <array>
 #include <numeric>
+#include <string>
+#include <type_traits>
 #include <vector>
 
 #include <gtest/gtest.h>
 
 #include "gromacs/simd/simd.h"
+#include "gromacs/utility/arrayref.h"
+#include "gromacs/utility/real.h"
 
 #include "simd.h"
 
 namespace gmx
 {
-
 #if GMX_SIMD_HAVE_REAL
 
 /* SimdInt32 is a strange type which would never belong in an interface,
@@ -73,12 +78,14 @@ class ArrayRef<const SimdInt32> : public internal::SimdArrayRef<const SimdInt32>
     using Base::Base;
 };
 
+namespace test
+{
 namespace
 {
 
 TEST(EmptyArrayRefTest, IsEmpty)
 {
-    ArrayRef<SimdReal> empty = ArrayRef<real>();
+    ArrayRef<SimdReal> empty = ArrayRef<real>{};
 
     EXPECT_EQ(0U, empty.size());
     EXPECT_TRUE(empty.empty());
@@ -145,7 +152,7 @@ public:
 
 using ArrayRefTypes =
         ::testing::Types<ArrayRef<SimdReal>, ArrayRef<const SimdReal>, ArrayRef<SimdInt32>, ArrayRef<const SimdInt32>>;
-TYPED_TEST_CASE(ArrayRefTest, ArrayRefTypes);
+TYPED_TEST_SUITE(ArrayRefTest, ArrayRefTypes);
 
 TYPED_TEST(ArrayRefTest, ConstructFromPointersWorks)
 {
@@ -166,7 +173,7 @@ TYPED_TEST(ArrayRefTest, ConstructFromArrayRefWorks)
 
     std::iota(a.begin(), a.end(), 0);
     ArrayRef<std::remove_const_t<typename TestFixture::ValueType>> ref(a.data(), a.data() + a.size());
-    typename TestFixture::ArrayRefType                             arrayRef(ref);
+    typename TestFixture::ArrayRefType arrayRef(ref);
     this->runReadOnlyTests(a.data(), 3, arrayRef);
 }
 
@@ -185,27 +192,29 @@ template<typename TypeParam>
 using ArrayRefReadWriteTest = ArrayRefTest<TypeParam>;
 
 using ArrayRefReadWriteTypes = ::testing::Types<ArrayRef<SimdReal>, ArrayRef<SimdInt32>>;
-TYPED_TEST_CASE(ArrayRefReadWriteTest, ArrayRefReadWriteTypes);
+TYPED_TEST_SUITE(ArrayRefReadWriteTest, ArrayRefReadWriteTypes);
 
 TYPED_TEST(ArrayRefReadWriteTest, Assignment)
 {
-    constexpr int width = TestFixture::width;
+    constexpr int testWidth = TestFixture::width;
 
-    alignas(width * sizeof(typename TestFixture::ElementType)) std::array<typename TestFixture::ElementType, width * 4> a;
+    alignas(testWidth * sizeof(typename TestFixture::ElementType))
+            std::array<typename TestFixture::ElementType, testWidth * 4>
+                    a;
 
     typename TestFixture::ArrayRefType arrayRef(a.data(), a.data() + a.size());
 
     arrayRef.front() = 1;
-    EXPECT_EQ(1, a[0 * width]);
+    EXPECT_EQ(1, a[0 * testWidth]);
     (arrayRef.front() = 1) = 2;
-    EXPECT_EQ(2, a[0 * width]);
+    EXPECT_EQ(2, a[0 * testWidth]);
 
     arrayRef[1] = 2;
-    EXPECT_EQ(2, a[1 * width]);
+    EXPECT_EQ(2, a[1 * testWidth]);
     *(arrayRef.begin() + 2) = 3;
-    EXPECT_EQ(3, a[2 * width]);
+    EXPECT_EQ(3, a[2 * testWidth]);
     arrayRef.back() = 4;
-    EXPECT_EQ(4, a[3 * width]);
+    EXPECT_EQ(4, a[3 * testWidth]);
 }
 
 template<typename TypeParam>
@@ -217,29 +226,30 @@ using ArrayRefArithmeticTypes = ::testing::Types<ArrayRef<SimdReal>
                                                  ArrayRef<SimdInt32>
 #        endif
                                                  >;
-TYPED_TEST_CASE(ArrayRefArithmeticTest, ArrayRefArithmeticTypes);
+TYPED_TEST_SUITE(ArrayRefArithmeticTest, ArrayRefArithmeticTypes);
 
 TYPED_TEST(ArrayRefArithmeticTest, Basic)
 {
-    constexpr int width = TestFixture::width;
+    constexpr int testWidth = TestFixture::width;
 
-    alignas(width * sizeof(typename TestFixture::ElementType)) std::array<typename TestFixture::ElementType, width> a;
+    alignas(testWidth * sizeof(typename TestFixture::ElementType)) std::array<typename TestFixture::ElementType, testWidth> a;
 
     typename TestFixture::ArrayRefType arrayRef(a.data(), a.data() + a.size());
 
     arrayRef.front() = 1;
-    ASSERT_EQ(1, a[0 * width]);
+    ASSERT_EQ(1, a[0 * testWidth]);
     arrayRef.front() += 1;
-    ASSERT_EQ(2, a[0 * width]);
+    ASSERT_EQ(2, a[0 * testWidth]);
     arrayRef.front() *= 2;
-    ASSERT_EQ(4, a[0 * width]);
+    ASSERT_EQ(4, a[0 * testWidth]);
     arrayRef.front() -= 3;
-    ASSERT_EQ(1, a[0 * width]);
+    ASSERT_EQ(1, a[0 * testWidth]);
 }
 
 #    endif // GTEST_HAS_TYPED_TEST
 
 } // namespace
+} // namespace test
 
 #endif // GMX_HAVE_SIMD_REAL
 

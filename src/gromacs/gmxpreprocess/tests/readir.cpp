@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2017,2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2017- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \internal \file
  * \brief
@@ -47,14 +46,19 @@
 
 #include "gromacs/gmxpreprocess/readir.h"
 
+#include "config.h"
+
+#include <filesystem>
 #include <string>
 
 #include <gtest/gtest.h>
 
+#include "gromacs/fileio/readinp.h"
 #include "gromacs/fileio/warninp.h"
 #include "gromacs/mdrun/mdmodules.h"
 #include "gromacs/mdtypes/inputrec.h"
 #include "gromacs/utility/cstringutil.h"
+#include "gromacs/utility/smalloc.h"
 #include "gromacs/utility/stringutil.h"
 #include "gromacs/utility/textreader.h"
 #include "gromacs/utility/textwriter.h"
@@ -71,7 +75,7 @@ namespace test
 class GetIrTest : public ::testing::Test
 {
 public:
-    GetIrTest() : wi_(init_warning(FALSE, 0)), wiGuard_(wi_)
+    GetIrTest()
     {
         snew(opts_.include, STRLEN);
         snew(opts_.define, STRLEN);
@@ -82,57 +86,94 @@ public:
         sfree(opts_.include);
         sfree(opts_.define);
     }
+
+    //! Tells whether warnings and/or errors are expected from inputrec parsing and checking, and whether we should compare the output
+    enum class TestBehavior
+    {
+        NoErrorAndCompareOutput,      //!< Expect no warnings/error and compare output
+        NoErrorAndDoNotCompareOutput, //!< Expect no warnings/error and do not compare output
+        ErrorAndCompareOutput,        //!< Expect at least one warning/error and compare output
+        ErrorAndDoNotCompareOutput //!< Expect at least one warning/error and do not compare output
+    };
+
     /*! \brief Test mdp reading and writing
      *
      * \todo Modernize read_inp and write_inp to use streams,
      * which will make these tests run faster, because they don't
      * use disk files. */
-    void runTest(const std::string& inputMdpFileContents)
+    void runTest(const std::string& inputMdpFileContents,
+                 const TestBehavior testBehavior = TestBehavior::NoErrorAndCompareOutput,
+                 const bool         setGenVelSeedToKnownValue = true)
     {
-        auto inputMdpFilename  = fileManager_.getTemporaryFilePath("input.mdp");
-        auto outputMdpFilename = fileManager_.getTemporaryFilePath("output.mdp");
+        const bool expectError = testBehavior == TestBehavior::ErrorAndCompareOutput
+                                 || testBehavior == TestBehavior::ErrorAndDoNotCompareOutput;
+        const bool compareOutput = testBehavior == TestBehavior::ErrorAndCompareOutput
+                                   || testBehavior == TestBehavior::NoErrorAndCompareOutput;
 
-        TextWriter::writeFileFromString(inputMdpFilename, inputMdpFileContents);
+        WarningHandler wi{ false, 0 };
+        std::string    inputMdpFilename = fileManager_.getTemporaryFilePath("input.mdp").string();
+        std::string    outputMdpFilename;
+        if (compareOutput)
+        {
+            outputMdpFilename = fileManager_.getTemporaryFilePath("output.mdp").string();
+        }
+        if (setGenVelSeedToKnownValue)
+        {
+            TextWriter::writeFileFromString(inputMdpFilename,
+                                            inputMdpFileContents + "\n gen-seed = 256\n");
+        }
+        else
+        {
+            TextWriter::writeFileFromString(inputMdpFilename, inputMdpFileContents);
+        }
 
-        get_ir(inputMdpFilename.c_str(), outputMdpFilename.c_str(), &mdModules_, &ir_, &opts_,
-               WriteMdpHeader::no, wi_);
+        get_ir(inputMdpFilename.c_str(),
+               outputMdpFilename.empty() ? nullptr : outputMdpFilename.c_str(),
+               &mdModules_,
+               &ir_,
+               &opts_,
+               WriteMdpHeader::no,
+               &wi);
 
-        check_ir(inputMdpFilename.c_str(), mdModules_.notifier(), &ir_, &opts_, wi_);
+        check_ir(inputMdpFilename.c_str(), mdModules_.notifiers(), &ir_, &opts_, &wi);
         // Now check
-        bool                 failure = warning_errors_exist(wi_);
-        TestReferenceData    data;
-        TestReferenceChecker checker(data.rootChecker());
-        checker.checkBoolean(failure, "Error parsing mdp file");
-        warning_reset(wi_);
+        bool failure = warning_errors_exist(wi);
+        EXPECT_EQ(failure, expectError);
 
-        auto outputMdpContents = TextReader::readFileToString(outputMdpFilename);
-        checker.checkString(outputMdpContents, "OutputMdpFile");
+        if (compareOutput)
+        {
+            TestReferenceData    data;
+            TestReferenceChecker checker(data.rootChecker());
+            checker.checkBoolean(failure, "Error parsing mdp file");
+
+            auto outputMdpContents = TextReader::readFileToString(outputMdpFilename);
+            checker.checkString(outputMdpContents, "OutputMdpFile");
+        }
     }
 
-    TestFileManager                    fileManager_;
-    t_inputrec                         ir_;
-    MDModules                          mdModules_;
-    t_gromppopts                       opts_;
-    warninp_t                          wi_;
-    unique_cptr<warninp, free_warning> wiGuard_;
+    TestFileManager fileManager_;
+    t_inputrec      ir_;
+    MDModules       mdModules_;
+    t_gromppopts    opts_;
 };
 
 /*
 TEST_F(GetIrTest, HandlesDifferentKindsOfMdpLines)
 {
-    const char* inputMdpFile[] = { "; File to run my simulation",
-                                   "title = simulation",
-                                   "define = -DBOOLVAR -DVAR=VALUE",
-                                   ";",
-                                   "xtc_grps = System ; was Protein",
-                                   "include = -I/home/me/stuff",
-                                   "",
-                                   "tau-t = 0.1 0.3",
-                                   "ref-t = ;290 290",
-                                   "tinit = 0.3",
-                                   "init_step = 0",
-                                   "nstcomm = 100",
-                                   "integrator = steep" };
+    const char*    inputMdpFile[] = { "; File to run my simulation",
+                                      "title = simulation",
+                                      "define = -DBOOLVAR -DVAR=VALUE",
+                                      ";",
+                                      "xtc_grps = System ; was Protein",
+                                      "include = -I/home/me/stuff",
+                                      "",
+                                      "tau-t = 0.1 0.3",
+                                      "ref-t = ;290 290",
+                                      "tinit = 0.3",
+                                      "init_step = 0",
+                                      "nstcomm = 100",
+                                      "integrator = steep" };
+    WarningHandler wi{ false, 0 };
     runTest(joinStrings(inputMdpFile, "\n"));
 }
 */
@@ -140,6 +181,7 @@ TEST_F(GetIrTest, HandlesDifferentKindsOfMdpLines)
 TEST_F(GetIrTest, RejectsNonCommentLineWithNoEquals)
 {
     const char* inputMdpFile = "title simulation";
+
     GMX_EXPECT_DEATH_IF_SUPPORTED(runTest(inputMdpFile), "No '=' to separate");
 }
 
@@ -182,6 +224,46 @@ TEST_F(GetIrTest, AcceptsEmptyLines)
     runTest(inputMdpFile);
 }
 */
+
+TEST_F(GetIrTest, MtsCheckNstcalcenergy)
+{
+    const char* inputMdpFile[] = {
+        "mts = yes", "mts-levels = 2", "mts-level2-factor = 2", "nstcalcenergy = 5"
+    };
+    runTest(joinStrings(inputMdpFile, "\n"), TestBehavior::ErrorAndDoNotCompareOutput);
+}
+
+TEST_F(GetIrTest, MtsCheckNstenergy)
+{
+    const char* inputMdpFile[] = {
+        "mts = yes", "mts-levels = 2", "mts-level2-factor = 2", "nstenergy = 5"
+    };
+    runTest(joinStrings(inputMdpFile, "\n"), TestBehavior::ErrorAndDoNotCompareOutput);
+}
+
+TEST_F(GetIrTest, MtsCheckNstpcouple)
+{
+    const char* inputMdpFile[] = { "mts = yes",
+                                   "mts-levels = 2",
+                                   "mts-level2-factor = 2",
+                                   "pcoupl = Berendsen",
+                                   "nstpcouple = 5" };
+    runTest(joinStrings(inputMdpFile, "\n"), TestBehavior::ErrorAndDoNotCompareOutput);
+}
+
+TEST_F(GetIrTest, MtsCheckNstdhdl)
+{
+    const char* inputMdpFile[] = {
+        "mts = yes", "mts-level2-factor = 2", "free-energy = yes", "nstdhdl = 5"
+    };
+    runTest(joinStrings(inputMdpFile, "\n"), TestBehavior::ErrorAndDoNotCompareOutput);
+}
+
+TEST_F(GetIrTest, MtsCheckSDNotSupported)
+{
+    const char* inputMdpFile[] = { "mts = yes", "integrator = sd" };
+    runTest(joinStrings(inputMdpFile, "\n"), TestBehavior::ErrorAndDoNotCompareOutput);
+}
 
 /*
 // These tests observe how the electric-field keys behave, since they
@@ -233,6 +315,253 @@ TEST_F(GetIrTest, AcceptsMimic)
     runTest(joinStrings(inputMdpFile, "\n"));
 }
 */
+
+#if HAVE_MUPARSER
+
+TEST_F(GetIrTest, AcceptsTransformationCoord)
+{
+    const char* inputMdpFile[] = {
+        "pull = yes",
+        "pull-ngroups = 2",
+        "pull-ncoords = 2",
+        "pull-coord1-geometry = distance",
+        "pull-coord1-groups = 1 2",
+        "pull-coord1-k = 1",
+        "pull-coord2-geometry = transformation",
+        "pull-coord2-expression = 1/(1+x1)",
+        "pull-coord2-k = 10",
+    };
+    runTest(joinStrings(inputMdpFile, "\n"), TestBehavior::NoErrorAndDoNotCompareOutput);
+}
+
+TEST_F(GetIrTest, InvalidTransformationCoordWithConstraint)
+{
+    const char* inputMdpFile[] = {
+        "pull = yes",
+        "pull-ncoords = 1",
+        "pull-coord1-geometry = transformation",
+        "pull-coord1-type = constraint", // INVALID
+        "pull-coord1-expression = 10",
+    };
+    runTest(joinStrings(inputMdpFile, "\n"), TestBehavior::ErrorAndDoNotCompareOutput);
+}
+
+TEST_F(GetIrTest, InvalidPullCoordWithConstraintInTransformationExpression)
+{
+    const char* inputMdpFile[] = {
+        "pull = yes",
+        "pull-ngroups = 2",
+        "pull-ncoords = 2",
+        "pull-coord1-geometry = distance",
+        "pull-coord1-type = constraint", // INVALID
+        "pull-coord1-groups = 1 2",
+        "pull-coord2-geometry = transformation",
+        "pull-coord2-expression = x1",
+    };
+    runTest(joinStrings(inputMdpFile, "\n"), TestBehavior::ErrorAndDoNotCompareOutput);
+}
+
+TEST_F(GetIrTest, InvalidTransformationCoordDxValue)
+{
+    const char* inputMdpFile[] = {
+        "pull = yes",
+        "pull-ncoords = 1",
+        "pull-coord1-geometry = transformation",
+        "pull-coord1-expression = 10",
+        "pull-coord1-dx = 0", // INVALID
+    };
+    runTest(joinStrings(inputMdpFile, "\n"), TestBehavior::ErrorAndDoNotCompareOutput);
+}
+
+TEST_F(GetIrTest, MissingTransformationCoordExpression)
+{
+    const char* inputMdpFile[] = {
+        "pull = yes",
+        "pull-ncoords = 1",
+        "pull-coord1-geometry = transformation",
+    };
+    runTest(joinStrings(inputMdpFile, "\n"), TestBehavior::ErrorAndDoNotCompareOutput);
+}
+
+TEST_F(GetIrTest, lambdaOverOneCheck_SC_And_ExactlyAsManyStep)
+{
+    // 1e5 steps and delta lambda 1e-5, should not warn (exactly right)
+    const char* inputMdpFile[] = {
+        "nsteps        = 100000",
+        "nstdhdl       = 1",
+        "nstcalcenergy       = 1",
+        "free-energy   = yes",
+        "init-lambda   = 0",
+        "delta-lambda  = 1e-05",
+        "sc-alpha      = 0.3",
+        "sc-sigma      = 0.25",
+        "; decoupled VdW to avoid warning about",
+        "; - not the point of this test",
+        "couple-lambda0 = q",
+        "sc-power      = 1",
+        "sc-coul       = yes",
+
+    };
+    runTest(joinStrings(inputMdpFile, "\n"), TestBehavior::NoErrorAndDoNotCompareOutput);
+}
+
+TEST_F(GetIrTest, lambdaOverOneCheck_SC_And_ExactlyAsManyStep_negativeDelta)
+{
+    // 1e5 steps and delta lambda -1e-5, should not warn (exactly right)
+    const char* inputMdpFile[] = {
+        "nsteps        = 100000",
+        "nstdhdl       = 1",
+        "nstcalcenergy       = 1",
+        "free-energy   = yes",
+        "init-lambda   = 1.0",
+        "delta-lambda  = -1e-05",
+        "sc-alpha      = 0.3",
+        "sc-sigma      = 0.25",
+        "; decoupled VdW to avoid warning about",
+        "; - not the point of this test",
+        "couple-lambda0 = q",
+        "sc-power      = 1",
+        "sc-coul       = yes",
+
+    };
+    runTest(joinStrings(inputMdpFile, "\n"), TestBehavior::NoErrorAndDoNotCompareOutput);
+}
+
+TEST_F(GetIrTest, lambdaOverOneCheck_NoSC_And_ExactlyAsManyStep)
+{
+    // 1e5 steps and delta lambda 1e-5, should not warn (exactly right)
+    // Should not warn without softcore too
+    const char* inputMdpFile[] = { "nsteps        = 100000",  "nstdhdl       = 1",
+                                   "nstcalcenergy       = 1", "free-energy   = yes",
+                                   "init-lambda   = 0",       "delta-lambda  = 1e-05" };
+    runTest(joinStrings(inputMdpFile, "\n"), TestBehavior::NoErrorAndDoNotCompareOutput);
+}
+
+TEST_F(GetIrTest, lambdaOverOneCheck_NoSC_And_ExactlyAsManyStep_negativeDelta)
+{
+    // 1e5 steps and delta lambda -1e-5, should not warn (exactly right)
+    // Should not warn without softcore too
+    const char* inputMdpFile[] = { "nsteps        = 100000",  "nstdhdl       = 1",
+                                   "nstcalcenergy       = 1", "free-energy   = yes",
+                                   "init-lambda   = 1",       "delta-lambda  = -1e-05" };
+    runTest(joinStrings(inputMdpFile, "\n"), TestBehavior::NoErrorAndDoNotCompareOutput);
+}
+
+TEST_F(GetIrTest, lambdaOverOneCheck_SC_And_OneStepTooMuch)
+{
+    // 1e5+1 steps and delta lambda 1e-5, should error (will be over 1 in the very last step
+    // and this is unsupported by softcore)
+    const char* inputMdpFile[] = {
+        "nsteps        = 100001",
+        "nstdhdl       = 1",
+        "nstcalcenergy       = 1",
+        "free-energy   = yes",
+        "init-lambda   = 0",
+        "delta-lambda  = 1e-05",
+        "sc-alpha      = 0.3",
+        "sc-sigma      = 0.25",
+        "; decoupled VdW to avoid warning about",
+        "; - not the point of this test",
+        "couple-lambda0 = q",
+        "sc-power      = 1",
+        "sc-coul       = yes",
+    };
+    runTest(joinStrings(inputMdpFile, "\n"), TestBehavior::ErrorAndDoNotCompareOutput);
+}
+
+TEST_F(GetIrTest, lambdaOverOneCheck_SC_And_OneStepTooMuch_negativeDelta)
+{
+    // 1e5+1 steps and delta lambda -1e-5, should error (will be under 0 in the very last step
+    // and this is unsupported by softcore)
+    const char* inputMdpFile[] = {
+        "nsteps        = 100001",
+        "nstdhdl       = 1",
+        "nstcalcenergy       = 1",
+        "free-energy   = yes",
+        "init-lambda   = 1",
+        "delta-lambda  = -1e-05",
+        "sc-alpha      = 0.3",
+        "sc-sigma      = 0.25",
+        "; decoupled VdW to avoid warning about",
+        "; - not the point of this test",
+        "couple-lambda0 = q",
+        "sc-power      = 1",
+        "sc-coul       = yes",
+    };
+    runTest(joinStrings(inputMdpFile, "\n"), TestBehavior::ErrorAndDoNotCompareOutput);
+}
+
+TEST_F(GetIrTest, lambdaOverOneCheck_NoSC_And_OneStepTooMuch_negativeDelta)
+{
+    // 1e5+1 steps and delta lambda -1e-5, should warn (will be under 0 in the very last step)
+    // Without softcore, this is still a warning
+    const char* inputMdpFile[] = {
+        "nsteps        = 100001", "nstdhdl       = 1", "nstcalcenergy       = 1",
+        "free-energy   = yes",    "init-lambda   = 1", "delta-lambda  = -1e-05",
+    };
+    runTest(joinStrings(inputMdpFile, "\n"), TestBehavior::ErrorAndDoNotCompareOutput);
+}
+
+TEST_F(GetIrTest, lambdaOverOneCheck_LambdaVector_And_OneStepTooMuch)
+{
+    // 1e5+1 steps and delta lambda 1e-5, with lambda vector, should warn (will be capped in the very last step)
+    const char* inputMdpFile[] = { "nsteps        = 100001",  "nstcalcenergy       = 1",
+                                   "nstdhdl       = 1",       "free-energy   = yes",
+                                   "delta-lambda  = 1e-05",   "init-lambda-state = 0",
+                                   "fep_lambdas =  0 0.5 1.0" };
+    runTest(joinStrings(inputMdpFile, "\n"), TestBehavior::ErrorAndDoNotCompareOutput);
+}
+
+TEST_F(GetIrTest, lambdaOverOneCheck_LambdaVector_And_OneStepTooMuch_negativeDelta)
+{
+    // 1e5+1 steps and delta lambda -1e-5, with lambda vector, should warn (will be capped in the very last step)
+    const char* inputMdpFile[] = { "nsteps        = 100001",  "nstdhdl       = 1",
+                                   "nstcalcenergy       = 1", "free-energy   = yes",
+                                   "delta-lambda  = -1e-05",  "init-lambda-state = 2",
+                                   "fep_lambdas =  0 0.5 1.0" };
+    runTest(joinStrings(inputMdpFile, "\n"), TestBehavior::ErrorAndDoNotCompareOutput);
+}
+
+TEST_F(GetIrTest, lambdaOverOneCheck_LambdaVector_And_ExactlyAsManyStep)
+{
+    // 1e5 steps and delta lambda 1e-5, with lambda vector, should not warn of lambda capping
+    const char* inputMdpFile[] = { "nsteps        = 100000",  "nstdhdl       = 1",
+                                   "nstcalcenergy       = 1", "free-energy   = yes",
+                                   "delta-lambda  = 1e-05",   "init-lambda-state = 0",
+                                   "fep_lambdas =  0 0.5 1.0" };
+    runTest(joinStrings(inputMdpFile, "\n"), TestBehavior::NoErrorAndDoNotCompareOutput);
+}
+
+TEST_F(GetIrTest, lambdaOverOneCheck_LambdaVector_And_ExactlyAsManyStep_negativeDelta)
+{
+    // 1e5 steps and delta lambda -1e-5, with lambda vector, should not warn of lambda capping
+    const char* inputMdpFile[] = { "nsteps        = 100000",  "nstdhdl       = 1",
+                                   "nstcalcenergy       = 1", "free-energy   = yes",
+                                   "delta-lambda  = -1e-05",  "init-lambda-state = 2",
+                                   "fep_lambdas =  0 0.5 1.0" };
+    runTest(joinStrings(inputMdpFile, "\n"), TestBehavior::NoErrorAndDoNotCompareOutput);
+}
+
+TEST_F(GetIrTest, AcceptsFmmOptions)
+{
+    const char* inputMdpFile[] = { "fmm-backend = exafmm",
+                                   "fmm-exafmm-order = 6",
+                                   "fmm-exafmm-direct-range = 2",
+                                   "fmm-exafmm-direct-provider = GROMACS",
+                                   "fmm-exafmm-tree-type = uniform",
+                                   "fmm-exafmm-tree-depth = 0",
+                                   "fmm-exafmm-max-particles-per-cell = 0",
+                                   "fmm-fmsolvr-order= 8",
+                                   "fmm-fmsolvr-direct-range = 2",
+                                   "fmm-fmsolvr-direct-provider = FMM",
+                                   "fmm-fmsolvr-dipole-compensation = yes",
+                                   "fmm-fmsolvr-tree-depth = 3",
+                                   "fmm-fmsolvr-sparse = no" };
+    runTest(joinStrings(inputMdpFile, "\n"));
+}
+
+
+#endif // HAVE_MUPARSER
 
 } // namespace test
 } // namespace gmx

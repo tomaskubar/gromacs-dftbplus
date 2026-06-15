@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2019- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 
 /*! \libinternal \file
@@ -50,11 +49,11 @@
 
 #include "gromacs/utility/real.h"
 
-namespace Nbnxm
+namespace gmx
 {
 
 //! Enum for selecting the SIMD kernel type for benchmarks
-enum class BenchMarkKernels : int
+enum class NbnxmBenchMarkKernels : int
 {
     SimdAuto,
     SimdNo,
@@ -64,7 +63,7 @@ enum class BenchMarkKernels : int
 };
 
 //! Enum for selecting the combination rule for kernel benchmarks
-enum class BenchMarkCombRule : int
+enum class NbnxmBenchMarkCombRule : int
 {
     RuleGeom,
     RuleLB,
@@ -73,26 +72,36 @@ enum class BenchMarkCombRule : int
 };
 
 //! Enum for selecting coulomb type for kernel benchmarks
-enum class BenchMarkCoulomb : int
+enum class NbnxmBenchMarkCoulomb : int
 {
     Pme,
     ReactionField,
     Count
 };
 
+enum class NbnxmBenchMarkInteractionModifiers : int
+{
+    PotShift,
+    PotSwitch,
+    ForceSwitch,
+    Count
+};
+
 /*! \internal \brief
  * The options for the kernel benchmarks
  */
-struct KernelBenchOptions
+struct NbnxmKernelBenchOptions
 {
     //! Whether to use a GPU, currently GPUs are not supported
     bool useGpu = false;
     //! The number of OpenMP threads to use
     int numThreads = 1;
     //! The SIMD type for the kernel
-    BenchMarkKernels nbnxmSimd = BenchMarkKernels::SimdAuto;
+    NbnxmBenchMarkKernels nbnxmSimd = NbnxmBenchMarkKernels::SimdAuto;
     //! The LJ combination rule
-    BenchMarkCombRule ljCombinationRule = BenchMarkCombRule::RuleGeom;
+    NbnxmBenchMarkCombRule ljCombinationRule = NbnxmBenchMarkCombRule::RuleGeom;
+    //! The Coulomb / VdW interaction modifier
+    NbnxmBenchMarkInteractionModifiers interactionModifier = NbnxmBenchMarkInteractionModifiers::PotShift;
     //! Use i-cluster half-LJ optimization for clusters with <= half LJ
     bool useHalfLJOptimization = false;
     //! The pairlist and interaction cut-off
@@ -102,7 +111,7 @@ struct KernelBenchOptions
     //! Whether to compute energies (shift forces for virial are always computed on CPU)
     bool computeVirialAndEnergy = false;
     //! The Coulomb interaction function
-    BenchMarkCoulomb coulombType = BenchMarkCoulomb::Pme;
+    NbnxmBenchMarkCoulomb coulombType = NbnxmBenchMarkCoulomb::Pme;
     //! Whether to use tabulated PME grid correction instead of analytical, not applicable with simd=no
     bool useTabulatedEwaldCorr = false;
     //! Whether to run all combinations of Coulomb type, combination rule and SIMD
@@ -132,8 +141,8 @@ struct KernelBenchOptions
  * \param[in] sizeFactor How much should the system size be increased.
  * \param[in] options How the benchmark will be run.
  */
-void bench(int sizeFactor, const KernelBenchOptions& options);
+void bench(int sizeFactor, const NbnxmKernelBenchOptions& options);
 
-} // namespace Nbnxm
+} // namespace gmx
 
 #endif

@@ -1,13 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
- * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2012,2014,2015,2017,2018 by the GROMACS development team.
- * Copyright (c) 2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 1991- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -21,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -30,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /* This file is completely threadsafe - keep it that way! */
 
@@ -41,9 +37,11 @@
 
 #include "pgutil.h"
 
+#include <cstdio>
 #include <cstring>
 
 #include <algorithm>
+#include <filesystem>
 
 #include "gromacs/topology/atoms.h"
 #include "gromacs/utility/cstringutil.h"
@@ -61,26 +59,33 @@ static void atom_not_found(int         fatal_errno,
                            bool        bAllowMissing)
 {
     char message_buffer[BUFSIZE];
-    if (strcmp(bondtype, "check") != 0)
+    if (std::strcmp(bondtype, "check") != 0)
     {
-        if (0 != strcmp(bondtype, "atom"))
+        if (0 != std::strcmp(bondtype, "atom"))
         {
-            snprintf(message_buffer, 1024,
+            snprintf(message_buffer,
+                     1024,
                      "Residue %d named %s of a molecule in the input file was mapped\n"
                      "to an entry in the topology database, but the atom %s used in\n"
                      "an interaction of type %s in that entry is not found in the\n"
                      "input file. Perhaps your atom and/or residue naming needs to be\n"
                      "fixed.\n",
-                     resind + 1, resname, atomname, bondtype);
+                     resind + 1,
+                     resname,
+                     atomname,
+                     bondtype);
         }
         else
         {
-            snprintf(message_buffer, 1024,
+            snprintf(message_buffer,
+                     1024,
                      "Residue %d named %s of a molecule in the input file was mapped\n"
                      "to an entry in the topology database, but the atom %s used in\n"
                      "that entry is not found in the input file. Perhaps your atom\n"
                      "and/or residue naming needs to be fixed.\n",
-                     resind + 1, resname, atomname);
+                     resind + 1,
+                     resname,
+                     atomname);
         }
         if (bAllowMissing)
         {
@@ -93,22 +98,22 @@ static void atom_not_found(int         fatal_errno,
     }
 }
 
-int search_atom(const char*              type,
-                int                      start,
-                const t_atoms*           atoms,
-                const char*              bondtype,
-                bool                     bAllowMissing,
-                gmx::ArrayRef<const int> cyclicBondsIndex)
+std::optional<int> search_atom(const char*              atomName,
+                               int                      start,
+                               const t_atoms*           atoms,
+                               const char*              bondtype,
+                               bool                     bAllowMissing,
+                               gmx::ArrayRef<const int> cyclicBondsIndex)
 {
     int                                i, resind = -1;
     bool                               bPrevious, bNext, bOverring;
-    int                                natoms = atoms->nr;
-    t_atom*                            at     = atoms->atom;
-    char** const*                      anm    = atoms->atomname;
+    int                                natoms             = atoms->nr;
+    t_atom*                            at                 = atoms->atom;
+    char** const*                      atomNameSearchPool = atoms->atomname;
     gmx::ArrayRef<const int>::iterator cyclicBondsIterator;
 
-    bPrevious = (strchr(type, '-') != nullptr);
-    bNext     = (strchr(type, '+') != nullptr);
+    bPrevious = (std::strchr(atomName, '-') != nullptr);
+    bNext     = (std::strchr(atomName, '+') != nullptr);
 
     if (!bPrevious)
     {
@@ -116,7 +121,7 @@ int search_atom(const char*              type,
         if (bNext)
         {
             /* The next residue */
-            type++;
+            atomName++;
             bOverring = !cyclicBondsIndex.empty()
                         && (cyclicBondsIterator =
                                     std::find(cyclicBondsIndex.begin(), cyclicBondsIndex.end(), resind))
@@ -124,7 +129,7 @@ int search_atom(const char*              type,
             if (bOverring && ((cyclicBondsIterator - cyclicBondsIndex.begin()) & 1))
             {
                 resind = *(--cyclicBondsIterator);
-                return search_res_atom(type, resind, atoms, bondtype, false);
+                return search_res_atom(atomName, resind, atoms, bondtype, false);
             }
             else
             {
@@ -141,21 +146,20 @@ int search_atom(const char*              type,
 
         for (i = start; (i < natoms) && (bNext || (at[i].resind == resind)); i++)
         {
-            if (anm[i] && gmx_strcasecmp(type, *(anm[i])) == 0)
+            if (atomNameSearchPool[i] && gmx_strcasecmp(atomName, *(atomNameSearchPool[i])) == 0)
             {
                 return i;
             }
         }
         if (!(bNext && at[start].resind == at[natoms - 1].resind))
         {
-            atom_not_found(FARGS, type, at[start].resind, *atoms->resinfo[resind].name, bondtype,
-                           bAllowMissing);
+            atom_not_found(FARGS, atomName, at[start].resind, *atoms->resinfo[resind].name, bondtype, bAllowMissing);
         }
     }
     else
     {
         /* The previous residue */
-        type++;
+        atomName++;
         resind    = at[start].resind;
         bOverring = !cyclicBondsIndex.empty()
                     && (cyclicBondsIterator =
@@ -165,7 +169,7 @@ int search_atom(const char*              type,
         if (bOverring && !((cyclicBondsIterator - cyclicBondsIndex.begin()) & 1))
         {
             resind = *(++cyclicBondsIterator);
-            return search_res_atom(type, resind, atoms, bondtype, false);
+            return search_res_atom(atomName, resind, atoms, bondtype, false);
         }
         else
         {
@@ -181,31 +185,32 @@ int search_atom(const char*              type,
         }
         for (i = start - 1; (i >= 0) && (at[i].resind == resind); i--)
         {
-            if (gmx_strcasecmp(type, *(anm[i])) == 0)
+            if (gmx_strcasecmp(atomName, *(atomNameSearchPool[i])) == 0)
             {
                 return i;
             }
         }
         if (start > 0)
         {
-            atom_not_found(FARGS, type, at[start].resind, *atoms->resinfo[resind].name, bondtype,
-                           bAllowMissing);
+            atom_not_found(FARGS, atomName, at[start].resind, *atoms->resinfo[resind].name, bondtype, bAllowMissing);
         }
     }
-    return -1;
+    return std::nullopt;
 }
 
-int search_res_atom(const char* type, int resind, const t_atoms* atoms, const char* bondtype, bool bAllowMissing)
+std::optional<int> search_res_atom(const char*    atomName,
+                                   int            resind,
+                                   const t_atoms* atoms,
+                                   const char*    bondtype,
+                                   bool           bAllowMissing)
 {
-    int i;
-
-    for (i = 0; (i < atoms->nr); i++)
+    for (int i = 0; (i < atoms->nr); i++)
     {
         if (atoms->atom[i].resind == resind)
         {
-            return search_atom(type, i, atoms, bondtype, bAllowMissing, gmx::ArrayRef<const int>());
+            return search_atom(atomName, i, atoms, bondtype, bAllowMissing, gmx::ArrayRef<const int>{});
         }
     }
 
-    return -1;
+    return std::nullopt;
 }

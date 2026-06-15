@@ -1,10 +1,9 @@
 #
 # This file is part of the GROMACS molecular simulation package.
 #
-# Copyright (c) 2018,2019,2020, by the GROMACS development team, led by
-# Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
-# and including many others, as listed in the AUTHORS file in the
-# top-level source directory and at http://www.gromacs.org.
+# Copyright 2018- The GROMACS Authors
+# and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+# Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
 #
 # GROMACS is free software; you can redistribute it and/or
 # modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
 #
 # You should have received a copy of the GNU Lesser General Public
 # License along with GROMACS; if not, see
-# http://www.gnu.org/licenses, or write to the Free Software Foundation,
+# https://www.gnu.org/licenses, or write to the Free Software Foundation,
 # Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
 #
 # If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
 # consider code for inclusion in the official distribution, but
 # derived work must not be called official GROMACS. Details are found
 # in the README & COPYING files - if they are missing, get the
-# official version at http://www.gromacs.org.
+# official version at https://www.gromacs.org.
 #
 # To help us fund GROMACS development, we humbly ask that you cite
-# the research papers on the package. Check out http://www.gromacs.org.
+# the research papers on the package. Check out https://www.gromacs.org.
 
 # This list file provides the Gromacs::gmxapi cmake module.
 
@@ -50,7 +49,7 @@
 # be tagged. Official GROMACS releases should be mappable to a distinct gmxapi
 # release string. For roadmap details, see https://gitlab.com/gromacs/gromacs/-/issues/2585
 set(GMXAPI_MAJOR 0)
-set(GMXAPI_MINOR 3)
+set(GMXAPI_MINOR 4)
 set(GMXAPI_PATCH 0)
 set(GMXAPI_RELEASE ${GMXAPI_MAJOR}.${GMXAPI_MINOR}.${GMXAPI_PATCH})
 
@@ -64,17 +63,16 @@ set_target_properties(gmxapi PROPERTIES
 
 if (GMX_LIB_MPI)
     # GROMACS is built against an MPI library.
-    # Clarification should be possible with resolution of #3672.
     set(_gmx_mpi_type "library")
-    # Ref https://cmake.org/cmake/help/v3.13/module/FindMPI.html#variables-for-using-mpi
-    find_package(MPI COMPONENTS C)
-    if (MPI_C_FOUND)
-        target_link_libraries(gmxapi PRIVATE MPI::MPI_C)
-        # If clients also need to link this target, we need to provide help in gmxapi-config.cmake
-        set(_gmxapi_find_dependencies "find_dependency(MPI COMPONENTS C)")
-    else()
-        message(FATAL_ERROR "Building gmxapi for MPI-enabled GROMACS, but no MPI toolchain found.")
-    endif ()
+    target_link_libraries(gmxapi PRIVATE MPI::MPI_CXX)
+    # a660b04e8d8756ed9c4dd355ad5d0d23d503eaa9 removed the definition for _gmxapi_find_dependencies
+    # that was used in gmxapi-config.cmake.in because we do not intend to require clients to build
+    # with MPI support. However, we _should_ provide some sort of helpers for clients to find
+    # tool chain and MPI installation consistent with what would be needed. We could insert a
+    # find_dependency for MPI, preconfigured with our best guess of hints. It would probably be better,
+    # though, to add the appropriate hints to the gromacs-hints.cmake so that the client can easily
+    # set or override input variables arbitrarily early in their CMake config call.
+    # _gmxapi_find_dependencies is now set in api/gmxapi/cpp/CMakeLists.txt
 elseif(GMX_THREAD_MPI)
     # GROMACS is built with its internal thread-MPI implementation.
     set(_gmx_mpi_type "tmpi")

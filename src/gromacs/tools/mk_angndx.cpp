@@ -1,13 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
- * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2012,2013,2014,2015,2016 by the GROMACS development team.
- * Copyright (c) 2017,2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 1991- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -21,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -30,29 +26,42 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 #include "gmxpre.h"
 
 #include "mk_angndx.h"
 
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 
+#include <filesystem>
+#include <string>
+
+#include "gromacs/commandline/filenm.h"
 #include "gromacs/commandline/pargs.h"
+#include "gromacs/fileio/filetypes.h"
 #include "gromacs/fileio/trxio.h"
+#include "gromacs/topology/atoms.h"
+#include "gromacs/topology/idef.h"
 #include "gromacs/topology/ifunc.h"
 #include "gromacs/topology/topology.h"
 #include "gromacs/utility/arraysize.h"
+#include "gromacs/utility/basedefinitions.h"
 #include "gromacs/utility/cstringutil.h"
 #include "gromacs/utility/fatalerror.h"
 #include "gromacs/utility/futil.h"
 #include "gromacs/utility/gmxassert.h"
+#include "gromacs/utility/real.h"
 #include "gromacs/utility/smalloc.h"
 
-static int calc_ntype(int nft, const int* ft, const t_idef* idef)
+struct gmx_output_env_t;
+
+static int calc_ntype(int nft, const InteractionFunction* ft, const t_idef* idef)
 {
     int i, f, nf = 0;
 
@@ -70,10 +79,10 @@ static int calc_ntype(int nft, const int* ft, const t_idef* idef)
     return nf;
 }
 
-static void fill_ft_ind(int nft, const int* ft, const t_idef* idef, int ft_ind[], char* grpnames[])
+static void fill_ft_ind(int nft, const InteractionFunction* ft, const t_idef* idef, int ft_ind[], char* grpnames[])
 {
     char buf[125];
-    int  i, f, ftype, ind = 0;
+    int  i, f, ind = 0;
 
     /* Loop over all the function types in the topology */
     for (i = 0; (i < idef->ntypes); i++)
@@ -82,55 +91,74 @@ static void fill_ft_ind(int nft, const int* ft, const t_idef* idef, int ft_ind[]
         /* Check all the selected function types */
         for (f = 0; f < nft; f++)
         {
-            ftype = ft[f];
+            const InteractionFunction ftype = ft[f];
             if (idef->functype[i] == ftype)
             {
                 ft_ind[i] = ind;
                 switch (ftype)
                 {
-                    case F_ANGLES:
-                        sprintf(buf, "Theta=%.1f_%.2f", idef->iparams[i].harmonic.rA,
+                    case InteractionFunction::Angles:
+                        sprintf(buf,
+                                "Theta=%.1f_%.2f",
+                                idef->iparams[i].harmonic.rA,
                                 idef->iparams[i].harmonic.krA);
                         break;
-                    case F_G96ANGLES:
-                        sprintf(buf, "Cos_th=%.1f_%.2f", idef->iparams[i].harmonic.rA,
+                    case InteractionFunction::GROMOS96Angles:
+                        sprintf(buf,
+                                "Cos_th=%.1f_%.2f",
+                                idef->iparams[i].harmonic.rA,
                                 idef->iparams[i].harmonic.krA);
                         break;
-                    case F_UREY_BRADLEY:
-                        sprintf(buf, "UB_th=%.1f_%.2f2f", idef->iparams[i].u_b.thetaA,
+                    case InteractionFunction::UreyBradleyPotential:
+                        sprintf(buf,
+                                "UB_th=%.1f_%.2f2f",
+                                idef->iparams[i].u_b.thetaA,
                                 idef->iparams[i].u_b.kthetaA);
                         break;
-                    case F_QUARTIC_ANGLES:
-                        sprintf(buf, "Q_th=%.1f_%.2f_%.2f", idef->iparams[i].qangle.theta,
-                                idef->iparams[i].qangle.c[0], idef->iparams[i].qangle.c[1]);
+                    case InteractionFunction::QuarticAngles:
+                        sprintf(buf,
+                                "Q_th=%.1f_%.2f_%.2f",
+                                idef->iparams[i].qangle.theta,
+                                idef->iparams[i].qangle.c[0],
+                                idef->iparams[i].qangle.c[1]);
                         break;
-                    case F_TABANGLES:
-                        sprintf(buf, "Table=%d_%.2f", idef->iparams[i].tab.table,
+                    case InteractionFunction::TabulatedAngles:
+                        sprintf(buf,
+                                "Table=%d_%.2f",
+                                idef->iparams[i].tab.table,
                                 idef->iparams[i].tab.kA);
                         break;
-                    case F_PDIHS:
-                        sprintf(buf, "Phi=%.1f_%d_%.2f", idef->iparams[i].pdihs.phiA,
-                                idef->iparams[i].pdihs.mult, idef->iparams[i].pdihs.cpA);
+                    case InteractionFunction::ProperDihedrals:
+                        sprintf(buf,
+                                "Phi=%.1f_%d_%.2f",
+                                idef->iparams[i].pdihs.phiA,
+                                idef->iparams[i].pdihs.mult,
+                                idef->iparams[i].pdihs.cpA);
                         break;
-                    case F_IDIHS:
-                        sprintf(buf, "Xi=%.1f_%.2f", idef->iparams[i].harmonic.rA,
+                    case InteractionFunction::ImproperDihedrals:
+                        sprintf(buf,
+                                "Xi=%.1f_%.2f",
+                                idef->iparams[i].harmonic.rA,
                                 idef->iparams[i].harmonic.krA);
                         break;
-                    case F_RBDIHS:
+                    case InteractionFunction::RyckaertBellemansDihedrals:
                         sprintf(buf, "RB-A1=%.2f", idef->iparams[i].rbdihs.rbcA[1]);
                         break;
-                    case F_RESTRANGLES:
+                    case InteractionFunction::RestrictedBendingPotential:
                         // Fall through intended
-                    case F_RESTRDIHS:
-                        sprintf(buf, "Theta=%.1f_%.2f", idef->iparams[i].harmonic.rA,
+                    case InteractionFunction::RestrictedTorsionPotential:
+                        sprintf(buf,
+                                "Theta=%.1f_%.2f",
+                                idef->iparams[i].harmonic.rA,
                                 idef->iparams[i].harmonic.krA);
                         break;
-                    case F_CBTDIHS:
+                    case InteractionFunction::CombinedBendingTorsionPotential:
                         sprintf(buf, "CBT-A1=%.2f", idef->iparams[i].cbtdihs.cbtcA[1]);
                         break;
 
                     default:
-                        gmx_fatal(FARGS, "Unsupported function type '%s' selected",
+                        gmx_fatal(FARGS,
+                                  "Unsupported function type '%s' selected",
                                   interaction_function[ftype].longname);
                 }
                 grpnames[ind] = gmx_strdup(buf);
@@ -140,17 +168,17 @@ static void fill_ft_ind(int nft, const int* ft, const t_idef* idef, int ft_ind[]
     }
 }
 
-static void fill_ang(int               nft,
-                     const int*        ft,
-                     int               fac,
-                     int               nr[],
-                     int*              index[],
-                     const int         ft_ind[],
-                     const t_topology* top,
-                     gmx_bool          bNoH,
-                     real              hq)
+static void fill_ang(int                        nft,
+                     const InteractionFunction* ft,
+                     int                        fac,
+                     int                        nr[],
+                     int*                       index[],
+                     const int                  ft_ind[],
+                     const t_topology*          top,
+                     gmx_bool                   bNoH,
+                     real                       hq)
 {
-    int           f, ftype, i, j, indg, nr_fac;
+    int           f, i, j, indg, nr_fac;
     gmx_bool      bUse;
     const t_idef* idef;
     t_atom*       atom;
@@ -162,8 +190,8 @@ static void fill_ang(int               nft,
 
     for (f = 0; f < nft; f++)
     {
-        ftype = ft[f];
-        ia    = idef->il[ftype].iatoms;
+        InteractionFunction ftype = ft[f];
+        ia                        = idef->il[ftype].iatoms;
         for (i = 0; (i < idef->il[ftype].nr);)
         {
             indg = ft_ind[ia[0]];
@@ -211,16 +239,16 @@ static void fill_ang(int               nft,
     }
 }
 
-static int* select_ftype(const char* opt, int* nft, int* mult)
+static InteractionFunction* select_ftype(const char* opt, int* nft, int* mult)
 {
-    int *ft = nullptr, ftype;
+    InteractionFunction* ft = nullptr;
 
     if (opt[0] == 'a')
     {
         *mult = 3;
-        for (ftype = 0; ftype < F_NRE; ftype++)
+        for (const auto ftype : gmx::EnumerationWrapper<InteractionFunction>{})
         {
-            if ((interaction_function[ftype].flags & IF_ATYPE) || ftype == F_TABANGLES)
+            if ((interaction_function[ftype].flags & IF_ATYPE) || ftype == InteractionFunction::TabulatedAngles)
             {
                 (*nft)++;
                 srenew(ft, *nft);
@@ -235,9 +263,9 @@ static int* select_ftype(const char* opt, int* nft, int* mult)
         snew(ft, *nft);
         switch (opt[0])
         {
-            case 'd': ft[0] = F_PDIHS; break;
-            case 'i': ft[0] = F_IDIHS; break;
-            case 'r': ft[0] = F_RBDIHS; break;
+            case 'd': ft[0] = InteractionFunction::ProperDihedrals; break;
+            case 'i': ft[0] = InteractionFunction::ImproperDihedrals; break;
+            case 'r': ft[0] = InteractionFunction::RyckaertBellemansDihedrals; break;
             default: break;
         }
     }
@@ -257,19 +285,19 @@ int gmx_mk_angndx(int argc, char* argv[])
     static gmx_bool    bH    = TRUE;
     static real        hq    = -1;
     t_pargs            pa[]  = { { "-type", FALSE, etENUM, { opt }, "Type of angle" },
-                     { "-hyd", FALSE, etBOOL, { &bH }, "Include angles with atoms with mass < 1.5" },
-                     { "-hq",
-                       FALSE,
-                       etREAL,
-                       { &hq },
-                       "Ignore angles with atoms with mass < 1.5 and magnitude of their charge "
-                       "less than this value" } };
+                                 { "-hyd", FALSE, etBOOL, { &bH }, "Include angles with atoms with mass < 1.5" },
+                                 { "-hq",
+                                   FALSE,
+                                   etREAL,
+                                   { &hq },
+                                   "Ignore angles with atoms with mass < 1.5 and magnitude of their charge "
+                                               "less than this value" } };
 
     gmx_output_env_t* oenv;
     FILE*             out;
     t_topology*       top;
     int               i, j, ntype;
-    int               nft = 0, *ft, mult = 0;
+    int               nft = 0, mult = 0;
     int**             index;
     int*              ft_ind;
     int*              nr;
@@ -284,7 +312,7 @@ int gmx_mk_angndx(int argc, char* argv[])
 
     GMX_RELEASE_ASSERT(opt[0] != nullptr, "Options inconsistency; opt[0] is NULL");
 
-    ft = select_ftype(opt[0], &nft, &mult);
+    InteractionFunction* ft = select_ftype(opt[0], &nft, &mult);
 
     top = read_top(ftp2fn(efTPR, NFILE, fnm), nullptr);
 

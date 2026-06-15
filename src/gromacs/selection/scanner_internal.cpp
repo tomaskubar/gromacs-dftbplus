@@ -1,11 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2009-2018, The GROMACS development team.
- * Copyright (c) 2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2009- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -19,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -28,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \internal \file
  * \brief Helper functions for the selection tokenizer.
@@ -56,11 +54,17 @@
 
 #include "scanner_internal.h"
 
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 
+#include <memory>
 #include <string>
 
+#include "gromacs/selection/scanner_flex.h"
+#include "gromacs/selection/selparam.h"
+#include "gromacs/selection/selvalue.h"
+#include "gromacs/utility/basedefinitions.h"
 #include "gromacs/utility/cstringutil.h"
 #include "gromacs/utility/exceptions.h"
 #include "gromacs/utility/gmxassert.h"
@@ -91,10 +95,10 @@ static int init_param_token(YYSTYPE* yylval, gmx_ana_selparam_t* param, bool bBo
     {
         GMX_RELEASE_ASSERT(param->name != nullptr,
                            "bBoolNo should only be set for a parameters with a name");
-        snew(yylval->str, strlen(param->name) + 3);
+        snew(yylval->str, std::strlen(param->name) + 3);
         yylval->str[0] = 'n';
         yylval->str[1] = 'o';
-        strcpy(yylval->str + 2, param->name);
+        std::strcpy(yylval->str + 2, param->name);
     }
     else
     {
@@ -222,11 +226,11 @@ int _gmx_sel_lexer_process_identifier(YYSTYPE* yylval, YYLTYPE* yylloc, char* yy
             {
                 /* Skip NULL parameters and too long parameters */
                 if (state->mstack[sp]->param[i].name == nullptr
-                    || strlen(state->mstack[sp]->param[i].name) > yyleng)
+                    || std::strlen(state->mstack[sp]->param[i].name) > yyleng)
                 {
                     continue;
                 }
-                if (!strncmp(state->mstack[sp]->param[i].name, yytext, yyleng))
+                if (!std::strncmp(state->mstack[sp]->param[i].name, yytext, yyleng))
                 {
                     param = &state->mstack[sp]->param[i];
                     break;
@@ -234,7 +238,7 @@ int _gmx_sel_lexer_process_identifier(YYSTYPE* yylval, YYLTYPE* yylloc, char* yy
                 /* Check separately for a 'no' prefix on boolean parameters */
                 if (state->mstack[sp]->param[i].val.type == NO_VALUE && yyleng > 2
                     && yytext[0] == 'n' && yytext[1] == 'o'
-                    && !strncmp(state->mstack[sp]->param[i].name, yytext + 2, yyleng - 2))
+                    && !std::strncmp(state->mstack[sp]->param[i].name, yytext + 2, yyleng - 2))
                 {
                     param   = &state->mstack[sp]->param[i];
                     bBoolNo = true;
@@ -330,14 +334,14 @@ void _gmx_sel_lexer_add_token(YYLTYPE* yylloc, const char* str, int len, gmx_sel
     yylloc->startIndex = yylloc->endIndex = state->pselstr.size();
     /* Do nothing if the string is empty, or if it is a space and there is
      * no other text yet, or if there already is a space. */
-    if (!str || len == 0 || strlen(str) == 0
+    if (!str || len == 0 || std::strlen(str) == 0
         || (str[0] == ' ' && str[1] == 0 && (state->pselstr.empty() || state->pselstr.back() == ' ')))
     {
         return;
     }
     if (len < 0)
     {
-        len = strlen(str);
+        len = std::strlen(str);
     }
     /* Append the token to the stored string */
     state->pselstr.append(str, len);

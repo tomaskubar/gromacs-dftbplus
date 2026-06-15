@@ -1,13 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
- * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2016,2017 by the GROMACS development team.
- * Copyright (c) 2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 1991- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -21,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -30,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 #include "gmxpre.h"
 
@@ -48,7 +44,13 @@
 #include <cstring>
 
 #include <algorithm>
+#include <array>
+#include <filesystem>
 #include <memory>
+#include <numeric>
+#include <optional>
+#include <string>
+#include <string_view>
 #include <unordered_set>
 
 #include <sys/types.h>
@@ -60,6 +62,7 @@
 #include "gromacs/gmxpreprocess/gpp_bond_atomtype.h"
 #include "gromacs/gmxpreprocess/gpp_nextnb.h"
 #include "gromacs/gmxpreprocess/grompp_impl.h"
+#include "gromacs/gmxpreprocess/notset.h"
 #include "gromacs/gmxpreprocess/readir.h"
 #include "gromacs/gmxpreprocess/topdirs.h"
 #include "gromacs/gmxpreprocess/toppush.h"
@@ -71,32 +74,41 @@
 #include "gromacs/mdtypes/inputrec.h"
 #include "gromacs/mdtypes/md_enums.h"
 #include "gromacs/pbcutil/pbc.h"
+#include "gromacs/topology/atoms.h"
 #include "gromacs/topology/block.h"
 #include "gromacs/topology/exclusionblocks.h"
+#include "gromacs/topology/idef.h"
 #include "gromacs/topology/ifunc.h"
 #include "gromacs/topology/symtab.h"
 #include "gromacs/topology/topology.h"
+#include "gromacs/topology/topology_enums.h"
+#include "gromacs/utility/arrayref.h"
+#include "gromacs/utility/basedefinitions.h"
 #include "gromacs/utility/cstringutil.h"
 #include "gromacs/utility/fatalerror.h"
 #include "gromacs/utility/futil.h"
 #include "gromacs/utility/gmxassert.h"
+#include "gromacs/utility/listoflists.h"
 #include "gromacs/utility/logger.h"
 #include "gromacs/utility/pleasecite.h"
 #include "gromacs/utility/smalloc.h"
+#include "gromacs/utility/stringutil.h"
+
+struct t_nbparam;
 
 #define OPENDIR '['  /* starting sign for directive */
 #define CLOSEDIR ']' /* ending sign for directive   */
 
-static void gen_pairs(const InteractionsOfType& nbs, InteractionsOfType* pairs, real fudge, int comb)
+static void gen_pairs(const InteractionsOfType& nbs, InteractionsOfType* pairs, real fudge, CombinationRule comb)
 {
     real scaling;
     int  ntp = nbs.size();
     int  nnn = static_cast<int>(std::sqrt(static_cast<double>(ntp)));
     GMX_ASSERT(nnn * nnn == ntp,
                "Number of pairs of generated non-bonded parameters should be a perfect square");
-    int nrfp  = NRFP(F_LJ);
-    int nrfpA = interaction_function[F_LJ14].nrfpA;
-    int nrfpB = interaction_function[F_LJ14].nrfpB;
+    int nrfp  = NRFP(InteractionFunction::LennardJonesShortRange);
+    int nrfpA = interaction_function[InteractionFunction::LennardJones14].nrfpA;
+    int nrfpB = interaction_function[InteractionFunction::LennardJones14].nrfpB;
 
     if ((nrfp != nrfpA) || (nrfpA != nrfpB))
     {
@@ -115,14 +127,15 @@ static void gen_pairs(const InteractionsOfType& nbs, InteractionsOfType* pairs, 
         /* Copy normal and FEP parameters and multiply by fudge factor */
         gmx::ArrayRef<const real> existingParam = type.forceParam();
         GMX_RELEASE_ASSERT(2 * nrfp <= MAXFORCEPARAM,
-                           "Can't have more parameters than half of maximum p  arameter number");
+                           "Can't have more parameters than half of maximum parameter number");
         for (int j = 0; j < nrfp; j++)
         {
             /* If we are using sigma/epsilon values, only the epsilon values
              * should be scaled, but not sigma.
              * The sigma values have even indices 0,2, etc.
              */
-            if ((comb == eCOMB_ARITHMETIC || comb == eCOMB_GEOM_SIG_EPS) && (j % 2 == 0))
+            if ((comb == CombinationRule::Arithmetic || comb == CombinationRule::GeomSigEps)
+                && (j % 2 == 0))
             {
                 scaling = 1.0;
             }
@@ -134,15 +147,15 @@ static void gen_pairs(const InteractionsOfType& nbs, InteractionsOfType* pairs, 
             forceParam[j]        = scaling * existingParam[j];
             forceParam[nrfp + j] = scaling * existingParam[j];
         }
-        pairs->interactionTypes.emplace_back(InteractionOfType(atomNumbers, forceParam));
+        pairs->interactionTypes.emplace_back(atomNumbers, forceParam);
         i++;
     }
 }
 
-double check_mol(const gmx_mtop_t* mtop, warninp* wi)
+double check_mol(const gmx_mtop_t* mtop, WarningHandler* wi)
 {
     char   buf[256];
-    int    i, ri, pt;
+    int    i, ri;
     double q;
     real   m, mB;
 
@@ -155,34 +168,174 @@ double check_mol(const gmx_mtop_t* mtop, warninp* wi)
         for (i = 0; (i < atoms->nr); i++)
         {
             q += molb.nmol * atoms->atom[i].q;
-            m  = atoms->atom[i].m;
-            mB = atoms->atom[i].mB;
-            pt = atoms->atom[i].ptype;
+            m               = atoms->atom[i].m;
+            mB              = atoms->atom[i].mB;
+            ParticleType pt = atoms->atom[i].ptype;
             /* If the particle is an atom or a nucleus it must have a mass,
              * else, if it is a shell, a vsite or a bondshell it can have mass zero
              */
-            if (((m <= 0.0) || (mB <= 0.0)) && ((pt == eptAtom) || (pt == eptNucleus)))
+            if (((m <= 0.0) || (mB <= 0.0)) && ((pt == ParticleType::Atom) || (pt == ParticleType::Nucleus)))
             {
                 ri = atoms->atom[i].resind;
-                sprintf(buf, "atom %s (Res %s-%d) has mass %g (state A) / %g (state B)\n",
-                        *(atoms->atomname[i]), *(atoms->resinfo[ri].name), atoms->resinfo[ri].nr, m, mB);
-                warning_error(wi, buf);
+                sprintf(buf,
+                        "atom %s (Res %s-%d) has mass %g (state A) / %g (state B)\n",
+                        *(atoms->atomname[i]),
+                        *(atoms->resinfo[ri].name),
+                        atoms->resinfo[ri].nr,
+                        m,
+                        mB);
+                wi->addError(buf);
             }
-            else if (((m != 0) || (mB != 0)) && (pt == eptVSite))
+            else if (((m != 0) || (mB != 0)) && (pt == ParticleType::VSite))
             {
                 ri = atoms->atom[i].resind;
                 sprintf(buf,
                         "virtual site %s (Res %s-%d) has non-zero mass %g (state A) / %g (state "
                         "B)\n"
                         "     Check your topology.\n",
-                        *(atoms->atomname[i]), *(atoms->resinfo[ri].name), atoms->resinfo[ri].nr, m, mB);
-                warning_error(wi, buf);
+                        *(atoms->atomname[i]),
+                        *(atoms->resinfo[ri].name),
+                        atoms->resinfo[ri].nr,
+                        m,
+                        mB);
+                wi->addError(buf);
                 /* The following statements make LINCS break! */
                 /* atoms->atom[i].m=0; */
             }
         }
     }
     return q;
+}
+
+/*! \brief Describe molecule and involved atoms for a dihedral interaction of a given type
+ *
+ * Searches in the dihedrals of type 3 (Ryckaert-Bellemans or Fourier) for an interaction
+ * type matching the interactionType input parameters, returning for the first match
+ * a string with the name of the  molecule and the 4 involved atoms.
+ *
+ * Precondition: the interaction should exist in the topology
+ *
+ */
+static std::string describeAtomsForRBDihedralOfGivenType(const gmx_mtop_t& mtop, int interactionType)
+{
+    for (const auto& molt : mtop.moltype)
+    {
+        const int* ia = molt.ilist[InteractionFunction::RyckaertBellemansDihedrals].iatoms.data();
+        for (int i = 0; (i < molt.ilist[InteractionFunction::RyckaertBellemansDihedrals].size());)
+        {
+            const int                 type  = ia[0];
+            const InteractionFunction ftype = mtop.ffparams.functype[type];
+            const int                 nra   = interaction_function[ftype].nratoms;
+            if (type == interactionType)
+            {
+                return gmx::formatString(
+                        "First such dihedral in molecule %s, involving atoms %d %d %d %d",
+                        *(molt.name),
+                        ia[1],
+                        ia[2],
+                        ia[3],
+                        ia[4]);
+            }
+            ia += nra + 1;
+            i += nra + 1;
+        }
+    }
+    gmx_fatal(FARGS, "Precondition violation: could not find RB interaction of given type %d", interactionType);
+}
+
+void checkRBDihedralSum(const gmx_mtop_t& mtop, const t_inputrec& ir, WarningHandler* wi)
+{
+    /*
+     * The sum of the RB dihedral coefficient being zero is relevant when:
+     *     - Free energy computation is being performed (dHdl)
+     *     - Comparing energies between force field ports and/or other MD codes
+     *  because this affect the value of the potential energy.
+     *
+     *  We can clearly detect problems in the first situation: free energy is enabled, stateA
+     *  and stateB have a different sum (=> potential energy "offset" at 0 degree), so we emit a
+     *  warning. The second case is more subtle, since formally the potential is up to a constant,
+     *  which does not affect the dynamics. We therefore only emit a note.
+     */
+
+    // Mistakes here are typically due to using the wrong formula to port dihedrals, not numerical
+    // issues, so we use a relatively large tolerance
+    const real         absoluteTolerance        = 0.01;
+    int                numSumCoefficientNotZero = 0;
+    std::optional<int> indexOfFirstSumCoefficientNotZero;
+    int                numSumCoefficientDifferentInStateAStateB = 0;
+    std::optional<int> indexOfSumCoefficientDifferentInStateAStateB;
+
+    for (int j = 0; j < gmx::ssize(mtop.ffparams.functype); ++j)
+    {
+        InteractionFunction ftype = mtop.ffparams.functype[j];
+        if (ftype == InteractionFunction::RyckaertBellemansDihedrals)
+        {
+            const t_iparams& params = mtop.ffparams.iparams[j];
+            const real       sum_a =
+                    std::accumulate(std::begin(params.rbdihs.rbcA), std::end(params.rbdihs.rbcA), 0.0);
+            const real sum_b =
+                    std::accumulate(std::begin(params.rbdihs.rbcB), std::end(params.rbdihs.rbcB), 0.0);
+
+            if (std::abs(sum_a - sum_b) > absoluteTolerance)
+            {
+                numSumCoefficientDifferentInStateAStateB++;
+                if (!indexOfSumCoefficientDifferentInStateAStateB.has_value())
+                {
+                    indexOfSumCoefficientDifferentInStateAStateB = j;
+                }
+            }
+
+            if (std::abs(sum_a) > absoluteTolerance || std::abs(sum_b) > absoluteTolerance)
+            {
+                numSumCoefficientNotZero++;
+                if (!indexOfFirstSumCoefficientNotZero.has_value())
+                {
+                    indexOfFirstSumCoefficientNotZero = j;
+                }
+            }
+        }
+    }
+
+    // At this stage of grompp, we only have the interactions that are going to be used in the
+    // simulation - this eliminates warning unrelated to the user's system, but also unfortunately
+    // means that we cannot easily identify the file/line where the offending parameters were
+    // originally defined. We can however go through the molecule types and print one instance of
+    // the offending dihedral.
+
+    auto generateMessage = [](int numDihedrals, const std::string& note, const std::string& involvedAtoms)
+    {
+        return gmx::formatString(
+                "%d dihedrals with function type 3 (Ryckaert-Bellemans or Fourier) have "
+                "coefficients %s"
+                "\n%s",
+                numDihedrals,
+                note.c_str(),
+                involvedAtoms.c_str());
+    };
+
+    if (numSumCoefficientNotZero > 0)
+    {
+        std::string involvedAtoms =
+                describeAtomsForRBDihedralOfGivenType(mtop, indexOfFirstSumCoefficientNotZero.value());
+        std::string note =
+                "that do not sum to zero. This does not affect the simulation and can "
+                "be ignored, unless you are comparing potential energy values with other force "
+                "field ports and/or MD software.";
+        std::string message = generateMessage(numSumCoefficientNotZero, note, involvedAtoms);
+        wi->addNote(message);
+    }
+
+    if (numSumCoefficientDifferentInStateAStateB > 0 && ir.efep != FreeEnergyPerturbationType::No)
+    {
+        std::string involvedAtoms = describeAtomsForRBDihedralOfGivenType(
+                mtop, indexOfSumCoefficientDifferentInStateAStateB.value());
+        std::string note =
+                "whose sums do not match in state A and B. This could introduce an "
+                "undesired offset in dHdl values.";
+        std::string message =
+                generateMessage(numSumCoefficientDifferentInStateAStateB, note, involvedAtoms);
+        wi->addWarning(message);
+    }
 }
 
 /*! \brief Returns the rounded charge of a molecule, when close to integer, otherwise returns the original charge.
@@ -238,55 +391,69 @@ static void sum_q(const t_atoms* atoms, int numMols, double* qTotA, double* qTot
     *qTotB += numMols * roundedMoleculeCharge(qmolB, sumAbsQB);
 }
 
-static void get_nbparm(char* nb_str, char* comb_str, int* nb, int* comb, warninp* wi)
+static void get_nbparm(char* nb_str, char* comb_str, VanDerWaalsPotential* nb, CombinationRule* comb, WarningHandler* wi)
 {
-    int  i;
-    char warn_buf[STRLEN];
-
-    *nb = -1;
-    for (i = 1; (i < eNBF_NR); i++)
+    *nb = VanDerWaalsPotential::Count;
+    for (auto i : gmx::EnumerationArray<VanDerWaalsPotential, bool>::keys())
     {
-        if (gmx_strcasecmp(nb_str, enbf_names[i]) == 0)
+        if (gmx_strcasecmp(nb_str, enumValueToString(i)) == 0)
         {
             *nb = i;
         }
     }
-    if (*nb == -1)
+    if (*nb == VanDerWaalsPotential::Count)
     {
-        *nb = strtol(nb_str, nullptr, 10);
+        int integerValue = std::strtol(nb_str, nullptr, 10);
+        if ((integerValue < 1) || (integerValue >= static_cast<int>(VanDerWaalsPotential::Count)))
+        {
+            std::string message =
+                    gmx::formatString("Invalid nonbond function selector '%s' using %s",
+                                      nb_str,
+                                      enumValueToString(VanDerWaalsPotential::LJ));
+            wi->addError(message);
+            *nb = VanDerWaalsPotential::LJ;
+        }
+        else
+        {
+            *nb = static_cast<VanDerWaalsPotential>(integerValue);
+        }
     }
-    if ((*nb < 1) || (*nb >= eNBF_NR))
+    *comb = CombinationRule::Count;
+    for (auto i : gmx::EnumerationArray<CombinationRule, bool>::keys())
     {
-        sprintf(warn_buf, "Invalid nonbond function selector '%s' using %s", nb_str, enbf_names[1]);
-        warning_error(wi, warn_buf);
-        *nb = 1;
-    }
-    *comb = -1;
-    for (i = 1; (i < eCOMB_NR); i++)
-    {
-        if (gmx_strcasecmp(comb_str, ecomb_names[i]) == 0)
+        if (gmx_strcasecmp(comb_str, enumValueToString(i)) == 0)
         {
             *comb = i;
         }
     }
-    if (*comb == -1)
+    if (*comb == CombinationRule::Count)
     {
-        *comb = strtol(comb_str, nullptr, 10);
-    }
-    if ((*comb < 1) || (*comb >= eCOMB_NR))
-    {
-        sprintf(warn_buf, "Invalid combination rule selector '%s' using %s", comb_str, ecomb_names[1]);
-        warning_error(wi, warn_buf);
-        *comb = 1;
+        int integerValue = std::strtol(comb_str, nullptr, 10);
+        if ((integerValue < 1) || (integerValue >= static_cast<int>(CombinationRule::Count)))
+        {
+            std::string message =
+                    gmx::formatString("Invalid combination rule selector '%s' using %s",
+                                      comb_str,
+                                      enumValueToString(CombinationRule::Geometric));
+            wi->addError(message);
+            *comb = CombinationRule::Geometric;
+        }
+        else
+        {
+            *comb = static_cast<CombinationRule>(integerValue);
+        }
     }
 }
 
-static char** cpp_opts(const char* define, const char* include, warninp* wi)
+/*! \brief Parses define and include flags.
+ *
+ * Returns a vector of parsed include/define flags, with an extra nullptr entry at the back
+ * for consumers that expect null-terminated char** structures.
+ */
+static std::vector<char*> cpp_opts(const char* define, const char* include, WarningHandler* wi)
 {
     int         n, len;
-    int         ncppopts = 0;
     const char* cppadds[2];
-    char**      cppopts   = nullptr;
     const char* option[2] = { "-D", "-I" };
     const char* nopt[2]   = { "define", "include" };
     const char* ptr;
@@ -296,6 +463,7 @@ static char** cpp_opts(const char* define, const char* include, warninp* wi)
 
     cppadds[0] = define;
     cppadds[1] = include;
+    std::vector<char*> cppOptions;
     for (n = 0; (n < 2); n++)
     {
         if (cppadds[n])
@@ -303,12 +471,12 @@ static char** cpp_opts(const char* define, const char* include, warninp* wi)
             ptr = cppadds[n];
             while (*ptr != '\0')
             {
-                while ((*ptr != '\0') && isspace(*ptr))
+                while ((*ptr != '\0') && std::isspace(*ptr))
                 {
                     ptr++;
                 }
                 rptr = ptr;
-                while ((*rptr != '\0') && !isspace(*rptr))
+                while ((*rptr != '\0') && !std::isspace(*rptr))
                 {
                     rptr++;
                 }
@@ -316,17 +484,16 @@ static char** cpp_opts(const char* define, const char* include, warninp* wi)
                 if (len > 2)
                 {
                     snew(buf, (len + 1));
-                    strncpy(buf, ptr, len);
-                    if (strstr(ptr, option[n]) != ptr)
+                    std::strncpy(buf, ptr, len);
+                    if (std::strstr(ptr, option[n]) != ptr)
                     {
-                        set_warning_line(wi, "mdp file", -1);
+                        wi->setFileAndLineNumber("mdp file", -1);
                         sprintf(warn_buf, "Malformed %s option %s", nopt[n], buf);
-                        warning(wi, warn_buf);
+                        wi->addWarning(warn_buf);
                     }
                     else
                     {
-                        srenew(cppopts, ++ncppopts);
-                        cppopts[ncppopts - 1] = gmx_strdup(buf);
+                        cppOptions.emplace_back(gmx_strdup(buf));
                     }
                     sfree(buf);
                     ptr = rptr;
@@ -334,10 +501,9 @@ static char** cpp_opts(const char* define, const char* include, warninp* wi)
             }
         }
     }
-    srenew(cppopts, ++ncppopts);
-    cppopts[ncppopts - 1] = nullptr;
-
-    return cppopts;
+    // Users of cppOptions expect a null last element.
+    cppOptions.emplace_back(nullptr);
+    return cppOptions;
 }
 
 
@@ -365,29 +531,29 @@ static void make_atoms_sys(gmx::ArrayRef<const gmx_molblock_t>      molblock,
 }
 
 
-static char** read_topol(const char*                           infile,
-                         const char*                           outfile,
-                         const char*                           define,
-                         const char*                           include,
-                         t_symtab*                             symtab,
-                         PreprocessingAtomTypes*               atypes,
-                         std::vector<MoleculeInformation>*     molinfo,
-                         std::unique_ptr<MoleculeInformation>* intermolecular_interactions,
-                         gmx::ArrayRef<InteractionsOfType>     interactions,
-                         int*                                  combination_rule,
-                         double*                               reppow,
-                         t_gromppopts*                         opts,
-                         real*                                 fudgeQQ,
-                         std::vector<gmx_molblock_t>*          molblock,
-                         bool*                                 ffParametrizedWithHBondConstraints,
-                         bool                                  bFEP,
-                         bool                                  bZero,
-                         bool                                  usingFullRangeElectrostatics,
-                         warninp*                              wi,
-                         const gmx::MDLogger&                  logger)
+static char** read_topol(const char*                                 infile,
+                         const std::optional<std::filesystem::path>& outfile,
+                         const char*                                 define,
+                         const char*                                 include,
+                         t_symtab*                                   symtab,
+                         PreprocessingAtomTypes*                     atypes,
+                         std::vector<MoleculeInformation>*           molinfo,
+                         std::unique_ptr<MoleculeInformation>*       intermolecular_interactions,
+                         gmx::EnumerationArray<InteractionFunction, InteractionsOfType>& interactions,
+                         CombinationRule*             combination_rule,
+                         double*                      reppow,
+                         t_gromppopts*                opts,
+                         real*                        fudgeQQ,
+                         std::vector<gmx_molblock_t>* molblock,
+                         bool*                        ffParametrizedWithHBondConstraints,
+                         bool                         bFEP,
+                         bool                         bZero,
+                         bool                         usingFullRangeElectrostatics,
+                         WarningHandler*              wi,
+                         const gmx::MDLogger&         logger)
 {
     FILE*                out;
-    int                  sl, nb_funct;
+    int                  sl;
     char *               pline = nullptr, **title = nullptr;
     char                 line[STRLEN], errbuf[256], comb_str[256], nb_str[256];
     char                 genpairs[32];
@@ -410,14 +576,14 @@ static char** read_topol(const char*                           infile,
     char        warn_buf[STRLEN];
     const char* floating_point_arithmetic_tip =
             "Total charge should normally be an integer. See\n"
-            "http://www.gromacs.org/Documentation/Floating_Point_Arithmetic\n"
+            "https://manual.gromacs.org/current/user-guide/floating-point.html\n"
             "for discussion on how close it should be to an integer.\n";
     /* We need to open the output file before opening the input file,
      * because cpp_open_file can change the current working directory.
      */
     if (outfile)
     {
-        out = gmx_fio_fopen(outfile, "w");
+        out = gmx_fio_fopen(outfile.value(), "w");
     }
     else
     {
@@ -426,7 +592,7 @@ static char** read_topol(const char*                           infile,
 
     /* open input file */
     auto cpp_opts_return = cpp_opts(define, include, wi);
-    status               = cpp_open_file(infile, &handle, cpp_opts_return);
+    status               = cpp_open_file(infile, &handle, cpp_opts_return.data());
     if (status != 0)
     {
         gmx_fatal(FARGS, "%s", cpp_error(&handle, status));
@@ -438,13 +604,12 @@ static char** read_topol(const char*                           infile,
     nbparam = nullptr;              /* The temporary non-bonded matrix */
     pair    = nullptr;              /* The temporary pair interaction matrix */
     std::vector<std::vector<gmx::ExclusionBlock>> exclusionBlocks;
-    nb_funct = F_LJ;
+    VanDerWaalsPotential                          nb_funct = VanDerWaalsPotential::LJ;
 
     *reppow = 12.0; /* Default value for repulsion power     */
 
-    /* Init the number of CMAP torsion angles  and grid spacing */
-    interactions[F_CMAP].cmakeGridSpacing = 0;
-    interactions[F_CMAP].cmapAngles       = 0;
+    /* Init the number of CMAP torsion angles */
+    interactions[InteractionFunction::DihedralEnergyCorrectionMap].numCmaps_ = 0;
 
     bWarn_copy_A_B = bFEP;
 
@@ -470,12 +635,12 @@ static char** read_topol(const char*                           infile,
                 fprintf(out, "%s\n", line);
             }
 
-            set_warning_line(wi, cpp_cur_file(&handle), cpp_cur_linenr(&handle));
+            wi->setFileAndLineNumber(cpp_cur_file(&handle), cpp_cur_linenr(&handle));
 
             pline = gmx_strdup(line);
 
             /* Strip trailing '\' from pline, if it exists */
-            sl = strlen(pline);
+            sl = std::strlen(pline);
             if ((sl > 0) && (pline[sl - 1] == CONTINUE))
             {
                 pline[sl - 1] = ' ';
@@ -485,14 +650,14 @@ static char** read_topol(const char*                           infile,
             while (continuing(line))
             {
                 status = cpp_read_line(&handle, STRLEN, line);
-                set_warning_line(wi, cpp_cur_file(&handle), cpp_cur_linenr(&handle));
+                wi->setFileAndLineNumber(cpp_cur_file(&handle), cpp_cur_linenr(&handle));
 
                 /* Since we depend on the '\' being present to continue to read, we copy line
                  * to a tmp string, strip the '\' from that string, and cat it to pline
                  */
                 tmp_line = gmx_strdup(line);
 
-                sl = strlen(tmp_line);
+                sl = std::strlen(tmp_line);
                 if ((sl > 0) && (tmp_line[sl - 1] == CONTINUE))
                 {
                     tmp_line[sl - 1] = ' ';
@@ -511,8 +676,8 @@ static char** read_topol(const char*                           infile,
                     }
                 }
 
-                srenew(pline, strlen(pline) + strlen(tmp_line) + 1);
-                strcat(pline, tmp_line);
+                srenew(pline, std::strlen(pline) + std::strlen(tmp_line) + 1);
+                std::strcat(pline, tmp_line);
                 sfree(tmp_line);
             }
 
@@ -521,7 +686,7 @@ static char** read_topol(const char*                           infile,
             trim(pline);
 
             /* if there is something left... */
-            if (static_cast<int>(strlen(pline)) > 0)
+            if (static_cast<int>(std::strlen(pline)) > 0)
             {
                 if (pline[0] == OPENDIR)
                 {
@@ -530,7 +695,7 @@ static char** read_topol(const char*                           infile,
                      * skip spaces and tabs on either side of directive
                      */
                     dirstr = gmx_strdup((pline + 1));
-                    if ((dummy2 = strchr(dirstr, CLOSEDIR)) != nullptr)
+                    if ((dummy2 = std::strchr(dirstr, CLOSEDIR)) != nullptr)
                     {
                         (*dummy2) = 0;
                     }
@@ -539,7 +704,7 @@ static char** read_topol(const char*                           infile,
                     if ((newd = str2dir(dirstr)) == Directive::d_invalid)
                     {
                         sprintf(errbuf, "Invalid directive %s", dirstr);
-                        warning_error(wi, errbuf);
+                        wi->addError(errbuf);
                     }
                     else
                     {
@@ -553,8 +718,10 @@ static char** read_topol(const char*                           infile,
                         {
                             /* we should print here which directives should have
                                been present, and which actually are */
-                            gmx_fatal(FARGS, "%s\nInvalid order for directive %s",
-                                      cpp_error(&handle, eCPP_SYNTAX), dir2str(newd));
+                            gmx_fatal(FARGS,
+                                      "%s\nInvalid order for directive %s",
+                                      cpp_error(&handle, eCPP_SYNTAX),
+                                      enumValueToString(newd));
                             /* d = Directive::d_invalid; */
                         }
 
@@ -567,7 +734,7 @@ static char** read_topol(const char*                           infile,
                                  * by making a "molecule" of the size of the system.
                                  */
                                 *intermolecular_interactions = std::make_unique<MoleculeInformation>();
-                                mi0                          = intermolecular_interactions->get();
+                                mi0 = intermolecular_interactions->get();
                                 mi0->initMolInfo();
                                 make_atoms_sys(*molblock, *molinfo, &mi0->atoms);
                             }
@@ -586,12 +753,13 @@ static char** read_topol(const char*                           infile,
                         case Directive::d_defaults:
                             if (bReadDefaults)
                             {
-                                gmx_fatal(FARGS, "%s\nFound a second defaults directive.\n",
+                                gmx_fatal(FARGS,
+                                          "%s\nFound a second defaults directive.\n",
                                           cpp_error(&handle, eCPP_SYNTAX));
                             }
                             bReadDefaults = TRUE;
-                            nscan = sscanf(pline, "%s%s%s%lf%lf%lf", nb_str, comb_str, genpairs,
-                                           &fLJ, &fQQ, &fPOW);
+                            nscan         = sscanf(
+                                    pline, "%s%s%s%lf%lf%lf", nb_str, comb_str, genpairs, &fLJ, &fQQ, &fPOW);
                             if (nscan < 2)
                             {
                                 too_few(wi);
@@ -606,7 +774,7 @@ static char** read_topol(const char*                           infile,
                                 if (nscan >= 3)
                                 {
                                     bGenPairs = (gmx::equalCaseInsensitive(genpairs, "Y", 1));
-                                    if (nb_funct != eNBF_LJ && bGenPairs)
+                                    if (nb_funct != VanDerWaalsPotential::LJ && bGenPairs)
                                     {
                                         gmx_fatal(FARGS,
                                                   "Generating pair parameters is only supported "
@@ -626,12 +794,18 @@ static char** read_topol(const char*                           infile,
                                     *reppow = fPOW;
                                 }
                             }
-                            nb_funct = ifunc_index(Directive::d_nonbond_params, nb_funct);
+                            nb_funct = static_cast<VanDerWaalsPotential>(ifunc_index(
+                                    Directive::d_nonbond_params, static_cast<int>(nb_funct)));
 
                             break;
                         case Directive::d_atomtypes:
-                            push_at(symtab, atypes, &bondAtomType, pline, nb_funct, &nbparam,
-                                    bGenPairs ? &pair : nullptr, wi);
+                            push_at(atypes,
+                                    &bondAtomType,
+                                    pline,
+                                    static_cast<int>(nb_funct),
+                                    &nbparam,
+                                    bGenPairs ? &pair : nullptr,
+                                    wi);
                             break;
 
                         case Directive::d_bondtypes: // Intended to fall through
@@ -641,7 +815,12 @@ static char** read_topol(const char*                           infile,
                         case Directive::d_pairtypes:
                             if (bGenPairs)
                             {
-                                push_nbt(d, pair, atypes, pline, F_LJ14, wi);
+                                push_nbt(d,
+                                         pair,
+                                         atypes,
+                                         pline,
+                                         static_cast<int>(InteractionFunction::LennardJones14),
+                                         wi);
                             }
                             else
                             {
@@ -657,7 +836,7 @@ static char** read_topol(const char*                           infile,
                             break;
 
                         case Directive::d_nonbond_params:
-                            push_nbt(d, nbparam, atypes, pline, nb_funct, wi);
+                            push_nbt(d, nbparam, atypes, pline, static_cast<int>(nb_funct), wi);
                             break;
 
                         case Directive::d_implicit_genborn_params: // NOLINT bugprone-branch-clone
@@ -673,7 +852,13 @@ static char** read_topol(const char*                           infile,
                             break;
 
                         case Directive::d_cmaptypes:
-                            push_cmaptype(d, interactions, 5, atypes, &bondAtomType, pline, wi);
+                            push_cmaptype(d,
+                                          interactions,
+                                          NRAL(InteractionFunction::DihedralEnergyCorrectionMap),
+                                          atypes,
+                                          &bondAtomType,
+                                          pline,
+                                          wi);
                             break;
 
                         case Directive::d_moleculetype:
@@ -686,32 +871,46 @@ static char** read_topol(const char*                           infile,
                                         || opts->couple_lam1 == ecouplamNONE
                                         || opts->couple_lam1 == ecouplamQ))
                                 {
-                                    dcatt = add_atomtype_decoupled(symtab, atypes, &nbparam,
-                                                                   bGenPairs ? &pair : nullptr);
+                                    dcatt = add_atomtype_decoupled(
+                                            atypes, &nbparam, bGenPairs ? &pair : nullptr);
                                 }
                                 ntype  = atypes->size();
                                 ncombs = (ntype * (ntype + 1)) / 2;
-                                generate_nbparams(*combination_rule, nb_funct,
-                                                  &(interactions[nb_funct]), atypes, wi);
-                                ncopy = copy_nbparams(nbparam, nb_funct, &(interactions[nb_funct]), ntype);
+                                generate_nbparams(*combination_rule,
+                                                  static_cast<int>(nb_funct),
+                                                  &(interactions[static_cast<int>(nb_funct)]),
+                                                  atypes,
+                                                  wi);
+                                ncopy = copy_nbparams(nbparam,
+                                                      static_cast<int>(nb_funct),
+                                                      &(interactions[static_cast<int>(nb_funct)]),
+                                                      ntype);
                                 GMX_LOG(logger.info)
                                         .asParagraph()
                                         .appendTextFormatted(
                                                 "Generated %d of the %d non-bonded parameter "
                                                 "combinations",
-                                                ncombs - ncopy, ncombs);
+                                                ncombs - ncopy,
+                                                ncombs);
                                 free_nbparam(nbparam, ntype);
                                 if (bGenPairs)
                                 {
-                                    gen_pairs((interactions[nb_funct]), &(interactions[F_LJ14]),
-                                              fudgeLJ, *combination_rule);
-                                    ncopy = copy_nbparams(pair, nb_funct, &(interactions[F_LJ14]), ntype);
+                                    gen_pairs((interactions[static_cast<int>(nb_funct)]),
+                                              &(interactions[InteractionFunction::LennardJones14]),
+                                              fudgeLJ,
+                                              *combination_rule);
+                                    ncopy = copy_nbparams(
+                                            pair,
+                                            static_cast<int>(nb_funct),
+                                            &(interactions[InteractionFunction::LennardJones14]),
+                                            ntype);
                                     GMX_LOG(logger.info)
                                             .asParagraph()
                                             .appendTextFormatted(
                                                     "Generated %d of the %d 1-4 parameter "
                                                     "combinations",
-                                                    ncombs - ncopy, ncombs);
+                                                    ncombs - ncopy,
+                                                    ncombs);
                                     free_nbparam(pair, ntype);
                                 }
                                 /* Copy GBSA parameters to atomtype array? */
@@ -737,17 +936,40 @@ static char** read_topol(const char*                           infile,
                             GMX_RELEASE_ASSERT(
                                     mi0,
                                     "Need to have a valid MoleculeInformation object to work on");
-                            push_bond(d, interactions, mi0->interactions, &(mi0->atoms), atypes,
-                                      pline, FALSE, bGenPairs, *fudgeQQ, bZero, &bWarn_copy_A_B, wi);
+                            push_bond(d,
+                                      interactions,
+                                      mi0->interactions,
+                                      &(mi0->atoms),
+                                      atypes,
+                                      pline,
+                                      FALSE,
+                                      bGenPairs,
+                                      *fudgeQQ,
+                                      bZero,
+                                      false,
+                                      &bWarn_copy_A_B,
+                                      wi);
                             break;
                         case Directive::d_pairs_nb:
                             GMX_RELEASE_ASSERT(
                                     mi0,
                                     "Need to have a valid MoleculeInformation object to work on");
-                            push_bond(d, interactions, mi0->interactions, &(mi0->atoms), atypes,
-                                      pline, FALSE, FALSE, 1.0, bZero, &bWarn_copy_A_B, wi);
+                            push_bond(d,
+                                      interactions,
+                                      mi0->interactions,
+                                      &(mi0->atoms),
+                                      atypes,
+                                      pline,
+                                      FALSE,
+                                      FALSE,
+                                      1.0,
+                                      bZero,
+                                      false,
+                                      &bWarn_copy_A_B,
+                                      wi);
                             break;
 
+                        case Directive::d_vsites1:
                         case Directive::d_vsites2:
                         case Directive::d_vsites3:
                         case Directive::d_vsites4:
@@ -768,8 +990,19 @@ static char** read_topol(const char*                           infile,
                             GMX_RELEASE_ASSERT(
                                     mi0,
                                     "Need to have a valid MoleculeInformation object to work on");
-                            push_bond(d, interactions, mi0->interactions, &(mi0->atoms), atypes,
-                                      pline, TRUE, bGenPairs, *fudgeQQ, bZero, &bWarn_copy_A_B, wi);
+                            push_bond(d,
+                                      interactions,
+                                      mi0->interactions,
+                                      &(mi0->atoms),
+                                      atypes,
+                                      pline,
+                                      TRUE,
+                                      bGenPairs,
+                                      *fudgeQQ,
+                                      bZero,
+                                      cpp_find_define(&handle, "_FF_AMBER_LEAP_ATOM_REORDERING") != nullptr,
+                                      &bWarn_copy_A_B,
+                                      wi);
                             break;
                         case Directive::d_cmap:
                             GMX_RELEASE_ASSERT(
@@ -814,7 +1047,7 @@ static char** read_topol(const char*                           infile,
 
                             bCouple = (opts->couple_moltype != nullptr
                                        && (gmx_strcasecmp("system", opts->couple_moltype) == 0
-                                           || strcmp(*(mi0->name), opts->couple_moltype) == 0));
+                                           || std::strcmp(*(mi0->name), opts->couple_moltype) == 0));
                             if (bCouple)
                             {
                                 nmol_couple += nrcopies;
@@ -828,8 +1061,9 @@ static char** read_topol(const char*                           infile,
                                     .asParagraph()
                                     .appendTextFormatted(
                                             "Excluding %d bonded neighbours molecule type '%s'",
-                                            mi0->nrexcl, *mi0->name);
-                            sum_q(&mi0->atoms, nrcopies, &qt, &qBt);
+                                            mi0->nrexcl,
+                                            *mi0->name);
+
                             if (!mi0->bProcessed)
                             {
                                 generate_excl(mi0->nrexcl, mi0->atoms.nr, mi0->interactions, &(mi0->excls));
@@ -838,20 +1072,39 @@ static char** read_topol(const char*                           infile,
 
                                 if (bCouple)
                                 {
-                                    convert_moltype_couple(mi0, dcatt, *fudgeQQ, opts->couple_lam0,
-                                                           opts->couple_lam1, opts->bCoupleIntra,
-                                                           nb_funct, &(interactions[nb_funct]), wi);
+                                    convert_moltype_couple(mi0,
+                                                           dcatt,
+                                                           *fudgeQQ,
+                                                           opts->couple_lam0,
+                                                           opts->couple_lam1,
+                                                           opts->bCoupleIntra,
+                                                           static_cast<int>(nb_funct),
+                                                           &(interactions[static_cast<int>(nb_funct)]),
+                                                           wi);
                                 }
                                 stupid_fill_block(&mi0->mols, mi0->atoms.nr, TRUE);
                                 mi0->bProcessed = TRUE;
                             }
+
+                            // After, potentially, applying decoupling we can accumulate the charge sum
+                            sum_q(&mi0->atoms, nrcopies, &qt, &qBt);
+
                             break;
                         }
                         default:
-                            GMX_LOG(logger.warning)
-                                    .asParagraph()
-                                    .appendTextFormatted("case: %d", static_cast<int>(d));
-                            gmx_incons("unknown directive");
+                            if (d == Directive::d_intermolecular_interactions)
+                            {
+                                gmx_fatal(FARGS,
+                                          "Expected a directive after directive '%s', not a line "
+                                          "with: '%s'",
+                                          enumValueToString(d),
+                                          line);
+                            }
+                            else
+                            {
+                                GMX_RELEASE_ASSERT(
+                                        false, "Unhandled combination of a line after a directive");
+                            }
                     }
                 }
             }
@@ -864,10 +1117,13 @@ static char** read_topol(const char*                           infile,
     std::string unusedDefineWarning = checkAndWarnForUnusedDefines(*handle);
     if (!unusedDefineWarning.empty())
     {
-        warning(wi, unusedDefineWarning);
+        wi->addWarning(unusedDefineWarning);
     }
 
-    sfree(cpp_opts_return);
+    for (char* element : cpp_opts_return)
+    {
+        sfree(element);
+    }
 
     if (out)
     {
@@ -890,9 +1146,36 @@ static char** read_topol(const char*                           infile,
         }
     }
 
+    if (cpp_find_define(&handle, "_FF_AMBER_LEAP_ATOM_REORDERING") != nullptr)
+    {
+        for (auto ftype : { InteractionFunction::ProperDihedrals,
+                            InteractionFunction::RyckaertBellemansDihedrals,
+                            InteractionFunction::ImproperDihedrals,
+                            InteractionFunction::PeriodicImproperDihedrals })
+        {
+            GMX_ASSERT(interactions[ftype].leapDihedralTypes_.size()
+                               == interactions[ftype].leapDihedralIndices_.size(),
+                       "Numbers of AMBER LEaP dihedral types and their first occurrences should "
+                       "match");
+            if (!interactions[ftype].leapDihedralTypes_.empty())
+            {
+                GMX_LOG(logger.info)
+                        .asParagraph()
+                        .appendTextFormatted(
+                                "To match AMBER LEaP ordering, reordered %zu and kept %zu %s "
+                                "ordered as encountered (%zu %s types total)\n",
+                                interactions[ftype].numLeapReorderingPerformed,
+                                interactions[ftype].numLeapReorderingNotNecessary,
+                                interaction_function[ftype].longname,
+                                interactions[ftype].leapDihedralTypes_.size(),
+                                interaction_function[ftype].longname);
+            }
+        }
+    }
+
     if (cpp_find_define(&handle, "_FF_GROMOS96") != nullptr)
     {
-        warning(wi,
+        wi->addWarning(
                 "The GROMOS force fields have been parametrized with a physically incorrect "
                 "multiple-time-stepping scheme for a twin-range cut-off. When used with "
                 "a single-range cut-off (or a correct Trotter multiple-time-stepping scheme), "
@@ -901,7 +1184,8 @@ static char** read_topol(const char*                           infile,
                 "integrators we have not yet removed the GROMOS force fields, but you should be "
                 "aware of these issues and check if molecules in your system are affected before "
                 "proceeding. "
-                "Further information is available at https://redmine.gromacs.org/issues/2884 , "
+                "Further information is available at "
+                "https://gitlab.com/gromacs/gromacs/-/issues/2884, "
                 "and a longer explanation of our decision to remove physically incorrect "
                 "algorithms "
                 "can be found at https://doi.org/10.26434/chemrxiv.11474583.v1 .");
@@ -918,8 +1202,8 @@ static char** read_topol(const char*                           infile,
         }
         GMX_LOG(logger.info)
                 .asParagraph()
-                .appendTextFormatted("Coupling %d copies of molecule type '%s'", nmol_couple,
-                                     opts->couple_moltype);
+                .appendTextFormatted(
+                        "Coupling %d copies of molecule type '%s'", nmol_couple, opts->couple_moltype);
     }
 
     /* this is not very clean, but fixes core dump on empty system name */
@@ -928,20 +1212,19 @@ static char** read_topol(const char*                           infile,
         title = put_symtab(symtab, "");
     }
 
-    if (fabs(qt) > 1e-4)
+    if (std::fabs(qt) > 1e-4)
     {
         sprintf(warn_buf, "System has non-zero total charge: %.6f\n%s\n", qt, floating_point_arithmetic_tip);
-        warning_note(wi, warn_buf);
+        wi->addNote(warn_buf);
     }
-    if (fabs(qBt) > 1e-4 && !gmx_within_tol(qBt, qt, 1e-6))
+    if (std::fabs(qBt) > 1e-4 && !gmx_within_tol(qBt, qt, 1e-6))
     {
-        sprintf(warn_buf, "State B has non-zero total charge: %.6f\n%s\n", qBt,
-                floating_point_arithmetic_tip);
-        warning_note(wi, warn_buf);
+        sprintf(warn_buf, "State B has non-zero total charge: %.6f\n%s\n", qBt, floating_point_arithmetic_tip);
+        wi->addNote(warn_buf);
     }
-    if (usingFullRangeElectrostatics && (fabs(qt) > 1e-4 || fabs(qBt) > 1e-4))
+    if (usingFullRangeElectrostatics && (std::fabs(qt) > 1e-4 || std::fabs(qBt) > 1e-4))
     {
-        warning(wi,
+        wi->addWarning(
                 "You are using Ewald electrostatics in a system with net charge. This can lead to "
                 "severe artifacts, such as ions moving into regions with low dielectric, due to "
                 "the uniform background charge. We suggest to neutralize your system with counter "
@@ -959,50 +1242,55 @@ static char** read_topol(const char*                           infile,
     return title;
 }
 
-char** do_top(bool                                  bVerbose,
-              const char*                           topfile,
-              const char*                           topppfile,
-              t_gromppopts*                         opts,
-              bool                                  bZero,
-              t_symtab*                             symtab,
-              gmx::ArrayRef<InteractionsOfType>     interactions,
-              int*                                  combination_rule,
-              double*                               repulsion_power,
-              real*                                 fudgeQQ,
-              PreprocessingAtomTypes*               atypes,
-              std::vector<MoleculeInformation>*     molinfo,
+char** do_top(bool                                                            bVerbose,
+              const char*                                                     topfile,
+              const std::optional<std::filesystem::path>&                     topppfile,
+              t_gromppopts*                                                   opts,
+              bool                                                            bZero,
+              t_symtab*                                                       symtab,
+              gmx::EnumerationArray<InteractionFunction, InteractionsOfType>& interactions,
+              CombinationRule*                                                combination_rule,
+              double*                                                         repulsion_power,
+              real*                                                           fudgeQQ,
+              PreprocessingAtomTypes*                                         atypes,
+              std::vector<MoleculeInformation>*                               molinfo,
               std::unique_ptr<MoleculeInformation>* intermolecular_interactions,
               const t_inputrec*                     ir,
               std::vector<gmx_molblock_t>*          molblock,
               bool*                                 ffParametrizedWithHBondConstraints,
-              warninp*                              wi,
+              WarningHandler*                       wi,
               const gmx::MDLogger&                  logger)
 {
-    /* Tmpfile might contain a long path */
-    const char* tmpfile;
-    char**      title;
-
-    if (topppfile)
-    {
-        tmpfile = topppfile;
-    }
-    else
-    {
-        tmpfile = nullptr;
-    }
+    char** title;
 
     if (bVerbose)
     {
         GMX_LOG(logger.info).asParagraph().appendTextFormatted("processing topology...");
     }
-    title = read_topol(topfile, tmpfile, opts->define, opts->include, symtab, atypes, molinfo,
-                       intermolecular_interactions, interactions, combination_rule, repulsion_power,
-                       opts, fudgeQQ, molblock, ffParametrizedWithHBondConstraints,
-                       ir->efep != efepNO, bZero, EEL_FULL(ir->coulombtype), wi, logger);
+    title = read_topol(topfile,
+                       topppfile,
+                       opts->define,
+                       opts->include,
+                       symtab,
+                       atypes,
+                       molinfo,
+                       intermolecular_interactions,
+                       interactions,
+                       combination_rule,
+                       repulsion_power,
+                       opts,
+                       fudgeQQ,
+                       molblock,
+                       ffParametrizedWithHBondConstraints,
+                       ir->efep != FreeEnergyPerturbationType::No,
+                       bZero,
+                       usingFullElectrostatics(ir->coulombtype),
+                       wi,
+                       logger);
 
-    if ((*combination_rule != eCOMB_GEOMETRIC) && (ir->vdwtype == evdwUSER))
+    if ((*combination_rule != CombinationRule::Geometric) && (ir->vdwtype == VanDerWaalsType::User))
     {
-        warning(wi,
+        wi->addWarning(
                 "Using sigma/epsilon based combination rules with"
                 " user supplied potential function may produce unwanted"
                 " results");
@@ -1015,7 +1303,7 @@ char** do_top(bool                                  bVerbose,
  * Exclude molecular interactions for QM atoms in QM/MM
  *
  * Update the exclusion lists to include all QM atoms of this molecule,
- * replace bonds between QM atoms with CONNBOND and
+ * replace bonds between QM atoms with InteractionFunction::ConnectBonds and
  * set charges of QM atoms to 0.
  * When MiMiC is not used, remove bonded interactions between QM and link atoms.
  *
@@ -1028,10 +1316,10 @@ char** do_top(bool                                  bVerbose,
 static void generate_qmexcl_moltype(gmx_moltype_t*       molt,
                                     const unsigned char* grpnr,
                                     t_inputrec*          ir,
-                                    GmxQmmmMode          qmmmMode,
+                                    QmmmModeType         qmmmMode,
                                     const gmx::MDLogger& logger)
 {
-    /* This routine expects molt->ilist to be of size F_NRE and ordered. */
+    /* This routine expects molt->ilist to be of size InteractionFunction::Count and ordered. */
 
     /* generates the exclusions between the individual QM atoms, as
      * these interactions should be handled by the QM subroutines and
@@ -1101,21 +1389,21 @@ static void generate_qmexcl_moltype(gmx_moltype_t*       molt,
      */
     int ftype_connbond = 0;
     int ind_connbond   = 0;
-    if (!molt->ilist[F_CONNBONDS].empty())
+    if (!molt->ilist[InteractionFunction::ConnectBonds].empty())
     {
         GMX_LOG(logger.info)
                 .asParagraph()
                 .appendTextFormatted("nr. of CONNBONDS present already: %d",
-                                     molt->ilist[F_CONNBONDS].size() / 3);
-        ftype_connbond = molt->ilist[F_CONNBONDS].iatoms[0];
-        ind_connbond   = molt->ilist[F_CONNBONDS].size();
+                                     molt->ilist[InteractionFunction::ConnectBonds].size() / 3);
+        ftype_connbond = molt->ilist[InteractionFunction::ConnectBonds].iatoms[0];
+        ind_connbond   = molt->ilist[InteractionFunction::ConnectBonds].size();
     }
     /* now we delete all bonded interactions, except the ones describing
      * a chemical bond. These are converted to CONNBONDS
      */
-    for (int ftype = 0; ftype < F_NRE; ftype++)
+    for (const auto ftype : gmx::EnumerationWrapper<InteractionFunction>{})
     {
-        if (!(interaction_function[ftype].flags & IF_BOND) || ftype == F_CONNBONDS)
+        if (!(interaction_function[ftype].flags & IF_BOND) || ftype == InteractionFunction::ConnectBonds)
         {
             continue;
         }
@@ -1135,11 +1423,11 @@ static void generate_qmexcl_moltype(gmx_moltype_t*       molt,
                 int a2 = molt->ilist[ftype].iatoms[1 + j + 1];
                 bexcl  = (bQMMM[a1] && bQMMM[a2]);
                 /* A chemical bond between two QM atoms will be copied to
-                 * the F_CONNBONDS list, for reasons mentioned above.
+                 * the InteractionFunction::ConnectBonds list, for reasons mentioned above.
                  */
                 if (bexcl && IS_CHEMBOND(ftype))
                 {
-                    InteractionList& ilist = molt->ilist[F_CONNBONDS];
+                    InteractionList& ilist = molt->ilist[InteractionFunction::ConnectBonds];
                     ilist.iatoms.resize(ind_connbond + 3);
                     ilist.iatoms[ind_connbond++] = ftype_connbond;
                     ilist.iatoms[ind_connbond++] = a1;
@@ -1166,7 +1454,7 @@ static void generate_qmexcl_moltype(gmx_moltype_t*       molt,
 
                 /* MiMiC treats link atoms as quantum atoms - therefore
                  * we do not need do additional exclusions here */
-                if (qmmmMode == GmxQmmmMode::GMX_QMMM_MIMIC)
+                if (qmmmMode == QmmmModeType::MiMiC)
                 {
                     bexcl = numQmAtoms == nratoms;
                 }
@@ -1175,7 +1463,7 @@ static void generate_qmexcl_moltype(gmx_moltype_t*       molt,
                     bexcl = (numQmAtoms >= nratoms - 1);
                 }
 
-                if (bexcl && ftype == F_SETTLE)
+                if (bexcl && ftype == InteractionFunction::SETTLE)
                 {
                     gmx_fatal(FARGS,
                               "Can not apply QM to molecules with SETTLE, replace the moleculetype "
@@ -1206,7 +1494,7 @@ static void generate_qmexcl_moltype(gmx_moltype_t*       molt,
      * linkatoms interaction with the QMatoms and would be counted
      * twice.  */
 
-    if (qmmmMode != GmxQmmmMode::GMX_QMMM_MIMIC)
+    if (qmmmMode != QmmmModeType::MiMiC)
     {
         for (int i = 0; i < F_NRE; i++)
         {
@@ -1244,7 +1532,7 @@ static void generate_qmexcl_moltype(gmx_moltype_t*       molt,
         blink[i] = FALSE;
     }
 
-    if (qmmmMode != GmxQmmmMode::GMX_QMMM_MIMIC)
+    if (qmmmMode != QmmmModeType::MiMiC)
     {
         for (int i = 0; i < link_nr; i++)
         {
@@ -1259,21 +1547,21 @@ static void generate_qmexcl_moltype(gmx_moltype_t*       molt,
     qmexcl.nra = qm_nr * (qm_nr + link_nr) + link_nr * qm_nr;
     snew(qmexcl.index, qmexcl.nr + 1);
     snew(qmexcl.a, qmexcl.nra);
-    int j = 0;
+    int l = 0;
     for (int i = 0; i < qmexcl.nr; i++)
     {
-        qmexcl.index[i] = j;
+        qmexcl.index[i] = l;
         if (bQMMM[i])
         {
             for (int k = 0; k < qm_nr; k++)
             {
-                qmexcl.a[k + j] = qm_arr[k];
+                qmexcl.a[k + l] = qm_arr[k];
             }
             for (int k = 0; k < link_nr; k++)
             {
-                qmexcl.a[qm_nr + k + j] = link_arr[k];
+                qmexcl.a[qm_nr + k + l] = link_arr[k];
             }
-            j += (qm_nr + link_nr);
+            l += (qm_nr + link_nr);
         }
         if (blink[i])
         {
@@ -1284,7 +1572,7 @@ static void generate_qmexcl_moltype(gmx_moltype_t*       molt,
             j += qm_nr;
         }
     }
-    qmexcl.index[qmexcl.nr] = j;
+    qmexcl.index[qmexcl.nr] = l;
 
     /* and merging with the exclusions already present in sys.
      */
@@ -1298,7 +1586,7 @@ static void generate_qmexcl_moltype(gmx_moltype_t*       molt,
      * as this interaction is already accounted for by the QM, so also
      * here we run the risk of double counting! We proceed in a similar
      * way as we did above for the other bonded interactions: */
-    for (int i = F_LJ14; i < F_COUL14; i++)
+    for (InteractionFunction i : { InteractionFunction::LennardJones14, InteractionFunction::Coulomb14 })
     {
         int nratoms = interaction_function[i].nratoms;
         int j       = 0;
@@ -1327,23 +1615,21 @@ static void generate_qmexcl_moltype(gmx_moltype_t*       molt,
         }
     }
 
-    free(qm_arr);
-    free(bQMMM);
-    free(link_arr);
-    free(blink);
-} /* generate_qmexcl */
+    std::free(qm_arr);
+    std::free(bQMMM);
+    std::free(link_arr);
+    std::free(blink);
+} /* generate_qmexcl_moltype */
 
-void generate_qmexcl(gmx_mtop_t* sys, t_inputrec* ir, warninp* wi, GmxQmmmMode qmmmMode, const gmx::MDLogger& logger)
+void generate_qmexcl(gmx_mtop_t* sys, t_inputrec* ir, warninp* wi, QmmmModeType qmmmMode, const gmx::MDLogger& logger)
 {
-    /* This routine expects molt->molt[m].ilist to be of size F_NRE and ordered.
+    /* This routine expects molt->molt[m].ilist to be of size InteractionFunction::Count and ordered.
      */
 
     unsigned char*  grpnr;
-    int             mol, nat_mol, nr_mol_with_qm_atoms = 0;
+    int             mol, nat_mol;
     gmx_molblock_t* molb;
     bool            bQMMM;
-    int             index_offset = 0;
-    int             qm_nr        = 0;
 
     grpnr = sys->groups.groupNumbers[SimulationAtomGroupType::QuantumMechanics].data();
 
@@ -1359,13 +1645,11 @@ void generate_qmexcl(gmx_mtop_t* sys, t_inputrec* ir, warninp* wi, GmxQmmmMode q
                 if ((grpnr ? grpnr[i] : 0) < (ir->opts.ngQM))
                 {
                     bQMMM = TRUE;
-                    qm_nr++;
                 }
             }
 
             if (bQMMM)
             {
-                nr_mol_with_qm_atoms++;
                 if (molb->nmol > 1)
                 {
                     /* We need to split this molblock */
@@ -1416,10 +1700,9 @@ void generate_qmexcl(gmx_mtop_t* sys, t_inputrec* ir, warninp* wi, GmxQmmmMode q
             {
                 grpnr += nat_mol;
             }
-            index_offset += nat_mol;
         }
     }
-    if (qmmmMode == GmxQmmmMode::GMX_QMMM_ORIGINAL && nr_mol_with_qm_atoms > 1)
+    if (qmmmMode == QmmmModeType::Original && nr_mol_with_qm_atoms > 1)
     {
         /* generate a warning is there are QM atoms in different topologies.
          * In this case, it is not possible at this stage to mutualy exclude

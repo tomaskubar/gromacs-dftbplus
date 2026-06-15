@@ -1,12 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
- * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 1991- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -20,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -29,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 
 #ifndef GMX_GMXPREPROCESS_PDB2TOP_H
@@ -40,10 +37,14 @@
 
 #include <cstdio>
 
+#include <filesystem>
 #include <string>
 #include <vector>
 
-#include "gromacs/math/vectypes.h"
+#include "gromacs/topology/ifunc.h"
+#include "gromacs/utility/enumerationhelpers.h"
+#include "gromacs/utility/real.h"
+#include "gromacs/utility/vectypes.h"
 
 class PreprocessingAtomTypes;
 
@@ -64,29 +65,27 @@ struct PreprocessResidue;
 struct DisulfideBond;
 struct t_symtab;
 
-/* this *MUST* correspond to array in pdb2top.c */
-enum
+/* this *MUST* correspond to array in pdb2top.cpp */
+enum class HistidineStates : int
 {
-    ehisA,
-    ehisB,
-    ehisH,
-    ehis1,
-    ehisNR
+    A,
+    B,
+    H,
+    One,
+    Count
 };
-extern const char* hh[ehisNR];
+const char* enumValueToString(HistidineStates enumValue);
 
-void choose_ff(const char*          ffsel,
-               char*                forcefield,
-               int                  ff_maxlen,
-               char*                ffdir,
-               int                  ffdir_maxlen,
-               const gmx::MDLogger& logger);
+std::filesystem::path choose_ff(const char* ffsel, char* forcefield, int ff_maxlen, const gmx::MDLogger& logger);
 /* Find force fields in the current and libdirs and choose an ff.
  * If ffsel!=NULL: search for ffsel.
  * If ffsel==NULL: interactive selection.
  */
 
-void choose_watermodel(const char* wmsel, const char* ffdir, char** watermodel, const gmx::MDLogger& logger);
+void choose_watermodel(const char*                  wmsel,
+                       const std::filesystem::path& ffdir,
+                       char**                       watermodel,
+                       const gmx::MDLogger&         logger);
 /* Choose, possibly interactively, which water model to include,
  * based on the wmsel command line option choice and watermodels.dat
  * in ffdir.
@@ -121,32 +120,38 @@ void match_atomnames_with_rtp(gmx::ArrayRef<PreprocessResidue>     usedPpResidue
  * add these atoms to restp.
  */
 
-void print_top_comment(FILE* out, const char* filename, const char* ffdir, bool bITP);
+void print_top_comment(FILE*                        out,
+                       const std::filesystem::path& filename,
+                       const std::filesystem::path& ffdir,
+                       bool                         bITP);
 
-void print_top_header(FILE* out, const char* filename, bool bITP, const char* ffdir, real mHmult);
+void print_top_header(FILE*                        out,
+                      const std::filesystem::path& filename,
+                      bool                         bITP,
+                      const std::filesystem::path& ffdir,
+                      real                         mHmult);
 
-void print_top_mols(FILE*                            out,
-                    const char*                      title,
-                    const char*                      ffdir,
-                    const char*                      water,
-                    gmx::ArrayRef<const std::string> incls,
-                    gmx::ArrayRef<const t_mols>      mols);
+void print_top_mols(FILE*                                      out,
+                    const char*                                title,
+                    const std::filesystem::path&               ffdir,
+                    const char*                                water,
+                    gmx::ArrayRef<const std::filesystem::path> incls,
+                    gmx::ArrayRef<const t_mols>                mols);
 
-void write_top(FILE*                                   out,
-               const char*                             pr,
-               const char*                             molname,
-               t_atoms*                                at,
-               bool                                    bRTPresname,
-               int                                     bts[],
-               gmx::ArrayRef<const InteractionsOfType> plist,
-               t_excls                                 excls[],
-               PreprocessingAtomTypes*                 atype,
-               int*                                    cgnr,
-               int                                     nrexcl);
+void write_top(FILE*                                                                 out,
+               const std::filesystem::path&                                          pr,
+               const char*                                                           molname,
+               t_atoms*                                                              at,
+               bool                                                                  bRTPresname,
+               gmx::ArrayRef<const int>                                              bts,
+               const gmx::EnumerationArray<InteractionFunction, InteractionsOfType>& plist,
+               t_excls                                                               excls[],
+               PreprocessingAtomTypes*                                               atype,
+               int                                                                   nrexcl);
 /* NOTE: nrexcl is not the size of *excl! */
 
 void pdb2top(FILE*                                  top_file,
-             const char*                            posre_fn,
+             const std::filesystem::path&           posre_fn,
              const char*                            molname,
              t_atoms*                               atoms,
              std::vector<gmx::RVec>*                x,
@@ -158,13 +163,12 @@ void pdb2top(FILE*                                  top_file,
              bool                                   bAllowMissing,
              bool                                   bVsites,
              bool                                   bVsiteAromatics,
-             const char*                            ffdir,
+             const std::filesystem::path&           ffdir,
              real                                   mHmult,
              gmx::ArrayRef<const DisulfideBond>     ssbonds,
              real                                   long_bond_dist,
              real                                   short_bond_dist,
              bool                                   bDeuterate,
-             bool                                   bChargeGroups,
              bool                                   bCmap,
              bool                                   bRenumRes,
              bool                                   bRTPresname,

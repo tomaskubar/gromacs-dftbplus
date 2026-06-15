@@ -1,11 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2010-2017, The GROMACS development team.
- * Copyright (c) 2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2010- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -19,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -28,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \internal \file
  * \brief
@@ -51,19 +49,26 @@
 #include "gromacs/options/optionsassigner.h"
 
 #include <limits>
+#include <string>
 #include <vector>
 
 #include <gtest/gtest.h>
 
 #include "gromacs/options/basicoptions.h"
+#include "gromacs/options/ioptionscontainer.h"
 #include "gromacs/options/options.h"
 #include "gromacs/options/optionsection.h"
 #include "gromacs/utility/any.h"
+#include "gromacs/utility/enumerationhelpers.h"
 #include "gromacs/utility/exceptions.h"
 #include "gromacs/utility/stringutil.h"
 
 #include "testutils/testasserts.h"
 
+namespace gmx
+{
+namespace test
+{
 namespace
 {
 
@@ -362,7 +367,7 @@ TEST(OptionsAssignerBooleanTest, HandlesBooleanWithPrefixAndValue)
 
 
 /********************************************************************
- * Tests for integer assignment
+ * Tests for 32-bit integer assignment
  *
  * These tests also contain tests for general default value handling.
  */
@@ -594,6 +599,750 @@ TEST(OptionsAssignerIntegerTest, HandlesVectorsWithDefaultValueWithInvalidAssign
     int          vec[3] = { 3, 2, 1 };
     using gmx::IntegerOption;
     ASSERT_NO_THROW(options.addOption(IntegerOption("p").store(vec).vector()));
+
+    gmx::OptionsAssigner assigner(&options);
+    EXPECT_NO_THROW(assigner.start());
+    ASSERT_NO_THROW(assigner.startOption("p"));
+    EXPECT_NO_THROW(assigner.appendValue("1"));
+    EXPECT_NO_THROW(assigner.appendValue("3"));
+    EXPECT_THROW(assigner.finishOption(), gmx::InvalidInputError);
+    EXPECT_NO_THROW(assigner.finish());
+    EXPECT_NO_THROW(options.finish());
+
+    EXPECT_EQ(3, vec[0]);
+    EXPECT_EQ(2, vec[1]);
+    EXPECT_EQ(1, vec[2]);
+}
+
+/********************************************************************
+ * Tests for 32-bit unsigned integer assignment
+ *
+ * These tests also contain tests for general default value handling.
+ */
+
+TEST(OptionsAssignerUnsignedIntegerTest, StoresSingleValue)
+{
+    gmx::Options options;
+    unsigned int value = 1;
+    using gmx::UnsignedIntegerOption;
+    ASSERT_NO_THROW(options.addOption(UnsignedIntegerOption("p").store(&value)));
+
+    gmx::OptionsAssigner assigner(&options);
+    EXPECT_NO_THROW(assigner.start());
+    ASSERT_NO_THROW(assigner.startOption("p"));
+    ASSERT_NO_THROW(assigner.appendValue("3"));
+    EXPECT_NO_THROW(assigner.finishOption());
+    EXPECT_NO_THROW(assigner.finish());
+    EXPECT_NO_THROW(options.finish());
+
+    EXPECT_EQ(3, value);
+}
+
+TEST(OptionsAssignerUnsignedIntegerTest, HandlesEmptyValue)
+{
+    gmx::Options options;
+    unsigned int value = 1;
+    using gmx::UnsignedIntegerOption;
+    ASSERT_NO_THROW(options.addOption(UnsignedIntegerOption("p").store(&value)));
+
+    gmx::OptionsAssigner assigner(&options);
+    EXPECT_NO_THROW(assigner.start());
+    ASSERT_NO_THROW(assigner.startOption("p"));
+    EXPECT_THROW(assigner.appendValue(""), gmx::InvalidInputError);
+    EXPECT_NO_THROW(assigner.finishOption());
+    EXPECT_NO_THROW(assigner.finish());
+    EXPECT_NO_THROW(options.finish());
+
+    EXPECT_EQ(1, value);
+}
+
+TEST(OptionsAssignerUnsignedIntegerTest, HandlesInvalidValue)
+{
+    gmx::Options options;
+    unsigned int value = 1;
+    using gmx::UnsignedIntegerOption;
+    ASSERT_NO_THROW(options.addOption(UnsignedIntegerOption("p").store(&value)));
+
+    gmx::OptionsAssigner assigner(&options);
+    EXPECT_NO_THROW(assigner.start());
+    ASSERT_NO_THROW(assigner.startOption("p"));
+    EXPECT_THROW(assigner.appendValue("2abc"), gmx::InvalidInputError);
+    EXPECT_NO_THROW(assigner.finishOption());
+    EXPECT_NO_THROW(assigner.finish());
+    EXPECT_NO_THROW(options.finish());
+
+    EXPECT_EQ(1, value);
+}
+
+TEST(OptionsAssignerUnsignedIntegerTest, HandlesOverflow)
+{
+    gmx::Options options;
+    unsigned int value = 1;
+    using gmx::UnsignedIntegerOption;
+    ASSERT_NO_THROW(options.addOption(UnsignedIntegerOption("p").store(&value)));
+
+    gmx::OptionsAssigner assigner(&options);
+    EXPECT_NO_THROW(assigner.start());
+    ASSERT_NO_THROW(assigner.startOption("p"));
+    std::string overflowValue(gmx::formatString("%u0000", std::numeric_limits<unsigned int>::max()));
+    EXPECT_THROW(assigner.appendValue(overflowValue), gmx::InvalidInputError);
+    EXPECT_NO_THROW(assigner.finishOption());
+    EXPECT_NO_THROW(assigner.finish());
+    EXPECT_NO_THROW(options.finish());
+
+    EXPECT_EQ(1, value);
+}
+
+TEST(OptionsAssignerUnsignedIntegerTest, StoresDefaultValue)
+{
+    gmx::Options options;
+    unsigned int value = -1;
+    using gmx::UnsignedIntegerOption;
+    ASSERT_NO_THROW(options.addOption(UnsignedIntegerOption("p").store(&value).defaultValue(2)));
+    EXPECT_EQ(2, value);
+
+    gmx::OptionsAssigner assigner(&options);
+    EXPECT_NO_THROW(assigner.start());
+    EXPECT_NO_THROW(assigner.finish());
+    EXPECT_NO_THROW(options.finish());
+
+    EXPECT_EQ(2, value);
+}
+
+TEST(OptionsAssignerUnsignedIntegerTest, StoresDefaultValueIfSet)
+{
+    gmx::Options options;
+    unsigned int value = 2;
+    using gmx::UnsignedIntegerOption;
+    ASSERT_NO_THROW(options.addOption(UnsignedIntegerOption("p").store(&value).defaultValueIfSet(2)));
+    EXPECT_EQ(2, value);
+
+    gmx::OptionsAssigner assigner(&options);
+    EXPECT_NO_THROW(assigner.start());
+    ASSERT_NO_THROW(assigner.startOption("p"));
+    EXPECT_NO_THROW(assigner.finishOption());
+    EXPECT_NO_THROW(assigner.finish());
+    EXPECT_NO_THROW(options.finish());
+
+    EXPECT_EQ(2, value);
+}
+
+TEST(OptionsAssignerUnsignedIntegerTest, HandlesDefaultValueIfSetWhenNotSet)
+{
+    gmx::Options options;
+    unsigned int value = 2;
+    using gmx::UnsignedIntegerOption;
+    ASSERT_NO_THROW(options.addOption(UnsignedIntegerOption("p").store(&value).defaultValueIfSet(2)));
+    EXPECT_EQ(2, value);
+
+    gmx::OptionsAssigner assigner(&options);
+    EXPECT_NO_THROW(assigner.start());
+    EXPECT_NO_THROW(assigner.finish());
+    EXPECT_NO_THROW(options.finish());
+
+    EXPECT_EQ(2, value);
+}
+
+TEST(OptionsAssignerUnsignedIntegerTest, HandlesBothDefaultValues)
+{
+    gmx::Options options;
+    unsigned int value = 2;
+    using gmx::UnsignedIntegerOption;
+    ASSERT_NO_THROW(options.addOption(
+            UnsignedIntegerOption("p").store(&value).defaultValue(1).defaultValueIfSet(2)));
+    EXPECT_EQ(1, value);
+
+    gmx::OptionsAssigner assigner(&options);
+    EXPECT_NO_THROW(assigner.start());
+    ASSERT_NO_THROW(assigner.startOption("p"));
+    EXPECT_NO_THROW(assigner.finishOption());
+    EXPECT_NO_THROW(assigner.finish());
+    EXPECT_NO_THROW(options.finish());
+
+    EXPECT_EQ(2, value);
+}
+
+TEST(OptionsAssignerUnsignedIntegerTest, StoresToVector)
+{
+    gmx::Options              options;
+    std::vector<unsigned int> values;
+    using gmx::UnsignedIntegerOption;
+    ASSERT_NO_THROW(options.addOption(UnsignedIntegerOption("p").storeVector(&values).multiValue()));
+
+    gmx::OptionsAssigner assigner(&options);
+    EXPECT_NO_THROW(assigner.start());
+    ASSERT_NO_THROW(assigner.startOption("p"));
+    ASSERT_NO_THROW(assigner.appendValue("2"));
+    ASSERT_NO_THROW(assigner.appendValue("1"));
+    ASSERT_NO_THROW(assigner.appendValue("4"));
+    EXPECT_NO_THROW(assigner.finishOption());
+    EXPECT_NO_THROW(assigner.finish());
+    EXPECT_NO_THROW(options.finish());
+
+    EXPECT_EQ(3U, values.size());
+    EXPECT_EQ(2, values[0]);
+    EXPECT_EQ(1, values[1]);
+    EXPECT_EQ(4, values[2]);
+}
+
+TEST(OptionsAssignerUnsignedIntegerTest, HandlesVectors)
+{
+    gmx::Options options;
+    unsigned int vec[3] = { 0, 0, 0 };
+    using gmx::UnsignedIntegerOption;
+    ASSERT_NO_THROW(options.addOption(UnsignedIntegerOption("p").store(vec).vector()));
+
+    gmx::OptionsAssigner assigner(&options);
+    EXPECT_NO_THROW(assigner.start());
+    ASSERT_NO_THROW(assigner.startOption("p"));
+    ASSERT_NO_THROW(assigner.appendValue("2"));
+    ASSERT_NO_THROW(assigner.appendValue("1"));
+    ASSERT_NO_THROW(assigner.appendValue("4"));
+    EXPECT_NO_THROW(assigner.finishOption());
+    EXPECT_NO_THROW(assigner.finish());
+    EXPECT_NO_THROW(options.finish());
+
+    EXPECT_EQ(2, vec[0]);
+    EXPECT_EQ(1, vec[1]);
+    EXPECT_EQ(4, vec[2]);
+}
+
+TEST(OptionsAssignerUnsignedIntegerTest, HandlesVectorFromSingleValue)
+{
+    gmx::Options options;
+    unsigned int vec[3] = { 0, 0, 0 };
+    using gmx::UnsignedIntegerOption;
+    ASSERT_NO_THROW(options.addOption(UnsignedIntegerOption("p").store(vec).vector()));
+
+    gmx::OptionsAssigner assigner(&options);
+    EXPECT_NO_THROW(assigner.start());
+    ASSERT_NO_THROW(assigner.startOption("p"));
+    ASSERT_NO_THROW(assigner.appendValue("2"));
+    EXPECT_NO_THROW(assigner.finishOption());
+    EXPECT_NO_THROW(assigner.finish());
+    EXPECT_NO_THROW(options.finish());
+
+    EXPECT_EQ(2, vec[0]);
+    EXPECT_EQ(2, vec[1]);
+    EXPECT_EQ(2, vec[2]);
+}
+
+TEST(OptionsAssignerUnsignedIntegerTest, HandlesVectorsWithDefaultValue)
+{
+    gmx::Options options;
+    unsigned int vec[3] = { 3, 2, 1 };
+    using gmx::UnsignedIntegerOption;
+    ASSERT_NO_THROW(options.addOption(UnsignedIntegerOption("p").store(vec).vector()));
+
+    EXPECT_NO_THROW(options.finish());
+
+    EXPECT_EQ(3, vec[0]);
+    EXPECT_EQ(2, vec[1]);
+    EXPECT_EQ(1, vec[2]);
+}
+
+TEST(OptionsAssignerUnsignedIntegerTest, HandlesVectorsWithDefaultValueWithInvalidAssignment)
+{
+    gmx::Options options;
+    unsigned int vec[3] = { 3, 2, 1 };
+    using gmx::UnsignedIntegerOption;
+    ASSERT_NO_THROW(options.addOption(UnsignedIntegerOption("p").store(vec).vector()));
+
+    gmx::OptionsAssigner assigner(&options);
+    EXPECT_NO_THROW(assigner.start());
+    ASSERT_NO_THROW(assigner.startOption("p"));
+    EXPECT_NO_THROW(assigner.appendValue("1"));
+    EXPECT_NO_THROW(assigner.appendValue("3"));
+    EXPECT_THROW(assigner.finishOption(), gmx::InvalidInputError);
+    EXPECT_NO_THROW(assigner.finish());
+    EXPECT_NO_THROW(options.finish());
+
+    EXPECT_EQ(3, vec[0]);
+    EXPECT_EQ(2, vec[1]);
+    EXPECT_EQ(1, vec[2]);
+}
+
+
+/********************************************************************
+ * Tests for 64-bit integer assignment
+ *
+ * These tests also contain tests for general default value handling.
+ */
+
+TEST(OptionsAssignerInt64Test, StoresSingleValue)
+{
+    gmx::Options options;
+    int64_t      value = 1;
+    using gmx::Int64Option;
+    ASSERT_NO_THROW(options.addOption(Int64Option("p").store(&value)));
+
+    gmx::OptionsAssigner assigner(&options);
+    EXPECT_NO_THROW(assigner.start());
+    ASSERT_NO_THROW(assigner.startOption("p"));
+    ASSERT_NO_THROW(assigner.appendValue("3"));
+    EXPECT_NO_THROW(assigner.finishOption());
+    EXPECT_NO_THROW(assigner.finish());
+    EXPECT_NO_THROW(options.finish());
+
+    EXPECT_EQ(3, value);
+}
+
+TEST(OptionsAssignerInt64Test, HandlesEmptyValue)
+{
+    gmx::Options options;
+    int64_t      value = 1;
+    using gmx::Int64Option;
+    ASSERT_NO_THROW(options.addOption(Int64Option("p").store(&value)));
+
+    gmx::OptionsAssigner assigner(&options);
+    EXPECT_NO_THROW(assigner.start());
+    ASSERT_NO_THROW(assigner.startOption("p"));
+    EXPECT_THROW(assigner.appendValue(""), gmx::InvalidInputError);
+    EXPECT_NO_THROW(assigner.finishOption());
+    EXPECT_NO_THROW(assigner.finish());
+    EXPECT_NO_THROW(options.finish());
+
+    EXPECT_EQ(1, value);
+}
+
+TEST(OptionsAssignerInt64Test, HandlesInvalidValue)
+{
+    gmx::Options options;
+    int64_t      value = 1;
+    using gmx::Int64Option;
+    ASSERT_NO_THROW(options.addOption(Int64Option("p").store(&value)));
+
+    gmx::OptionsAssigner assigner(&options);
+    EXPECT_NO_THROW(assigner.start());
+    ASSERT_NO_THROW(assigner.startOption("p"));
+    EXPECT_THROW(assigner.appendValue("2abc"), gmx::InvalidInputError);
+    EXPECT_NO_THROW(assigner.finishOption());
+    EXPECT_NO_THROW(assigner.finish());
+    EXPECT_NO_THROW(options.finish());
+
+    EXPECT_EQ(1, value);
+}
+
+TEST(OptionsAssignerInt64Test, HandlesOverflow)
+{
+    gmx::Options options;
+    int64_t      value = 1;
+    using gmx::Int64Option;
+    ASSERT_NO_THROW(options.addOption(Int64Option("p").store(&value)));
+
+    gmx::OptionsAssigner assigner(&options);
+    EXPECT_NO_THROW(assigner.start());
+    ASSERT_NO_THROW(assigner.startOption("p"));
+    std::string overflowValue(gmx::formatString("%" PRIi64 "0000", std::numeric_limits<int64_t>::max()));
+    EXPECT_THROW(assigner.appendValue(overflowValue), gmx::InvalidInputError);
+    EXPECT_NO_THROW(assigner.finishOption());
+    EXPECT_NO_THROW(assigner.finish());
+    EXPECT_NO_THROW(options.finish());
+
+    EXPECT_EQ(1, value);
+}
+
+TEST(OptionsAssignerInt64Test, StoresDefaultValue)
+{
+    gmx::Options options;
+    int64_t      value = -1;
+    using gmx::Int64Option;
+    ASSERT_NO_THROW(options.addOption(Int64Option("p").store(&value).defaultValue(2)));
+    EXPECT_EQ(2, value);
+
+    gmx::OptionsAssigner assigner(&options);
+    EXPECT_NO_THROW(assigner.start());
+    EXPECT_NO_THROW(assigner.finish());
+    EXPECT_NO_THROW(options.finish());
+
+    EXPECT_EQ(2, value);
+}
+
+TEST(OptionsAssignerInt64Test, StoresDefaultValueIfSet)
+{
+    gmx::Options options;
+    int64_t      value = -1;
+    using gmx::Int64Option;
+    ASSERT_NO_THROW(options.addOption(Int64Option("p").store(&value).defaultValueIfSet(2)));
+    EXPECT_EQ(-1, value);
+
+    gmx::OptionsAssigner assigner(&options);
+    EXPECT_NO_THROW(assigner.start());
+    ASSERT_NO_THROW(assigner.startOption("p"));
+    EXPECT_NO_THROW(assigner.finishOption());
+    EXPECT_NO_THROW(assigner.finish());
+    EXPECT_NO_THROW(options.finish());
+
+    EXPECT_EQ(2, value);
+}
+
+TEST(OptionsAssignerInt64Test, HandlesDefaultValueIfSetWhenNotSet)
+{
+    gmx::Options options;
+    int64_t      value = -1;
+    using gmx::Int64Option;
+    ASSERT_NO_THROW(options.addOption(Int64Option("p").store(&value).defaultValueIfSet(2)));
+    EXPECT_EQ(-1, value);
+
+    gmx::OptionsAssigner assigner(&options);
+    EXPECT_NO_THROW(assigner.start());
+    EXPECT_NO_THROW(assigner.finish());
+    EXPECT_NO_THROW(options.finish());
+
+    EXPECT_EQ(-1, value);
+}
+
+TEST(OptionsAssignerInt64Test, HandlesBothDefaultValues)
+{
+    gmx::Options options;
+    int64_t      value = -1;
+    using gmx::Int64Option;
+    ASSERT_NO_THROW(options.addOption(Int64Option("p").store(&value).defaultValue(1).defaultValueIfSet(2)));
+    EXPECT_EQ(1, value);
+
+    gmx::OptionsAssigner assigner(&options);
+    EXPECT_NO_THROW(assigner.start());
+    ASSERT_NO_THROW(assigner.startOption("p"));
+    EXPECT_NO_THROW(assigner.finishOption());
+    EXPECT_NO_THROW(assigner.finish());
+    EXPECT_NO_THROW(options.finish());
+
+    EXPECT_EQ(2, value);
+}
+
+TEST(OptionsAssignerInt64Test, StoresToVector)
+{
+    gmx::Options         options;
+    std::vector<int64_t> values;
+    using gmx::Int64Option;
+    ASSERT_NO_THROW(options.addOption(Int64Option("p").storeVector(&values).multiValue()));
+
+    gmx::OptionsAssigner assigner(&options);
+    EXPECT_NO_THROW(assigner.start());
+    ASSERT_NO_THROW(assigner.startOption("p"));
+    ASSERT_NO_THROW(assigner.appendValue("-2"));
+    ASSERT_NO_THROW(assigner.appendValue("1"));
+    ASSERT_NO_THROW(assigner.appendValue("4"));
+    EXPECT_NO_THROW(assigner.finishOption());
+    EXPECT_NO_THROW(assigner.finish());
+    EXPECT_NO_THROW(options.finish());
+
+    EXPECT_EQ(3U, values.size());
+    EXPECT_EQ(-2, values[0]);
+    EXPECT_EQ(1, values[1]);
+    EXPECT_EQ(4, values[2]);
+}
+
+TEST(OptionsAssignerInt64Test, HandlesVectors)
+{
+    gmx::Options options;
+    int64_t      vec[3] = { 0, 0, 0 };
+    using gmx::Int64Option;
+    ASSERT_NO_THROW(options.addOption(Int64Option("p").store(vec).vector()));
+
+    gmx::OptionsAssigner assigner(&options);
+    EXPECT_NO_THROW(assigner.start());
+    ASSERT_NO_THROW(assigner.startOption("p"));
+    ASSERT_NO_THROW(assigner.appendValue("-2"));
+    ASSERT_NO_THROW(assigner.appendValue("1"));
+    ASSERT_NO_THROW(assigner.appendValue("4"));
+    EXPECT_NO_THROW(assigner.finishOption());
+    EXPECT_NO_THROW(assigner.finish());
+    EXPECT_NO_THROW(options.finish());
+
+    EXPECT_EQ(-2, vec[0]);
+    EXPECT_EQ(1, vec[1]);
+    EXPECT_EQ(4, vec[2]);
+}
+
+TEST(OptionsAssignerInt64Test, HandlesVectorFromSingleValue)
+{
+    gmx::Options options;
+    int64_t      vec[3] = { 0, 0, 0 };
+    using gmx::Int64Option;
+    ASSERT_NO_THROW(options.addOption(Int64Option("p").store(vec).vector()));
+
+    gmx::OptionsAssigner assigner(&options);
+    EXPECT_NO_THROW(assigner.start());
+    ASSERT_NO_THROW(assigner.startOption("p"));
+    ASSERT_NO_THROW(assigner.appendValue("2"));
+    EXPECT_NO_THROW(assigner.finishOption());
+    EXPECT_NO_THROW(assigner.finish());
+    EXPECT_NO_THROW(options.finish());
+
+    EXPECT_EQ(2, vec[0]);
+    EXPECT_EQ(2, vec[1]);
+    EXPECT_EQ(2, vec[2]);
+}
+
+TEST(OptionsAssignerInt64Test, HandlesVectorsWithDefaultValue)
+{
+    gmx::Options options;
+    int64_t      vec[3] = { 3, 2, 1 };
+    using gmx::Int64Option;
+    ASSERT_NO_THROW(options.addOption(Int64Option("p").store(vec).vector()));
+
+    EXPECT_NO_THROW(options.finish());
+
+    EXPECT_EQ(3, vec[0]);
+    EXPECT_EQ(2, vec[1]);
+    EXPECT_EQ(1, vec[2]);
+}
+
+TEST(OptionsAssignerInt64Test, HandlesVectorsWithDefaultValueWithInvalidAssignment)
+{
+    gmx::Options options;
+    int64_t      vec[3] = { 3, 2, 1 };
+    using gmx::Int64Option;
+    ASSERT_NO_THROW(options.addOption(Int64Option("p").store(vec).vector()));
+
+    gmx::OptionsAssigner assigner(&options);
+    EXPECT_NO_THROW(assigner.start());
+    ASSERT_NO_THROW(assigner.startOption("p"));
+    EXPECT_NO_THROW(assigner.appendValue("1"));
+    EXPECT_NO_THROW(assigner.appendValue("3"));
+    EXPECT_THROW(assigner.finishOption(), gmx::InvalidInputError);
+    EXPECT_NO_THROW(assigner.finish());
+    EXPECT_NO_THROW(options.finish());
+
+    EXPECT_EQ(3, vec[0]);
+    EXPECT_EQ(2, vec[1]);
+    EXPECT_EQ(1, vec[2]);
+}
+
+/********************************************************************
+ * Tests for 64-bit unsigned integer assignment
+ *
+ * These tests also contain tests for general default value handling.
+ */
+
+TEST(OptionsAssignerUnsignedInt64Test, StoresSingleValue)
+{
+    gmx::Options options;
+    uint64_t     value = 1;
+    using gmx::UnsignedInt64Option;
+    ASSERT_NO_THROW(options.addOption(UnsignedInt64Option("p").store(&value)));
+
+    gmx::OptionsAssigner assigner(&options);
+    EXPECT_NO_THROW(assigner.start());
+    ASSERT_NO_THROW(assigner.startOption("p"));
+    ASSERT_NO_THROW(assigner.appendValue("3"));
+    EXPECT_NO_THROW(assigner.finishOption());
+    EXPECT_NO_THROW(assigner.finish());
+    EXPECT_NO_THROW(options.finish());
+
+    EXPECT_EQ(3, value);
+}
+
+TEST(OptionsAssignerUnsignedInt64Test, HandlesEmptyValue)
+{
+    gmx::Options options;
+    uint64_t     value = 1;
+    using gmx::UnsignedInt64Option;
+    ASSERT_NO_THROW(options.addOption(UnsignedInt64Option("p").store(&value)));
+
+    gmx::OptionsAssigner assigner(&options);
+    EXPECT_NO_THROW(assigner.start());
+    ASSERT_NO_THROW(assigner.startOption("p"));
+    EXPECT_THROW(assigner.appendValue(""), gmx::InvalidInputError);
+    EXPECT_NO_THROW(assigner.finishOption());
+    EXPECT_NO_THROW(assigner.finish());
+    EXPECT_NO_THROW(options.finish());
+
+    EXPECT_EQ(1, value);
+}
+
+TEST(OptionsAssignerUnsignedInt64Test, HandlesInvalidValue)
+{
+    gmx::Options options;
+    uint64_t     value = 1;
+    using gmx::UnsignedInt64Option;
+    ASSERT_NO_THROW(options.addOption(UnsignedInt64Option("p").store(&value)));
+
+    gmx::OptionsAssigner assigner(&options);
+    EXPECT_NO_THROW(assigner.start());
+    ASSERT_NO_THROW(assigner.startOption("p"));
+    EXPECT_THROW(assigner.appendValue("2abc"), gmx::InvalidInputError);
+    EXPECT_NO_THROW(assigner.finishOption());
+    EXPECT_NO_THROW(assigner.finish());
+    EXPECT_NO_THROW(options.finish());
+
+    EXPECT_EQ(1, value);
+}
+
+TEST(OptionsAssignerUnsignedInt64Test, HandlesOverflow)
+{
+    gmx::Options options;
+    uint64_t     value = 1;
+    using gmx::UnsignedInt64Option;
+    ASSERT_NO_THROW(options.addOption(UnsignedInt64Option("p").store(&value)));
+
+    gmx::OptionsAssigner assigner(&options);
+    EXPECT_NO_THROW(assigner.start());
+    ASSERT_NO_THROW(assigner.startOption("p"));
+    std::string overflowValue(gmx::formatString("%" PRIu64 "0000", std::numeric_limits<uint64_t>::max()));
+    EXPECT_THROW(assigner.appendValue(overflowValue), gmx::InvalidInputError);
+    EXPECT_NO_THROW(assigner.finishOption());
+    EXPECT_NO_THROW(assigner.finish());
+    EXPECT_NO_THROW(options.finish());
+
+    EXPECT_EQ(1, value);
+}
+
+TEST(OptionsAssignerUnsignedInt64Test, StoresDefaultValue)
+{
+    gmx::Options options;
+    uint64_t     value = 4;
+    using gmx::UnsignedInt64Option;
+    ASSERT_NO_THROW(options.addOption(UnsignedInt64Option("p").store(&value).defaultValue(2)));
+    EXPECT_EQ(2, value);
+
+    gmx::OptionsAssigner assigner(&options);
+    EXPECT_NO_THROW(assigner.start());
+    EXPECT_NO_THROW(assigner.finish());
+    EXPECT_NO_THROW(options.finish());
+
+    EXPECT_EQ(2, value);
+}
+
+TEST(OptionsAssignerUnsignedInt64Test, StoresDefaultValueIfSet)
+{
+    gmx::Options options;
+    uint64_t     value = 4;
+    using gmx::UnsignedInt64Option;
+    ASSERT_NO_THROW(options.addOption(UnsignedInt64Option("p").store(&value).defaultValueIfSet(2)));
+    EXPECT_EQ(4, value);
+
+    gmx::OptionsAssigner assigner(&options);
+    EXPECT_NO_THROW(assigner.start());
+    ASSERT_NO_THROW(assigner.startOption("p"));
+    EXPECT_NO_THROW(assigner.finishOption());
+    EXPECT_NO_THROW(assigner.finish());
+    EXPECT_NO_THROW(options.finish());
+
+    EXPECT_EQ(2, value);
+}
+
+TEST(OptionsAssignerUnsignedInt64Test, HandlesDefaultValueIfSetWhenNotSet)
+{
+    gmx::Options options;
+    uint64_t     value = 4;
+    using gmx::UnsignedInt64Option;
+    ASSERT_NO_THROW(options.addOption(UnsignedInt64Option("p").store(&value).defaultValueIfSet(2)));
+    EXPECT_EQ(4, value);
+
+    gmx::OptionsAssigner assigner(&options);
+    EXPECT_NO_THROW(assigner.start());
+    EXPECT_NO_THROW(assigner.finish());
+    EXPECT_NO_THROW(options.finish());
+
+    EXPECT_EQ(4, value);
+}
+
+TEST(OptionsAssignerUnsignedInt64Test, HandlesBothDefaultValues)
+{
+    gmx::Options options;
+    uint64_t     value = 4;
+    using gmx::UnsignedInt64Option;
+    ASSERT_NO_THROW(options.addOption(
+            UnsignedInt64Option("p").store(&value).defaultValue(1).defaultValueIfSet(2)));
+    EXPECT_EQ(1, value);
+
+    gmx::OptionsAssigner assigner(&options);
+    EXPECT_NO_THROW(assigner.start());
+    ASSERT_NO_THROW(assigner.startOption("p"));
+    EXPECT_NO_THROW(assigner.finishOption());
+    EXPECT_NO_THROW(assigner.finish());
+    EXPECT_NO_THROW(options.finish());
+
+    EXPECT_EQ(2, value);
+}
+
+TEST(OptionsAssignerUnsignedInt64Test, StoresToVector)
+{
+    gmx::Options          options;
+    std::vector<uint64_t> values;
+    using gmx::UnsignedInt64Option;
+    ASSERT_NO_THROW(options.addOption(UnsignedInt64Option("p").storeVector(&values).multiValue()));
+
+    gmx::OptionsAssigner assigner(&options);
+    EXPECT_NO_THROW(assigner.start());
+    ASSERT_NO_THROW(assigner.startOption("p"));
+    ASSERT_NO_THROW(assigner.appendValue("4"));
+    ASSERT_NO_THROW(assigner.appendValue("1"));
+    ASSERT_NO_THROW(assigner.appendValue("4"));
+    EXPECT_NO_THROW(assigner.finishOption());
+    EXPECT_NO_THROW(assigner.finish());
+    EXPECT_NO_THROW(options.finish());
+
+    EXPECT_EQ(3U, values.size());
+    EXPECT_EQ(4, values[0]);
+    EXPECT_EQ(1, values[1]);
+    EXPECT_EQ(4, values[2]);
+}
+
+TEST(OptionsAssignerUnsignedInt64Test, HandlesVectors)
+{
+    gmx::Options options;
+    uint64_t     vec[3] = { 0, 0, 0 };
+    using gmx::UnsignedInt64Option;
+    ASSERT_NO_THROW(options.addOption(UnsignedInt64Option("p").store(vec).vector()));
+
+    gmx::OptionsAssigner assigner(&options);
+    EXPECT_NO_THROW(assigner.start());
+    ASSERT_NO_THROW(assigner.startOption("p"));
+    ASSERT_NO_THROW(assigner.appendValue("2"));
+    ASSERT_NO_THROW(assigner.appendValue("1"));
+    ASSERT_NO_THROW(assigner.appendValue("4"));
+    EXPECT_NO_THROW(assigner.finishOption());
+    EXPECT_NO_THROW(assigner.finish());
+    EXPECT_NO_THROW(options.finish());
+
+    EXPECT_EQ(2, vec[0]);
+    EXPECT_EQ(1, vec[1]);
+    EXPECT_EQ(4, vec[2]);
+}
+
+TEST(OptionsAssignerUnsignedInt64Test, HandlesVectorFromSingleValue)
+{
+    gmx::Options options;
+    uint64_t     vec[3] = { 0, 0, 0 };
+    using gmx::UnsignedInt64Option;
+    ASSERT_NO_THROW(options.addOption(UnsignedInt64Option("p").store(vec).vector()));
+
+    gmx::OptionsAssigner assigner(&options);
+    EXPECT_NO_THROW(assigner.start());
+    ASSERT_NO_THROW(assigner.startOption("p"));
+    ASSERT_NO_THROW(assigner.appendValue("2"));
+    EXPECT_NO_THROW(assigner.finishOption());
+    EXPECT_NO_THROW(assigner.finish());
+    EXPECT_NO_THROW(options.finish());
+
+    EXPECT_EQ(2, vec[0]);
+    EXPECT_EQ(2, vec[1]);
+    EXPECT_EQ(2, vec[2]);
+}
+
+TEST(OptionsAssignerUnsignedInt64Test, HandlesVectorsWithDefaultValue)
+{
+    gmx::Options options;
+    uint64_t     vec[3] = { 3, 2, 1 };
+    using gmx::UnsignedInt64Option;
+    ASSERT_NO_THROW(options.addOption(UnsignedInt64Option("p").store(vec).vector()));
+
+    EXPECT_NO_THROW(options.finish());
+
+    EXPECT_EQ(3, vec[0]);
+    EXPECT_EQ(2, vec[1]);
+    EXPECT_EQ(1, vec[2]);
+}
+
+TEST(OptionsAssignerUnsignedInt64Test, HandlesVectorsWithDefaultValueWithInvalidAssignment)
+{
+    gmx::Options options;
+    uint64_t     vec[3] = { 3, 2, 1 };
+    using gmx::UnsignedInt64Option;
+    ASSERT_NO_THROW(options.addOption(UnsignedInt64Option("p").store(vec).vector()));
 
     gmx::OptionsAssigner assigner(&options);
     EXPECT_NO_THROW(assigner.start());
@@ -1001,3 +1750,5 @@ TEST(OptionsAssignerEnumTest, HandlesEnumDefaultValueFromVector)
 }
 
 } // namespace
+} // namespace test
+} // namespace gmx

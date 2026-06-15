@@ -1,11 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2010-2018, The GROMACS development team.
- * Copyright (c) 2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2010- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -19,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -28,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \libinternal \file
  * \brief
@@ -310,15 +308,13 @@ protected:
     template<class U>
     explicit OptionStorageTemplateSimple(const OptionTemplate<T, U>& settings,
                                          OptionFlags                 staticFlags = OptionFlags()) :
-        OptionStorageTemplate<T>(settings, staticFlags),
-        initialized_(false)
+        OptionStorageTemplate<T>(settings, staticFlags), initialized_(false)
     {
     }
     //! Initializes the storage.
     OptionStorageTemplateSimple(const AbstractOption&                           settings,
                                 typename OptionStorageTemplate<T>::StorePointer store) :
-        OptionStorageTemplate<T>(settings, std::move(store)),
-        initialized_(false)
+        OptionStorageTemplate<T>(settings, std::move(store)), initialized_(false)
     {
     }
 
@@ -416,8 +412,7 @@ OptionStorageTemplate<T>::OptionStorageTemplate(const OptionTemplate<T, U>& sett
 
 template<typename T>
 OptionStorageTemplate<T>::OptionStorageTemplate(const AbstractOption& settings, StorePointer store) :
-    AbstractOptionStorage(settings, OptionFlags()),
-    store_(std::move(store))
+    AbstractOptionStorage(settings, OptionFlags()), store_(std::move(store))
 {
 }
 
@@ -462,14 +457,14 @@ std::unique_ptr<IOptionValueStore<T>> OptionStorageTemplate<T>::createStore(Valu
 template<typename T>
 std::vector<Any> OptionStorageTemplate<T>::defaultValues() const
 {
-    std::vector<Any> result;
     if (hasFlag(efOption_NoDefaultValue))
     {
-        return result;
+        return {};
     }
     GMX_RELEASE_ASSERT(
             hasFlag(efOption_HasDefaultValue),
             "Current option implementation can only provide default values before assignment");
+    std::vector<Any> result;
     for (const auto& value : values())
     {
         result.push_back(Any::create<T>(value));
@@ -553,9 +548,7 @@ void OptionStorageTemplate<T>::commitValues()
     }
     store_->reserve(setValues_.size());
     // For bool the loop variable isn't a reference (it's its special reference type)
-    // clang-format off
-    CLANG_DIAGNOSTIC_IGNORE(-Wrange-loop-analysis);
-    // clang-format on
+    CLANG_DIAGNOSTIC_IGNORE("-Wrange-loop-analysis");
     for (const auto& value : setValues_)
     {
         store_->append(value);

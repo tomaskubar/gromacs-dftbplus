@@ -1,11 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2012,2013,2014,2016,2017 by the GROMACS development team.
- * Copyright (c) 2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2012- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -19,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -28,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 
 #include "gromacs/gpu_utils/cuda_arch_utils.cuh"
@@ -341,3 +339,55 @@
 
 #undef EL_EWALD_TAB
 #undef VDW_CUTOFF_CHECK
+
+
+#if GMX_USE_EXT_FMM
+/* No electrostatics (e.g., FMM handles it); only VdW interactions generated
+ */
+
+#    define VDW_CUTOFF_CHECK
+
+/* cut-off + V shift LJ */
+#    define NB_KERNEL_FUNC_NAME(x, ...) x##_ElecNone_VdwLJ##__VA_ARGS__
+#    include "nbnxm_cuda_kernel.cuh"
+#    undef NB_KERNEL_FUNC_NAME
+/* cut-off + V shift LJ w geometric combination rules */
+#    define LJ_COMB_GEOM
+#    define NB_KERNEL_FUNC_NAME(x, ...) x##_ElecNone_VdwLJCombGeom##__VA_ARGS__
+#    include "nbnxm_cuda_kernel.cuh"
+#    undef LJ_COMB_GEOM
+#    undef NB_KERNEL_FUNC_NAME
+/* cut-off + V shift LJ w LB combination rules */
+#    define LJ_COMB_LB
+#    define NB_KERNEL_FUNC_NAME(x, ...) x##_ElecNone_VdwLJCombLB##__VA_ARGS__
+#    include "nbnxm_cuda_kernel.cuh"
+#    undef LJ_COMB_LB
+#    undef NB_KERNEL_FUNC_NAME
+/* LJ-Ewald w geometric combination rules */
+#    define LJ_EWALD_COMB_GEOM
+#    define NB_KERNEL_FUNC_NAME(x, ...) x##_ElecNone_VdwLJEwCombGeom##__VA_ARGS__
+#    include "nbnxm_cuda_kernel.cuh"
+#    undef LJ_EWALD_COMB_GEOM
+#    undef NB_KERNEL_FUNC_NAME
+/* LJ-Ewald w LB combination rules */
+#    define LJ_EWALD_COMB_LB
+#    define NB_KERNEL_FUNC_NAME(x, ...) x##_ElecNone_VdwLJEwCombLB##__VA_ARGS__
+#    include "nbnxm_cuda_kernel.cuh"
+#    undef LJ_EWALD_COMB_LB
+#    undef NB_KERNEL_FUNC_NAME
+/* F switch LJ */
+#    define LJ_FORCE_SWITCH
+#    define NB_KERNEL_FUNC_NAME(x, ...) x##_ElecNone_VdwLJFsw##__VA_ARGS__
+#    include "nbnxm_cuda_kernel.cuh"
+#    undef LJ_FORCE_SWITCH
+#    undef NB_KERNEL_FUNC_NAME
+/* V switch LJ */
+#    define LJ_POT_SWITCH
+#    define NB_KERNEL_FUNC_NAME(x, ...) x##_ElecNone_VdwLJPsw##__VA_ARGS__
+#    include "nbnxm_cuda_kernel.cuh"
+#    undef LJ_POT_SWITCH
+#    undef NB_KERNEL_FUNC_NAME
+
+#    undef VDW_CUTOFF_CHECK
+
+#endif /* GMX_USE_EXT_FMM */

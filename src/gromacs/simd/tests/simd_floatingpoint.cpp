@@ -1,11 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2014,2015,2016,2017,2018 by the GROMACS development team.
- * Copyright (c) 2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2014- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -19,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -28,20 +26,27 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 #include "gmxpre.h"
 
 #include <cmath>
 
 #include <array>
+#include <limits>
+#include <string>
+#include <vector>
 
+#include <gtest/gtest.h>
+
+#include "gromacs/math/units.h"
 #include "gromacs/math/utilities.h"
 #include "gromacs/simd/simd.h"
 #include "gromacs/utility/basedefinitions.h"
+#include "gromacs/utility/real.h"
 
 #include "testutils/testasserts.h"
 
@@ -243,14 +248,16 @@ TEST_F(SimdFloatingpointTest, frexp)
 
 
     fraction = frexp(rSimd_Exp, &exponent);
-    GMX_EXPECT_SIMD_REAL_EQ(setSimdRealFrom3R(0.609548660288905419513128, 0.5833690139241746175358116,
+    GMX_EXPECT_SIMD_REAL_EQ(setSimdRealFrom3R(0.609548660288905419513128,
+                                              0.5833690139241746175358116,
                                               -0.584452007502232362412542),
                             fraction);
     GMX_EXPECT_SIMD_INT_EQ(setSimdIntFrom3I(61, -40, 55), exponent);
 
     // Test the unsafe flavor too, in case they use different branches
     fraction = frexp<MathOptimization::Unsafe>(rSimd_Exp, &exponent);
-    GMX_EXPECT_SIMD_REAL_EQ(setSimdRealFrom3R(0.609548660288905419513128, 0.5833690139241746175358116,
+    GMX_EXPECT_SIMD_REAL_EQ(setSimdRealFrom3R(0.609548660288905419513128,
+                                              0.5833690139241746175358116,
                                               -0.584452007502232362412542),
                             fraction);
     GMX_EXPECT_SIMD_INT_EQ(setSimdIntFrom3I(61, -40, 55), exponent);
@@ -288,11 +295,13 @@ TEST_F(SimdFloatingpointTest, ldexp)
 {
     SimdReal one = setSimdRealFrom1R(1.0);
 
-    GMX_EXPECT_SIMD_REAL_EQ(setSimdRealFrom3R(pow(2.0, 60.0), pow(2.0, -41.0), pow(2.0, 54.0)),
-                            ldexp<MathOptimization::Unsafe>(one, setSimdIntFrom3I(60, -41, 54)));
+    GMX_EXPECT_SIMD_REAL_EQ(
+            setSimdRealFrom3R(std::pow(2.0, 60.0), std::pow(2.0, -41.0), std::pow(2.0, 54.0)),
+            ldexp<MathOptimization::Unsafe>(one, setSimdIntFrom3I(60, -41, 54)));
 #        if GMX_SIMD_HAVE_DOUBLE && GMX_DOUBLE
-    GMX_EXPECT_SIMD_REAL_EQ(setSimdRealFrom3R(pow(2.0, 587.0), pow(2.0, -462.0), pow(2.0, 672.0)),
-                            ldexp<MathOptimization::Unsafe>(one, setSimdIntFrom3I(587, -462, 672)));
+    GMX_EXPECT_SIMD_REAL_EQ(
+            setSimdRealFrom3R(std::pow(2.0, 587.0), std::pow(2.0, -462.0), std::pow(2.0, 672.0)),
+            ldexp<MathOptimization::Unsafe>(one, setSimdIntFrom3I(587, -462, 672)));
 #        endif
     // The default safe version must be able to handle very negative arguments too
     GMX_EXPECT_SIMD_REAL_EQ(setZero(), ldexp(one, setSimdIntFrom3I(-2000, -1000000, -1000000000)));
@@ -532,7 +541,7 @@ TEST_F(SimdFloatingpointTest, cvtDouble2Float)
     SimdDouble vd1 = load<SimdDouble>(d + GMX_SIMD_DOUBLE_WIDTH); // load upper half of data
     vf             = cvtDD2F(vd0, vd1);
 #        elif (GMX_SIMD_FLOAT_WIDTH == GMX_SIMD_DOUBLE_WIDTH)
-    vf  = cvtD2F(vd0);
+    vf = cvtD2F(vd0);
 #        else
 #            error Width of float SIMD must either be identical to double, or twice the width.
 #        endif

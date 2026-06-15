@@ -1,13 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
- * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2017,2018 by the GROMACS development team.
- * Copyright (c) 2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 1991- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -21,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -30,41 +26,27 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 #include "gmxpre.h"
 
-#include "block.h"
+#include "gromacs/topology/block.h"
 
 #include <cstdio>
 
 #include <algorithm>
+#include <vector>
 
+#include "gromacs/topology/index.h"
+#include "gromacs/utility/arrayref.h"
+#include "gromacs/utility/basedefinitions.h"
 #include "gromacs/utility/listoflists.h"
 #include "gromacs/utility/smalloc.h"
 #include "gromacs/utility/txtdump.h"
 
-void gmx::RangePartitioning::setAllBlocksSizeOne(int numBlocksToSet)
-{
-    if (!allBlocksHaveSizeOne())
-    {
-        clear();
-    }
-    if (numBlocksToSet < numBlocks())
-    {
-        index_.resize(numBlocksToSet + 1);
-    }
-    else if (numBlocksToSet > numBlocks())
-    {
-        for (int b = numBlocks(); b < numBlocksToSet; b++)
-        {
-            appendBlock(1);
-        }
-    }
-}
 
 void init_block(t_block* block)
 {
@@ -72,13 +54,6 @@ void init_block(t_block* block)
     block->nalloc_index = 1;
     snew(block->index, block->nalloc_index);
     block->index[0] = 0;
-}
-
-void init_block_null(t_block* block)
-{
-    block->nr           = 0;
-    block->nalloc_index = 0;
-    block->index        = nullptr;
 }
 
 void init_blocka(t_blocka* block)
@@ -90,26 +65,6 @@ void init_blocka(t_blocka* block)
     block->index[0] = 0;
     block->nalloc_a = 0;
     block->a        = nullptr;
-}
-
-void init_blocka_null(t_blocka* block)
-{
-    block->nr           = 0;
-    block->nra          = 0;
-    block->nalloc_index = 0;
-    block->index        = nullptr;
-    block->nalloc_a     = 0;
-    block->a            = nullptr;
-}
-
-t_blocka* new_blocka()
-{
-    t_blocka* block;
-
-    snew(block, 1);
-    snew(block->index, 1);
-
-    return block;
 }
 
 void done_block(t_block* block)
@@ -154,48 +109,6 @@ void stupid_fill_block(t_block* grp, int natom, gmx_bool bOneIndexGroup)
     }
 }
 
-void stupid_fill_blocka(t_blocka* grp, int natom)
-{
-    grp->nalloc_a = natom;
-    snew(grp->a, grp->nalloc_a);
-    for (int i = 0; i < natom; ++i)
-    {
-        grp->a[i] = i;
-    }
-    grp->nra = natom;
-
-    grp->nalloc_index = natom + 1;
-    snew(grp->index, grp->nalloc_index);
-    for (int i = 0; i <= natom; ++i)
-    {
-        grp->index[i] = i;
-    }
-    grp->nr = natom;
-}
-
-void copy_blocka(const t_blocka* src, t_blocka* dest)
-{
-    dest->nr = src->nr;
-    /* Workaround for inconsistent handling of nalloc_index in
-     * other parts of the code. Often nalloc_index and nalloc_a
-     * are not set.
-     */
-    dest->nalloc_index = std::max(src->nalloc_index, dest->nr + 1);
-    snew(dest->index, dest->nalloc_index);
-    for (int i = 0; i < dest->nr + 1; ++i)
-    {
-        dest->index[i] = src->index[i];
-    }
-    dest->nra = src->nra;
-    /* See above. */
-    dest->nalloc_a = std::max(src->nalloc_a, dest->nra);
-    snew(dest->a, dest->nalloc_a);
-    for (int i = 0; i < dest->nra; ++i)
-    {
-        dest->a[i] = src->a[i];
-    }
-}
-
 static int pr_block_title(FILE* fp, int indent, const char* title, const t_block* block)
 {
     if (available(fp, block, indent, title))
@@ -207,16 +120,12 @@ static int pr_block_title(FILE* fp, int indent, const char* title, const t_block
     return indent;
 }
 
-static int pr_blocka_title(FILE* fp, int indent, const char* title, const t_blocka* block)
+static int pr_blocka_title(FILE* fp, int indent, const char* title, const int numBlocks)
 {
-    if (available(fp, block, indent, title))
-    {
-        indent = pr_title(fp, indent, title);
-        pr_indent(fp, indent);
-        fprintf(fp, "nr=%d\n", block->nr);
-        pr_indent(fp, indent);
-        fprintf(fp, "nra=%d\n", block->nra);
-    }
+    indent = pr_title(fp, indent, title);
+    pr_indent(fp, indent);
+    fprintf(fp, "nr=%d\n", numBlocks);
+
     return indent;
 }
 
@@ -233,41 +142,19 @@ static int pr_listoflists_title(FILE* fp, int indent, const char* title, const g
     return indent;
 }
 
-static void low_pr_blocka(FILE* fp, int indent, const char* title, const t_blocka* block, gmx_bool bShowNumbers)
-{
-    int i;
-
-    if (available(fp, block, indent, title))
-    {
-        indent = pr_blocka_title(fp, indent, title, block);
-        for (i = 0; i <= block->nr; i++)
-        {
-            pr_indent(fp, indent + INDENT);
-            fprintf(fp, "%s->index[%d]=%d\n", title, bShowNumbers ? i : -1, block->index[i]);
-        }
-        for (i = 0; i < block->nra; i++)
-        {
-            pr_indent(fp, indent + INDENT);
-            fprintf(fp, "%s->a[%d]=%d\n", title, bShowNumbers ? i : -1, block->a[i]);
-        }
-    }
-}
-
 void pr_block(FILE* fp, int indent, const char* title, const t_block* block, gmx_bool bShowNumbers)
 {
-    int i, start;
-
     if (available(fp, block, indent, title))
     {
-        indent = pr_block_title(fp, indent, title, block);
-        start  = 0;
+        indent    = pr_block_title(fp, indent, title, block);
+        int start = 0;
         if (block->index[start] != 0)
         {
             fprintf(fp, "block->index[%d] should be 0\n", start);
         }
         else
         {
-            for (i = 0; i < block->nr; i++)
+            for (int i = 0; i < block->nr; i++)
             {
                 int end = block->index[i + 1];
                 pr_indent(fp, indent);
@@ -277,8 +164,12 @@ void pr_block(FILE* fp, int indent, const char* title, const t_block* block, gmx
                 }
                 else
                 {
-                    fprintf(fp, "%s[%d]={%d..%d}\n", title, bShowNumbers ? i : -1,
-                            bShowNumbers ? start : -1, bShowNumbers ? end - 1 : -1);
+                    fprintf(fp,
+                            "%s[%d]={%d..%d}\n",
+                            title,
+                            bShowNumbers ? i : -1,
+                            bShowNumbers ? start : -1,
+                            bShowNumbers ? end - 1 : -1);
                 }
                 start = end;
             }
@@ -286,57 +177,38 @@ void pr_block(FILE* fp, int indent, const char* title, const t_block* block, gmx
     }
 }
 
-void pr_blocka(FILE* fp, int indent, const char* title, const t_blocka* block, gmx_bool bShowNumbers)
+void pr_blocka(FILE* fp, int indent, const char* title, gmx::ArrayRef<const IndexGroup> blocks, gmx_bool bShowNumbers)
 {
-    int i, j, ok, size, start, end;
+    indent = pr_blocka_title(fp, indent, title, gmx::ssize(blocks));
 
-    if (available(fp, block, indent, title))
+    for (int i = 0; i < gmx::ssize(blocks); i++)
     {
-        indent = pr_blocka_title(fp, indent, title, block);
-        start  = 0;
-        end    = start;
-        if ((ok = static_cast<int>(block->index[start] == 0)) == 0)
+        const auto& block = blocks[i].particleIndices;
+        int         size  = pr_indent(fp, indent);
+        if (block.empty())
         {
-            fprintf(fp, "block->index[%d] should be 0\n", start);
+            size += fprintf(fp, "%s[%d]={", title, i);
         }
         else
         {
-            for (i = 0; i < block->nr; i++)
-            {
-                end  = block->index[i + 1];
-                size = pr_indent(fp, indent);
-                if (end <= start)
-                {
-                    size += fprintf(fp, "%s[%d]={", title, i);
-                }
-                else
-                {
-                    size += fprintf(fp, "%s[%d][%d..%d]={", title, bShowNumbers ? i : -1,
-                                    bShowNumbers ? start : -1, bShowNumbers ? end - 1 : -1);
-                }
-                for (j = start; j < end; j++)
-                {
-                    if (j > start)
-                    {
-                        size += fprintf(fp, ", ");
-                    }
-                    if ((size) > (USE_WIDTH))
-                    {
-                        fprintf(fp, "\n");
-                        size = pr_indent(fp, indent + INDENT);
-                    }
-                    size += fprintf(fp, "%d", block->a[j]);
-                }
-                fprintf(fp, "}\n");
-                start = end;
-            }
+            size += fprintf(fp, "%s[%d]={", title, bShowNumbers ? i : -1);
         }
-        if ((end != block->nra) || (!ok))
+        bool firstElement = true;
+        for (const int a : block)
         {
-            pr_indent(fp, indent);
-            fprintf(fp, "tables inconsistent, dumping complete tables:\n");
-            low_pr_blocka(fp, indent, title, block, bShowNumbers);
+            if (!firstElement)
+            {
+                size += fprintf(fp, ", ");
+            }
+            if ((size) > (USE_WIDTH))
+            {
+                fprintf(fp, "\n");
+                size = pr_indent(fp, indent + INDENT);
+            }
+            size += fprintf(fp, "%d", a);
+            firstElement = false;
         }
+        fprintf(fp, "}\n");
     }
 }
 
@@ -345,7 +217,7 @@ void pr_listoflists(FILE* fp, int indent, const char* title, const gmx::ListOfLi
     if (available(fp, lists, indent, title))
     {
         indent = pr_listoflists_title(fp, indent, title, lists);
-        for (gmx::index i = 0; i < lists->ssize(); i++)
+        for (gmx::Index i = 0; i < lists->ssize(); i++)
         {
             int                      size = pr_indent(fp, indent);
             gmx::ArrayRef<const int> list = (*lists)[i];
@@ -374,20 +246,5 @@ void pr_listoflists(FILE* fp, int indent, const char* title, const gmx::ListOfLi
             }
             fprintf(fp, "}\n");
         }
-    }
-}
-
-void copy_block(const t_block* src, t_block* dst)
-{
-    dst->nr = src->nr;
-    /* Workaround for inconsistent handling of nalloc_index in
-     * other parts of the code. Often nalloc_index and nalloc_a
-     * are not set.
-     */
-    dst->nalloc_index = std::max(src->nalloc_index, dst->nr + 1);
-    snew(dst->index, dst->nalloc_index);
-    for (int i = 0; i < dst->nr + 1; ++i)
-    {
-        dst->index[i] = src->index[i];
     }
 }

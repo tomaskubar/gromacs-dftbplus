@@ -1,12 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
- * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2012,2014,2015,2017,2019, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 1991- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -20,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -29,20 +26,21 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 #include "gmxpre.h"
 
-#include "sparsematrix.h"
-
-#include <stdio.h>
-#include <stdlib.h>
+#include "gromacs/linearalgebra/sparsematrix.h"
 
 #include <cassert>
+#include <cstdio>
+#include <cstdlib>
 
+#include "gromacs/utility/basedefinitions.h"
+#include "gromacs/utility/real.h"
 #include "gromacs/utility/smalloc.h"
 
 gmx_sparsematrix_t* gmx_sparsematrix_init(int nrow)
@@ -98,7 +96,7 @@ void gmx_sparsematrix_print(FILE* stream, gmx_sparsematrix_t* A)
         {
             for (j = 0; j < A->nrow; j++)
             {
-                fprintf(stream, " %6.3f", 0.0);
+                std::fprintf(stream, " %6.3f", 0.0);
             }
         }
         else
@@ -108,16 +106,16 @@ void gmx_sparsematrix_print(FILE* stream, gmx_sparsematrix_t* A)
             {
                 while (k++ < A->data[i][j].col)
                 {
-                    fprintf(stream, " %6.3f", 0.0);
+                    std::fprintf(stream, " %6.3f", 0.0);
                 }
-                fprintf(stream, " %6.3f", A->data[i][j].value);
+                std::fprintf(stream, " %6.3f", A->data[i][j].value);
             }
             while (k++ < A->nrow)
             {
-                fprintf(stream, " %6.3f", 0.0);
+                std::fprintf(stream, " %6.3f", 0.0);
             }
         }
-        fprintf(stream, "\n");
+        std::fprintf(stream, "\n");
     }
 }
 
@@ -239,12 +237,12 @@ void gmx_sparsematrix_compress(gmx_sparsematrix_t* A)
             }
         }
         /* Only non-zero elements remaining on this row. Sort them after column index */
-        qsort((void*)(A->data[i]), A->ndata[i], sizeof(gmx_sparsematrix_entry_t), compare_columns);
+        std::qsort((void*)(A->data[i]), A->ndata[i], sizeof(gmx_sparsematrix_entry_t), compare_columns);
     }
 }
 
 
-void gmx_sparsematrix_vector_multiply(gmx_sparsematrix_t* A, real* x, real* y)
+void gmx_sparsematrix_vector_multiply(gmx_sparsematrix_t* A, const real* x, real* y)
 {
     real                      s, v, xi;
     int                       i, j, k;

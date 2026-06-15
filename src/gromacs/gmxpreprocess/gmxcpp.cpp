@@ -1,13 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
- * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2017,2018 by the GROMACS development team.
- * Copyright (c) 2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 1991- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -21,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -30,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 #include "gmxpre.h"
 
@@ -48,14 +44,16 @@
 #include <cstring>
 
 #include <algorithm>
+#include <filesystem>
 #include <memory>
 #include <unordered_set>
+#include <vector>
 
 #include <sys/types.h>
 
 #include "gromacs/utility/arrayref.h"
+#include "gromacs/utility/basedefinitions.h"
 #include "gromacs/utility/cstringutil.h"
-#include "gromacs/utility/dir_separator.h"
 #include "gromacs/utility/fatalerror.h"
 #include "gromacs/utility/futil.h"
 #include "gromacs/utility/gmxassert.h"
@@ -77,39 +75,39 @@ enum
 
 struct gmx_cpp
 {
-    std::shared_ptr<std::vector<t_define>>    defines;
-    std::shared_ptr<std::vector<std::string>> includes;
-    std::unordered_set<std::string>           unmatched_defines;
-    FILE*                                     fp = nullptr;
-    std::string                               path;
-    std::string                               cwd;
-    std::string                               fn;
-    std::string                               line;
-    int                                       line_nr;
-    std::vector<int>                          ifdefs;
-    struct gmx_cpp*                           child  = nullptr;
-    struct gmx_cpp*                           parent = nullptr;
+    std::shared_ptr<std::vector<t_define>>              defines;
+    std::shared_ptr<std::vector<std::filesystem::path>> includes;
+    std::unordered_set<std::string>                     unmatched_defines;
+    FILE*                                               fp = nullptr;
+    std::filesystem::path                               path;
+    std::filesystem::path                               cwd;
+    std::filesystem::path                               fn;
+    std::string                                         line;
+    int                                                 line_nr;
+    std::vector<int>                                    ifdefs;
+    struct gmx_cpp*                                     child  = nullptr;
+    struct gmx_cpp*                                     parent = nullptr;
 };
 
 static bool is_word_end(char c)
 {
-    return !((isalnum(c) != 0) || c == '_');
+    return !((std::isalnum(c) != 0) || c == '_');
 }
 
 static const char* strstrw(const char* buf, const char* word)
 {
     const char* ptr;
 
-    while ((ptr = strstr(buf, word)) != nullptr)
+    while ((ptr = std::strstr(buf, word)) != nullptr)
     {
         /* Check if we did not find part of a longer word */
-        if (ptr && is_word_end(ptr[strlen(word)])
+        if (ptr && is_word_end(ptr[std::strlen(word)])
             && (((ptr > buf) && is_word_end(ptr[-1])) || (ptr == buf)))
         {
             return ptr;
         }
 
-        buf = ptr + strlen(word);
+        buf = ptr + std::strlen(word);
     }
     return nullptr;
 }
@@ -121,7 +119,7 @@ static const char* strstrw(const char* buf, const char* word)
 static bool find_directive(const char* buf, std::string* name, std::string* val)
 {
     /* Skip initial whitespace */
-    while (isspace(*buf))
+    while (std::isspace(*buf))
     {
         ++buf;
     }
@@ -132,13 +130,13 @@ static bool find_directive(const char* buf, std::string* name, std::string* val)
     }
     /* Skip the hash and any space after it */
     ++buf;
-    while (isspace(*buf))
+    while (std::isspace(*buf))
     {
         ++buf;
     }
     /* Set the name pointer and find the next space */
     name->clear();
-    while (*buf != '\0' && !isspace(*buf))
+    while (*buf != '\0' && !std::isspace(*buf))
     {
         *name += *buf;
         ++buf;
@@ -147,7 +145,7 @@ static bool find_directive(const char* buf, std::string* name, std::string* val)
     if (*buf != '\0')
     {
         ++buf;
-        while (isspace(*buf))
+        while (std::isspace(*buf))
         {
             ++buf;
         }
@@ -157,7 +155,7 @@ static bool find_directive(const char* buf, std::string* name, std::string* val)
     {
         *val = buf;
         // Remove trailing whitespace
-        while (!val->empty() && isspace(val->back()))
+        while (!val->empty() && std::isspace(val->back()))
         {
             val->resize(val->size() - 1);
         }
@@ -175,20 +173,20 @@ static bool is_ifdeffed_out(gmx::ArrayRef<const int> ifdefs)
     return (!ifdefs.empty() && ifdefs.back() != eifTRUE);
 }
 
-static void add_include(std::vector<std::string>* includes, const char* includePath)
+static void add_include(std::vector<std::filesystem::path>* includes, const std::filesystem::path& includePath)
 {
     GMX_RELEASE_ASSERT(includes, "Need valid includes");
-    GMX_RELEASE_ASSERT(includePath, "Need a valid include path");
+    GMX_RELEASE_ASSERT(!includePath.empty(), "Need a valid include path");
 
-    for (const std::string& include : *includes)
+    for (const auto& include : *includes)
     {
-        if (strcmp(include.c_str(), includePath) == 0)
+        if (include.string() == includePath.string())
         {
             return;
         }
     }
 
-    includes->push_back(includePath);
+    includes->emplace_back(includePath);
 }
 
 static void add_define(std::vector<t_define>* defines, const std::string& name, const char* value)
@@ -210,11 +208,11 @@ static void add_define(std::vector<t_define>* defines, const std::string& name, 
 
 /* Open the file to be processed. The handle variable holds internal
    info for the cpp emulator. Return integer status */
-static int cpp_open_file(const char*                                filenm,
-                         gmx_cpp_t*                                 handle,
-                         char**                                     cppopts,
-                         std::shared_ptr<std::vector<t_define>>*    definesFromParent,
-                         std::shared_ptr<std::vector<std::string>>* includesFromParent)
+static int cpp_open_file(const std::filesystem::path&                         filenm,
+                         gmx_cpp_t*                                           handle,
+                         char**                                               cppopts,
+                         std::shared_ptr<std::vector<t_define>>*              definesFromParent,
+                         std::shared_ptr<std::vector<std::filesystem::path>>* includesFromParent)
 {
     // TODO: We should avoid new/delete, we should use Pimpl instead
     gmx_cpp* cpp = new gmx_cpp;
@@ -235,7 +233,7 @@ static int cpp_open_file(const char*                                filenm,
     }
     else
     {
-        cpp->includes = std::make_shared<std::vector<std::string>>();
+        cpp->includes = std::make_shared<std::vector<std::filesystem::path>>();
     }
 
     /* First process options, they might be necessary for opening files
@@ -245,14 +243,14 @@ static int cpp_open_file(const char*                                filenm,
     {
         while (cppopts[i])
         {
-            if (strstr(cppopts[i], "-I") == cppopts[i])
+            if (std::strstr(cppopts[i], "-I") == cppopts[i])
             {
                 add_include(cpp->includes.get(), cppopts[i] + 2);
             }
-            if (strstr(cppopts[i], "-D") == cppopts[i])
+            if (std::strstr(cppopts[i], "-D") == cppopts[i])
             {
                 /* If the option contains a =, split it into name and value. */
-                char* ptr = strchr(cppopts[i], '=');
+                char* ptr = std::strchr(cppopts[i], '=');
                 if (ptr)
                 {
                     std::string buf = cppopts[i] + 2;
@@ -278,9 +276,10 @@ static int cpp_open_file(const char*                                filenm,
     else
     {
         /* If not, check all the paths given with -I. */
-        for (const std::string& include : *cpp->includes)
+        for (const auto& include : *cpp->includes)
         {
-            std::string buf = include + "/" + filenm;
+            auto buf = include;
+            buf.append(filenm.string());
             if (gmx_fexist(buf))
             {
                 cpp->fn = buf;
@@ -295,30 +294,17 @@ static int cpp_open_file(const char*                                filenm,
     }
     if (cpp->fn.empty())
     {
-        gmx_fatal(FARGS, "Topology include file \"%s\" not found", filenm);
+        gmx_fatal(FARGS, "Topology include file \"%s\" not found", filenm.string().c_str());
     }
     /* If the file name has a path component, we need to change to that
-     * directory. Note that we - just as C - always use UNIX path separators
-     * internally in include file names.
+     * directory.
      */
-    size_t pos  = cpp->fn.rfind('/');
-    size_t pos2 = cpp->fn.rfind(DIR_SEPARATOR);
-
-    if (pos == std::string::npos || (pos2 != std::string::npos && pos2 > pos))
+    if (cpp->fn.has_parent_path())
     {
-        pos = pos2;
-    }
-    if (pos != std::string::npos)
-    {
-        cpp->path = cpp->fn;
-        cpp->path.resize(pos);
-        cpp->fn.erase(0, pos + 1);
-
-        char buf[STRLEN];
-        gmx_getcwd(buf, STRLEN);
-        cpp->cwd = buf;
-
-        gmx_chdir(cpp->path.c_str());
+        cpp->path = cpp->fn.parent_path();
+        cpp->fn   = cpp->fn.filename();
+        cpp->cwd  = gmx_getcwd();
+        gmx_chdir(cpp->path);
     }
     cpp->line.clear();
     cpp->line_nr = 0;
@@ -327,7 +313,7 @@ static int cpp_open_file(const char*                                filenm,
     cpp->parent = nullptr;
     if (cpp->fp == nullptr)
     {
-        cpp->fp = fopen(cpp->fn.c_str(), "r");
+        cpp->fp = std::fopen(cpp->fn.string().c_str(), "r");
     }
     if (cpp->fp == nullptr)
     {
@@ -342,7 +328,7 @@ static int cpp_open_file(const char*                                filenm,
 
 /* Open the file to be processed. The handle variable holds internal
    info for the cpp emulator. Return integer status */
-int cpp_open_file(const char* filenm, gmx_cpp_t* handle, char** cppopts)
+int cpp_open_file(const std::filesystem::path& filenm, gmx_cpp_t* handle, char** cppopts)
 {
     return cpp_open_file(filenm, handle, cppopts, nullptr, nullptr);
 }
@@ -477,8 +463,8 @@ static int process_directive(gmx_cpp_t* handlep, const std::string& dname, const
         std::string inc_fn = dval.substr(i0, len);
 
         /* Open include file and store it as a child in the handle structure */
-        int status = cpp_open_file(inc_fn.c_str(), &(handle->child), nullptr, &handle->defines,
-                                   &handle->includes);
+        int status = cpp_open_file(
+                inc_fn.c_str(), &(handle->child), nullptr, &handle->defines, &handle->includes);
         if (status != eCPP_OK)
         {
             handle->child = nullptr;
@@ -500,13 +486,13 @@ static int process_directive(gmx_cpp_t* handlep, const std::string& dname, const
         }
         /* Split it into name and value. */
         const char* ptr = dval.c_str();
-        while ((*ptr != '\0') && !isspace(*ptr))
+        while ((*ptr != '\0') && !std::isspace(*ptr))
         {
             ptr++;
         }
         std::string name = dval.substr(0, ptr - dval.c_str());
 
-        while ((*ptr != '\0') && isspace(*ptr))
+        while ((*ptr != '\0') && std::isspace(*ptr))
         {
             ptr++;
         }
@@ -560,7 +546,7 @@ int cpp_read_line(gmx_cpp_t* handlep, int n, char buf[])
         return eCPP_FILE_NOT_OPEN;
     }
 
-    bEOF = (feof(handle->fp) != 0);
+    bEOF = (std::feof(handle->fp) != 0);
     if (!bEOF)
     {
         /* Read the actual line now. */
@@ -569,7 +555,7 @@ int cpp_read_line(gmx_cpp_t* handlep, int n, char buf[])
             /* Recheck EOF, since we could have been at the end before
              * the fgets2 call, but we need to read past the end to know.
              */
-            bEOF = (feof(handle->fp) != 0);
+            bEOF = (std::feof(handle->fp) != 0);
             if (!bEOF)
             {
                 /* Something strange happened, fgets returned NULL,
@@ -632,7 +618,7 @@ int cpp_read_line(gmx_cpp_t* handlep, int n, char buf[])
             while ((ptr = strstrw(ptr, define.name.c_str())) != nullptr)
             {
                 nn++;
-                ptr += strlen(define.name.c_str());
+                ptr += std::strlen(define.name.c_str());
             }
             if (nn > 0)
             {
@@ -645,18 +631,18 @@ int cpp_read_line(gmx_cpp_t* handlep, int n, char buf[])
                 root->unmatched_defines.erase(define.name);
 
                 std::string name;
-                const char* ptr = buf;
+                const char* ptr1 = buf;
                 const char* ptr2;
-                while ((ptr2 = strstrw(ptr, define.name.c_str())) != nullptr)
+                while ((ptr2 = strstrw(ptr1, define.name.c_str())) != nullptr)
                 {
-                    name.append(ptr, ptr2 - ptr);
+                    name.append(ptr1, ptr2 - ptr1);
                     name += define.def;
-                    ptr = ptr2 + define.name.size();
+                    ptr1 = ptr2 + define.name.size();
                 }
-                name += ptr;
+                name += ptr1;
                 GMX_RELEASE_ASSERT(name.size() < static_cast<size_t>(n),
                                    "The line should fit in buf");
-                strcpy(buf, name.c_str());
+                std::strcpy(buf, name.c_str());
             }
         }
     }
@@ -664,9 +650,9 @@ int cpp_read_line(gmx_cpp_t* handlep, int n, char buf[])
     return eCPP_OK;
 }
 
-const char* cpp_cur_file(const gmx_cpp_t* handlep)
+std::filesystem::path cpp_cur_file(const gmx_cpp_t* handlep)
 {
-    return (*handlep)->fn.c_str();
+    return (*handlep)->fn;
 }
 
 int cpp_cur_linenr(const gmx_cpp_t* handlep)
@@ -687,11 +673,11 @@ int cpp_close_file(gmx_cpp_t* handlep)
     {
         return eCPP_FILE_NOT_OPEN;
     }
-    fclose(handle->fp);
+    std::fclose(handle->fp);
 
     if (!handle->cwd.empty())
     {
-        gmx_chdir(handle->cwd.c_str());
+        gmx_chdir(handle->cwd);
     }
 
     handle->fp      = nullptr;
@@ -751,9 +737,12 @@ char* cpp_error(gmx_cpp_t* handlep, int status)
         status = eCPP_NR;
     }
 
-    sprintf(buf, "%s - File %s, line %d\nLast line read:\n'%s'", ecpp[status],
-            (handle && !handle->fn.empty()) ? handle->fn.c_str() : "unknown",
-            (handle) ? handle->line_nr : -1, !handle->line.empty() ? handle->line.c_str() : "");
+    sprintf(buf,
+            "%s - File %s, line %d\nLast line read:\n'%s'",
+            ecpp[status],
+            (handle && !handle->fn.empty()) ? handle->fn.string().c_str() : "unknown",
+            (handle) ? handle->line_nr : -1,
+            !handle->line.empty() ? handle->line.c_str() : "");
 
     return gmx_strdup(buf);
 }
@@ -767,7 +756,7 @@ std::string checkAndWarnForUnusedDefines(const gmx_cpp& handle)
                 "The following macros were defined in the 'define' mdp field with the -D prefix, "
                 "but "
                 "were not used in the topology:\n";
-        for (auto& str : handle.unmatched_defines)
+        for (const auto& str : handle.unmatched_defines)
         {
             warning += ("    " + str + "\n");
         }

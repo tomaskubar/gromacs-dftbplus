@@ -1,13 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
- * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2016,2017 by the GROMACS development team.
- * Copyright (c) 2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 1991- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -21,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -30,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \file
  * \brief
@@ -45,10 +41,9 @@
 #ifndef GMX_UTILITY_BASEDEFINITIONS_H
 #define GMX_UTILITY_BASEDEFINITIONS_H
 
-#include <stdint.h>
-
 #include <cinttypes>
 #include <cstddef>
+#include <cstdint>
 
 //! Identical to bool
 typedef bool gmx_bool;
@@ -70,11 +65,11 @@ namespace gmx
  *
  * Same as ptrdiff_t.
  */
-using index = std::ptrdiff_t;
+using Index = std::ptrdiff_t;
 
 //! Return signed size of container
 template<typename T>
-index ssize(const T& t)
+Index ssize(const T& t)
 {
     return t.size();
 }
@@ -104,10 +99,7 @@ index ssize(const T& t)
  */
 #ifndef gmx_unused
 #    ifdef __GNUC__
-/* GCC, clang, and some ICC pretending to be GCC */
-#        define gmx_unused __attribute__((unused))
-#    elif (defined(__INTEL_COMPILER) || defined(__ECC)) && !defined(_MSC_VER)
-/* ICC on *nix */
+/* GCC, clang, and any pretending to be or based on them */
 #        define gmx_unused __attribute__((unused))
 #    elif defined(__PGI)
 /* Portland group compilers */
@@ -122,6 +114,27 @@ index ssize(const T& t)
 #        define gmx_unused
 #    endif
 #endif
+
+/*! \def gmx_inline
+ *  \brief Function attribute to hint inlining.
+ *
+ * Since C++ does not have a standard way to ensure a function is inlined
+ * we use compiler-specific attributes (or combinations of attributes) to
+ * to make sure that the various compilers will most likely inline functions
+ * we intend to be inlined.
+ *
+ * \note g++-13 uses an extreme amount of memory with RelWithAssert builds.
+ * To avoid this we fall back to plain inline attribute when NDEBUG is not defined with gcc 13,
+ * since the performance is not critical in this case (not "Release" build).
+ */
+#if defined(__GNUC__) && !defined(__clang__) && (__GNUC__ != 13 || defined(NDEBUG))
+#    define gmx_inline __attribute__((__gnu_inline__, __always_inline__)) inline
+#elif defined(__clang__)
+#    define gmx_inline __attribute__((always_inline)) inline
+#else
+#    define gmx_inline inline
+#endif
+
 
 /*! \brief Attribute to explicitly indicate that a parameter or
  * locally scoped variable is used just in debug mode.
@@ -148,10 +161,22 @@ index ssize(const T& t)
  */
 #define GMX_UNUSED_VALUE(value) (void)value
 
-#ifdef __clang__
-#    define DO_PRAGMA(x) _Pragma(#    x)
+#if defined(__GNUC__) && !defined(__clang__)
+#    define DO_PRAGMA(x) _Pragma(#x)
+#    define GCC_DIAGNOSTIC_IGNORE(warning) \
+        _Pragma("GCC diagnostic push") DO_PRAGMA(GCC diagnostic ignored warning)
+#    define GCC_DIAGNOSTIC_RESET _Pragma("GCC diagnostic pop")
+#else
+//! Ignore specified clang warning until GCC_DIAGNOSTIC_RESET
+#    define GCC_DIAGNOSTIC_IGNORE(warning)
+//! Reset all diagnostics to default
+#    define GCC_DIAGNOSTIC_RESET
+#endif
+
+#if defined(__clang__) && !defined(DO_PRAGMA)
+#    define DO_PRAGMA(x) _Pragma(#x)
 #    define CLANG_DIAGNOSTIC_IGNORE(warning) \
-        _Pragma("clang diagnostic push") DO_PRAGMA(clang diagnostic ignored #warning)
+        _Pragma("clang diagnostic push") DO_PRAGMA(clang diagnostic ignored warning)
 #    define CLANG_DIAGNOSTIC_RESET _Pragma("clang diagnostic pop")
 #else
 //! Ignore specified clang warning until CLANG_DIAGNOSTIC_RESET
@@ -159,6 +184,30 @@ index ssize(const T& t)
 //! Reset all diagnostics to default
 #    define CLANG_DIAGNOSTIC_RESET
 #endif
+
+/*! \brief Ensure we suppress no-return-value-optimization warnings
+ * only for clang versions that recognize them.
+ *
+ * The calls to these macro can be changed to the standard
+ * CLANG_DIAGNOSTIC forms when we require at least clang 21.
+ *
+ * If we start to get a few of these custom suppressions, perhaps
+ * instead using
+ * `_Pragma("clang diagnostic ignored \"-Wunknown-warning-option\")`
+ * will become more attractive than multiple custom suppressions. */
+#if defined(__has_warning)
+#    if __has_warning("-Wnrvo")
+#        define CLANG_DIAGNOSTIC_IGNORE_WNRVO CLANG_DIAGNOSTIC_IGNORE("-Wnrvo")
+#        define CLANG_DIAGNOSTIC_RESET_WNRVO CLANG_DIAGNOSTIC_RESET
+#    else
+#        define CLANG_DIAGNOSTIC_IGNORE_WNRVO
+#        define CLANG_DIAGNOSTIC_RESET_WNRVO
+#    endif
+#else
+#    define CLANG_DIAGNOSTIC_IGNORE_WNRVO
+#    define CLANG_DIAGNOSTIC_RESET_WNRVO
+#endif
+
 
 #ifdef _MSC_VER
 #    define MSVC_DIAGNOSTIC_IGNORE(id) __pragma(warning(push)) __pragma(warning(disable : id))
@@ -168,18 +217,6 @@ index ssize(const T& t)
 #    define MSVC_DIAGNOSTIC_IGNORE(warning)
 //! Reset all diagnostics to default
 #    define MSVC_DIAGNOSTIC_RESET
-#endif
-
-#ifdef __INTEL_COMPILER
-//! Ignore unused loop variable warning - it was used until the compiler removes the use!
-#    define DO_PRAGMA(x) _Pragma(#    x)
-#    define INTEL_DIAGNOSTIC_IGNORE(id) DO_PRAGMA(warning push) DO_PRAGMA(warning(disable : id))
-#    define INTEL_DIAGNOSTIC_RESET DO_PRAGMA(warning pop)
-#else
-//! Ignore specified diagnostic message from Intel compiler.
-#    define INTEL_DIAGNOSTIC_IGNORE(id)
-//! Reset the diagnostic message setting.
-#    define INTEL_DIAGNOSTIC_RESET
 #endif
 
 namespace gmx

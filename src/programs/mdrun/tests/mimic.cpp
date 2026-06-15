@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2018,2019, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2018- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 
 /*! \internal \file
@@ -42,6 +41,9 @@
  */
 #include "gmxpre.h"
 
+#include <filesystem>
+#include <string>
+
 #include <gtest/gtest.h>
 
 #include "gromacs/topology/ifunc.h"
@@ -52,6 +54,8 @@
 #include "testutils/cmdlinetest.h"
 #include "testutils/refdata.h"
 #include "testutils/simulationdatabase.h"
+#include "testutils/testasserts.h"
+#include "testutils/testfilemanager.h"
 
 #include "energycomparison.h"
 #include "energyreader.h"
@@ -69,9 +73,9 @@ public:
     //! Execute the trajectory writing test
     void setupGrompp(const char* index_file, const char* top_file, const char* gro_file)
     {
-        runner_.topFileName_ = TestFileManager::getInputFilePath(top_file);
-        runner_.groFileName_ = TestFileManager::getInputFilePath(gro_file);
-        runner_.ndxFileName_ = TestFileManager::getInputFilePath(index_file);
+        runner_.topFileName_ = TestFileManager::getInputFilePath(top_file).string();
+        runner_.groFileName_ = TestFileManager::getInputFilePath(gro_file).string();
+        runner_.ndxFileName_ = TestFileManager::getInputFilePath(index_file).string();
         runner_.useStringAsMdpFile(
                 "integrator                = mimic\n"
                 "QMMM-grps                 = QMatoms");
@@ -82,14 +86,15 @@ public:
         CommandLine rerunCaller;
         rerunCaller.append("mdrun");
         rerunCaller.addOption("-rerun", runner_.groFileName_);
-        runner_.edrFileName_ = fileManager_.getTemporaryFilePath(".edr");
+        runner_.edrFileName_ = fileManager_.getTemporaryFilePath(".edr").string();
         return rerunCaller;
     }
     //! Check the output of mdrun
     void checkRerun()
     {
         EnergyTermsToCompare energyTermsToCompare{ {
-                { interaction_function[F_EPOT].longname, relativeToleranceAsFloatingPoint(-20.1, 1e-4) },
+                { interaction_function[InteractionFunction::PotentialEnergy].longname,
+                  relativeToleranceAsFloatingPoint(-20.1, 1e-4) },
         } };
 
         TestReferenceData refData;

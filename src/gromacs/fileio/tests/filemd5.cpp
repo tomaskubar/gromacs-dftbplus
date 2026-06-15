@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2018,2019, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2018- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \internal \file
  * \brief
@@ -44,6 +43,8 @@
 #include <cstdio>
 
 #include <algorithm>
+#include <array>
+#include <filesystem>
 #include <numeric>
 #include <string>
 #include <vector>
@@ -53,6 +54,7 @@
 
 #include "gromacs/fileio/gmxfio.h"
 #include "gromacs/utility/arrayref.h"
+#include "gromacs/utility/futil.h"
 
 #include "testutils/refdata.h"
 #include "testutils/testfilemanager.h"
@@ -67,15 +69,15 @@ namespace
 class FileMD5Test : public ::testing::Test
 {
 public:
-    void prepareFile(int lengthInBytes)
+    void prepareFile(int lengthInBytes) const
     {
         // Fill some memory with some arbitrary bits.
         std::vector<char> data(lengthInBytes);
         std::iota(data.begin(), data.end(), 1);
         // Binary mode ensures it works the same on all OS
-        FILE* fp = fopen(filename_.c_str(), "wb");
-        fwrite(data.data(), sizeof(char), data.size(), fp);
-        fclose(fp);
+        FILE* fp = std::fopen(filename_.string().c_str(), "wb");
+        std::fwrite(data.data(), sizeof(char), data.size(), fp);
+        std::fclose(fp);
     }
     ~FileMD5Test() override
     {
@@ -87,14 +89,14 @@ public:
     TestFileManager fileManager_;
     // Make sure the file extension is one that gmx_fio_open will
     // recognize to open as binary.
-    std::string filename_ = fileManager_.getTemporaryFilePath("data.edr");
-    t_fileio*   file_     = nullptr;
+    std::filesystem::path filename_ = fileManager_.getTemporaryFilePath("data.edr");
+    t_fileio*             file_     = nullptr;
 };
 
 TEST_F(FileMD5Test, CanComputeMD5)
 {
     prepareFile(1000);
-    file_ = gmx_fio_open(filename_.c_str(), "r+");
+    file_ = gmx_fio_open(filename_, "r+");
 
     std::array<unsigned char, 16> digest = { 0 };
     // Chosen to be less than the full file length
@@ -111,7 +113,7 @@ TEST_F(FileMD5Test, CanComputeMD5)
 TEST_F(FileMD5Test, ReturnsErrorIfFileModeIsWrong)
 {
     prepareFile(1000);
-    file_ = gmx_fio_open(filename_.c_str(), "r");
+    file_ = gmx_fio_open(filename_, "r");
 
     std::array<unsigned char, 16> digest;
     gmx_off_t                     offset             = 100;

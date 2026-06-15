@@ -49,7 +49,7 @@ to stack around your solute(s), and then to truncate to give the simulation volu
 using any 3-point model (e.g. ``SPC``, ``SPC/E`` or ``TIP3P``) you should specify ``-cs spc216.gro``
 which will take this file from ``the gromacs/share/top`` directory. Other water models (e.g.
 ``TIP4P`` and ``TIP5P``) are available as well. Check the contents of the ``/share/top`` subdirectory
-of your GROMACS installation. After solvation, you should then be sure to equilibrate for at
+of your |Gromacs| installation. After solvation, you should then be sure to equilibrate for at
 least 5-10ps at the desired temperature. You will need to select the right water model in your
 :ref:`top` file, either with the ``-water`` flag to :ref:`pdb2gmx <gmx pdb2gmx>`, or by editing
 your :ref:`top` file appropriately by hand.
@@ -67,7 +67,7 @@ have a pre-equilibrated box of whatever solvent you need, and suitable parameter
 in a simulation.  One can then pass the solvent box to the -cs switch of :ref:`solvate <gmx solvate>` to accomplish solvation.
 
 A series of about 150 different equilibrated liquids validated for use with |Gromacs|,
-and for the OPLS/AA and GAFF force fields, can be found at `virtualchemistry <http://virtualchemistry.org/>`_.
+and for the OPLS/AA and GAFF force fields, can be found at `virtualchemistry <https://virtualchemistry.org/>`_.
 
 Making a non-aqueous solvent box
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -105,7 +105,7 @@ Making Disulfide Bonds
 The easiest way to do this is by using the mechanism implemented with the ``specbond.dat``
 file and :ref:`pdb2gmx <gmx pdb2gmx>`. You may find :ref:`pdb2gmx <gmx pdb2gmx>` ``-ss yes``
 is useful. The sulfur atoms will need to be in the same unit that :ref:`pdb2gmx <gmx pdb2gmx>`
-is converting to a ``moleculetype``, so invoking :ref:`pdb2gmx <gmx pdb2gmx>` ``-chainsep``'
+is converting to a ``moleculetype``, so invoking :ref:`pdb2gmx <gmx pdb2gmx>` ``-chainsep``
 correctly may be required. See :ref:`pdb2gmx <gmx pdb2gmx>` ``-h``. This requires that the
 two sulfur atoms be within a distance + tolerance (usually 10%) in order to be recognised
 as a disulfide. If your sulfur atoms are not this close, then either you can

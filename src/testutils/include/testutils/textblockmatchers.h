@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2015,2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2015- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \libinternal \file
  * \brief
@@ -152,6 +151,11 @@ public:
  * stamps. The latter won't be reproducible in tests until
  * the tools that emit them can be mocked suitably.
  *
+ * Constructor arguments are available to signal whether the text that
+ * is read in should have leading or trailing white space
+ * removed. This can be particularly useful when the regex needs
+ * to work on multiple OS, such as in CI testing.
+ *
  * \inlibraryapi
  * \ingroup module_testutils
  */
@@ -159,7 +163,9 @@ class FilteringExactTextMatch : public ITextBlockMatcherSettings
 {
 public:
     //! Constructor
-    explicit FilteringExactTextMatch(std::vector<std::string> linesToSkip);
+    explicit FilteringExactTextMatch(std::vector<std::string> linesToSkip,
+                                     bool                     trimLeadingWhiteSpace,
+                                     bool                     trimTrailingWhiteSpace);
     //! Factory method.
     TextBlockMatcherPointer createMatcher() const override;
     //! Add a regular expression for which a matching line should be skipped.
@@ -168,6 +174,10 @@ public:
 private:
     //! The regular expressions for lines that should be skipped.
     std::vector<std::string> linesToSkip_;
+    //! Whether the text being matched should have leading white space trimmed
+    const bool trimLeadingWhiteSpace_;
+    //! Whether the text being matched should have trailing white space trimmed
+    const bool trimTrailingWhiteSpace_;
 };
 
 } // namespace test

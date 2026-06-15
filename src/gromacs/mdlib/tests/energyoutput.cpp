@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2018- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \internal \file
  * \brief
@@ -53,25 +52,47 @@
 
 #include "gromacs/mdlib/energyoutput.h"
 
+#include <cassert>
 #include <cstdio>
+
+#include <array>
+#include <filesystem>
+#include <memory>
+#include <string>
+#include <vector>
 
 #include <gtest/gtest.h>
 
+#include "gromacs/fileio/enxio.h"
+#include "gromacs/mdlib/constr.h"
 #include "gromacs/mdlib/ebin.h"
 #include "gromacs/mdlib/makeconstraints.h"
 #include "gromacs/mdrunutility/handlerestart.h"
-#include "gromacs/mdtypes/commrec.h"
+#include "gromacs/mdrunutility/mdmodulesnotifiers.h"
+#include "gromacs/mdtypes/enerdata.h"
 #include "gromacs/mdtypes/fcdata.h"
 #include "gromacs/mdtypes/group.h"
 #include "gromacs/mdtypes/inputrec.h"
+#include "gromacs/mdtypes/md_enums.h"
 #include "gromacs/mdtypes/mdatom.h"
 #include "gromacs/mdtypes/state.h"
+#include "gromacs/topology/forcefieldparameters.h"
+#include "gromacs/topology/idef.h"
+#include "gromacs/topology/ifunc.h"
 #include "gromacs/topology/topology.h"
+#include "gromacs/topology/topology_enums.h"
+#include "gromacs/trajectory/energyframe.h"
+#include "gromacs/utility/arrayref.h"
+#include "gromacs/utility/basedefinitions.h"
 #include "gromacs/utility/cstringutil.h"
-#include "gromacs/utility/mdmodulenotification.h"
+#include "gromacs/utility/enumerationhelpers.h"
+#include "gromacs/utility/mpicomm.h"
+#include "gromacs/utility/real.h"
+#include "gromacs/utility/smalloc.h"
 #include "gromacs/utility/stringutil.h"
 #include "gromacs/utility/textreader.h"
 #include "gromacs/utility/unique_cptr.h"
+#include "gromacs/utility/vectypes.h"
 
 #include "testutils/refdata.h"
 #include "testutils/setenv.h"
@@ -88,7 +109,7 @@ namespace
 //! Wraps fclose to discard the return value to use it as a deleter with gmx::unique_cptr.
 void fcloseWrapper(FILE* fp)
 {
-    fclose(fp);
+    std::fclose(fp);
 }
 
 /*! \brief Test parameters space.
@@ -98,11 +119,11 @@ void fcloseWrapper(FILE* fp)
 struct EnergyOutputTestParameters
 {
     //! Thermostat (enum)
-    int temperatureCouplingScheme;
+    TemperatureCoupling temperatureCouplingScheme;
     //! Barostat (enum)
-    int pressureCouplingScheme;
+    PressureCoupling pressureCouplingScheme;
     //! Integrator
-    int integrator;
+    IntegrationAlgorithm integrator;
     //! Number of saved energy frames (to test averages output).
     int numFrames;
     //! If output should be initialized as a rerun.
@@ -116,17 +137,19 @@ struct EnergyOutputTestParameters
  * Only several combinations of the parameters are used. Using all possible combinations will
  * require ~10 MB of test data and ~2 sec to run the tests.
  */
-const EnergyOutputTestParameters parametersSets[] = { { etcNO, epcNO, eiMD, 1, false, false },
-                                                      { etcNO, epcNO, eiMD, 1, true, false },
-                                                      { etcNO, epcNO, eiMD, 1, false, true },
-                                                      { etcNO, epcNO, eiMD, 0, false, false },
-                                                      { etcNO, epcNO, eiMD, 10, false, false },
-                                                      { etcVRESCALE, epcNO, eiMD, 1, false, false },
-                                                      { etcNOSEHOOVER, epcNO, eiMD, 1, false, false },
-                                                      { etcNO, epcPARRINELLORAHMAN, eiMD, 1, false, false },
-                                                      { etcNO, epcMTTK, eiMD, 1, false, false },
-                                                      { etcNO, epcNO, eiVV, 1, false, false },
-                                                      { etcNO, epcMTTK, eiVV, 1, false, false } };
+const EnergyOutputTestParameters parametersSets[] = {
+    { TemperatureCoupling::No, PressureCoupling::No, IntegrationAlgorithm::MD, 1, false, false },
+    { TemperatureCoupling::No, PressureCoupling::No, IntegrationAlgorithm::MD, 1, true, false },
+    { TemperatureCoupling::No, PressureCoupling::No, IntegrationAlgorithm::MD, 1, false, true },
+    { TemperatureCoupling::No, PressureCoupling::No, IntegrationAlgorithm::MD, 0, false, false },
+    { TemperatureCoupling::No, PressureCoupling::No, IntegrationAlgorithm::MD, 10, false, false },
+    { TemperatureCoupling::VRescale, PressureCoupling::No, IntegrationAlgorithm::MD, 1, false, false },
+    { TemperatureCoupling::NoseHoover, PressureCoupling::No, IntegrationAlgorithm::MD, 1, false, false },
+    { TemperatureCoupling::No, PressureCoupling::ParrinelloRahman, IntegrationAlgorithm::MD, 1, false, false },
+    { TemperatureCoupling::No, PressureCoupling::Mttk, IntegrationAlgorithm::MD, 1, false, false },
+    { TemperatureCoupling::No, PressureCoupling::No, IntegrationAlgorithm::VV, 1, false, false },
+    { TemperatureCoupling::No, PressureCoupling::Mttk, IntegrationAlgorithm::VV, 1, false, false }
+};
 
 /*! \brief Test fixture to test energy output.
  *
@@ -136,6 +159,10 @@ const EnergyOutputTestParameters parametersSets[] = { { etcNO, epcNO, eiMD, 1, f
  */
 class EnergyOutputTest : public ::testing::TestWithParam<EnergyOutputTestParameters>
 {
+    static constexpr int numTempCouplingGroups_ = 3;
+    static constexpr std::array<real, numTempCouplingGroups_> tcgInit_{ 0.0_real, 0.0_real, 0.0_real };
+    static constexpr real cosAccel_ = 1.0;
+
 public:
     //! File manager
     TestFileManager fileManager_;
@@ -157,10 +184,6 @@ public:
     t_state state_;
     //! PBC box
     matrix box_;
-    //! Virial from constraints
-    tensor constraintsVirial_;
-    //! Virial from force computation
-    tensor forceVirial_;
     //! Total virial
     tensor totalVirial_;
     //! Pressure
@@ -173,8 +196,10 @@ public:
     std::vector<char*> groupNameHandles_;
     //! Total dipole momentum
     rvec muTotal_;
-    //! Communication record
-    t_commrec cr_;
+    //! Communication object
+    MpiComm mpiComm_;
+    //! Domain decomposition pointer
+    gmx_domdec_t* dd_ = nullptr;
     //! Constraints object (for constraints RMSD output in case of LINCS)
     std::unique_ptr<Constraints> constraints_;
     //! Temporary output filename
@@ -191,8 +216,10 @@ public:
     TestReferenceChecker checker_;
 
     EnergyOutputTest() :
-        logFilename_(fileManager_.getTemporaryFilePath(".log")),
-        edrFilename_(fileManager_.getTemporaryFilePath(".edr")),
+        ekindata_(tcgInit_, EnsembleTemperatureSetting::NotAvailable, -1.0_real, false, cosAccel_, 1),
+        mpiComm_(MpiComm(MpiComm::SingleRank{})),
+        logFilename_(fileManager_.getTemporaryFilePath(".log").string()),
+        edrFilename_(fileManager_.getTemporaryFilePath(".edr").string()),
         log_(std::fopen(logFilename_.c_str(), "w")),
         logFileGuard_(log_),
         checker_(refData_.rootChecker())
@@ -200,42 +227,38 @@ public:
         // Input record
         inputrec_.delta_t = 0.001;
 
-        // F_EQM
-        inputrec_.bQMMM = true;
-        // F_RF_EXCL will not be tested - group scheme is not supported any more
-        inputrec_.cutoff_scheme = ecutsVERLET;
-        // F_COUL_RECIP
-        inputrec_.coulombtype = eelPME;
-        // F_LJ_RECIP
-        inputrec_.vdwtype = evdwPME;
+        // InteractionFunction::ReactionFieldExclusion will not be tested - group scheme is not supported any more
+        inputrec_.cutoff_scheme = CutoffScheme::Verlet;
+        // InteractionFunction::CoulombReciprocalSpace
+        inputrec_.coulombtype = CoulombInteractionType::Pme;
+        // InteractionFunction::LennardJonesReciprocalSpace
+        inputrec_.vdwtype = VanDerWaalsType::Pme;
 
-        // F_DVDL_COUL, F_DVDL_VDW, F_DVDL_BONDED, F_DVDL_RESTRAINT, F_DKDL and F_DVDL
-        inputrec_.efep                                  = efepYES;
-        inputrec_.fepvals->separate_dvdl[efptCOUL]      = true;
-        inputrec_.fepvals->separate_dvdl[efptVDW]       = true;
-        inputrec_.fepvals->separate_dvdl[efptBONDED]    = true;
-        inputrec_.fepvals->separate_dvdl[efptRESTRAINT] = true;
-        inputrec_.fepvals->separate_dvdl[efptMASS]      = true;
-        inputrec_.fepvals->separate_dvdl[efptCOUL]      = true;
-        inputrec_.fepvals->separate_dvdl[efptFEP]       = true;
+        // InteractionFunction::dVCoulombdLambda, InteractionFunction::dVvanderWaalsdLambda, InteractionFunction::dVbondeddLambda,
+        // InteractionFunction::dVrestraintdLambda, InteractionFunction::dEkineticdLambda and InteractionFunction::dVremainingdLambda
+        inputrec_.efep = FreeEnergyPerturbationType::Yes;
+        inputrec_.fepvals->separate_dvdl[FreeEnergyPerturbationCouplingType::Coul]      = true;
+        inputrec_.fepvals->separate_dvdl[FreeEnergyPerturbationCouplingType::Vdw]       = true;
+        inputrec_.fepvals->separate_dvdl[FreeEnergyPerturbationCouplingType::Bonded]    = true;
+        inputrec_.fepvals->separate_dvdl[FreeEnergyPerturbationCouplingType::Restraint] = true;
+        inputrec_.fepvals->separate_dvdl[FreeEnergyPerturbationCouplingType::Mass]      = true;
+        inputrec_.fepvals->separate_dvdl[FreeEnergyPerturbationCouplingType::Coul]      = true;
+        inputrec_.fepvals->separate_dvdl[FreeEnergyPerturbationCouplingType::Fep]       = true;
 
-        // F_DISPCORR and F_PDISPCORR
-        inputrec_.eDispCorr = edispcEner;
+        // InteractionFunction::DispersionCorrection and InteractionFunction::PressureDispersionCorrection
+        inputrec_.eDispCorr = DispersionCorrectionType::Ener;
         inputrec_.bRot      = true;
 
-        // F_ECONSERVED
-        inputrec_.ref_p[YY][XX] = 0.0;
-        inputrec_.ref_p[ZZ][XX] = 0.0;
-        inputrec_.ref_p[ZZ][YY] = 0.0;
+        // InteractionFunction::ConservedEnergy
+        inputrec_.pressureCouplingOptions.ref_p[YY][XX] = 0.0;
+        inputrec_.pressureCouplingOptions.ref_p[ZZ][XX] = 0.0;
+        inputrec_.pressureCouplingOptions.ref_p[ZZ][YY] = 0.0;
 
         // Dipole (mu)
-        inputrec_.ewald_geometry = eewg3DC;
+        inputrec_.ewald_geometry = EwaldGeometry::ThreeDC;
 
-        // GMX_CONSTRAINTVIR environment variable should also be
-        // set to print constraints and force virials separately.
-        gmxSetenv("GMX_CONSTRAINTVIR", "true", 1);
         // To print constrain RMSD, constraints algorithm should be set to LINCS.
-        inputrec_.eConstrAlg = econtLINCS;
+        inputrec_.eConstrAlg = ConstraintAlgorithm::Lincs;
 
         mtop_.bIntermolecularInteractions = false;
 
@@ -244,41 +267,41 @@ public:
 
         molType.atoms.nr = 2;
 
-        // F_CONSTR
+        // InteractionFunction::Constraints
         // This must be initialized so that Constraints object can be created below.
         InteractionList interactionListConstr;
-        interactionListConstr.iatoms.resize(NRAL(F_CONSTR) + 1);
-        interactionListConstr.iatoms[0] = 0;
-        interactionListConstr.iatoms[1] = 0;
-        interactionListConstr.iatoms[2] = 1;
-        molType.ilist.at(F_CONSTR)      = interactionListConstr;
+        interactionListConstr.iatoms.resize(NRAL(InteractionFunction::Constraints) + 1);
+        interactionListConstr.iatoms[0]                 = 0;
+        interactionListConstr.iatoms[1]                 = 0;
+        interactionListConstr.iatoms[2]                 = 1;
+        molType.ilist[InteractionFunction::Constraints] = interactionListConstr;
 
         InteractionList interactionListEmpty;
         interactionListEmpty.iatoms.resize(0);
-        molType.ilist.at(F_CONSTRNC) = interactionListEmpty;
-        molType.ilist.at(F_SETTLE)   = interactionListEmpty;
+        molType.ilist[InteractionFunction::ConstraintsNoCoupling] = interactionListEmpty;
+        molType.ilist[InteractionFunction::SETTLE]                = interactionListEmpty;
 
-        // F_LJ14 and F_COUL14
+        // InteractionFunction::LennardJones14 and InteractionFunction::Coulomb14
         InteractionList interactionListLJ14;
-        interactionListLJ14.iatoms.resize(NRAL(F_LJ14) + 1);
-        molType.ilist.at(F_LJ14) = interactionListLJ14;
+        interactionListLJ14.iatoms.resize(NRAL(InteractionFunction::LennardJones14) + 1);
+        molType.ilist[InteractionFunction::LennardJones14] = interactionListLJ14;
 
-        // F_LJC14_Q
+        // InteractionFunction::LennardJonesCoulomb14Q
         InteractionList interactionListLJC14Q;
-        interactionListLJC14Q.iatoms.resize(NRAL(F_LJC14_Q) + 1);
-        molType.ilist.at(F_LJC14_Q) = interactionListLJC14Q;
+        interactionListLJC14Q.iatoms.resize(NRAL(InteractionFunction::LennardJonesCoulomb14Q) + 1);
+        molType.ilist[InteractionFunction::LennardJonesCoulomb14Q] = interactionListLJC14Q;
 
         // TODO Do proper initialization for distance and orientation
         //      restraints and remove comments to enable their output
-        // F_DISRES
+        // InteractionFunction::DistanceRestraints
         // InteractionList interactionListDISRES;
-        // interactionListDISRES.iatoms.resize(NRAL(F_DISRES) + 1);
-        // molType.ilist.at(F_DISRES)   = interactionListDISRES;
+        // interactionListDISRES.iatoms.resize(NRAL(InteractionFunction::DistanceRestraints) + 1);
+        // molType.ilist[InteractionFunction::DistanceRestraints]   = interactionListDISRES;
         //
-        // F_ORIRES
+        // InteractionFunction::OrientationRestraints
         // InteractionList interactionListORIRES;
-        // interactionListORIRES.iatoms.resize(NRAL(F_ORIRES) + 1);
-        // molType.ilist.at(F_ORIRES)   = interactionListORIRES;
+        // interactionListORIRES.iatoms.resize(NRAL(InteractionFunction::OrientationRestraints) +
+        // 1); molType.ilist[InteractionFunction::OrientationRestraints]   = interactionListORIRES;
 
         mtop_.moltype.push_back(molType);
 
@@ -289,12 +312,14 @@ public:
 
         // This is to keep constraints initialization happy
         mtop_.natoms = 2;
-        mtop_.ffparams.iparams.resize(F_NRE);
-        mtop_.ffparams.functype.resize(F_NRE);
-        mtop_.ffparams.iparams.at(F_CONSTR).constr.dA   = 1.0;
-        mtop_.ffparams.iparams.at(F_CONSTR).constr.dB   = 1.0;
-        mtop_.ffparams.iparams.at(F_CONSTRNC).constr.dA = 1.0;
-        mtop_.ffparams.iparams.at(F_CONSTRNC).constr.dB = 1.0;
+        mtop_.ffparams.iparams.resize(static_cast<int>(InteractionFunction::Count));
+        mtop_.ffparams.functype.resize(static_cast<int>(InteractionFunction::Count));
+        mtop_.ffparams.iparams.at(static_cast<int>(InteractionFunction::Constraints)).constr.dA = 1.0;
+        mtop_.ffparams.iparams.at(static_cast<int>(InteractionFunction::Constraints)).constr.dB = 1.0;
+        mtop_.ffparams.iparams.at(static_cast<int>(InteractionFunction::ConstraintsNoCoupling))
+                .constr.dA = 1.0;
+        mtop_.ffparams.iparams.at(static_cast<int>(InteractionFunction::ConstraintsNoCoupling))
+                .constr.dB = 1.0;
 
         // Groups for energy output, temperature coupling and acceleration
         for (const auto& string : groupNameStrings_)
@@ -310,19 +335,15 @@ public:
             mtop_.groups.groupNames.emplace_back(&handle);
         }
 
-        mtop_.groups.groups[SimulationAtomGroupType::EnergyOutput].resize(3);
+        mtop_.groups.groups[SimulationAtomGroupType::EnergyOutput].resize(numTempCouplingGroups_);
         mtop_.groups.groups[SimulationAtomGroupType::EnergyOutput][0] = 0;
         mtop_.groups.groups[SimulationAtomGroupType::EnergyOutput][1] = 1;
         mtop_.groups.groups[SimulationAtomGroupType::EnergyOutput][2] = 2;
 
-        mtop_.groups.groups[SimulationAtomGroupType::TemperatureCoupling].resize(3);
+        mtop_.groups.groups[SimulationAtomGroupType::TemperatureCoupling].resize(numTempCouplingGroups_);
         mtop_.groups.groups[SimulationAtomGroupType::TemperatureCoupling][0] = 0;
         mtop_.groups.groups[SimulationAtomGroupType::TemperatureCoupling][1] = 1;
         mtop_.groups.groups[SimulationAtomGroupType::TemperatureCoupling][2] = 2;
-
-        mtop_.groups.groups[SimulationAtomGroupType::Acceleration].resize(2);
-        mtop_.groups.groups[SimulationAtomGroupType::Acceleration][0] = 0;
-        mtop_.groups.groups[SimulationAtomGroupType::Acceleration][1] = 2;
 
         // Nose-Hoover chains
         inputrec_.bPrintNHChains     = true;
@@ -340,42 +361,31 @@ public:
 
         // Group pairs
         enerdata_ = std::make_unique<gmx_enerdata_t>(
-                mtop_.groups.groups[SimulationAtomGroupType::EnergyOutput].size(), 0);
+                mtop_.groups.groups[SimulationAtomGroupType::EnergyOutput].size(), nullptr);
 
         // Kinetic energy and related data
         ekindata_.tcstat.resize(mtop_.groups.groups[SimulationAtomGroupType::TemperatureCoupling].size());
-        ekindata_.grpstat.resize(mtop_.groups.groups[SimulationAtomGroupType::Acceleration].size());
 
         // This is needed so that the ebin space will be allocated
-        inputrec_.cos_accel = 1.0;
-        // This is to keep the destructor happy (otherwise sfree() segfaults)
-        ekindata_.nthreads = 0;
-        snew(ekindata_.ekin_work_alloc, 1);
-        snew(ekindata_.ekin_work, 1);
-        snew(ekindata_.dekindl_work, 1);
+        inputrec_.cos_accel = cosAccel_;
 
         // Group options for annealing output
-        inputrec_.opts.ngtc = 3;
-        snew(inputrec_.opts.ref_t, inputrec_.opts.ngtc);
+        inputrec_.opts.ngtc = numTempCouplingGroups_;
         snew(inputrec_.opts.annealing, inputrec_.opts.ngtc);
-        inputrec_.opts.annealing[0] = eannNO;
-        inputrec_.opts.annealing[1] = eannSINGLE;
-        inputrec_.opts.annealing[2] = eannPERIODIC;
+        inputrec_.opts.annealing[0] = SimulatedAnnealing::No;
+        inputrec_.opts.annealing[1] = SimulatedAnnealing::Single;
+        inputrec_.opts.annealing[2] = SimulatedAnnealing::Periodic;
 
         // This is to keep done_inputrec happy (otherwise sfree() segfaults)
         snew(inputrec_.opts.anneal_time, inputrec_.opts.ngtc);
         snew(inputrec_.opts.anneal_temp, inputrec_.opts.ngtc);
 
-        // Communication record (for Constraints constructor)
-        cr_.nnodes = 1;
-        cr_.dd     = nullptr;
-
         // Constraints object (to get constraints RMSD from)
         // TODO EnergyOutput should not take Constraints object
         // TODO This object will always return zero as RMSD value.
         //      It is more relevant to have non-zero value for testing.
-        constraints_ = makeConstraints(mtop_, inputrec_, nullptr, false, nullptr, &cr_, nullptr,
-                                       nullptr, nullptr, false);
+        constraints_ = makeConstraints(
+                mtop_, inputrec_, nullptr, false, false, nullptr, mpiComm_, dd_, false, nullptr, nullptr, nullptr, false, nullptr);
     }
 
     /*! \brief Helper function to generate synthetic data to output
@@ -388,44 +398,44 @@ public:
         time_  = (*testValue += 0.1);
         tmass_ = (*testValue += 0.1);
 
-        enerdata_->term[F_LJ]      = (*testValue += 0.1);
-        enerdata_->term[F_COUL_SR] = (*testValue += 0.1);
-        enerdata_->term[F_EPOT]    = (*testValue += 0.1);
-        enerdata_->term[F_EKIN]    = (*testValue += 0.1);
-        enerdata_->term[F_ETOT]    = (*testValue += 0.1);
-        enerdata_->term[F_TEMP]    = (*testValue += 0.1);
-        enerdata_->term[F_PRES]    = (*testValue += 0.1);
+        enerdata_->term[InteractionFunction::LennardJonesShortRange] = (*testValue += 0.1);
+        enerdata_->term[InteractionFunction::CoulombShortRange]      = (*testValue += 0.1);
+        enerdata_->term[InteractionFunction::PotentialEnergy]        = (*testValue += 0.1);
+        enerdata_->term[InteractionFunction::KineticEnergy]          = (*testValue += 0.1);
+        enerdata_->term[InteractionFunction::TotalEnergy]            = (*testValue += 0.1);
+        enerdata_->term[InteractionFunction::Temperature]            = (*testValue += 0.1);
+        enerdata_->term[InteractionFunction::Pressure]               = (*testValue += 0.1);
 
-        enerdata_->term[F_BHAM]         = (*testValue += 0.1);
-        enerdata_->term[F_EQM]          = (*testValue += 0.1);
-        enerdata_->term[F_RF_EXCL]      = (*testValue += 0.1);
-        enerdata_->term[F_COUL_RECIP]   = (*testValue += 0.1);
-        enerdata_->term[F_LJ_RECIP]     = (*testValue += 0.1);
-        enerdata_->term[F_LJ14]         = (*testValue += 0.1);
-        enerdata_->term[F_COUL14]       = (*testValue += 0.1);
-        enerdata_->term[F_LJC14_Q]      = (*testValue += 0.1);
-        enerdata_->term[F_LJC_PAIRS_NB] = (*testValue += 0.1);
+        enerdata_->term[InteractionFunction::BuckinghamShortRange]          = (*testValue += 0.1);
+        enerdata_->term[InteractionFunction::QuantumMechanicalRegionEnergy] = (*testValue += 0.1);
+        enerdata_->term[InteractionFunction::ReactionFieldExclusion]        = (*testValue += 0.1);
+        enerdata_->term[InteractionFunction::CoulombReciprocalSpace]        = (*testValue += 0.1);
+        enerdata_->term[InteractionFunction::LennardJonesReciprocalSpace]   = (*testValue += 0.1);
+        enerdata_->term[InteractionFunction::LennardJones14]                = (*testValue += 0.1);
+        enerdata_->term[InteractionFunction::Coulomb14]                     = (*testValue += 0.1);
+        enerdata_->term[InteractionFunction::LennardJonesCoulomb14Q]        = (*testValue += 0.1);
+        enerdata_->term[InteractionFunction::LennardJonesCoulombNonBondedPairs] = (*testValue += 0.1);
 
-        enerdata_->term[F_DVDL_COUL]      = (*testValue += 0.1);
-        enerdata_->term[F_DVDL_VDW]       = (*testValue += 0.1);
-        enerdata_->term[F_DVDL_BONDED]    = (*testValue += 0.1);
-        enerdata_->term[F_DVDL_RESTRAINT] = (*testValue += 0.1);
-        enerdata_->term[F_DKDL]           = (*testValue += 0.1);
-        enerdata_->term[F_DVDL]           = (*testValue += 0.1);
+        enerdata_->term[InteractionFunction::dVCoulombdLambda]     = (*testValue += 0.1);
+        enerdata_->term[InteractionFunction::dVvanderWaalsdLambda] = (*testValue += 0.1);
+        enerdata_->term[InteractionFunction::dVbondeddLambda]      = (*testValue += 0.1);
+        enerdata_->term[InteractionFunction::dVrestraintdLambda]   = (*testValue += 0.1);
+        enerdata_->term[InteractionFunction::dEkineticdLambda]     = (*testValue += 0.1);
+        enerdata_->term[InteractionFunction::dVremainingdLambda]   = (*testValue += 0.1);
 
-        enerdata_->term[F_DISPCORR]   = (*testValue += 0.1);
-        enerdata_->term[F_PDISPCORR]  = (*testValue += 0.1);
-        enerdata_->term[F_DISRESVIOL] = (*testValue += 0.1);
-        enerdata_->term[F_ORIRESDEV]  = (*testValue += 0.1);
-        enerdata_->term[F_COM_PULL]   = (*testValue += 0.1);
-        enerdata_->term[F_ECONSERVED] = (*testValue += 0.1);
+        enerdata_->term[InteractionFunction::DispersionCorrection]           = (*testValue += 0.1);
+        enerdata_->term[InteractionFunction::PressureDispersionCorrection]   = (*testValue += 0.1);
+        enerdata_->term[InteractionFunction::DistanceRestraintViolations]    = (*testValue += 0.1);
+        enerdata_->term[InteractionFunction::OrientationRestraintDeviations] = (*testValue += 0.1);
+        enerdata_->term[InteractionFunction::CenterOfMassPullingEnergy]      = (*testValue += 0.1);
+        enerdata_->term[InteractionFunction::ConservedEnergy]                = (*testValue += 0.1);
 
         // Group pairs
         for (int i = 0; i < enerdata_->grpp.nener; i++)
         {
-            for (int k = 0; k < egNR; k++)
+            for (int k = 0; k < static_cast<int>(NonBondedEnergyTerms::Count); k++)
             {
-                enerdata_->grpp.ener[k][i] = (*testValue += 0.1);
+                enerdata_->grpp.energyGroupPairTerms[k][i] = (*testValue += 0.1);
             }
         }
 
@@ -435,12 +445,9 @@ public:
             tcstat.T      = (*testValue += 0.1);
             tcstat.lambda = (*testValue += 0.1);
         }
-        for (auto& grpstat : ekindata_.grpstat)
-        {
-            grpstat.u[XX] = (*testValue += 0.1);
-            grpstat.u[YY] = (*testValue += 0.1);
-            grpstat.u[ZZ] = (*testValue += 0.1);
-        }
+        // Removing constant acceleration removed a total increment of 0.6
+        // To avoid unnecessary changes in reference data, we keep the increment
+        (*testValue += 0.6);
 
         // This conditional is to check whether the ebin was allocated.
         // Otherwise it will print cosacc data into the first bin.
@@ -470,25 +477,9 @@ public:
         box_[ZZ][YY] = (*testValue += 0.1);
         box_[ZZ][ZZ] = (*testValue += 0.1);
 
-        constraintsVirial_[XX][XX] = (*testValue += 0.1);
-        constraintsVirial_[XX][YY] = (*testValue += 0.1);
-        constraintsVirial_[XX][ZZ] = (*testValue += 0.1);
-        constraintsVirial_[YY][XX] = (*testValue += 0.1);
-        constraintsVirial_[YY][YY] = (*testValue += 0.1);
-        constraintsVirial_[YY][ZZ] = (*testValue += 0.1);
-        constraintsVirial_[ZZ][XX] = (*testValue += 0.1);
-        constraintsVirial_[ZZ][YY] = (*testValue += 0.1);
-        constraintsVirial_[ZZ][ZZ] = (*testValue += 0.1);
-
-        forceVirial_[XX][XX] = (*testValue += 0.1);
-        forceVirial_[XX][YY] = (*testValue += 0.1);
-        forceVirial_[XX][ZZ] = (*testValue += 0.1);
-        forceVirial_[YY][XX] = (*testValue += 0.1);
-        forceVirial_[YY][YY] = (*testValue += 0.1);
-        forceVirial_[YY][ZZ] = (*testValue += 0.1);
-        forceVirial_[ZZ][XX] = (*testValue += 0.1);
-        forceVirial_[ZZ][YY] = (*testValue += 0.1);
-        forceVirial_[ZZ][ZZ] = (*testValue += 0.1);
+        // Removing GMX_CONSTRVIR removed a total increment of 1.8
+        // To avoid unnecessary changes in reference data, we keep the increment
+        (*testValue += 1.8);
 
         totalVirial_[XX][XX] = (*testValue += 0.1);
         totalVirial_[XX][YY] = (*testValue += 0.1);
@@ -526,10 +517,11 @@ public:
 
         for (int i = 0; i < inputrec_.opts.ngtc; i++)
         {
-            inputrec_.opts.ref_t[i] = (*testValue += 0.1);
+            *testValue += 0.1;
+            ekindata_.setCurrentReferenceTemperature(i, *testValue);
         }
 
-        for (index k = 0; k < ssize(mtop_.groups.groups[SimulationAtomGroupType::TemperatureCoupling])
+        for (Index k = 0; k < gmx::ssize(mtop_.groups.groups[SimulationAtomGroupType::TemperatureCoupling])
                                       * inputrec_.opts.nhchainlength;
              k++)
         {
@@ -616,38 +608,57 @@ TEST_P(EnergyOutputTest, CheckOutput)
 
     EnergyOutputTestParameters parameters = GetParam();
     inputrec_.etc                         = parameters.temperatureCouplingScheme;
-    inputrec_.epc                         = parameters.pressureCouplingScheme;
+    inputrec_.pressureCouplingOptions.epc = parameters.pressureCouplingScheme;
     inputrec_.eI                          = parameters.integrator;
 
     if (parameters.isBoxTriclinic)
     {
-        inputrec_.ref_p[YY][XX] = 1.0;
+        inputrec_.pressureCouplingOptions.ref_p[YY][XX] = 1.0;
     }
 
-    MdModulesNotifier             mdModulesNotifier;
-    std::unique_ptr<EnergyOutput> energyOutput = std::make_unique<EnergyOutput>(
-            energyFile_, &mtop_, &inputrec_, nullptr, nullptr, parameters.isRerun,
-            StartingBehavior::NewSimulation, false, mdModulesNotifier);
+    MDModulesNotifiers            mdModulesNotifiers;
+    std::unique_ptr<EnergyOutput> energyOutput =
+            std::make_unique<EnergyOutput>(energyFile_,
+                                           mtop_,
+                                           inputrec_,
+                                           nullptr,
+                                           nullptr,
+                                           parameters.isRerun,
+                                           StartingBehavior::NewSimulation,
+                                           false,
+                                           mdModulesNotifiers);
 
     // Add synthetic data for a single step
     double testValue = 10.0;
     for (int frame = 0; frame < parameters.numFrames; frame++)
     {
         setStepData(&testValue);
-        energyOutput->addDataAtEnergyStep(
-                false, true, time_, tmass_, enerdata_.get(), nullptr, nullptr, box_,
-                PTCouplingArrays({ state_.boxv, state_.nosehoover_xi, state_.nosehoover_vxi,
-                                   state_.nhpres_xi, state_.nhpres_vxi }),
-                state_.fep_state, constraintsVirial_, forceVirial_, totalVirial_, pressure_,
-                &ekindata_, muTotal_, constraints_.get());
+        energyOutput->addDataAtEnergyStep(false,
+                                          true,
+                                          time_,
+                                          tmass_,
+                                          enerdata_.get(),
+                                          nullptr,
+                                          box_,
+                                          PTCouplingArrays({ state_.boxv,
+                                                             state_.nosehoover_xi,
+                                                             state_.nosehoover_vxi,
+                                                             state_.nhpres_xi,
+                                                             state_.nhpres_vxi }),
+                                          state_.fep_state,
+                                          totalVirial_,
+                                          pressure_,
+                                          &ekindata_,
+                                          muTotal_,
+                                          constraints_.get());
 
-        energyOutput->printAnnealingTemperatures(log_, &mtop_.groups, &inputrec_.opts);
-        energyOutput->printStepToEnergyFile(energyFile_, true, false, false, log_, 100 * frame,
-                                            time_, nullptr, nullptr);
+        energyOutput->printAnnealingTemperatures(log_, mtop_.groups, inputrec_.opts, ekindata_);
+        energyOutput->printStepToEnergyFile(
+                energyFile_, true, false, false, log_, 100 * frame, time_, nullptr, nullptr);
         time_ += 1.0;
     }
 
-    energyOutput->printAnnealingTemperatures(log_, &mtop_.groups, &inputrec_.opts);
+    energyOutput->printAnnealingTemperatures(log_, mtop_.groups, inputrec_.opts, ekindata_);
     energyOutput->printAverages(log_, &mtop_.groups);
 
     // We need to close the file before the contents are available.
@@ -669,7 +680,7 @@ TEST_P(EnergyOutputTest, CheckOutput)
     checker_.checkString(TextReader::readFileToString(logFilename_), "log");
 }
 
-INSTANTIATE_TEST_CASE_P(WithParameters, EnergyOutputTest, ::testing::ValuesIn(parametersSets));
+INSTANTIATE_TEST_SUITE_P(WithParameters, EnergyOutputTest, ::testing::ValuesIn(parametersSets));
 
 } // namespace
 } // namespace test

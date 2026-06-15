@@ -1,13 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
- * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2016,2017 by the GROMACS development team.
- * Copyright (c) 2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 1991- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -21,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -30,23 +26,29 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 #include "gmxpre.h"
 
 #include "pdb2gmx.h"
 
 #include <cctype>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
 
 #include <algorithm>
+#include <filesystem>
+#include <iterator>
 #include <memory>
+#include <optional>
 #include <string>
+#include <unordered_map>
+#include <utility>
 #include <vector>
 
 #include "gromacs/commandline/cmdlineoptionsmodule.h"
@@ -67,37 +69,49 @@
 #include "gromacs/gmxpreprocess/ter_db.h"
 #include "gromacs/gmxpreprocess/toputil.h"
 #include "gromacs/gmxpreprocess/xlate.h"
-#include "gromacs/math/vec.h"
+#include "gromacs/math/functions.h"
 #include "gromacs/options/basicoptions.h"
 #include "gromacs/options/filenameoption.h"
 #include "gromacs/options/ioptionscontainer.h"
 #include "gromacs/topology/atomprop.h"
+#include "gromacs/topology/atoms.h"
 #include "gromacs/topology/block.h"
 #include "gromacs/topology/index.h"
 #include "gromacs/topology/residuetypes.h"
 #include "gromacs/topology/symtab.h"
 #include "gromacs/topology/topology.h"
-#include "gromacs/utility/dir_separator.h"
+#include "gromacs/utility/arrayref.h"
+#include "gromacs/utility/basedefinitions.h"
+#include "gromacs/utility/cstringutil.h"
+#include "gromacs/utility/enumerationhelpers.h"
 #include "gromacs/utility/exceptions.h"
 #include "gromacs/utility/fatalerror.h"
 #include "gromacs/utility/filestream.h"
+#include "gromacs/utility/futil.h"
+#include "gromacs/utility/gmxassert.h"
+#include "gromacs/utility/logger.h"
 #include "gromacs/utility/loggerbuilder.h"
 #include "gromacs/utility/path.h"
+#include "gromacs/utility/real.h"
 #include "gromacs/utility/smalloc.h"
 #include "gromacs/utility/strdb.h"
 #include "gromacs/utility/stringutil.h"
+#include "gromacs/utility/vec.h"
+#include "gromacs/utility/vectypes.h"
 
 #include "hackblock.h"
 #include "resall.h"
 
+enum class PbcType : int;
+namespace gmx
+{
+class CommandLineModuleSettings;
+} // namespace gmx
+
 struct RtpRename
 {
     RtpRename(const char* newGmx, const char* newMain, const char* newNter, const char* newCter, const char* newBter) :
-        gmx(newGmx),
-        main(newMain),
-        nter(newNter),
-        cter(newCter),
-        bter(newBter)
+        gmx(newGmx), main(newMain), nter(newNter), cter(newCter), bter(newBter)
     {
     }
     std::string gmx;
@@ -115,26 +129,143 @@ const char* res2bb_notermini(const std::string& name, gmx::ArrayRef<const RtpRen
     /* NOTE: This function returns the main building block name,
      *       it does not take terminal renaming into account.
      */
-    auto found = std::find_if(rr.begin(), rr.end(), [&name](const auto& rename) {
-        return gmx::equalCaseInsensitive(name, rename.gmx);
-    });
+    auto found = std::find_if(rr.begin(),
+                              rr.end(),
+                              [&name](const auto& rename)
+                              { return gmx::equalCaseInsensitive(name, rename.gmx); });
     return found != rr.end() ? found->main.c_str() : name.c_str();
 }
 
-const char* select_res(int                            nr,
-                       int                            resnr,
-                       const char*                    name[],
-                       const char*                    expl[],
-                       const char*                    title,
-                       gmx::ArrayRef<const RtpRename> rr)
+const char* enumValueToLongString(HistidineStates enumValue)
+{
+    constexpr gmx::EnumerationArray<HistidineStates, const char*> histidineStatesLongNames = {
+        "H on ND1 only", "H on NE2 only", "H on ND1 and NE2", "Coupled to Heme"
+    };
+    return histidineStatesLongNames[enumValue];
+}
+
+enum class AspartateStates : int
+{
+    Deprot,
+    Prot,
+    Count
+};
+
+const char* enumValueToString(AspartateStates enumValue)
+{
+    constexpr gmx::EnumerationArray<AspartateStates, const char*> aspartateStateNames = { "ASP",
+                                                                                          "ASPH" };
+    return aspartateStateNames[enumValue];
+}
+
+const char* enumValueToLongString(AspartateStates enumValue)
+{
+    constexpr gmx::EnumerationArray<AspartateStates, const char*> aspartateStateLongNames = {
+        "Not protonated (charge -1)", "Protonated (charge 0)"
+    };
+    return aspartateStateLongNames[enumValue];
+}
+
+enum class GlutamateStates : int
+{
+    Deprot,
+    Prot,
+    Count
+};
+
+const char* enumValueToString(GlutamateStates enumValue)
+{
+    constexpr gmx::EnumerationArray<GlutamateStates, const char*> glutamateStateNames = { "GLU",
+                                                                                          "GLUH" };
+    return glutamateStateNames[enumValue];
+}
+
+const char* enumValueToLongString(GlutamateStates enumValue)
+{
+    constexpr gmx::EnumerationArray<GlutamateStates, const char*> glutamateStateLongNames = {
+        "Not protonated (charge -1)", "Protonated (charge 0)"
+    };
+    return glutamateStateLongNames[enumValue];
+}
+
+enum class GlutamineStates : int
+{
+    Deprot,
+    Prot,
+    Count
+};
+
+const char* enumValueToString(GlutamineStates enumValue)
+{
+    constexpr gmx::EnumerationArray<GlutamineStates, const char*> glutamineStateNames = { "GLN",
+                                                                                          "QLN" };
+    return glutamineStateNames[enumValue];
+}
+
+const char* enumValueToLongString(GlutamineStates enumValue)
+{
+    constexpr gmx::EnumerationArray<GlutamineStates, const char*> glutamineStateLongNames = {
+        "Not protonated (charge 0)", "Protonated (charge +1)"
+    };
+    return glutamineStateLongNames[enumValue];
+}
+
+enum class LysineStates : int
+{
+    Deprot,
+    Prot,
+    Count
+};
+
+const char* enumValueToString(LysineStates enumValue)
+{
+    constexpr gmx::EnumerationArray<LysineStates, const char*> lysineStateNames = { "LYSN", "LYS" };
+    return lysineStateNames[enumValue];
+}
+
+const char* enumValueToLongString(LysineStates enumValue)
+{
+    constexpr gmx::EnumerationArray<LysineStates, const char*> lysineStateLongNames = {
+        "Not protonated (charge 0)", "Protonated (charge +1)"
+    };
+    return lysineStateLongNames[enumValue];
+}
+
+enum class ArginineStates : int
+{
+    Deprot,
+    Prot,
+    Count
+};
+
+const char* enumValueToString(ArginineStates enumValue)
+{
+    constexpr gmx::EnumerationArray<ArginineStates, const char*> arginineStatesNames = { "ARGN",
+                                                                                         "ARG" };
+    return arginineStatesNames[enumValue];
+}
+
+const char* enumValueToLongString(ArginineStates enumValue)
+{
+    constexpr gmx::EnumerationArray<ArginineStates, const char*> arginineStatesLongNames = {
+        "Not protonated (charge 0)", "Protonated (charge +1)"
+    };
+    return arginineStatesLongNames[enumValue];
+}
+
+template<typename EnumType>
+const char* select_res(int resnr, const char* title, gmx::ArrayRef<const RtpRename> rr)
 {
     printf("Which %s type do you want for residue %d\n", title, resnr + 1);
-    for (int sel = 0; (sel < nr); sel++)
+    for (auto sel : gmx::EnumerationWrapper<EnumType>{})
     {
-        printf("%d. %s (%s)\n", sel, expl[sel], res2bb_notermini(name[sel], rr));
+        printf("%d. %s (%s)\n",
+               static_cast<int>(sel),
+               enumValueToLongString(sel),
+               res2bb_notermini(enumValueToString(sel), rr));
     }
     printf("\nType a number:");
-    fflush(stdout);
+    std::fflush(stdout);
 
     int userSelection;
     if (scanf("%d", &userSelection) != 1)
@@ -142,85 +273,37 @@ const char* select_res(int                            nr,
         gmx_fatal(FARGS, "Answer me for res %s %d!", title, resnr + 1);
     }
 
-    return name[userSelection];
+    return enumValueToString(static_cast<EnumType>(userSelection));
 }
 
 const char* get_asptp(int resnr, gmx::ArrayRef<const RtpRename> rr)
 {
-    enum
-    {
-        easp,
-        easpH,
-        easpNR
-    };
-    const char* lh[easpNR]   = { "ASP", "ASPH" };
-    const char* expl[easpNR] = { "Not protonated (charge -1)", "Protonated (charge 0)" };
-
-    return select_res(easpNR, resnr, lh, expl, "ASPARTIC ACID", rr);
+    return select_res<AspartateStates>(resnr, "ASPARTIC ACID", rr);
 }
 
 const char* get_glutp(int resnr, gmx::ArrayRef<const RtpRename> rr)
 {
-    enum
-    {
-        eglu,
-        egluH,
-        egluNR
-    };
-    const char* lh[egluNR]   = { "GLU", "GLUH" };
-    const char* expl[egluNR] = { "Not protonated (charge -1)", "Protonated (charge 0)" };
-
-    return select_res(egluNR, resnr, lh, expl, "GLUTAMIC ACID", rr);
+    return select_res<GlutamateStates>(resnr, "GLUTAMIC ACID", rr);
 }
 
 const char* get_glntp(int resnr, gmx::ArrayRef<const RtpRename> rr)
 {
-    enum
-    {
-        egln,
-        eglnH,
-        eglnNR
-    };
-    const char* lh[eglnNR]   = { "GLN", "QLN" };
-    const char* expl[eglnNR] = { "Not protonated (charge 0)", "Protonated (charge +1)" };
-
-    return select_res(eglnNR, resnr, lh, expl, "GLUTAMINE", rr);
+    return select_res<GlutamineStates>(resnr, "GLUTAMINE", rr);
 }
 
 const char* get_lystp(int resnr, gmx::ArrayRef<const RtpRename> rr)
 {
-    enum
-    {
-        elys,
-        elysH,
-        elysNR
-    };
-    const char* lh[elysNR]   = { "LYSN", "LYS" };
-    const char* expl[elysNR] = { "Not protonated (charge 0)", "Protonated (charge +1)" };
-
-    return select_res(elysNR, resnr, lh, expl, "LYSINE", rr);
+    return select_res<LysineStates>(resnr, "LYSINE", rr);
 }
 
 const char* get_argtp(int resnr, gmx::ArrayRef<const RtpRename> rr)
 {
-    enum
-    {
-        earg,
-        eargH,
-        eargNR
-    };
-    const char* lh[eargNR]   = { "ARGN", "ARG" };
-    const char* expl[eargNR] = { "Not protonated (charge 0)", "Protonated (charge +1)" };
-
-    return select_res(eargNR, resnr, lh, expl, "ARGININE", rr);
+    return select_res<ArginineStates>(resnr, "ARGININE", rr);
 }
 
 const char* get_histp(int resnr, gmx::ArrayRef<const RtpRename> rr)
 {
-    const char* expl[ehisNR] = { "H on ND1 only", "H on NE2 only", "H on ND1 and NE2",
-                                 "Coupled to Heme" };
-
-    return select_res(ehisNR, resnr, hh, expl, "HISTIDINE", rr);
+    return select_res<HistidineStates>(resnr, "HISTIDINE", rr);
 }
 
 void read_rtprename(const char* fname, FILE* fp, std::vector<RtpRename>* rtprename)
@@ -251,8 +334,12 @@ void read_rtprename(const char* fname, FILE* fp, std::vector<RtpRename>* rtprena
         {
             if (nc != 2 && nc != 5)
             {
-                gmx_fatal(FARGS, "Residue renaming database '%s' has %d columns instead of %d or %d",
-                          fname, ncol, 2, 5);
+                gmx_fatal(FARGS,
+                          "Residue renaming database '%s' has %d columns instead of %d or %d",
+                          fname,
+                          ncol,
+                          2,
+                          5);
             }
             ncol = nc;
         }
@@ -261,7 +348,9 @@ void read_rtprename(const char* fname, FILE* fp, std::vector<RtpRename>* rtprena
             gmx_fatal(FARGS,
                       "A line in residue renaming database '%s' has %d columns, while previous "
                       "lines have %d columns",
-                      fname, nc, ncol);
+                      fname,
+                      nc,
+                      ncol);
         }
 
         if (nc == 2)
@@ -277,10 +366,13 @@ void read_rtprename(const char* fname, FILE* fp, std::vector<RtpRename>* rtprena
 
 std::string search_resrename(gmx::ArrayRef<const RtpRename> rr, const char* name, bool bStart, bool bEnd, bool bCompareFFRTPname)
 {
-    auto found = std::find_if(rr.begin(), rr.end(), [&name, &bCompareFFRTPname](const auto& rename) {
-        return ((!bCompareFFRTPname && (name == rename.gmx))
-                || (bCompareFFRTPname && (name == rename.main)));
-    });
+    auto found = std::find_if(rr.begin(),
+                              rr.end(),
+                              [&name, &bCompareFFRTPname](const auto& rename)
+                              {
+                                  return ((!bCompareFFRTPname && (name == rename.gmx))
+                                          || (bCompareFFRTPname && (name == rename.main)));
+                              });
 
     std::string newName;
     /* If found in the database, rename this residue's rtp building block,
@@ -307,7 +399,9 @@ std::string search_resrename(gmx::ArrayRef<const RtpRename> rr, const char* name
 
         if (newName[0] == '-')
         {
-            gmx_fatal(FARGS, "In the chosen force field there is no residue type for '%s'%s", name,
+            gmx_fatal(FARGS,
+                      "In the chosen force field there is no residue type for '%s'%s",
+                      name,
                       bStart ? (bEnd ? " as a standalone (starting & ending) residue" : " as a starting terminus")
                              : (bEnd ? " as an ending terminus" : ""));
         }
@@ -325,7 +419,7 @@ void rename_resrtp(t_atoms*                       pdba,
                    bool                           bVerbose,
                    const gmx::MDLogger&           logger)
 {
-    bool bFFRTPTERRNM = (getenv("GMX_NO_FFRTP_TER_RENAME") == nullptr);
+    bool bFFRTPTERRNM = (std::getenv("GMX_NO_FFRTP_TER_RENAME") == nullptr);
 
     for (int r = 0; r < pdba->nres; r++)
     {
@@ -365,7 +459,8 @@ void rename_resrtp(t_atoms*                       pdba,
                 GMX_LOG(logger.info)
                         .asParagraph()
                         .appendTextFormatted("Changing rtp entry of residue %d %s to '%s'",
-                                             pdba->resinfo[r].nr, *pdba->resinfo[r].name,
+                                             pdba->resinfo[r].nr,
+                                             *pdba->resinfo[r].name,
                                              newName.c_str());
             }
             pdba->resinfo[r].rtp = put_symtab(symtab, newName.c_str());
@@ -395,7 +490,7 @@ void rename_pdbres(t_atoms* pdba, const char* oldnm, const char* newnm, bool bFu
     {
         resnm = *pdba->resinfo[i].name;
         if ((bFullCompare && (gmx::equalCaseInsensitive(resnm, oldnm)))
-            || (!bFullCompare && strstr(resnm, oldnm) != nullptr))
+            || (!bFullCompare && std::strstr(resnm, oldnm) != nullptr))
         {
             /* Rename the residue name (not the rtp name) */
             pdba->resinfo[i].name = put_symtab(symtab, newnm);
@@ -403,43 +498,80 @@ void rename_pdbres(t_atoms* pdba, const char* oldnm, const char* newnm, bool bFu
     }
 }
 
-void rename_bb(t_atoms* pdba, const char* oldnm, const char* newnm, bool bFullCompare, t_symtab* symtab)
+/*! \brief Rename all residues named \c oldnm to \c newnm
+ *
+ * Search for residues for which the residue name from the input
+ * configuration file matches \c oldnm, and when found choose the rtp
+ * entry and name of \c newnm.
+ *
+ * \todo Refactor this function to accept a lambda that accepts i and
+ * numMatchesFound but always produces \c newnm. Then remove
+ * renameResiduesInteractively by calling this method with suitable
+ * lambdas that capture its parameter \c rr and ignores
+ * numMatchesFound. */
+void renameResidue(const gmx::MDLogger& logger,
+                   t_atoms*             pdba,
+                   const char*          oldnm,
+                   const char*          newnm,
+                   bool                 bFullCompare,
+                   t_symtab*            symtab)
 {
-    char* bbnm;
-    int   i;
-
-    for (i = 0; (i < pdba->nres); i++)
+    int numMatchesFound = 0;
+    for (int i = 0; (i < pdba->nres); i++)
     {
-        /* We have not set the rtp name yes, use the residue name */
-        bbnm = *pdba->resinfo[i].name;
-        if ((bFullCompare && (gmx::equalCaseInsensitive(bbnm, oldnm)))
-            || (!bFullCompare && strstr(bbnm, oldnm) != nullptr))
+        /* We have not set the rtp name yet, use the residue name */
+        const char* residueNameInInputConfiguration = *pdba->resinfo[i].name;
+        if ((bFullCompare && (gmx::equalCaseInsensitive(residueNameInInputConfiguration, oldnm)))
+            || (!bFullCompare && std::strstr(residueNameInInputConfiguration, oldnm) != nullptr))
         {
-            /* Change the rtp builing block name */
-            pdba->resinfo[i].rtp = put_symtab(symtab, newnm);
+            /* Change the rtp building block name */
+            pdba->resinfo[i].rtp  = put_symtab(symtab, newnm);
+            pdba->resinfo[i].name = pdba->resinfo[i].rtp;
+            numMatchesFound++;
         }
+    }
+    if (numMatchesFound > 0)
+    {
+        GMX_LOG(logger.info)
+                .asParagraph()
+                .appendTextFormatted(
+                        "Replaced %d residue%s named %s to the default %s. Use interactive "
+                        "selection of protonated residues if that is what you need.",
+                        numMatchesFound,
+                        numMatchesFound > 1 ? "s" : "",
+                        oldnm,
+                        newnm);
     }
 }
 
-void rename_bbint(t_atoms*                       pdba,
-                  const char*                    oldnm,
-                  const char*                    gettp(int, gmx::ArrayRef<const RtpRename>),
-                  bool                           bFullCompare,
-                  t_symtab*                      symtab,
-                  gmx::ArrayRef<const RtpRename> rr)
+/*! \brief Rename all residues named \c oldnm according to the user's
+ * interactive choice
+ *
+ * Search for residues for which the residue name from the input
+ * configuration file matches \c oldnm, and when found choose the rtp
+ * entry and name of the interactive choice from \c gettp.
+ *
+ * \todo Remove this function, per todo in \c renameResidue. */
+void renameResidueInteractively(t_atoms*    pdba,
+                                const char* oldnm,
+                                const char* gettp(int, gmx::ArrayRef<const RtpRename>),
+                                bool        bFullCompare,
+                                t_symtab*   symtab,
+                                gmx::ArrayRef<const RtpRename> rr)
 {
-    int         i;
-    const char* ptr;
-    char*       bbnm;
-
-    for (i = 0; i < pdba->nres; i++)
+    // Search for residues i for which the residue name from the input
+    // configuration file matches oldnm, so it can replaced by the rtp
+    // entry and name of newnm.
+    for (int i = 0; i < pdba->nres; i++)
     {
         /* We have not set the rtp name yet, use the residue name */
-        bbnm = *pdba->resinfo[i].name;
-        if ((bFullCompare && (strcmp(bbnm, oldnm) == 0)) || (!bFullCompare && strstr(bbnm, oldnm) != nullptr))
+        char* residueNameInInputConfiguration = *pdba->resinfo[i].name;
+        if ((bFullCompare && (std::strcmp(residueNameInInputConfiguration, oldnm) == 0))
+            || (!bFullCompare && std::strstr(residueNameInInputConfiguration, oldnm) != nullptr))
         {
-            ptr                  = gettp(i, rr);
-            pdba->resinfo[i].rtp = put_symtab(symtab, ptr);
+            const char* interactiveRtpChoice = gettp(i, rr);
+            pdba->resinfo[i].rtp             = put_symtab(symtab, interactiveRtpChoice);
+            pdba->resinfo[i].name            = pdba->resinfo[i].rtp;
         }
     }
 }
@@ -468,7 +600,8 @@ void check_occupancy(t_atoms* atoms, const char* filename, bool bVerbose, const 
                             .appendTextFormatted("Occupancy for atom %s%d-%s is %f rather than 1",
                                                  *atoms->resinfo[atoms->atom[i].resind].name,
                                                  atoms->resinfo[atoms->atom[i].resind].nr,
-                                                 *atoms->atomname[i], atoms->pdbinfo[i].occup);
+                                                 *atoms->atomname[i],
+                                                 atoms->pdbinfo[i].occup);
                 }
                 if (atoms->pdbinfo[i].occup == 0)
                 {
@@ -495,7 +628,9 @@ void check_occupancy(t_atoms* atoms, const char* filename, bool bVerbose, const 
                             "there were %d atoms with zero occupancy and %d atoms with "
                             "         occupancy unequal to one (out of %d atoms). Check your pdb "
                             "file.",
-                            nzero, nnotone, atoms->nr);
+                            nzero,
+                            nnotone,
+                            atoms->nr);
         }
         else
         {
@@ -518,7 +653,11 @@ void write_posres(const char* fn, t_atoms* pdba, real fc)
             "\n"
             "[ position_restraints ]\n"
             "; %4s%6s%8s%8s%8s\n",
-            "atom", "type", "fx", "fy", "fz");
+            "atom",
+            "type",
+            "fx",
+            "fy",
+            "fz");
     for (i = 0; (i < pdba->nr); i++)
     {
         if (!is_hydrogen(*pdba->atomname[i]) && !is_dummymass(*pdba->atomname[i]))
@@ -529,20 +668,20 @@ void write_posres(const char* fn, t_atoms* pdba, real fc)
     gmx_fio_fclose(fp);
 }
 
-int read_pdball(const char*     inf,
-                bool            bOutput,
-                const char*     outf,
-                char**          title,
-                t_atoms*        atoms,
-                rvec**          x,
-                PbcType*        pbcType,
-                matrix          box,
-                bool            bRemoveH,
-                t_symtab*       symtab,
-                ResidueType*    rt,
-                const char*     watres,
-                AtomProperties* aps,
-                bool            bVerbose)
+int read_pdball(const char*           inf,
+                bool                  bOutput,
+                const char*           outf,
+                char**                title,
+                t_atoms*              atoms,
+                rvec**                x,
+                PbcType*              pbcType,
+                matrix                box,
+                bool                  bRemoveH,
+                t_symtab*             symtab,
+                const ResidueTypeMap& residueTypeMap,
+                const char*           watres,
+                AtomProperties*       aps,
+                bool                  bVerbose)
 /* Read a pdb file. (containing proteins) */
 {
     int natom, new_natom, i;
@@ -589,7 +728,7 @@ int read_pdball(const char*     inf,
     rename_pdbres(atoms, "SOL", watres, false, symtab);
     rename_pdbres(atoms, "WAT", watres, false, symtab);
 
-    rename_atoms("xlateat.dat", nullptr, atoms, symtab, {}, true, rt, true, bVerbose);
+    rename_atoms("xlateat.dat", {}, atoms, symtab, {}, true, residueTypeMap, true, bVerbose);
 
     if (natom == 0)
     {
@@ -603,7 +742,8 @@ int read_pdball(const char*     inf,
     return natom;
 }
 
-void process_chain(t_atoms*                       pdba,
+void process_chain(const gmx::MDLogger&           logger,
+                   t_atoms*                       pdba,
                    gmx::ArrayRef<gmx::RVec>       x,
                    bool                           bTrpU,
                    bool                           bPheU,
@@ -622,43 +762,43 @@ void process_chain(t_atoms*                       pdba,
     /* Rename aromatics, lys, asp and histidine */
     if (bTyrU)
     {
-        rename_bb(pdba, "TYR", "TYRU", false, symtab);
+        renameResidue(logger, pdba, "TYR", "TYRU", false, symtab);
     }
     if (bTrpU)
     {
-        rename_bb(pdba, "TRP", "TRPU", false, symtab);
+        renameResidue(logger, pdba, "TRP", "TRPU", false, symtab);
     }
     if (bPheU)
     {
-        rename_bb(pdba, "PHE", "PHEU", false, symtab);
+        renameResidue(logger, pdba, "PHE", "PHEU", false, symtab);
     }
     if (bLysMan)
     {
-        rename_bbint(pdba, "LYS", get_lystp, false, symtab, rr);
+        renameResidueInteractively(pdba, "LYS", get_lystp, false, symtab, rr);
     }
     if (bArgMan)
     {
-        rename_bbint(pdba, "ARG", get_argtp, false, symtab, rr);
+        renameResidueInteractively(pdba, "ARG", get_argtp, false, symtab, rr);
     }
     if (bGlnMan)
     {
-        rename_bbint(pdba, "GLN", get_glntp, false, symtab, rr);
+        renameResidueInteractively(pdba, "GLN", get_glntp, false, symtab, rr);
     }
     if (bAspMan)
     {
-        rename_bbint(pdba, "ASP", get_asptp, false, symtab, rr);
+        renameResidueInteractively(pdba, "ASP", get_asptp, false, symtab, rr);
     }
     else
     {
-        rename_bb(pdba, "ASPH", "ASP", false, symtab);
+        renameResidue(logger, pdba, "ASPH", "ASP", false, symtab);
     }
     if (bGluMan)
     {
-        rename_bbint(pdba, "GLU", get_glutp, false, symtab, rr);
+        renameResidueInteractively(pdba, "GLU", get_glutp, false, symtab, rr);
     }
     else
     {
-        rename_bb(pdba, "GLUH", "GLU", false, symtab);
+        renameResidue(logger, pdba, "GLUH", "GLU", false, symtab);
     }
 
     if (!bHisMan)
@@ -667,7 +807,7 @@ void process_chain(t_atoms*                       pdba,
     }
     else
     {
-        rename_bbint(pdba, "HIS", get_histp, true, symtab, rr);
+        renameResidueInteractively(pdba, "HIS", get_histp, true, symtab, rr);
     }
 
     /* Initialize the rtp builing block names with the residue names
@@ -710,13 +850,11 @@ bool pdbicomp(const t_pdbindex& a, const t_pdbindex& b)
     return d < 0;
 }
 
-void sort_pdbatoms(gmx::ArrayRef<const PreprocessResidue> restp_chain,
-                   int                                    natoms,
-                   t_atoms**                              pdbaptr,
-                   t_atoms**                              newPdbAtoms,
-                   std::vector<gmx::RVec>*                x,
-                   t_blocka*                              block,
-                   char***                                gnames)
+std::vector<IndexGroup> sort_pdbatoms(gmx::ArrayRef<const PreprocessResidue> restp_chain,
+                                      int                                    natoms,
+                                      t_atoms**                              pdbaptr,
+                                      t_atoms**                              newPdbAtoms,
+                                      std::vector<gmx::RVec>*                x)
 {
     t_atoms*               pdba = *pdbaptr;
     std::vector<gmx::RVec> xnew;
@@ -731,15 +869,18 @@ void sort_pdbatoms(gmx::ArrayRef<const PreprocessResidue> restp_chain,
         atomnm                                  = *pdba->atomname[i];
         const PreprocessResidue* localPpResidue = &restp_chain[pdba->atom[i].resind];
         auto                     found =
-                std::find_if(localPpResidue->atomname.begin(), localPpResidue->atomname.end(),
+                std::find_if(localPpResidue->atomname.begin(),
+                             localPpResidue->atomname.end(),
                              [&atomnm](char** it) { return gmx::equalCaseInsensitive(atomnm, *it); });
         if (found == localPpResidue->atomname.end())
         {
             std::string buf = gmx::formatString(
                     "Atom %s in residue %s %d was not found in rtp entry %s with %d atoms\n"
                     "while sorting atoms.\n%s",
-                    atomnm, *pdba->resinfo[pdba->atom[i].resind].name,
-                    pdba->resinfo[pdba->atom[i].resind].nr, localPpResidue->resname.c_str(),
+                    atomnm,
+                    *pdba->resinfo[pdba->atom[i].resind].name,
+                    pdba->resinfo[pdba->atom[i].resind].nr,
+                    localPpResidue->resname.c_str(),
                     localPpResidue->natom(),
                     is_hydrogen(atomnm)
                             ? "\nFor a hydrogen, this can be a different protonation state, or it\n"
@@ -786,8 +927,13 @@ void sort_pdbatoms(gmx::ArrayRef<const PreprocessResidue> restp_chain,
     /* copy the sorted pdbnew back to pdba */
     *pdbaptr = *newPdbAtoms;
     *x       = xnew;
-    add_grp(block, gnames, a, "prot_sort");
+
+    std::vector<IndexGroup> indexGroups;
+    indexGroups.push_back({ "prot_sort", a });
+
     sfree(pdbi);
+
+    return indexGroups;
 }
 
 int remove_duplicate_atoms(t_atoms* pdba, gmx::ArrayRef<gmx::RVec> x, bool bVerbose, const gmx::MDLogger& logger)
@@ -804,7 +950,7 @@ int remove_duplicate_atoms(t_atoms* pdba, gmx::ArrayRef<gmx::RVec> x, bool bVerb
         /* compare 'i' and 'i-1', throw away 'i' if they are identical
            this is a 'while' because multiple alternate locations can be present */
         while ((i < pdba->nr) && (pdba->atom[i - 1].resind == pdba->atom[i].resind)
-               && (strcmp(*pdba->atomname[i - 1], *pdba->atomname[i]) == 0))
+               && (std::strcmp(*pdba->atomname[i - 1], *pdba->atomname[i]) == 0))
         {
             ndel++;
             if (bVerbose)
@@ -813,7 +959,10 @@ int remove_duplicate_atoms(t_atoms* pdba, gmx::ArrayRef<gmx::RVec> x, bool bVerb
                 GMX_LOG(logger.info)
                         .asParagraph()
                         .appendTextFormatted("deleting duplicate atom %4s  %s%4d%c",
-                                             *pdba->atomname[i], *ri->name, ri->nr, ri->ic);
+                                             *pdba->atomname[i],
+                                             *ri->name,
+                                             ri->nr,
+                                             ri->ic);
                 if (ri->chainid && (ri->chainid != ' '))
                 {
                     printf(" ch %c", ri->chainid);
@@ -859,7 +1008,7 @@ int remove_duplicate_atoms(t_atoms* pdba, gmx::ArrayRef<gmx::RVec> x, bool bVerb
     return pdba->nr;
 }
 
-void checkResidueTypeSanity(t_atoms* pdba, int r0, int r1, ResidueType* rt)
+void checkResidueTypeSanity(t_atoms* pdba, int r0, int r1, const ResidueTypeMap& residueTypeMap)
 {
     std::string startResidueString =
             gmx::formatString("%s%d", *pdba->resinfo[r0].name, pdba->resinfo[r0].nr);
@@ -888,8 +1037,11 @@ void checkResidueTypeSanity(t_atoms* pdba, int r0, int r1, ResidueType* rt)
         gmx_fatal(FARGS,
                   "The chain covering the range %s--%s does not have a consistent chain ID. "
                   "The first residue has ID '%c', while residue %s has ID '%c'.",
-                  startResidueString.c_str(), endResidueString.c_str(), chainID0,
-                  residueString.c_str(), chainID);
+                  startResidueString.c_str(),
+                  endResidueString.c_str(),
+                  chainID0,
+                  residueString.c_str(),
+                  chainID);
     }
 
     // At this point all residues have the same ID. If they are also non-blank
@@ -898,11 +1050,11 @@ void checkResidueTypeSanity(t_atoms* pdba, int r0, int r1, ResidueType* rt)
     {
         bool        allResiduesHaveSameType = true;
         std::string restype;
-        std::string restype0 = rt->typeOfNamedDatabaseResidue(*pdba->resinfo[r0].name);
+        std::string restype0 = typeOfNamedDatabaseResidue(residueTypeMap, *pdba->resinfo[r0].name);
 
         for (int i = r0 + 1; i < r1; i++)
         {
-            restype = rt->typeOfNamedDatabaseResidue(*pdba->resinfo[i].name);
+            restype = typeOfNamedDatabaseResidue(residueTypeMap, *pdba->resinfo[i].name);
             if (!gmx::equalCaseInsensitive(restype, restype0))
             {
                 allResiduesHaveSameType = false;
@@ -921,16 +1073,24 @@ void checkResidueTypeSanity(t_atoms* pdba, int r0, int r1, ResidueType* rt)
                       "file in the GROMACS library directory. If there are other molecules "
                       "such as ligands, they should not have the same chain ID as the "
                       "adjacent protein chain since it's a separate molecule.",
-                      startResidueString.c_str(), endResidueString.c_str(), restype0.c_str(),
-                      residueString.c_str(), restype.c_str());
+                      startResidueString.c_str(),
+                      endResidueString.c_str(),
+                      restype0.c_str(),
+                      residueString.c_str(),
+                      restype.c_str());
         }
     }
 }
 
-void find_nc_ter(t_atoms* pdba, int r0, int r1, int* r_start, int* r_end, ResidueType* rt, const gmx::MDLogger& logger)
+void find_nc_ter(t_atoms*              pdba,
+                 int                   r0,
+                 int                   r1,
+                 int*                  r_start,
+                 int*                  r_end,
+                 const ResidueTypeMap& residueTypeMap,
+                 const gmx::MDLogger&  logger)
 {
-    int                        i;
-    std::optional<std::string> startrestype;
+    std::optional<std::string> residueTypeOfStartingTerminus;
 
     *r_start = -1;
     *r_end   = -1;
@@ -941,7 +1101,7 @@ void find_nc_ter(t_atoms* pdba, int r0, int r1, int* r_start, int* r_end, Residu
 
     // Check that all residues have the same chain identifier, and if it is
     // non-blank we also require the residue types to match.
-    checkResidueTypeSanity(pdba, r0, r1, rt);
+    checkResidueTypeSanity(pdba, r0, r1, residueTypeMap);
 
     // If we return correctly from checkResidueTypeSanity(), the only
     // remaining cases where we can have non-matching residue types is if
@@ -954,24 +1114,26 @@ void find_nc_ter(t_atoms* pdba, int r0, int r1, int* r_start, int* r_end, Residu
     char chainID = pdba->resinfo[r0].chainid;
 
     /* Find the starting terminus (typially N or 5') */
-    for (i = r0; i < r1 && *r_start == -1; i++)
+    for (int i = r0; i < r1 && *r_start == -1; i++)
     {
-        startrestype = rt->optionalTypeOfNamedDatabaseResidue(*pdba->resinfo[i].name);
-        if (!startrestype)
+        auto foundIt = residueTypeMap.find(*pdba->resinfo[i].name);
+        if (foundIt == residueTypeMap.end())
         {
             continue;
         }
-        if (gmx::equalCaseInsensitive(*startrestype, "Protein")
-            || gmx::equalCaseInsensitive(*startrestype, "DNA")
-            || gmx::equalCaseInsensitive(*startrestype, "RNA"))
+        residueTypeOfStartingTerminus = foundIt->second;
+        if (gmx::equalCaseInsensitive(residueTypeOfStartingTerminus.value(), "Protein")
+            || gmx::equalCaseInsensitive(residueTypeOfStartingTerminus.value(), "DNA")
+            || gmx::equalCaseInsensitive(residueTypeOfStartingTerminus.value(), "RNA"))
         {
             GMX_LOG(logger.info)
                     .asParagraph()
                     .appendTextFormatted("Identified residue %s%d as a starting terminus.",
-                                         *pdba->resinfo[i].name, pdba->resinfo[i].nr);
+                                         *pdba->resinfo[i].name,
+                                         pdba->resinfo[i].nr);
             *r_start = i;
         }
-        else if (gmx::equalCaseInsensitive(*startrestype, "Ion"))
+        else if (gmx::equalCaseInsensitive(residueTypeOfStartingTerminus.value(), "Ion"))
         {
             if (ionNotes < 5)
             {
@@ -980,7 +1142,8 @@ void find_nc_ter(t_atoms* pdba, int r0, int r1, int* r_start, int* r_end, Residu
                         .appendTextFormatted(
                                 "Residue %s%d has type 'Ion', assuming it is not linked into a "
                                 "chain.",
-                                *pdba->resinfo[i].name, pdba->resinfo[i].nr);
+                                *pdba->resinfo[i].name,
+                                pdba->resinfo[i].nr);
             }
             if (ionNotes == 4)
             {
@@ -1011,7 +1174,9 @@ void find_nc_ter(t_atoms* pdba, int r0, int r1, int* r_start, int* r_end, Residu
                                     "be catastrophic if they should in fact be linked. Please "
                                     "check your structure, "
                                     "and add %s to residuetypes.dat if this was not correct.",
-                                    *pdba->resinfo[i].name, pdba->resinfo[i].nr, *pdba->resinfo[i].name);
+                                    *pdba->resinfo[i].name,
+                                    pdba->resinfo[i].nr,
+                                    *pdba->resinfo[i].name);
                 }
                 else
                 {
@@ -1026,7 +1191,8 @@ void find_nc_ter(t_atoms* pdba, int r0, int r1, int* r_start, int* r_end, Residu
                                     "and add all "
                                     "necessary residue names to residuetypes.dat if this was not "
                                     "correct.",
-                                    *pdba->resinfo[i].name, pdba->resinfo[i].nr);
+                                    *pdba->resinfo[i].name,
+                                    pdba->resinfo[i].nr);
                 }
             }
             if (startWarnings == 4)
@@ -1046,17 +1212,18 @@ void find_nc_ter(t_atoms* pdba, int r0, int r1, int* r_start, int* r_end, Residu
         /* Go through the rest of the residues, check that they are the same class, and identify the ending terminus. */
         for (int i = *r_start; i < r1; i++)
         {
-            std::optional<std::string> restype =
-                    rt->optionalTypeOfNamedDatabaseResidue(*pdba->resinfo[i].name);
-            if (!restype)
+            auto foundIt = residueTypeMap.find(*pdba->resinfo[i].name);
+            if (foundIt == residueTypeMap.end())
             {
                 continue;
             }
-            if (gmx::equalCaseInsensitive(*restype, *startrestype) && endWarnings == 0)
+            const std::string& residueTypeOfCurrentResidue = foundIt->second;
+            if (gmx::equalCaseInsensitive(residueTypeOfCurrentResidue, residueTypeOfStartingTerminus.value())
+                && endWarnings == 0)
             {
                 *r_end = i;
             }
-            else if (gmx::equalCaseInsensitive(*startrestype, "Ion"))
+            else if (gmx::equalCaseInsensitive(residueTypeOfStartingTerminus.value(), "Ion"))
             {
                 if (ionNotes < 5)
                 {
@@ -1065,7 +1232,8 @@ void find_nc_ter(t_atoms* pdba, int r0, int r1, int* r_start, int* r_end, Residu
                             .appendTextFormatted(
                                     "Residue %s%d has type 'Ion', assuming it is not linked into a "
                                     "chain.",
-                                    *pdba->resinfo[i].name, pdba->resinfo[i].nr);
+                                    *pdba->resinfo[i].name,
+                                    pdba->resinfo[i].nr);
                 }
                 if (ionNotes == 4)
                 {
@@ -1098,9 +1266,13 @@ void find_nc_ter(t_atoms* pdba, int r0, int r1, int* r_start, int* r_end, Residu
                                     "linked. Please check your structure, and add %s to "
                                     "residuetypes.dat "
                                     "if this was not correct.",
-                                    *pdba->resinfo[i].name, pdba->resinfo[i].nr, restype->c_str(),
-                                    *pdba->resinfo[*r_start].name, pdba->resinfo[*r_start].nr,
-                                    startrestype->c_str(), *pdba->resinfo[i].name);
+                                    *pdba->resinfo[i].name,
+                                    pdba->resinfo[i].nr,
+                                    residueTypeOfCurrentResidue.c_str(),
+                                    *pdba->resinfo[*r_start].name,
+                                    pdba->resinfo[*r_start].nr,
+                                    residueTypeOfStartingTerminus.value().c_str(),
+                                    *pdba->resinfo[i].name);
                 }
                 if (endWarnings == 4)
                 {
@@ -1120,7 +1292,8 @@ void find_nc_ter(t_atoms* pdba, int r0, int r1, int* r_start, int* r_end, Residu
         GMX_LOG(logger.info)
                 .asParagraph()
                 .appendTextFormatted("Identified residue %s%d as a ending terminus.",
-                                     *pdba->resinfo[*r_end].name, pdba->resinfo[*r_end].nr);
+                                     *pdba->resinfo[*r_end].name,
+                                     pdba->resinfo[*r_end].nr);
     }
 }
 
@@ -1236,11 +1409,18 @@ void modify_chain_numbers(t_atoms* pdba, ChainSeparationType chainSeparation, co
                                         "Split the chain (and introduce termini) between residue %s%d (chain id '%c', atom %d %s)\
 "
                                         "and residue %s%d (chain id '%c', atom %d %s) ? [n/y]",
-                                        prev_resname, prev_resnum, prev_chainid, prev_atomnum,
-                                        prev_atomname, this_resname, this_resnum, this_chainid,
-                                        this_atomnum, this_atomname);
+                                        prev_resname,
+                                        prev_resnum,
+                                        prev_chainid,
+                                        prev_atomnum,
+                                        prev_atomname,
+                                        this_resname,
+                                        this_resnum,
+                                        this_chainid,
+                                        this_atomnum,
+                                        this_atomname);
 
-                        if (nullptr == fgets(select, STRLEN - 1, stdin))
+                        if (nullptr == std::fgets(select, STRLEN - 1, stdin))
                         {
                             gmx_fatal(FARGS, "Error reading from stdin");
                         }
@@ -1262,7 +1442,7 @@ void modify_chain_numbers(t_atoms* pdba, ChainSeparationType chainSeparation, co
 }
 
 bool checkChainCyclicity(t_atoms*                               pdba,
-                         rvec*                                  pdbx,
+                         gmx::ArrayRef<const gmx::RVec>         x,
                          int                                    start_ter,
                          int                                    end_ter,
                          gmx::ArrayRef<const PreprocessResidue> rtpFFDB,
@@ -1270,9 +1450,14 @@ bool checkChainCyclicity(t_atoms*                               pdba,
                          real                                   long_bond_dist_,
                          real                                   short_bond_dist_)
 {
-    int         ai = -1, aj = -1;
-    char*       rtpname = *(pdba->resinfo[start_ter].rtp);
-    std::string newName = search_resrename(rr, rtpname, false, false, false);
+    // if start and end are the same, we can't have a cycle
+    if (start_ter == end_ter)
+    {
+        return false;
+    }
+    std::optional<int> ai, aj;
+    char*              rtpname = *(pdba->resinfo[start_ter].rtp);
+    std::string        newName = search_resrename(rr, rtpname, false, false, false);
     if (newName.empty())
     {
         newName = rtpname;
@@ -1280,7 +1465,8 @@ bool checkChainCyclicity(t_atoms*                               pdba,
     auto        res = getDatabaseEntry(newName, rtpFFDB);
     const char *name_ai, *name_aj;
 
-    for (const auto& patch : res->rb[ebtsBONDS].b)
+    bool bothFound = false;
+    for (const auto& patch : res->rb[BondedTypes::Bonds].b)
     { /* Search backward bond for n/5' terminus */
         name_ai = patch.ai().c_str();
         name_aj = patch.aj().c_str();
@@ -1294,13 +1480,14 @@ bool checkChainCyclicity(t_atoms*                               pdba,
             aj = search_res_atom(++name_aj, end_ter, pdba, "check", TRUE);
             ai = search_res_atom(name_ai, start_ter, pdba, "check", TRUE);
         }
-        if (ai >= 0 && aj >= 0)
+        if (ai.has_value() and aj.has_value())
         {
+            bothFound = true;
             break; /* Found */
         }
     }
 
-    if (!(ai >= 0 && aj >= 0))
+    if (!bothFound)
     {
         rtpname = *(pdba->resinfo[end_ter].rtp);
         newName = search_resrename(rr, rtpname, false, false, false);
@@ -1309,7 +1496,7 @@ bool checkChainCyclicity(t_atoms*                               pdba,
             newName = rtpname;
         }
         res = getDatabaseEntry(newName, rtpFFDB);
-        for (const auto& patch : res->rb[ebtsBONDS].b)
+        for (const auto& patch : res->rb[BondedTypes::Bonds].b)
         {
             /* Seach forward bond for c/3' terminus */
             name_ai = patch.ai().c_str();
@@ -1325,16 +1512,17 @@ bool checkChainCyclicity(t_atoms*                               pdba,
                 ai = search_res_atom(name_ai, end_ter, pdba, "check", TRUE);
                 aj = search_res_atom(++name_aj, start_ter, pdba, "check", TRUE);
             }
-            if (ai >= 0 && aj >= 0)
+            if (ai.has_value() and aj.has_value())
             {
+                bothFound = true;
                 break;
             }
         }
     }
 
-    if (ai >= 0 && aj >= 0)
+    if (bothFound)
     {
-        real dist = distance2(pdbx[ai], pdbx[aj]);
+        real dist = distance2(x[ai.value()], x[aj.value()]);
         /* it is better to read bond length from ffbonded.itp */
         return (dist < gmx::square(long_bond_dist_) && dist > gmx::square(short_bond_dist_));
     }
@@ -1347,7 +1535,7 @@ bool checkChainCyclicity(t_atoms*                               pdba,
 struct t_pdbchain
 {
     char             chainid   = ' ';
-    char             chainnum  = ' ';
+    int              chainnum  = ' '; // char, but stored as int to make clang-tidy happy
     int              start     = -1;
     int              natom     = -1;
     bool             bAllWat   = false;
@@ -1378,24 +1566,36 @@ enum class VSitesType : int
     Aromatics,
     Count
 };
-const gmx::EnumerationArray<VSitesType, const char*> c_vsitesTypeNames = { { "none", "hydrogens",
-                                                                             "aromatics" } };
+const gmx::EnumerationArray<VSitesType, const char*> c_vsitesTypeNames = {
+    { "none", "hydrogens", "aromatics" }
+};
 
 enum class WaterType : int
 {
     Select,
     None,
+    Opc,
+    Opc3,
     Spc,
     SpcE,
     Tip3p,
     Tip4p,
+    Tip4pew,
     Tip5p,
     Tips3p,
     Count
 };
-const gmx::EnumerationArray<WaterType, const char*> c_waterTypeNames = {
-    { "select", "none", "spc", "spce", "tip3p", "tip4p", "tip5p", "tips3p" }
-};
+const gmx::EnumerationArray<WaterType, const char*> c_waterTypeNames = { { "select",
+                                                                           "none",
+                                                                           "opc",
+                                                                           "opc3",
+                                                                           "spc",
+                                                                           "spce",
+                                                                           "tip3p",
+                                                                           "tip4p",
+                                                                           "tip4pew",
+                                                                           "tip5p",
+                                                                           "tips3p" } };
 
 enum class MergeType : int
 {
@@ -1404,8 +1604,19 @@ enum class MergeType : int
     Interactive,
     Count
 };
-const gmx::EnumerationArray<MergeType, const char*> c_mergeTypeNames = { { "no", "all",
-                                                                           "interactive" } };
+const gmx::EnumerationArray<MergeType, const char*> c_mergeTypeNames = {
+    { "no", "all", "interactive" }
+};
+
+enum class RtpResType : int
+{
+    Auto,
+    No,
+    Yes,
+    Count
+};
+const gmx::EnumerationArray<RtpResType, const char*> c_rtpResTypeNames = { { "auto", "no", "yes" } };
+
 
 } // namespace
 
@@ -1426,6 +1637,7 @@ public:
         vsitesType_(VSitesType::None),
         waterType_(WaterType::Select),
         mergeType_(MergeType::No),
+        RTPresname_(RtpResType::Auto),
         itp_file_(nullptr),
         mHmult_(0)
     {
@@ -1462,10 +1674,8 @@ private:
     bool bRemoveH_;
     bool bDeuterate_;
     bool bVerbose_;
-    bool bChargeGroups_;
     bool bCmap_;
     bool bRenumRes_;
-    bool bRTPresname_;
     bool bIndexSet_;
     bool bOutputSet_;
     bool bVsites_;
@@ -1480,7 +1690,6 @@ private:
     real short_bond_dist_;
 
     std::string indexOutputFile_;
-    std::string outputFile_;
     std::string topologyFile_;
     std::string includeTopologyFile_;
     std::string outputConfFile_;
@@ -1492,16 +1701,17 @@ private:
     VSitesType          vsitesType_;
     WaterType           waterType_;
     MergeType           mergeType_;
+    RtpResType          RTPresname_;
 
-    FILE*                        itp_file_;
-    char                         forcefield_[STRLEN];
-    char                         ffdir_[STRLEN];
-    char*                        ffname_;
-    char*                        watermodel_;
-    std::vector<std::string>     incls_;
-    std::vector<t_mols>          mols_;
-    real                         mHmult_;
-    std::unique_ptr<LoggerOwner> loggerOwner_;
+    FILE*                              itp_file_;
+    char                               forcefield_[STRLEN];
+    std::filesystem::path              ffdir_;
+    char*                              ffname_;
+    char*                              watermodel_;
+    std::vector<std::filesystem::path> incls_;
+    std::vector<t_mols>                mols_;
+    real                               mHmult_;
+    std::unique_ptr<LoggerOwner>       loggerOwner_;
 };
 
 void pdb2gmx::initOptions(IOptionsContainer* options, ICommandLineOptionsModuleSettings* settings)
@@ -1696,19 +1906,15 @@ void pdb2gmx::initOptions(IOptionsContainer* options, ICommandLineOptionsModuleS
             "Make hydrogen atoms heavy"));
     options->addOption(
             BooleanOption("deuterate").store(&bDeuterate_).defaultValue(false).description("Change the mass of hydrogens to 2 amu"));
-    options->addOption(BooleanOption("chargegrp")
-                               .store(&bChargeGroups_)
-                               .defaultValue(true)
-                               .description("Use charge groups in the [REF].rtp[ref] file"));
     options->addOption(BooleanOption("cmap").store(&bCmap_).defaultValue(true).description(
             "Use cmap torsions (if enabled in the [REF].rtp[ref] file)"));
     options->addOption(BooleanOption("renum")
                                .store(&bRenumRes_)
                                .defaultValue(false)
                                .description("Renumber the residues consecutively in the output"));
-    options->addOption(BooleanOption("rtpres")
-                               .store(&bRTPresname_)
-                               .defaultValue(false)
+    options->addOption(EnumOption<RtpResType>("rtpres")
+                               .enumValue(c_rtpResTypeNames)
+                               .store(&RTPresname_)
                                .description("Use [REF].rtp[ref] entry names as residue names"));
     options->addOption(FileNameOption("f")
                                .legacyType(efSTX)
@@ -1789,10 +1995,12 @@ void pdb2gmx::optionsFinished()
     }
 
     /* Force field selection, interactive or direct */
-    choose_ff(strcmp(ff_.c_str(), "select") == 0 ? nullptr : ff_.c_str(), forcefield_,
-              sizeof(forcefield_), ffdir_, sizeof(ffdir_), loggerOwner_->logger());
+    ffdir_ = choose_ff(std::strcmp(ff_.c_str(), "select") == 0 ? nullptr : ff_.c_str(),
+                       forcefield_,
+                       sizeof(forcefield_),
+                       loggerOwner_->logger());
 
-    if (strlen(forcefield_) > 0)
+    if (std::strlen(forcefield_) > 0)
     {
         ffname_    = forcefield_;
         ffname_[0] = std::toupper(ffname_[0]);
@@ -1827,7 +2035,8 @@ int pdb2gmx::run()
 
     GMX_LOG(logger.info)
             .asParagraph()
-            .appendTextFormatted("Using the %s force field in directory %s", ffname_, ffdir_);
+            .appendTextFormatted(
+                    "Using the %s force field in directory %s", ffname_, ffdir_.string().c_str());
 
     choose_watermodel(c_waterTypeNames[waterType_], ffdir_, &watermodel_, logger);
 
@@ -1854,17 +2063,19 @@ int pdb2gmx::run()
     open_symtab(&symtab);
 
     /* Residue type database */
-    ResidueType rt;
+    ResidueTypeMap residueTypeMap = residueTypeMapFromLibraryFile("residuetypes.dat");
 
     /* Read residue renaming database(s), if present */
-    std::vector<std::string> rrn = fflib_search_file_end(ffdir_, ".r2b", FALSE);
+    auto rrn = fflib_search_file_end(ffdir_.string(), ".r2b", FALSE);
 
     std::vector<RtpRename> rtprename;
     for (const auto& filename : rrn)
     {
-        GMX_LOG(logger.info).asParagraph().appendTextFormatted("going to rename %s", filename.c_str());
+        GMX_LOG(logger.info)
+                .asParagraph()
+                .appendTextFormatted("going to rename %s", filename.string().c_str());
         FILE* fp = fflib_open(filename);
-        read_rtprename(filename.c_str(), fp, &rtprename);
+        read_rtprename(filename.string().c_str(), fp, &rtprename);
         gmx_ffclose(fp);
     }
 
@@ -1873,23 +2084,28 @@ int pdb2gmx::run()
     for (const auto& rename : rtprename)
     {
         /* Only add names if the 'standard' gromacs/iupac base name was found */
-        if (auto restype = rt.optionalTypeOfNamedDatabaseResidue(rename.gmx))
+        if (auto foundIt = residueTypeMap.find(rename.gmx); foundIt != residueTypeMap.end())
         {
-            rt.addResidue(rename.main, *restype);
-            rt.addResidue(rename.nter, *restype);
-            rt.addResidue(rename.cter, *restype);
-            rt.addResidue(rename.bter, *restype);
+            // Add the renamed forms with the same residue type as the standard form
+            auto& residueType = foundIt->second;
+            addResidue(&residueTypeMap, rename.main, residueType);
+            addResidue(&residueTypeMap, rename.nter, residueType);
+            addResidue(&residueTypeMap, rename.cter, residueType);
+            addResidue(&residueTypeMap, rename.bter, residueType);
         }
     }
 
     matrix      box;
     const char* watres;
     clear_mat(box);
-    if (watermodel_ != nullptr && (strstr(watermodel_, "4p") || strstr(watermodel_, "4P")))
+    if (watermodel_ != nullptr
+        && (std::strstr(watermodel_, "4p") != nullptr || std::strstr(watermodel_, "4P") != nullptr
+            || std::string(watermodel_) == "opc" || std::string(watermodel_) == "OPC"))
     {
         watres = "HO4";
     }
-    else if (watermodel_ != nullptr && (strstr(watermodel_, "5p") || strstr(watermodel_, "5P")))
+    else if (watermodel_ != nullptr
+             && (std::strstr(watermodel_, "5p") || std::strstr(watermodel_, "5P")))
     {
         watres = "HO5";
     }
@@ -1903,8 +2119,20 @@ int pdb2gmx::run()
     PbcType        pbcType;
     t_atoms        pdba_all;
     rvec*          pdbx;
-    int natom = read_pdball(inputConfFile_.c_str(), bOutputSet_, outFile_.c_str(), &title, &pdba_all,
-                            &pdbx, &pbcType, box, bRemoveH_, &symtab, &rt, watres, &aps, bVerbose_);
+    int            natom = read_pdball(inputConfFile_.c_str(),
+                            bOutputSet_,
+                            outFile_.c_str(),
+                            &title,
+                            &pdba_all,
+                            &pdbx,
+                            &pbcType,
+                            box,
+                            bRemoveH_,
+                            &symtab,
+                            residueTypeMap,
+                            watres,
+                            &aps,
+                            bVerbose_);
 
     if (natom == 0)
     {
@@ -1969,7 +2197,7 @@ int pdb2gmx::run()
             bMerged         = false;
             if (i > 0 && !bWat_)
             {
-                if (!strncmp(c_mergeTypeNames[mergeType_], "int", 3))
+                if (!std::strncmp(c_mergeTypeNames[mergeType_], "int", 3))
                 {
                     GMX_LOG(logger.info)
                             .asParagraph()
@@ -1978,17 +2206,24 @@ int pdb2gmx::run()
                                     "%s) and chain starting with "
                                     "residue %s%d (chain id '%c', atom %d %s) into a single "
                                     "moleculetype (keeping termini)? [n/y]",
-                                    prev_resname, prev_resnum, prev_chainid, prev_atomnum,
-                                    prev_atomname, this_resname, this_resnum, this_chainid,
-                                    this_atomnum, this_atomname);
+                                    prev_resname,
+                                    prev_resnum,
+                                    prev_chainid,
+                                    prev_atomnum,
+                                    prev_atomname,
+                                    this_resname,
+                                    this_resnum,
+                                    this_chainid,
+                                    this_atomnum,
+                                    this_atomname);
 
-                    if (nullptr == fgets(select, STRLEN - 1, stdin))
+                    if (nullptr == std::fgets(select, STRLEN - 1, stdin))
                     {
                         gmx_fatal(FARGS, "Error reading from stdin");
                     }
                     bMerged = (select[0] == 'y');
                 }
-                else if (!strncmp(c_mergeTypeNames[mergeType_], "all", 3))
+                else if (!std::strncmp(c_mergeTypeNames[mergeType_], "all", 3))
                 {
                     bMerged = true;
                 }
@@ -2055,21 +2290,21 @@ int pdb2gmx::run()
 
     /* set all the water blocks at the end of the chain */
     std::vector<int> swap_index(numChains);
-    int              j = 0;
+    int              jj = 0;
     for (int i = 0; i < numChains; i++)
     {
         if (!pdb_ch[i].bAllWat)
         {
-            swap_index[j] = i;
-            j++;
+            swap_index[jj] = i;
+            jj++;
         }
     }
     for (int i = 0; i < numChains; i++)
     {
         if (pdb_ch[i].bAllWat)
         {
-            swap_index[j] = i;
-            j++;
+            swap_index[jj] = i;
+            jj++;
         }
     }
     if (nwaterchain > 1)
@@ -2097,9 +2332,9 @@ int pdb2gmx::run()
 
         snew(chains[i].pdba, 1);
         init_t_atoms(chains[i].pdba, pdb_ch[si].natom, true);
-        for (j = 0; j < chains[i].pdba->nr; j++)
+        for (int j = 0; j < chains[i].pdba->nr; j++)
         {
-            chains[i].pdba->atom[j]     = pdba_all.atom[pdb_ch[si].start + j];
+            chains[i].pdba->atom[j] = pdba_all.atom[pdb_ch[si].start + j];
             chains[i].pdba->atomname[j] = put_symtab(&symtab, *pdba_all.atomname[pdb_ch[si].start + j]);
             chains[i].pdba->pdbinfo[j] = pdba_all.pdbinfo[pdb_ch[si].start + j];
             chains[i].x.emplace_back(pdbx[pdb_ch[si].start + j]);
@@ -2135,7 +2370,10 @@ int pdb2gmx::run()
             .appendTextFormatted(
                     "There are %d chains and %d blocks of water and "
                     "%d residues with %d atoms",
-                    numChains - nwaterchain, nwaterchain, pdba_all.nres, natom);
+                    numChains - nwaterchain,
+                    nwaterchain,
+                    pdba_all.nres,
+                    natom);
 
     GMX_LOG(logger.info)
             .asParagraph()
@@ -2144,24 +2382,36 @@ int pdb2gmx::run()
     {
         GMX_LOG(logger.info)
                 .asParagraph()
-                .appendTextFormatted("  %d '%c' %5d %6d  %s\n", i + 1,
-                                     chains[i].chainid ? chains[i].chainid : '-', chains[i].pdba->nres,
-                                     chains[i].pdba->nr, chains[i].bAllWat ? "(only water)" : "");
+                .appendTextFormatted("  %d '%c' %5d %6d  %s\n",
+                                     i + 1,
+                                     chains[i].chainid ? chains[i].chainid : '-',
+                                     chains[i].pdba->nres,
+                                     chains[i].pdba->nr,
+                                     chains[i].bAllWat ? "(only water)" : "");
     }
 
     check_occupancy(&pdba_all, inputConfFile_.c_str(), bVerbose_, logger);
 
     /* Read atomtypes... */
-    PreprocessingAtomTypes atype = read_atype(ffdir_, &symtab);
+    PreprocessingAtomTypes atype = read_atype(ffdir_);
 
     /* read residue database */
     GMX_LOG(logger.info).asParagraph().appendTextFormatted("Reading residue database... (%s)", forcefield_);
-    std::vector<std::string>       rtpf = fflib_search_file_end(ffdir_, ".rtp", true);
+    auto                           rtpf = fflib_search_file_end(ffdir_, ".rtp", true);
     std::vector<PreprocessResidue> rtpFFDB;
     for (const auto& filename : rtpf)
     {
         readResidueDatabase(filename, &rtpFFDB, &atype, &symtab, logger, false);
     }
+    if (rtpFFDB[0].replaceResidueNameWithResidueType && RTPresname_ == RtpResType::No)
+    {
+        gmx_fatal(FARGS,
+                  "The selected force field requires the usage of residue types from the .rtp "
+                  "file as residue names. Please do not use -rtpres no");
+    }
+    const bool bRTPresname_ =
+            RTPresname_ == RtpResType::Yes
+            || (RTPresname_ == RtpResType::Auto && rtpFFDB[0].replaceResidueNameWithResidueType);
     if (bNewRTP_)
     {
         /* Not correct with multiple rtp input files with different bonded types */
@@ -2207,29 +2457,51 @@ int pdb2gmx::run()
             GMX_LOG(logger.info)
                     .asParagraph()
                     .appendTextFormatted("Processing chain %d '%c' (%d atoms, %d residues)",
-                                         chain + 1, cc->chainid, natom, nres);
+                                         chain + 1,
+                                         cc->chainid,
+                                         natom,
+                                         nres);
         }
         else
         {
             GMX_LOG(logger.info)
                     .asParagraph()
-                    .appendTextFormatted("Processing chain %d (%d atoms, %d residues)", chain + 1,
-                                         natom, nres);
+                    .appendTextFormatted(
+                            "Processing chain %d (%d atoms, %d residues)", chain + 1, natom, nres);
         }
 
-        process_chain(pdba, x, bUnA_, bUnA_, bUnA_, bLysMan_, bAspMan_, bGluMan_, bHisMan_,
-                      bArgMan_, bGlnMan_, angle_, distance_, &symtab, rtprename);
+        process_chain(logger,
+                      pdba,
+                      x,
+                      bUnA_,
+                      bUnA_,
+                      bUnA_,
+                      bLysMan_,
+                      bAspMan_,
+                      bGluMan_,
+                      bHisMan_,
+                      bArgMan_,
+                      bGlnMan_,
+                      angle_,
+                      distance_,
+                      &symtab,
+                      rtprename);
 
         cc->chainstart[cc->nterpairs] = pdba->nres;
-        j                             = 0;
+        int j                         = 0;
         for (int i = 0; i < cc->nterpairs; i++)
         {
-            find_nc_ter(pdba, cc->chainstart[i], cc->chainstart[i + 1], &(cc->r_start[j]),
-                        &(cc->r_end[j]), &rt, logger);
+            find_nc_ter(pdba,
+                        cc->chainstart[i],
+                        cc->chainstart[i + 1],
+                        &(cc->r_start[j]),
+                        &(cc->r_end[j]),
+                        residueTypeMap,
+                        logger);
             if (cc->r_start[j] >= 0 && cc->r_end[j] >= 0)
             {
-                if (checkChainCyclicity(pdba, pdbx, cc->r_start[j], cc->r_end[j], rtpFFDB,
-                                        rtprename, long_bond_dist_, short_bond_dist_))
+                if (checkChainCyclicity(
+                            pdba, x, cc->r_start[j], cc->r_end[j], rtpFFDB, rtprename, long_bond_dist_, short_bond_dist_))
                 {
                     cc->cyclicBondsIndex.push_back(cc->r_start[j]);
                     cc->cyclicBondsIndex.push_back(cc->r_end[j]);
@@ -2255,7 +2527,7 @@ int pdb2gmx::run()
         }
 
         /* Check for disulfides and other special bonds */
-        ssbonds = makeDisulfideBonds(pdba, gmx::as_rvec_array(x.data()), bCysMan_, bVerbose_);
+        ssbonds = makeDisulfideBonds(pdba, &symtab, gmx::as_rvec_array(x.data()), bCysMan_, bVerbose_);
 
         if (!rtprename.empty())
         {
@@ -2288,8 +2560,10 @@ int pdb2gmx::run()
                 {
                     if (bTerMan_ && !tdblist.empty())
                     {
-                        sprintf(select, "Select start terminus type for %s-%d",
-                                *pdba->resinfo[cc->r_start[i]].name, pdba->resinfo[cc->r_start[i]].nr);
+                        sprintf(select,
+                                "Select start terminus type for %s-%d",
+                                *pdba->resinfo[cc->r_start[i]].name,
+                                pdba->resinfo[cc->r_start[i]].nr);
                         cc->ntdb.push_back(choose_ter(tdblist, select));
                     }
                     else
@@ -2297,8 +2571,10 @@ int pdb2gmx::run()
                         cc->ntdb.push_back(tdblist[0]);
                     }
 
-                    printf("Start terminus %s-%d: %s\n", *pdba->resinfo[cc->r_start[i]].name,
-                           pdba->resinfo[cc->r_start[i]].nr, (cc->ntdb[i])->name.c_str());
+                    printf("Start terminus %s-%d: %s\n",
+                           *pdba->resinfo[cc->r_start[i]].name,
+                           pdba->resinfo[cc->r_start[i]].nr,
+                           (cc->ntdb[i])->name.c_str());
                     tdblist.clear();
                 }
             }
@@ -2326,16 +2602,20 @@ int pdb2gmx::run()
                 {
                     if (bTerMan_ && !tdblist.empty())
                     {
-                        sprintf(select, "Select end terminus type for %s-%d",
-                                *pdba->resinfo[cc->r_end[i]].name, pdba->resinfo[cc->r_end[i]].nr);
+                        sprintf(select,
+                                "Select end terminus type for %s-%d",
+                                *pdba->resinfo[cc->r_end[i]].name,
+                                pdba->resinfo[cc->r_end[i]].nr);
                         cc->ctdb.push_back(choose_ter(tdblist, select));
                     }
                     else
                     {
                         cc->ctdb.push_back(tdblist[0]);
                     }
-                    printf("End terminus %s-%d: %s\n", *pdba->resinfo[cc->r_end[i]].name,
-                           pdba->resinfo[cc->r_end[i]].nr, (cc->ctdb[i])->name.c_str());
+                    printf("End terminus %s-%d: %s\n",
+                           *pdba->resinfo[cc->r_end[i]].name,
+                           pdba->resinfo[cc->r_end[i]].nr,
+                           (cc->ctdb[i])->name.c_str());
                     tdblist.clear();
                 }
             }
@@ -2347,23 +2627,31 @@ int pdb2gmx::run()
         std::vector<MoleculePatchDatabase> hb_chain;
         /* lookup hackblocks and rtp for all residues */
         std::vector<PreprocessResidue> restp_chain;
-        get_hackblocks_rtp(&hb_chain, &restp_chain, rtpFFDB, pdba->nres, pdba->resinfo, cc->nterpairs,
-                           &symtab, cc->ntdb, cc->ctdb, cc->r_start, cc->r_end, bAllowMissing_, logger);
+        get_hackblocks_rtp(&hb_chain,
+                           &restp_chain,
+                           rtpFFDB,
+                           pdba->nres,
+                           pdba->resinfo,
+                           cc->nterpairs,
+                           &symtab,
+                           cc->ntdb,
+                           cc->ctdb,
+                           cc->r_start,
+                           cc->r_end,
+                           bAllowMissing_,
+                           logger);
         /* ideally, now we would not need the rtp itself anymore, but do
            everything using the hb and restp arrays. Unfortunately, that
            requires some re-thinking of code in gen_vsite.c, which I won't
            do now :( AF 26-7-99 */
 
-        rename_atoms(nullptr, ffdir_, pdba, &symtab, restp_chain, false, &rt, false, bVerbose_);
+        rename_atoms({}, ffdir_, pdba, &symtab, restp_chain, false, residueTypeMap, false, bVerbose_);
 
         match_atomnames_with_rtp(restp_chain, hb_chain, pdba, &symtab, x, bVerbose_, logger);
 
         if (bSort_)
         {
-            char**    gnames;
-            t_blocka* block = new_blocka();
-            snew(gnames, 1);
-            sort_pdbatoms(restp_chain, natom, &pdba, &sortAtoms[chain], &x, block, &gnames);
+            const auto indexGroups = sort_pdbatoms(restp_chain, natom, &pdba, &sortAtoms[chain], &x);
             remove_duplicate_atoms(pdba, x, bVerbose_, logger);
             if (bIndexSet_)
             {
@@ -2377,15 +2665,8 @@ int pdb2gmx::run()
                                     "(the index file is generated before hydrogens are added)",
                                     indexOutputFile_.c_str());
                 }
-                write_index(indexOutputFile_.c_str(), block, gnames, false, 0);
+                write_index(indexOutputFile_.c_str(), indexGroups, false, 0);
             }
-            for (int i = 0; i < block->nr; i++)
-            {
-                sfree(gnames[i]);
-            }
-            sfree(gnames);
-            done_blocka(block);
-            sfree(block);
         }
         else
         {
@@ -2400,8 +2681,18 @@ int pdb2gmx::run()
                 .asParagraph()
                 .appendTextFormatted(
                         "Generating any missing hydrogen atoms and/or adding termini.");
-        add_h(&pdba, &localAtoms[chain], &x, ah, &symtab, cc->nterpairs, cc->ntdb, cc->ctdb,
-              cc->r_start, cc->r_end, bAllowMissing_, cc->cyclicBondsIndex);
+        add_h(&pdba,
+              &localAtoms[chain],
+              &x,
+              ah,
+              &symtab,
+              cc->nterpairs,
+              cc->ntdb,
+              cc->ctdb,
+              cc->r_start,
+              cc->r_end,
+              bAllowMissing_,
+              cc->cyclicBondsIndex);
         GMX_LOG(logger.info)
                 .asParagraph()
                 .appendTextFormatted("Now there are %d residues with %d atoms", pdba->nres, pdba->nr);
@@ -2410,7 +2701,7 @@ int pdb2gmx::run()
 
         int k = (cc->nterpairs > 0 && cc->r_start[0] >= 0) ? cc->r_start[0] : 0;
 
-        std::string restype = rt.typeOfNamedDatabaseResidue(*pdba->resinfo[k].name);
+        std::string restype = typeOfNamedDatabaseResidue(residueTypeMap, *pdba->resinfo[k].name);
 
         std::string molname;
         std::string suffix;
@@ -2430,9 +2721,9 @@ int pdb2gmx::run()
 
             /* Check if there have been previous chains with the same id */
             int nid_used = 0;
-            for (int k = 0; k < chain; k++)
+            for (int c = 0; c < chain; c++)
             {
-                if (cc->chainid == chains[k].chainid)
+                if (cc->chainid == chains[c].chainid)
                 {
                     nid_used++;
                 }
@@ -2443,7 +2734,7 @@ int pdb2gmx::run()
                 suffix.append(formatString("%d", nid_used + 1));
             }
 
-            if (suffix.length() > 0)
+            if (!suffix.empty())
             {
                 molname.append(restype);
                 molname.append(suffix);
@@ -2472,7 +2763,7 @@ int pdb2gmx::run()
             posre_fn.append(".itp");
             if (posre_fn == itp_fn)
             {
-                posre_fn = Path::concatenateBeforeExtension(posre_fn, "_pr");
+                posre_fn = gmx::concatenateBeforeExtension(posre_fn, "_pr").string();
             }
             incls_.emplace_back();
             incls_.back() = itp_fn;
@@ -2514,10 +2805,30 @@ int pdb2gmx::run()
             top_file2 = top_file;
         }
 
-        pdb2top(top_file2, posre_fn.c_str(), molname.c_str(), pdba, &x, &atype, &symtab, rtpFFDB,
-                restp_chain, hb_chain, bAllowMissing_, bVsites_, bVsiteAromatics_, ffdir_, mHmult_,
-                ssbonds, long_bond_dist_, short_bond_dist_, bDeuterate_, bChargeGroups_, bCmap_,
-                bRenumRes_, bRTPresname_, cc->cyclicBondsIndex, logger);
+        pdb2top(top_file2,
+                posre_fn.c_str(),
+                molname.c_str(),
+                pdba,
+                &x,
+                &atype,
+                &symtab,
+                rtpFFDB,
+                restp_chain,
+                hb_chain,
+                bAllowMissing_,
+                bVsites_,
+                bVsiteAromatics_,
+                ffdir_,
+                mHmult_,
+                ssbonds,
+                long_bond_dist_,
+                short_bond_dist_,
+                bDeuterate_,
+                bCmap_,
+                bRenumRes_,
+                bRTPresname_,
+                cc->cyclicBondsIndex,
+                logger);
 
         if (!cc->bAllWat)
         {
@@ -2550,14 +2861,16 @@ int pdb2gmx::run()
     }
     else
     {
-        std::string waterFile = formatString("%s%c%s.itp", ffdir_, DIR_SEPARATOR, watermodel_);
+        auto waterFile = ffdir_;
+        waterFile.append(watermodel_).replace_extension("itp");
         if (!fflib_fexist(waterFile))
         {
             auto message = formatString(
                     "The topology file '%s' for the selected water "
                     "model '%s' can not be found in the force field "
                     "directory. Select a different water model.",
-                    waterFile.c_str(), watermodel_);
+                    waterFile.string().c_str(),
+                    watermodel_);
             GMX_THROW(InconsistentInputError(message));
         }
     }
@@ -2592,7 +2905,9 @@ int pdb2gmx::run()
             GMX_LOG(logger.info)
                     .asParagraph()
                     .appendTextFormatted("Including chain %d in system: %d atoms %d residues",
-                                         i + 1, chains[i].pdba->nr, chains[i].pdba->nres);
+                                         i + 1,
+                                         chains[i].pdba->nr,
+                                         chains[i].pdba->nres);
         }
         for (int j = 0; (j < chains[i].pdba->nr); j++)
         {
@@ -2630,8 +2945,8 @@ int pdb2gmx::run()
     {
         make_new_box(atoms->nr, gmx::as_rvec_array(x.data()), box, box_space, false);
     }
-    write_sto_conf(outputConfFile_.c_str(), title, atoms, gmx::as_rvec_array(x.data()), nullptr,
-                   pbcType, box);
+    write_sto_conf(
+            outputConfFile_.c_str(), title, atoms, gmx::as_rvec_array(x.data()), nullptr, pbcType, box);
 
     done_symtab(&symtab);
     done_atom(&pdba_all);
@@ -2658,8 +2973,8 @@ int pdb2gmx::run()
     {
         GMX_LOG(logger.info)
                 .asParagraph()
-                .appendTextFormatted("The %s force field and the %s water model are used.", ffname_,
-                                     watermodel_);
+                .appendTextFormatted(
+                        "The %s force field and the %s water model are used.", ffname_, watermodel_);
         sfree(watermodel_);
     }
     else
@@ -2675,8 +2990,8 @@ int pdb2gmx::run()
 
 } // namespace
 
-const char pdb2gmxInfo::name[] = "pdb2gmx";
-const char pdb2gmxInfo::shortDescription[] =
+LIBGROMACS_EXPORT const char pdb2gmxInfo::name[] = "pdb2gmx";
+LIBGROMACS_EXPORT const char pdb2gmxInfo::shortDescription[] =
         "Convert coordinate files to topology and FF-compliant coordinate files";
 ICommandLineOptionsModulePointer pdb2gmxInfo::create()
 {

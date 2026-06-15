@@ -1,10 +1,9 @@
 #
 # This file is part of the GROMACS molecular simulation package.
 #
-# Copyright (c) 2017,2018,2019,2020, by the GROMACS development team, led by
-# Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
-# and including many others, as listed in the AUTHORS file in the
-# top-level source directory and at http://www.gromacs.org.
+# Copyright 2017- The GROMACS Authors
+# and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+# Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
 #
 # GROMACS is free software; you can redistribute it and/or
 # modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
 #
 # You should have received a copy of the GNU Lesser General Public
 # License along with GROMACS; if not, see
-# http://www.gnu.org/licenses, or write to the Free Software Foundation,
+# https://www.gnu.org/licenses, or write to the Free Software Foundation,
 # Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
 #
 # If you want to redistribute modifications to GROMACS, please
@@ -27,80 +26,22 @@
 # consider code for inclusion in the official distribution, but
 # derived work must not be called official GROMACS. Details are found
 # in the README & COPYING files - if they are missing, get the
-# official version at http://www.gromacs.org.
+# official version at https://www.gromacs.org.
 #
 # To help us fund GROMACS development, we humbly ask that you cite
-# the research papers on the package. Check out http://www.gromacs.org.
+# the research papers on the package. Check out https://www.gromacs.org.
 
-function (gmx_test_clang_cuda_support)
-
-    if ((NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang") OR
-        (CMAKE_CXX_COMPILER_ID MATCHES "Clang" AND CMAKE_CXX_COMPILER_VERSION VERSION_LESS 6))
-        message(FATAL_ERROR "clang 6 or later required with GMX_CLANG_CUDA=ON!")
-    endif()
-
-    # NOTE: we'd ideally like to use a compile check here, but the link-stage
-    # fails as the clang invocation generated seems to not handle well some
-    # (GPU code) in the object file generated during compilation.
-    # SET(CMAKE_REQUIRED_FLAGS ${FLAGS})
-    # SET(CMAKE_REQUIRED_LIBRARIES ${LIBS})
-    # CHECK_CXX_SOURCE_COMPILES("int main() { int c; cudaGetDeviceCount(&c); return 0; }" _CLANG_CUDA_COMPILES)
-endfunction ()
-
-if (GMX_CUDA_TARGET_COMPUTE)
-    message(WARNING "Values passed in GMX_CUDA_TARGET_COMPUTE will be ignored; clang will by default include PTX in the binary.")
+if (NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    message(FATAL_ERROR "Clang is required with GMX_CLANG_CUDA=ON!")
 endif()
 
-if (GMX_CUDA_TARGET_SM)
-    set(_CUDA_CLANG_GENCODE_FLAGS)
-    set(_target_sm_list ${GMX_CUDA_TARGET_SM})
-    foreach(_target ${_target_sm_list})
-        list(APPEND _CUDA_CLANG_GENCODE_FLAGS "--cuda-gpu-arch=sm_${_target}")
-    endforeach()
-else()
-    list(APPEND _CUDA_CLANG_GENCODE_FLAGS "--cuda-gpu-arch=sm_30")
-    list(APPEND _CUDA_CLANG_GENCODE_FLAGS "--cuda-gpu-arch=sm_35")
-    # clang 6.0 + CUDA 9.0 seems to have issues generating code for sm_37
-    if (CMAKE_CXX_COMPILER_VERSION VERSION_LESS 6.0 OR CMAKE_CXX_COMPILER_VERSION VERSION_GREATER 6.0.999)
-        list(APPEND _CUDA_CLANG_GENCODE_FLAGS "--cuda-gpu-arch=sm_37")
-    endif()
-    list(APPEND _CUDA_CLANG_GENCODE_FLAGS "--cuda-gpu-arch=sm_50")
-    list(APPEND _CUDA_CLANG_GENCODE_FLAGS "--cuda-gpu-arch=sm_52")
-    list(APPEND _CUDA_CLANG_GENCODE_FLAGS "--cuda-gpu-arch=sm_60")
-    list(APPEND _CUDA_CLANG_GENCODE_FLAGS "--cuda-gpu-arch=sm_61")
-    list(APPEND _CUDA_CLANG_GENCODE_FLAGS "--cuda-gpu-arch=sm_70")
-    # Enable this when clang (8.0 ?) introduces sm_75 support
-    #if (NOT CUDA_VERSION VERSION_LESS 10.0)
-    #    list(APPEND _CUDA_CLANG_GENCODE_FLAGS "--cuda-gpu-arch=sm_75")
-    #endif()
-endif()
-if (GMX_CUDA_TARGET_SM)
-    set_property(CACHE GMX_CUDA_TARGET_SM PROPERTY HELPSTRING "List of CUDA GPU architecture codes to compile for (without the sm_ prefix)")
-    set_property(CACHE GMX_CUDA_TARGET_SM PROPERTY TYPE STRING)
-endif()
 
-# default flags
-list(APPEND _CUDA_CLANG_FLAGS "-x cuda" "-ffast-math" "-fcuda-flush-denormals-to-zero")
-# Workaround for clang>=9 (Bug 45533). No CUDA file uses OpenMP.
-list(APPEND _CUDA_CLANG_FLAGS "-fno-openmp")
-# CUDA toolkit
-list(APPEND _CUDA_CLANG_FLAGS "--cuda-path=${CUDA_TOOLKIT_ROOT_DIR}")
-# codegen flags
-list(APPEND _CUDA_CLANG_FLAGS "${_CUDA_CLANG_GENCODE_FLAGS}")
-foreach(_flag ${_CUDA_CLANG_FLAGS})
-    set(GMX_CUDA_CLANG_FLAGS "${GMX_CUDA_CLANG_FLAGS} ${_flag}")
-endforeach()
-
-if (CUDA_USE_STATIC_CUDA_RUNTIME)
-    set(GMX_CUDA_CLANG_LINK_LIBS "cudart_static")
-else()
-    set(GMX_CUDA_CLANG_LINK_LIBS "cudart")
+if(DEFINED GMX_CUDA_CLANG_FLAGS)
+    list(APPEND GMX_CUDA_FLAGS ${GMX_CUDA_CLANG_FLAGS})
 endif()
-set(GMX_CUDA_CLANG_LINK_LIBS "${GMX_CUDA_CLANG_LINK_LIBS}" "dl" "rt")
-if (CUDA_64_BIT_DEVICE_CODE)
-    set(GMX_CUDA_CLANG_LINK_DIRS "${CUDA_TOOLKIT_ROOT_DIR}/lib64")
-else()
-    set(GMX_CUDA_CLANG_LINK_DIRS "${CUDA_TOOLKIT_ROOT_DIR}/lib")
-endif()
+# Don't warn about unknown CUDA version; this is developer-facing build, and we hope developers know what they are doing
+gmx_add_cuda_flag_if_supported(HAS_NO_UNKNOWN_CUDA_VERSION -Wno-unknown-cuda-version)
 
-gmx_test_clang_cuda_support()
+# Default flags
+gmx_add_cuda_flag_if_supported(HAS_FFAST_MATH -ffast_math)
+gmx_add_cuda_flag_if_supported(HAS_FCUDA_FLUSH_DENORMALS_TO_ZERO_FLUSH_DENORMALS_TO_ZERO -fcuda-flush-denormals-to-zero)

@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2016,2017,2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2016- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,29 +26,30 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 #ifndef GMX_MDRUNUTILITY_TESTS_THREADAFFINITYTEST_H
 #define GMX_MDRUNUTILITY_TESTS_THREADAFFINITYTEST_H
 
 #include <initializer_list>
 #include <memory>
+#include <string>
 
 #include <gmock/gmock.h>
+#include <gtest/gtest.h>
 
 #include "gromacs/hardware/hw_info.h"
 #include "gromacs/mdrunutility/threadaffinity.h"
-#include "gromacs/utility/basedefinitions.h"
+#include "gromacs/utility/arrayref.h"
 #include "gromacs/utility/logger.h"
+#include "gromacs/utility/mpicomm.h"
 #include "gromacs/utility/physicalnodecommunicator.h"
 #include "gromacs/utility/stringutil.h"
 
 #include "testutils/loggertest.h"
-
-struct t_commrec;
 
 namespace gmx
 {
@@ -63,7 +63,6 @@ class MockThreadAffinityAccess : public IThreadAffinityAccess
 {
 public:
     MockThreadAffinityAccess();
-    ~MockThreadAffinityAccess() override;
 
     void setSupported(bool supported) { supported_ = supported; }
 
@@ -95,6 +94,13 @@ public:
 
     void setLogicalProcessorCount(int logicalProcessorCount);
 
+    void setExternalAffinitySet(const std::vector<int>& cores);
+
+    // Load topology from saved mock filesystem root with external affinity mask
+    void setTopologyFromSavedMock(const std::string&      filesystemRoot,
+                                  const std::vector<int>& allowedProcessors,
+                                  const std::vector<int>& externalAffinitySet);
+
     void setTotNumThreadsIsAuto(bool isAuto) { hwOpt_.totNumThreadsIsAuto = isAuto; }
 
     void expectAffinitySet(int core)
@@ -102,6 +108,13 @@ public:
         EXPECT_CALL(affinityAccess_, setCurrentThreadAffinityToCore(core));
     }
     void expectAffinitySet(std::initializer_list<int> cores)
+    {
+        for (int core : cores)
+        {
+            expectAffinitySet(core);
+        }
+    }
+    void expectAffinitySet(gmx::ArrayRef<const int> cores)
     {
         for (int core : cores)
         {
@@ -132,8 +145,8 @@ public:
     }
     void expectPinningMessage(bool userSpecifiedStride, int stride)
     {
-        std::string pattern = formatString("Pinning threads .* %s.* stride of %d",
-                                           userSpecifiedStride ? "user" : "auto", stride);
+        std::string pattern = formatString(
+                "Pinning threads .* %s.* stride of %d", userSpecifiedStride ? "user" : "auto", stride);
         expectInfoMatchingRegex(pattern.c_str());
     }
     void expectLogMessageMatchingRegexIf(MDLogger::LogLevel level, const char* re, bool condition)
@@ -151,16 +164,12 @@ public:
             setLogicalProcessorCount(1);
         }
         gmx::PhysicalNodeCommunicator comm(MPI_COMM_WORLD, physicalNodeId_);
-        int                           numThreadsOnThisNode, indexWithinNodeOfFirstThreadOnThisRank;
-        analyzeThreadsOnThisNode(comm, numThreadsOnThisRank, &numThreadsOnThisNode,
-                                 &indexWithinNodeOfFirstThreadOnThisRank);
-        gmx_set_thread_affinity(logHelper_.logger(), cr_, &hwOpt_, *hwTop_, numThreadsOnThisRank,
-                                numThreadsOnThisNode, indexWithinNodeOfFirstThreadOnThisRank,
-                                &affinityAccess_);
+        gmx_set_thread_affinity(
+                logHelper_.logger(), mpiComm_, comm, &hwOpt_, *hwTop_, numThreadsOnThisRank, &affinityAccess_);
     }
 
 private:
-    t_commrec*                        cr_;
+    MpiComm                           mpiComm_;
     gmx_hw_opt_t                      hwOpt_;
     std::unique_ptr<HardwareTopology> hwTop_;
     MockThreadAffinityAccess          affinityAccess_;

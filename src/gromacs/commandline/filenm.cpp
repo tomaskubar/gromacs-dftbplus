@@ -1,13 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
- * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2016,2017 by the GROMACS development team.
- * Copyright (c) 2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 1991- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -21,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -30,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 #include "gmxpre.h"
 
@@ -43,6 +39,7 @@
 #include <cstdio>
 #include <cstring>
 
+#include <filesystem>
 #include <string_view>
 
 #include "gromacs/fileio/filetypes.h"
@@ -71,8 +68,8 @@ static const t_filenm* getFileOption(const char* opt, int nfile, const t_filenm 
 
     for (int i = 0; i < nfile; i++)
     {
-        if ((fnm[i].opt != nullptr && strcmp(opt, fnm[i].opt) == 0)
-            || (fnm[i].opt == nullptr && strcmp(opt, ftp2defopt(fnm[i].ftp)) == 0))
+        if ((fnm[i].opt != nullptr && std::strcmp(opt, fnm[i].opt) == 0)
+            || (fnm[i].opt == nullptr && std::strcmp(opt, ftp2defopt(fnm[i].ftp)) == 0))
         {
             return &fnm[i];
         }
@@ -184,6 +181,16 @@ gmx_bool opt2bSet(const char* opt, int nfile, const t_filenm fnm[])
     return FALSE;
 }
 
+std::optional<std::filesystem::path> opt2path_optional(const char* opt, int nfile, const t_filenm fnm[])
+{
+    const char* r = opt2fn_null(opt, nfile, fnm);
+    if (r != nullptr)
+    {
+        return std::make_optional<std::filesystem::path>(r);
+    }
+    return std::nullopt;
+}
+
 const char* opt2fn_null(const char* opt, int nfile, const t_filenm fnm[])
 {
     const t_filenm* fileOption = getFileOption(opt, nfile, fnm);
@@ -203,6 +210,16 @@ const char* opt2fn_null(const char* opt, int nfile, const t_filenm fnm[])
     GMX_RELEASE_ASSERT(false, "opt2fn_null should be called with a valid option");
 
     return nullptr;
+}
+
+std::optional<std::filesystem::path> ftp2path_optional(int ftp, int nfile, const t_filenm fnm[])
+{
+    const char* r = ftp2fn_null(ftp, nfile, fnm);
+    if (r != nullptr)
+    {
+        return std::make_optional<std::filesystem::path>(r);
+    }
+    return std::nullopt;
 }
 
 const char* ftp2fn_null(int ftp, int nfile, const t_filenm fnm[])
@@ -282,7 +299,7 @@ int add_suffix_to_output_names(t_filenm* fnm, int nfile, const char* suffix)
                 // mdrun should not generate files like
                 // md.part0002.part0003.log. mdrun should permit users
                 // to name files like md.equil.part0002.log. So,
-                // before we use Path::concatenateBeforeExtension to
+                // before we use concatenateBeforeExtension to
                 // add the requested suffix, we need to check for
                 // files matching mdrun's pattern for adding part
                 // numbers. Then we can remove that if needed.
@@ -296,7 +313,7 @@ int add_suffix_to_output_names(t_filenm* fnm, int nfile, const char* suffix)
                     temporary += filename.substr(partPosition + 9);
                     filename.swap(temporary);
                 }
-                filename = gmx::Path::concatenateBeforeExtension(filename, suffix);
+                filename = gmx::concatenateBeforeExtension(filename, suffix).string();
             }
         }
     }

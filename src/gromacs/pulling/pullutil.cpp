@@ -1,13 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
- * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2016,2017 by the GROMACS development team.
- * Copyright (c) 2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 1991- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -21,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -30,96 +26,70 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 #include "gmxpre.h"
 
 #include "config.h"
 
 #include <cassert>
+#include <cmath>
 #include <cstdlib>
 
+#include <array>
+#include <filesystem>
+#include <memory>
+#include <optional>
+#include <vector>
+
+#include "gromacs/domdec/localatomset.h"
 #include "gromacs/fileio/confio.h"
 #include "gromacs/gmxlib/network.h"
 #include "gromacs/math/functions.h"
+#include "gromacs/math/units.h"
 #include "gromacs/math/utilities.h"
-#include "gromacs/math/vec.h"
-#include "gromacs/mdtypes/commrec.h"
 #include "gromacs/mdtypes/inputrec.h"
 #include "gromacs/mdtypes/md_enums.h"
-#include "gromacs/mdtypes/mdatom.h"
+#include "gromacs/mdtypes/pull_params.h"
 #include "gromacs/mdtypes/state.h"
 #include "gromacs/pbcutil/pbc.h"
 #include "gromacs/pulling/pull.h"
+#include "gromacs/pulling/pull_internal.h"
+#include "gromacs/utility/arrayref.h"
+#include "gromacs/utility/basedefinitions.h"
 #include "gromacs/utility/fatalerror.h"
 #include "gromacs/utility/futil.h"
 #include "gromacs/utility/gmxassert.h"
+#include "gromacs/utility/mpicomm.h"
+#include "gromacs/utility/mpitypes.h"
 #include "gromacs/utility/real.h"
 #include "gromacs/utility/smalloc.h"
+#include "gromacs/utility/vec.h"
+#include "gromacs/utility/vectypes.h"
 
-#include "pull_internal.h"
-
-#if GMX_MPI
-
-// Helper function to deduce MPI datatype from the type of data
-gmx_unused static MPI_Datatype mpiDatatype(const float gmx_unused* data)
-{
-    return MPI_FLOAT;
-}
-
-// Helper function to deduce MPI datatype from the type of data
-gmx_unused static MPI_Datatype mpiDatatype(const double gmx_unused* data)
-{
-    return MPI_DOUBLE;
-}
-
-#endif // GMX_MPI
-
-#if !GMX_DOUBLE
-// Helper function; note that gmx_sum(d) should actually be templated
-gmx_unused static void gmxAllReduce(int n, real* data, const t_commrec* cr)
-{
-    gmx_sum(n, data, cr);
-}
-#endif
-
-// Helper function; note that gmx_sum(d) should actually be templated
-gmx_unused static void gmxAllReduce(int n, double* data, const t_commrec* cr)
-{
-    gmx_sumd(n, data, cr);
-}
+using gmx::ArrayRef;
+using gmx::DVec;
+using gmx::RVec;
 
 // Reduce data of n elements over all ranks currently participating in pull
 template<typename T>
-static void pullAllReduce(const t_commrec* cr, pull_comm_t* comm, int n, T* data)
+static void pullAllReduce(const gmx::MpiComm& mpiComm, pull_comm_t* comm, int n, T* data)
 {
-    if (cr != nullptr && PAR(cr))
+    if (mpiComm.isParallel())
     {
         if (comm->bParticipateAll)
         {
             /* Sum the contributions over all DD ranks */
-            gmxAllReduce(n, data, cr);
+            mpiComm.sumReduce(n, data);
         }
         else
         {
             /* Separate branch because gmx_sum uses cr->mpi_comm_mygroup */
 #if GMX_MPI
-#    if MPI_IN_PLACE_EXISTS
-            MPI_Allreduce(MPI_IN_PLACE, data, n, mpiDatatype(data), MPI_SUM, comm->mpi_comm_com);
-#    else
-            std::vector<T> buf(n);
-
-            MPI_Allreduce(data, buf.data(), n, mpiDatatype(data), MPI_SUM, comm->mpi_comm_com);
-
-            /* Copy the result from the buffer to the input/output data */
-            for (int i = 0; i < n; i++)
-            {
-                data[i] = buf[i];
-            }
-#    endif
+            MPI_Allreduce(MPI_IN_PLACE, data, n, gmx::mpiType<T>(), MPI_SUM, comm->mpi_comm_com);
 #else
             gmx_incons("comm->bParticipateAll=FALSE without GMX_MPI");
 #endif
@@ -130,7 +100,7 @@ static void pullAllReduce(const t_commrec* cr, pull_comm_t* comm, int n, T* data
 /* Copies the coordinates of the PBC atom of pgrp to x_pbc.
  * When those coordinates are not available on this rank, clears x_pbc.
  */
-static void setPbcAtomCoords(const pull_group_work_t& pgrp, const rvec* x, rvec x_pbc)
+static void setPbcAtomCoords(const pull_group_work_t& pgrp, ArrayRef<const RVec> x, rvec x_pbc)
 {
     if (pgrp.pbcAtomSet != nullptr)
     {
@@ -147,11 +117,14 @@ static void setPbcAtomCoords(const pull_group_work_t& pgrp, const rvec* x, rvec 
     }
     else
     {
-        copy_rvec(x[pgrp.params.pbcatom], x_pbc);
+        copy_rvec(x[pgrp.params_.pbcatom], x_pbc);
     }
 }
 
-static void pull_set_pbcatoms(const t_commrec* cr, struct pull_t* pull, const rvec* x, gmx::ArrayRef<gmx::RVec> x_pbc)
+static void pull_set_pbcatoms(const gmx::MpiComm&  mpiComm,
+                              struct pull_t*       pull,
+                              ArrayRef<const RVec> x,
+                              ArrayRef<RVec>       x_pbc)
 {
     int numPbcAtoms = 0;
     for (size_t g = 0; g < pull->group.size(); g++)
@@ -168,18 +141,46 @@ static void pull_set_pbcatoms(const t_commrec* cr, struct pull_t* pull, const rv
         }
     }
 
-    if (cr && PAR(cr) && numPbcAtoms > 0)
+    if (mpiComm.isParallel() && numPbcAtoms > 0)
     {
         /* Sum over participating ranks to get x_pbc from the home ranks.
          * This can be very expensive at high parallelization, so we only
          * do this after each DD repartitioning.
          */
-        pullAllReduce(cr, &pull->comm, pull->group.size() * DIM, static_cast<real*>(x_pbc[0]));
+        pullAllReduce(mpiComm, &pull->comm, pull->group.size() * DIM, static_cast<real*>(x_pbc[0]));
     }
 }
 
-static void
-make_cyl_refgrps(const t_commrec* cr, pull_t* pull, const real* masses, t_pbc* pbc, double t, const rvec* x)
+// Returns the reference location for PBC for computing the COM of a cylinder reference group
+static DVec getCylinderRefGroupPbcReference(const pull_coord_work_t&          coord,
+                                            ArrayRef<const pull_group_work_t> groups)
+{
+    GMX_ASSERT(coord.params_.eGeom == PullGroupGeometry::Cylinder, "Geometry should be cylinder");
+
+    /* With standard pulling we expect the location of the reference group to be
+     * very close to the reference distance from group 1. This is the best estimate
+     * of the cylinder group location, so we use that.
+     *
+     * With an external pull potential we do not have a reference distance. So then
+     * we use the COM of the whole reference group as the PBC reference.
+     */
+    if (coord.params_.eType != PullingAlgorithm::External)
+    {
+        return groups[coord.params_.group[1]].x - coord.spatialData.vec * coord.value_ref;
+    }
+    else
+    {
+        GMX_ASSERT(groups[coord.params_.group[0]].needToCalcCom, "We need the COM");
+        return groups[coord.params_.group[0]].x;
+    }
+}
+
+static void make_cyl_refgrps(const gmx::MpiComm&  mpiComm,
+                             pull_t*              pull,
+                             ArrayRef<const real> masses,
+                             const t_pbc&         pbc,
+                             double               t,
+                             ArrayRef<const RVec> x)
 {
     pull_comm_t* comm = &pull->comm;
 
@@ -189,13 +190,11 @@ make_cyl_refgrps(const t_commrec* cr, pull_t* pull, const real* masses, t_pbc* p
     double inv_cyl_r2 = 1.0 / gmx::square(pull->params.cylinder_r);
 
     /* loop over all groups to make a reference group for each*/
-    for (size_t c = 0; c < pull->coord.size(); c++)
+    int bufferOffset = 0;
+    for (pull_coord_work_t& pcrd : pull->coord)
     {
-        pull_coord_work_t* pcrd;
-        double             sum_a, wmass, wwmass;
-        dvec               radf_fac0, radf_fac1;
-
-        pcrd = &pull->coord[c];
+        double sum_a, wmass, wwmass;
+        dvec   radf_fac0, radf_fac1;
 
         sum_a  = 0;
         wmass  = 0;
@@ -203,14 +202,13 @@ make_cyl_refgrps(const t_commrec* cr, pull_t* pull, const real* masses, t_pbc* p
         clear_dvec(radf_fac0);
         clear_dvec(radf_fac1);
 
-        if (pcrd->params.eGeom == epullgCYL)
+        if (pcrd.params_.eGeom == PullGroupGeometry::Cylinder)
         {
             /* pref will be the same group for all pull coordinates */
-            const pull_group_work_t& pref  = pull->group[pcrd->params.group[0]];
-            const pull_group_work_t& pgrp  = pull->group[pcrd->params.group[1]];
-            pull_group_work_t&       pdyna = pull->dyna[c];
+            const pull_group_work_t& pref  = pull->group[pcrd.params_.group[0]];
+            pull_group_work_t&       pdyna = *pcrd.dynamicGroup0;
             rvec                     direction;
-            copy_dvec_to_rvec(pcrd->spatialData.vec, direction);
+            copy_dvec_to_rvec(pcrd.spatialData.vec, direction);
 
             /* Since we have not calculated the COM of the cylinder group yet,
              * we calculate distances with respect to location of the pull
@@ -218,18 +216,14 @@ make_cyl_refgrps(const t_commrec* cr, pull_t* pull, const real* masses, t_pbc* p
              * here we already have the COM of the pull group. This resolves
              * any PBC issues and we don't need to use a PBC-atom here.
              */
-            if (pcrd->params.rate != 0)
+            if (pcrd.params_.rate != 0)
             {
                 /* With rate=0, value_ref is set initially */
-                pcrd->value_ref = pcrd->params.init + pcrd->params.rate * t;
+                pcrd.value_ref = pcrd.params_.init + pcrd.params_.rate * t;
             }
-            rvec reference;
-            for (int m = 0; m < DIM; m++)
-            {
-                reference[m] = pgrp.x[m] - pcrd->spatialData.vec[m] * pcrd->value_ref;
-            }
+            const RVec pbcReference = getCylinderRefGroupPbcReference(pcrd, pull->group).toRVec();
 
-            auto localAtomIndices = pref.atomSet.localIndex();
+            auto localAtomIndices = pref.atomSet_.localIndex();
 
             /* This actually only needs to be done at init or DD time,
              * but resizing with the same size does not cause much overhead.
@@ -239,11 +233,11 @@ make_cyl_refgrps(const t_commrec* cr, pull_t* pull, const real* masses, t_pbc* p
             pdyna.dv.resize(localAtomIndices.size());
 
             /* loop over all atoms in the main ref group */
-            for (gmx::index indexInSet = 0; indexInSet < localAtomIndices.ssize(); indexInSet++)
+            for (gmx::Index indexInSet = 0; indexInSet < localAtomIndices.ssize(); indexInSet++)
             {
                 int  atomIndex = localAtomIndices[indexInSet];
                 rvec dx;
-                pbc_dx_aiuc(pbc, x[atomIndex], reference, dx);
+                pbc_dx_aiuc(&pbc, x[atomIndex], pbcReference, dx);
                 double axialLocation = iprod(direction, dx);
                 dvec   radialLocation;
                 double dr2 = 0;
@@ -273,7 +267,7 @@ make_cyl_refgrps(const t_commrec* cr, pull_t* pull, const real* masses, t_pbc* p
                     wwmass += mass * weight * weight;
                     dvec mdw;
                     dsvmul(mass * dweight_r, radialLocation, mdw);
-                    copy_dvec(mdw, pdyna.mdw[indexInSet]);
+                    pdyna.mdw[indexInSet] = mdw;
                     /* Currently we only have the axial component of the
                      * offset from the cylinder COM up to an unkown offset.
                      * We add this offset after the reduction needed
@@ -293,8 +287,9 @@ make_cyl_refgrps(const t_commrec* cr, pull_t* pull, const real* masses, t_pbc* p
             }
         }
 
-        auto buffer = gmx::arrayRefFromArray(
-                comm->cylinderBuffer.data() + c * c_cylinderBufferStride, c_cylinderBufferStride);
+        auto buffer = gmx::arrayRefFromArray(comm->cylinderBuffer.data() + bufferOffset,
+                                             c_cylinderBufferStride);
+        bufferOffset += c_cylinderBufferStride;
 
         buffer[0] = wmass;
         buffer[1] = wwmass;
@@ -309,45 +304,54 @@ make_cyl_refgrps(const t_commrec* cr, pull_t* pull, const real* masses, t_pbc* p
         buffer[8] = radf_fac1[ZZ];
     }
 
-    if (cr != nullptr && PAR(cr))
+    if (mpiComm.isParallel())
     {
         /* Sum the contributions over the ranks */
-        pullAllReduce(cr, comm, pull->coord.size() * c_cylinderBufferStride, comm->cylinderBuffer.data());
+        pullAllReduce(
+                mpiComm, comm, pull->coord.size() * c_cylinderBufferStride, comm->cylinderBuffer.data());
     }
 
-    for (size_t c = 0; c < pull->coord.size(); c++)
+    int pullCoordIndex = 0;
+    bufferOffset       = 0;
+    for (pull_coord_work_t& pcrd : pull->coord)
     {
-        pull_coord_work_t* pcrd;
-
-        pcrd = &pull->coord[c];
-
-        if (pcrd->params.eGeom == epullgCYL)
+        if (pcrd.params_.eGeom == PullGroupGeometry::Cylinder)
         {
-            pull_group_work_t*    pdyna       = &pull->dyna[c];
-            pull_group_work_t*    pgrp        = &pull->group[pcrd->params.group[1]];
-            PullCoordSpatialData& spatialData = pcrd->spatialData;
+            pull_group_work_t&    dynamicGroup0 = *pcrd.dynamicGroup0;
+            PullCoordSpatialData& spatialData   = pcrd.spatialData;
 
-            auto buffer = gmx::constArrayRefFromArray(
-                    comm->cylinderBuffer.data() + c * c_cylinderBufferStride, c_cylinderBufferStride);
-            double wmass   = buffer[0];
-            double wwmass  = buffer[1];
-            pdyna->mwscale = 1.0 / wmass;
+            auto buffer = gmx::constArrayRefFromArray(comm->cylinderBuffer.data() + bufferOffset,
+                                                      c_cylinderBufferStride);
+            bufferOffset += c_cylinderBufferStride;
+            const double wmass  = buffer[0];
+            const double wwmass = buffer[1];
+            if (wmass == 0)
+            {
+                gmx_fatal(FARGS,
+                          "The mass of the cylinder selection of pull group %d is zero. "
+                          "This means that group %d does not cover the whole area. "
+                          "Maybe you did not put the correct group as group 1 in the pull "
+                          "coordinate?",
+                          pullCoordIndex + 1,
+                          pullCoordIndex + 1);
+            }
+            dynamicGroup0.mwscale = 1.0 / wmass;
             /* Cylinder pulling can't be used with constraints, but we set
              * wscale and invtm anyhow, in case someone would like to use them.
              */
-            pdyna->wscale = wmass / wwmass;
-            pdyna->invtm  = wwmass / (wmass * wmass);
+            dynamicGroup0.wscale = wmass / wwmass;
+            dynamicGroup0.invtm  = wwmass / (wmass * wmass);
 
             /* We store the deviation of the COM from the reference location
              * used above, since we need it when we apply the radial forces
              * to the atoms in the cylinder group.
              */
-            spatialData.cyl_dev = 0;
+            spatialData.cyl_dev     = 0;
+            const DVec pbcReference = getCylinderRefGroupPbcReference(pcrd, pull->group);
             for (int m = 0; m < DIM; m++)
             {
-                double reference = pgrp->x[m] - spatialData.vec[m] * pcrd->value_ref;
-                double dist      = -spatialData.vec[m] * buffer[2] * pdyna->mwscale;
-                pdyna->x[m]      = reference - dist;
+                double dist        = -spatialData.vec[m] * buffer[2] * dynamicGroup0.mwscale;
+                dynamicGroup0.x[m] = pbcReference[m] - dist;
                 spatialData.cyl_dev += dist;
             }
             /* Now we know the exact COM of the cylinder reference group,
@@ -359,15 +363,9 @@ make_cyl_refgrps(const t_commrec* cr, pull_t* pull, const real* masses, t_pbc* p
             {
                 spatialData.ffrad[m] = (buffer[6 + m] + buffer[3 + m] * spatialData.cyl_dev) / wmass;
             }
-
-            if (debug)
-            {
-                fprintf(debug, "Pull cylinder group %zu:%8.3f%8.3f%8.3f m:%8.3f\n", c, pdyna->x[0],
-                        pdyna->x[1], pdyna->x[2], 1.0 / pdyna->invtm);
-                fprintf(debug, "ffrad %8.3f %8.3f %8.3f\n", spatialData.ffrad[XX],
-                        spatialData.ffrad[YY], spatialData.ffrad[ZZ]);
-            }
         }
+
+        pullCoordIndex++;
     }
 }
 
@@ -375,7 +373,7 @@ static double atan2_0_2pi(double y, double x)
 {
     double a;
 
-    a = atan2(y, x);
+    a = std::atan2(y, x);
     if (a < 0)
     {
         a += 2.0 * M_PI;
@@ -386,10 +384,10 @@ static double atan2_0_2pi(double y, double x)
 static void sum_com_part(const pull_group_work_t* pgrp,
                          int                      ind_start,
                          int                      ind_end,
-                         const rvec*              x,
-                         const rvec*              xp,
-                         const real*              mass,
-                         const t_pbc*             pbc,
+                         ArrayRef<const RVec>     x,
+                         ArrayRef<const RVec>     xp,
+                         ArrayRef<const real>     mass,
+                         const t_pbc&             pbc,
                          const rvec               x_pbc,
                          ComSums*                 sum_com)
 {
@@ -398,7 +396,7 @@ static void sum_com_part(const pull_group_work_t* pgrp,
     dvec   sum_wmx  = { 0, 0, 0 };
     dvec   sum_wmxp = { 0, 0, 0 };
 
-    auto localAtomIndices = pgrp->atomSet.localIndex();
+    auto localAtomIndices = pgrp->atomSet_.localIndex();
     for (int i = ind_start; i < ind_end; i++)
     {
         int  ii = localAtomIndices[i];
@@ -424,7 +422,7 @@ static void sum_com_part(const pull_group_work_t* pgrp,
             {
                 sum_wmx[d] += wm * x[ii][d];
             }
-            if (xp)
+            if (!xp.empty())
             {
                 for (int d = 0; d < DIM; d++)
                 {
@@ -437,12 +435,12 @@ static void sum_com_part(const pull_group_work_t* pgrp,
             rvec dx;
 
             /* Sum the difference with the reference atom */
-            pbc_dx(pbc, x[ii], x_pbc, dx);
+            pbc_dx(&pbc, x[ii], x_pbc, dx);
             for (int d = 0; d < DIM; d++)
             {
                 sum_wmx[d] += wm * dx[d];
             }
-            if (xp)
+            if (!xp.empty())
             {
                 /* For xp add the difference between xp and x to dx,
                  * such that we use the same periodic image,
@@ -459,7 +457,7 @@ static void sum_com_part(const pull_group_work_t* pgrp,
     sum_com->sum_wm  = sum_wm;
     sum_com->sum_wwm = sum_wwm;
     copy_dvec(sum_wmx, sum_com->sum_wmx);
-    if (xp)
+    if (!xp.empty())
     {
         copy_dvec(sum_wmxp, sum_com->sum_wmxp);
     }
@@ -470,9 +468,9 @@ static void sum_com_part_cosweight(const pull_group_work_t* pgrp,
                                    int                      ind_end,
                                    int                      cosdim,
                                    real                     twopi_box,
-                                   const rvec*              x,
-                                   const rvec*              xp,
-                                   const real*              mass,
+                                   ArrayRef<const RVec>     x,
+                                   ArrayRef<const RVec>     xp,
+                                   ArrayRef<const real>     mass,
                                    ComSums*                 sum_com)
 {
     /* Cosine weighting geometry */
@@ -484,7 +482,7 @@ static void sum_com_part_cosweight(const pull_group_work_t* pgrp,
     double sum_cmp = 0;
     double sum_smp = 0;
 
-    auto localAtomIndices = pgrp->atomSet.localIndex();
+    auto localAtomIndices = pgrp->atomSet_.localIndex();
 
     for (int i = ind_start; i < ind_end; i++)
     {
@@ -499,12 +497,12 @@ static void sum_com_part_cosweight(const pull_group_work_t* pgrp,
         sum_csm += static_cast<double>(cw * sw * m);
         sum_ssm += static_cast<double>(sw * sw * m);
 
-        if (xp != nullptr)
+        if (!xp.empty())
         {
-            real cw = std::cos(xp[ii][cosdim] * twopi_box);
-            real sw = std::sin(xp[ii][cosdim] * twopi_box);
-            sum_cmp += static_cast<double>(cw * m);
-            sum_smp += static_cast<double>(sw * m);
+            real cwUpdated = std::cos(xp[ii][cosdim] * twopi_box);
+            real swUpdated = std::sin(xp[ii][cosdim] * twopi_box);
+            sum_cmp += static_cast<double>(cwUpdated * m);
+            sum_smp += static_cast<double>(swUpdated * m);
         }
     }
 
@@ -518,13 +516,13 @@ static void sum_com_part_cosweight(const pull_group_work_t* pgrp,
 }
 
 /* calculates center of mass of selection index from all coordinates x */
-// Compiler segfault with 2019_update_5 and 2020_initial
-#if defined(__INTEL_COMPILER)                                          \
-        && ((__INTEL_COMPILER == 1900 && __INTEL_COMPILER_UPDATE >= 5) \
-            || (__INTEL_COMPILER >= 1910 && __INTEL_COMPILER < 2021))
-#    pragma intel optimization_level 2
-#endif
-void pull_calc_coms(const t_commrec* cr, pull_t* pull, const real* masses, t_pbc* pbc, double t, const rvec x[], rvec* xp)
+void pull_calc_coms(const gmx::MpiComm&  mpiComm,
+                    pull_t*              pull,
+                    ArrayRef<const real> masses,
+                    const t_pbc&         pbc,
+                    double               t,
+                    ArrayRef<const RVec> x,
+                    ArrayRef<RVec>       xp)
 {
     real         twopi_box = 0;
     pull_comm_t* comm;
@@ -538,9 +536,9 @@ void pull_calc_coms(const t_commrec* cr, pull_t* pull, const real* masses, t_pbc
 
     if (pull->bRefAt && pull->bSetPBCatoms)
     {
-        pull_set_pbcatoms(cr, pull, x, comm->pbcAtomBuffer);
+        pull_set_pbcatoms(mpiComm, pull, x, comm->pbcAtomBuffer);
 
-        if (cr != nullptr && DOMAINDECOMP(cr))
+        if (pull->haveDDAtomOrdering)
         {
             /* We can keep these PBC reference coordinates fixed for nstlist
              * steps, since atoms won't jump over PBC.
@@ -561,12 +559,12 @@ void pull_calc_coms(const t_commrec* cr, pull_t* pull, const real* masses, t_pbc
 
         for (m = pull->cosdim + 1; m < pull->npbcdim; m++)
         {
-            if (pbc->box[m][pull->cosdim] != 0)
+            if (pbc.box[m][pull->cosdim] != 0)
             {
-                gmx_fatal(FARGS, "Can not do cosine weighting for trilinic dimensions");
+                gmx_fatal(FARGS, "Can not do cosine weighting for triclinic dimensions");
             }
         }
-        twopi_box = 2.0 * M_PI / pbc->box[pull->cosdim][pull->cosdim];
+        twopi_box = 2.0 * M_PI / pbc.box[pull->cosdim][pull->cosdim];
     }
 
     for (size_t g = 0; g < pull->group.size(); g++)
@@ -579,7 +577,7 @@ void pull_calc_coms(const t_commrec* cr, pull_t* pull, const real* masses, t_pbc
          */
         if (pgrp->epgrppbc == epgrppbcCOS)
         {
-            pgrp->localWeights.resize(pgrp->atomSet.localIndex().size());
+            pgrp->localWeights.resize(pgrp->atomSet_.localIndex().size());
         }
 
         auto comBuffer = gmx::arrayRefFromArray(comm->comBuffer.data() + g * c_comBufferStride,
@@ -611,45 +609,45 @@ void pull_calc_coms(const t_commrec* cr, pull_t* pull, const real* masses, t_pbc
                  * Note that with constraint pulling the mass does matter, but
                  * in that case a check group mass != 0 has been done before.
                  */
-                if (pgrp->params.ind.size() == 1 && pgrp->atomSet.numAtomsLocal() == 1
-                    && masses[pgrp->atomSet.localIndex()[0]] == 0)
+                if (pgrp->params_.ind.size() == 1 && pgrp->atomSet_.numAtomsLocal() == 1
+                    && masses[pgrp->atomSet_.localIndex()[0]] == 0)
                 {
-                    GMX_ASSERT(xp == nullptr,
+                    GMX_ASSERT(xp.empty(),
                                "We should not have groups with zero mass with constraints, i.e. "
-                               "xp!=NULL");
+                               "xp not empty");
 
                     /* Copy the single atom coordinate */
                     for (int d = 0; d < DIM; d++)
                     {
-                        comSumsTotal.sum_wmx[d] = x[pgrp->atomSet.localIndex()[0]][d];
+                        comSumsTotal.sum_wmx[d] = x[pgrp->atomSet_.localIndex()[0]][d];
                     }
                     /* Set all mass factors to 1 to get the correct COM */
                     comSumsTotal.sum_wm  = 1;
                     comSumsTotal.sum_wwm = 1;
                 }
-                else if (pgrp->atomSet.numAtomsLocal() <= c_pullMaxNumLocalAtomsSingleThreaded)
+                else if (pgrp->atomSet_.numAtomsLocal() <= c_pullMaxNumLocalAtomsSingleThreaded)
                 {
-                    sum_com_part(pgrp, 0, pgrp->atomSet.numAtomsLocal(), x, xp, masses, pbc, x_pbc,
-                                 &comSumsTotal);
+                    sum_com_part(pgrp, 0, pgrp->atomSet_.numAtomsLocal(), x, xp, masses, pbc, x_pbc, &comSumsTotal);
                 }
                 else
                 {
-#pragma omp parallel for num_threads(pull->nthreads) schedule(static)
-                    for (int t = 0; t < pull->nthreads; t++)
+                    const int numThreads = pgrp->numThreads();
+#pragma omp parallel for num_threads(numThreads) schedule(static)
+                    for (int thread = 0; thread < numThreads; thread++)
                     {
-                        int ind_start = (pgrp->atomSet.numAtomsLocal() * (t + 0)) / pull->nthreads;
-                        int ind_end   = (pgrp->atomSet.numAtomsLocal() * (t + 1)) / pull->nthreads;
-                        sum_com_part(pgrp, ind_start, ind_end, x, xp, masses, pbc, x_pbc,
-                                     &pull->comSums[t]);
+                        int ind_start = (pgrp->atomSet_.numAtomsLocal() * (thread + 0)) / numThreads;
+                        int ind_end = (pgrp->atomSet_.numAtomsLocal() * (thread + 1)) / numThreads;
+                        sum_com_part(
+                                pgrp, ind_start, ind_end, x, xp, masses, pbc, x_pbc, &pull->comSums[thread]);
                     }
 
                     /* Reduce the thread contributions to sum_com[0] */
-                    for (int t = 1; t < pull->nthreads; t++)
+                    for (int thread = 1; thread < numThreads; thread++)
                     {
-                        comSumsTotal.sum_wm += pull->comSums[t].sum_wm;
-                        comSumsTotal.sum_wwm += pull->comSums[t].sum_wwm;
-                        dvec_inc(comSumsTotal.sum_wmx, pull->comSums[t].sum_wmx);
-                        dvec_inc(comSumsTotal.sum_wmxp, pull->comSums[t].sum_wmxp);
+                        comSumsTotal.sum_wm += pull->comSums[thread].sum_wm;
+                        comSumsTotal.sum_wwm += pull->comSums[thread].sum_wwm;
+                        dvec_inc(comSumsTotal.sum_wmx, pull->comSums[thread].sum_wmx);
+                        dvec_inc(comSumsTotal.sum_wmxp, pull->comSums[thread].sum_wmxp);
                     }
                 }
 
@@ -673,26 +671,27 @@ void pull_calc_coms(const t_commrec* cr, pull_t* pull, const real* masses, t_pbc
                  * This uses a slab of the system, thus we always have many
                  * atoms in the pull groups. Therefore, always use threads.
                  */
-#pragma omp parallel for num_threads(pull->nthreads) schedule(static)
-                for (int t = 0; t < pull->nthreads; t++)
+                const int numThreads = pgrp->numThreads();
+#pragma omp parallel for num_threads(numThreads) schedule(static)
+                for (int thread = 0; thread < numThreads; thread++)
                 {
-                    int ind_start = (pgrp->atomSet.numAtomsLocal() * (t + 0)) / pull->nthreads;
-                    int ind_end   = (pgrp->atomSet.numAtomsLocal() * (t + 1)) / pull->nthreads;
-                    sum_com_part_cosweight(pgrp, ind_start, ind_end, pull->cosdim, twopi_box, x, xp,
-                                           masses, &pull->comSums[t]);
+                    int ind_start = (pgrp->atomSet_.numAtomsLocal() * (thread + 0)) / numThreads;
+                    int ind_end   = (pgrp->atomSet_.numAtomsLocal() * (thread + 1)) / numThreads;
+                    sum_com_part_cosweight(
+                            pgrp, ind_start, ind_end, pull->cosdim, twopi_box, x, xp, masses, &pull->comSums[thread]);
                 }
 
                 /* Reduce the thread contributions to comSums[0] */
                 ComSums& comSumsTotal = pull->comSums[0];
-                for (int t = 1; t < pull->nthreads; t++)
+                for (int thread = 1; thread < numThreads; thread++)
                 {
-                    comSumsTotal.sum_cm += pull->comSums[t].sum_cm;
-                    comSumsTotal.sum_sm += pull->comSums[t].sum_sm;
-                    comSumsTotal.sum_ccm += pull->comSums[t].sum_ccm;
-                    comSumsTotal.sum_csm += pull->comSums[t].sum_csm;
-                    comSumsTotal.sum_ssm += pull->comSums[t].sum_ssm;
-                    comSumsTotal.sum_cmp += pull->comSums[t].sum_cmp;
-                    comSumsTotal.sum_smp += pull->comSums[t].sum_smp;
+                    comSumsTotal.sum_cm += pull->comSums[thread].sum_cm;
+                    comSumsTotal.sum_sm += pull->comSums[thread].sum_sm;
+                    comSumsTotal.sum_ccm += pull->comSums[thread].sum_ccm;
+                    comSumsTotal.sum_csm += pull->comSums[thread].sum_csm;
+                    comSumsTotal.sum_ssm += pull->comSums[thread].sum_ssm;
+                    comSumsTotal.sum_cmp += pull->comSums[thread].sum_cmp;
+                    comSumsTotal.sum_smp += pull->comSums[thread].sum_smp;
                 }
 
                 /* Copy local sums to a buffer for global summing */
@@ -715,7 +714,9 @@ void pull_calc_coms(const t_commrec* cr, pull_t* pull, const real* masses, t_pbc
         }
     }
 
-    pullAllReduce(cr, comm, pull->group.size() * c_comBufferStride * DIM,
+    pullAllReduce(mpiComm,
+                  comm,
+                  pull->group.size() * c_comBufferStride * DIM,
                   static_cast<double*>(comm->comBuffer[0]));
 
     for (size_t g = 0; g < pull->group.size(); g++)
@@ -725,7 +726,7 @@ void pull_calc_coms(const t_commrec* cr, pull_t* pull, const real* masses, t_pbc
         pgrp = &pull->group[g];
         if (pgrp->needToCalcCom)
         {
-            GMX_ASSERT(!pgrp->params.ind.empty(),
+            GMX_ASSERT(!pgrp->params_.ind.empty(),
                        "Normal pull groups should have atoms, only group 0, which should have "
                        "bCalcCom=FALSE has nat=0");
 
@@ -751,14 +752,14 @@ void pull_calc_coms(const t_commrec* cr, pull_t* pull, const real* masses, t_pbc
                 for (m = 0; m < DIM; m++)
                 {
                     pgrp->x[m] = comBuffer[0][m] * pgrp->mwscale;
-                    if (xp)
+                    if (!xp.empty())
                     {
                         pgrp->xp[m] = comBuffer[1][m] * pgrp->mwscale;
                     }
                     if (pgrp->epgrppbc == epgrppbcREFAT || pgrp->epgrppbc == epgrppbcPREVSTEPCOM)
                     {
                         pgrp->x[m] += comm->pbcAtomBuffer[g][m];
-                        if (xp)
+                        if (!xp.empty())
                         {
                             pgrp->xp[m] += comm->pbcAtomBuffer[g][m];
                         }
@@ -775,7 +776,7 @@ void pull_calc_coms(const t_commrec* cr, pull_t* pull, const real* masses, t_pbc
                 snw                   = comBuffer[0][1];
                 pgrp->x[pull->cosdim] = atan2_0_2pi(snw, csw) / twopi_box;
                 /* Set the weights for the local atoms */
-                wmass  = sqrt(csw * csw + snw * snw);
+                wmass  = std::sqrt(csw * csw + snw * snw);
                 wwmass = (comBuffer[1][0] * csw * csw + comBuffer[1][1] * csw * snw
                           + comBuffer[1][2] * snw * snw)
                          / (wmass * wmass);
@@ -786,22 +787,18 @@ void pull_calc_coms(const t_commrec* cr, pull_t* pull, const real* masses, t_pbc
                 /* Set the weights for the local atoms */
                 csw *= pgrp->invtm;
                 snw *= pgrp->invtm;
-                for (size_t i = 0; i < pgrp->atomSet.numAtomsLocal(); i++)
+                for (size_t i = 0; i < pgrp->atomSet_.numAtomsLocal(); i++)
                 {
-                    int ii                = pgrp->atomSet.localIndex()[i];
+                    int ii                = pgrp->atomSet_.localIndex()[i];
                     pgrp->localWeights[i] = csw * std::cos(twopi_box * x[ii][pull->cosdim])
                                             + snw * std::sin(twopi_box * x[ii][pull->cosdim]);
                 }
-                if (xp)
+                if (!xp.empty())
                 {
                     csw                    = comBuffer[2][0];
                     snw                    = comBuffer[2][1];
                     pgrp->xp[pull->cosdim] = atan2_0_2pi(snw, csw) / twopi_box;
                 }
-            }
-            if (debug)
-            {
-                fprintf(debug, "Pull group %zu wmass %f invtm %f\n", g, 1.0 / pgrp->mwscale, pgrp->invtm);
             }
         }
     }
@@ -809,7 +806,7 @@ void pull_calc_coms(const t_commrec* cr, pull_t* pull, const real* masses, t_pbc
     if (pull->bCylinder)
     {
         /* Calculate the COMs for the cyclinder reference groups */
-        make_cyl_refgrps(cr, pull, masses, pbc, t, x);
+        make_cyl_refgrps(mpiComm, pull, masses, pbc, t, x);
     }
 }
 
@@ -818,9 +815,9 @@ using BoolVec = gmx::BasicVector<bool>;
 /* Returns whether the pull group obeys the PBC restrictions */
 static bool pullGroupObeysPbcRestrictions(const pull_group_work_t& group,
                                           const BoolVec&           dimUsed,
-                                          const rvec*              x,
+                                          ArrayRef<const RVec>     x,
                                           const t_pbc&             pbc,
-                                          const gmx::RVec&         x_pbc,
+                                          const RVec&              x_pbc,
                                           const real               pbcMargin)
 {
     /* Determine which dimensions are relevant for PBC */
@@ -866,8 +863,8 @@ static bool pullGroupObeysPbcRestrictions(const pull_group_work_t& group,
         }
     }
 
-    auto localAtomIndices = group.atomSet.localIndex();
-    for (gmx::index indexInSet = 0; indexInSet < localAtomIndices.ssize(); indexInSet++)
+    auto localAtomIndices = group.atomSet_.localIndex();
+    for (gmx::Index indexInSet = 0; indexInSet < localAtomIndices.ssize(); indexInSet++)
     {
         rvec dx;
         pbc_dx(&pbc, x[localAtomIndices[indexInSet]], x_pbc, dx);
@@ -904,7 +901,7 @@ static bool pullGroupObeysPbcRestrictions(const pull_group_work_t& group,
     return true;
 }
 
-int pullCheckPbcWithinGroups(const pull_t& pull, const rvec* x, const t_pbc& pbc, real pbcMargin)
+int pullCheckPbcWithinGroups(const pull_t& pull, ArrayRef<const RVec> x, const t_pbc& pbc, real pbcMargin)
 {
     if (pbc.pbcType == PbcType::No)
     {
@@ -913,14 +910,15 @@ int pullCheckPbcWithinGroups(const pull_t& pull, const rvec* x, const t_pbc& pbc
 
     /* Determine what dimensions are used for each group by pull coordinates */
     std::vector<BoolVec> dimUsed(pull.group.size(), { false, false, false });
-    for (size_t c = 0; c < pull.coord.size(); c++)
+    for (const pull_coord_work_t& pcrd : pull.coord)
     {
-        const t_pull_coord& coordParams = pull.coord[c].params;
+        const t_pull_coord& coordParams = pcrd.params_;
         for (int groupIndex = 0; groupIndex < coordParams.ngroup; groupIndex++)
         {
             for (int d = 0; d < DIM; d++)
             {
-                if (coordParams.dim[d] && !(coordParams.eGeom == epullgCYL && groupIndex == 0))
+                if (coordParams.dim[d]
+                    && !(coordParams.eGeom == PullGroupGeometry::Cylinder && groupIndex == 0))
                 {
                     dimUsed[coordParams.group[groupIndex]][d] = true;
                 }
@@ -942,11 +940,7 @@ int pullCheckPbcWithinGroups(const pull_t& pull, const rvec* x, const t_pbc& pbc
     return -1;
 }
 
-bool pullCheckPbcWithinGroup(const pull_t&                  pull,
-                             gmx::ArrayRef<const gmx::RVec> x,
-                             const t_pbc&                   pbc,
-                             int                            groupNr,
-                             real                           pbcMargin)
+bool pullCheckPbcWithinGroup(const pull_t& pull, ArrayRef<const RVec> x, const t_pbc& pbc, int groupNr, real pbcMargin)
 {
     if (pbc.pbcType == PbcType::No)
     {
@@ -963,16 +957,17 @@ bool pullCheckPbcWithinGroup(const pull_t&                  pull,
 
     /* Determine what dimensions are used for each group by pull coordinates */
     BoolVec dimUsed = { false, false, false };
-    for (size_t c = 0; c < pull.coord.size(); c++)
+    for (const pull_coord_work_t& pcrd : pull.coord)
     {
-        const t_pull_coord& coordParams = pull.coord[c].params;
+        const t_pull_coord& coordParams = pcrd.params_;
         for (int groupIndex = 0; groupIndex < coordParams.ngroup; groupIndex++)
         {
             if (coordParams.group[groupIndex] == groupNr)
             {
                 for (int d = 0; d < DIM; d++)
                 {
-                    if (coordParams.dim[d] && !(coordParams.eGeom == epullgCYL && groupIndex == 0))
+                    if (coordParams.dim[d]
+                        && !(coordParams.eGeom == PullGroupGeometry::Cylinder && groupIndex == 0))
                     {
                         dimUsed[d] = true;
                     }
@@ -981,8 +976,8 @@ bool pullCheckPbcWithinGroup(const pull_t&                  pull,
         }
     }
 
-    return (pullGroupObeysPbcRestrictions(group, dimUsed, as_rvec_array(x.data()), pbc,
-                                          pull.comm.pbcAtomBuffer[groupNr], pbcMargin));
+    return (pullGroupObeysPbcRestrictions(
+            group, dimUsed, x, pbc, pull.comm.pbcAtomBuffer[groupNr], pbcMargin));
 }
 
 void setPrevStepPullComFromState(struct pull_t* pull, const t_state* state)
@@ -996,17 +991,77 @@ void setPrevStepPullComFromState(struct pull_t* pull, const t_state* state)
     }
 }
 
-void updatePrevStepPullCom(struct pull_t* pull, t_state* state)
+/*! \brief Whether pull functions save a backup to the t_state object
+ *
+ * Saving to the state object is only used for checkpointing in the legacy simulator.
+ * Modular simulator doesn't use the t_state object for checkpointing.
+ */
+enum class PullBackupCOM
 {
-    for (size_t g = 0; g < pull->group.size(); g++)
+    Yes, //<! Save a copy of the previous step COM to state
+    No,  //<! Don't save a copy of the previous step COM to state
+};
+
+/*! \brief Sets the previous step COM in pull to the current COM and optionally
+ *         stores it in the provided ArrayRef
+ *
+ * \tparam     pullBackupToState  Whether we're storing the previous COM to state
+ * \param[in]  pull  The COM pull force calculation data structure
+ * \param[in]   comPreviousStep  The COM of the previous step of each pull group
+ */
+template<PullBackupCOM pullBackupToState>
+static void updatePrevStepPullComImpl(pull_t* pull, gmx::ArrayRef<double> comPreviousStep)
+{
+    for (gmx::Index g = 0; g < gmx::ssize(pull->group); g++)
     {
         if (pull->group[g].needToCalcCom)
         {
             for (int j = 0; j < DIM; j++)
             {
-                pull->group[g].x_prev_step[j]          = pull->group[g].x[j];
-                state->pull_com_prev_step[g * DIM + j] = pull->group[g].x[j];
+                pull->group[g].x_prev_step[j] = pull->group[g].x[j];
+                if (pullBackupToState == PullBackupCOM::Yes)
+                {
+                    comPreviousStep[g * DIM + j] = pull->group[g].x[j];
+                }
             }
+        }
+    }
+}
+
+void updatePrevStepPullCom(pull_t* pull, std::optional<gmx::ArrayRef<double>> comPreviousStep)
+{
+    if (comPreviousStep.has_value())
+    {
+        updatePrevStepPullComImpl<PullBackupCOM::Yes>(pull, comPreviousStep.value());
+    }
+    else
+    {
+        updatePrevStepPullComImpl<PullBackupCOM::No>(pull, gmx::ArrayRef<double>{});
+    }
+}
+
+std::vector<double> prevStepPullCom(const pull_t* pull)
+{
+    std::vector<double> pullCom(pull->group.size() * DIM, 0.0);
+    for (gmx::Index g = 0; g < gmx::ssize(pull->group); g++)
+    {
+        for (int j = 0; j < DIM; j++)
+        {
+            pullCom[g * DIM + j] = pull->group[g].x_prev_step[j];
+        }
+    }
+    return pullCom;
+}
+
+void setPrevStepPullCom(pull_t* pull, gmx::ArrayRef<const double> prevStepPullCom)
+{
+    GMX_RELEASE_ASSERT(prevStepPullCom.size() >= pull->group.size() * DIM,
+                       "Pull COM vector size mismatch.");
+    for (gmx::Index g = 0; g < gmx::ssize(pull->group); g++)
+    {
+        for (int j = 0; j < DIM; j++)
+        {
+            pull->group[g].x_prev_step[j] = prevStepPullCom[g * DIM + j];
         }
     }
 }
@@ -1025,7 +1080,11 @@ void allocStatePrevStepPullCom(t_state* state, const pull_t* pull)
     }
 }
 
-void initPullComFromPrevStep(const t_commrec* cr, pull_t* pull, const real* masses, t_pbc* pbc, const rvec x[])
+void initPullComFromPrevStep(const gmx::MpiComm&  mpiComm,
+                             pull_t*              pull,
+                             ArrayRef<const real> masses,
+                             const t_pbc&         pbc,
+                             ArrayRef<const RVec> x)
 {
     pull_comm_t* comm   = &pull->comm;
     size_t       ngroup = pull->group.size();
@@ -1040,7 +1099,7 @@ void initPullComFromPrevStep(const t_commrec* cr, pull_t* pull, const real* mass
     GMX_ASSERT(comm->comBuffer.size() == pull->group.size() * c_comBufferStride,
                "comBuffer should have size #group*c_comBufferStride");
 
-    pull_set_pbcatoms(cr, pull, x, comm->pbcAtomBuffer);
+    pull_set_pbcatoms(mpiComm, pull, x, comm->pbcAtomBuffer);
 
     for (size_t g = 0; g < ngroup; g++)
     {
@@ -1050,46 +1109,35 @@ void initPullComFromPrevStep(const t_commrec* cr, pull_t* pull, const real* mass
 
         if (pgrp->needToCalcCom && pgrp->epgrppbc == epgrppbcPREVSTEPCOM)
         {
-            GMX_ASSERT(pgrp->params.ind.size() > 1,
+            GMX_ASSERT(pgrp->params_.ind.size() > 1,
                        "Groups with no atoms, or only one atom, should not "
                        "use the COM from the previous step as reference.");
 
-            rvec x_pbc = { 0, 0, 0 };
+            RVec x_pbc = { 0, 0, 0 };
             copy_rvec(comm->pbcAtomBuffer[g], x_pbc);
-
-            if (debug)
-            {
-                fprintf(debug, "Initialising prev step COM of pull group %zu. x_pbc =", g);
-                for (int m = 0; m < DIM; m++)
-                {
-                    fprintf(debug, " %f", x_pbc[m]);
-                }
-                fprintf(debug, "\n");
-            }
 
             /* The following is to a large extent similar to pull_calc_coms() */
 
             /* The final sums should end up in sum_com[0] */
             ComSums& comSumsTotal = pull->comSums[0];
 
-            if (pgrp->atomSet.numAtomsLocal() <= c_pullMaxNumLocalAtomsSingleThreaded)
+            if (pgrp->atomSet_.numAtomsLocal() <= c_pullMaxNumLocalAtomsSingleThreaded)
             {
-                sum_com_part(pgrp, 0, pgrp->atomSet.numAtomsLocal(), x, nullptr, masses, pbc, x_pbc,
-                             &comSumsTotal);
+                sum_com_part(pgrp, 0, pgrp->atomSet_.numAtomsLocal(), x, {}, masses, pbc, x_pbc, &comSumsTotal);
             }
             else
             {
-#pragma omp parallel for num_threads(pull->nthreads) schedule(static)
-                for (int t = 0; t < pull->nthreads; t++)
+                const int numThreads = pgrp->numThreads();
+#pragma omp parallel for num_threads(numThreads) schedule(static)
+                for (int t = 0; t < numThreads; t++)
                 {
-                    int ind_start = (pgrp->atomSet.numAtomsLocal() * (t + 0)) / pull->nthreads;
-                    int ind_end   = (pgrp->atomSet.numAtomsLocal() * (t + 1)) / pull->nthreads;
-                    sum_com_part(pgrp, ind_start, ind_end, x, nullptr, masses, pbc, x_pbc,
-                                 &pull->comSums[t]);
+                    int ind_start = (pgrp->atomSet_.numAtomsLocal() * (t + 0)) / numThreads;
+                    int ind_end   = (pgrp->atomSet_.numAtomsLocal() * (t + 1)) / numThreads;
+                    sum_com_part(pgrp, ind_start, ind_end, x, {}, masses, pbc, x_pbc, &pull->comSums[t]);
                 }
 
                 /* Reduce the thread contributions to sum_com[0] */
-                for (int t = 1; t < pull->nthreads; t++)
+                for (int t = 1; t < numThreads; t++)
                 {
                     comSumsTotal.sum_wm += pull->comSums[t].sum_wm;
                     comSumsTotal.sum_wwm += pull->comSums[t].sum_wwm;
@@ -1115,7 +1163,8 @@ void initPullComFromPrevStep(const t_commrec* cr, pull_t* pull, const real* mass
         }
     }
 
-    pullAllReduce(cr, comm, ngroup * c_comBufferStride * DIM, static_cast<double*>(comm->comBuffer[0]));
+    pullAllReduce(
+            mpiComm, comm, ngroup * c_comBufferStride * DIM, static_cast<double*>(comm->comBuffer[0]));
 
     for (size_t g = 0; g < ngroup; g++)
     {
@@ -1146,18 +1195,7 @@ void initPullComFromPrevStep(const t_commrec* cr, pull_t* pull, const real* mass
                     pgrp->x[m] = localSums[0][m] * pgrp->mwscale;
                     pgrp->x[m] += comm->pbcAtomBuffer[g][m];
                 }
-                if (debug)
-                {
-                    fprintf(debug, "Pull group %zu wmass %f invtm %f\n", g, 1.0 / pgrp->mwscale,
-                            pgrp->invtm);
-                    fprintf(debug, "Initialising prev step COM of pull group %zu to", g);
-                    for (int m = 0; m < DIM; m++)
-                    {
-                        fprintf(debug, " %f", pgrp->x[m]);
-                    }
-                    fprintf(debug, "\n");
-                }
-                copy_dvec(pgrp->x, pgrp->x_prev_step);
+                pgrp->x_prev_step = pgrp->x;
             }
         }
     }

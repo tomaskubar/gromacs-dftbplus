@@ -1,13 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
- * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2016,2017 by the GROMACS development team.
- * Copyright (c) 2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 1991- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -21,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -30,36 +26,45 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 #include "gmxpre.h"
 
 #include "enxio.h"
 
+#include <cinttypes>
+#include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 
 #include <algorithm>
+#include <string>
+#include <vector>
 
 #include "gromacs/fileio/gmxfio.h"
 #include "gromacs/fileio/gmxfio_xdr.h"
 #include "gromacs/fileio/xdrf.h"
 #include "gromacs/math/functions.h"
-#include "gromacs/math/vec.h"
 #include "gromacs/mdtypes/inputrec.h"
 #include "gromacs/mdtypes/md_enums.h"
 #include "gromacs/mdtypes/state.h"
 #include "gromacs/pbcutil/pbc.h"
 #include "gromacs/topology/topology.h"
+#include "gromacs/topology/topology_enums.h"
 #include "gromacs/trajectory/energyframe.h"
 #include "gromacs/utility/compare.h"
+#include "gromacs/utility/cstringutil.h"
+#include "gromacs/utility/enumerationhelpers.h"
 #include "gromacs/utility/fatalerror.h"
 #include "gromacs/utility/futil.h"
 #include "gromacs/utility/gmxassert.h"
 #include "gromacs/utility/smalloc.h"
+#include "gromacs/utility/vec.h"
+#include "gromacs/utility/vectypes.h"
 
 /* The source code in this file should be thread-safe.
          Please keep it that way. */
@@ -67,14 +72,14 @@
 /* This number should be increased whenever the file format changes! */
 static const int enx_version = 5;
 
-const char* enx_block_id_name[] = { "Averaged orientation restraints",
-                                    "Instantaneous orientation restraints",
-                                    "Orientation restraint order tensor(s)",
-                                    "Distance restraints",
-                                    "Free energy data",
-                                    "BAR histogram",
-                                    "Delta H raw data",
-                                    "AWH data" };
+const char* const enx_block_id_name[] = { "Averaged orientation restraints",
+                                          "Instantaneous orientation restraints",
+                                          "Orientation restraint order tensor(s)",
+                                          "Distance restraints",
+                                          "Free energy data",
+                                          "BAR histogram",
+                                          "Delta H raw data",
+                                          "AWH data" };
 
 
 /* Stuff for reading pre 4.1 energy files */
@@ -100,9 +105,9 @@ static void enxsubblock_init(t_enxsubblock* sb)
 {
     sb->nr = 0;
 #if GMX_DOUBLE
-    sb->type = xdr_datatype_double;
+    sb->type = XdrDataType::Double;
 #else
-    sb->type            = xdr_datatype_float;
+    sb->type = XdrDataType::Float;
 #endif
     sb->fval       = nullptr;
     sb->dval       = nullptr;
@@ -173,42 +178,42 @@ static void enxsubblock_alloc(t_enxsubblock* sb)
     /* allocate the appropriate amount of memory */
     switch (sb->type)
     {
-        case xdr_datatype_float:
+        case XdrDataType::Float:
             if (sb->nr > sb->fval_alloc)
             {
                 srenew(sb->fval, sb->nr);
                 sb->fval_alloc = sb->nr;
             }
             break;
-        case xdr_datatype_double:
+        case XdrDataType::Double:
             if (sb->nr > sb->dval_alloc)
             {
                 srenew(sb->dval, sb->nr);
                 sb->dval_alloc = sb->nr;
             }
             break;
-        case xdr_datatype_int:
+        case XdrDataType::Int:
             if (sb->nr > sb->ival_alloc)
             {
                 srenew(sb->ival, sb->nr);
                 sb->ival_alloc = sb->nr;
             }
             break;
-        case xdr_datatype_int64:
+        case XdrDataType::Int64:
             if (sb->nr > sb->lval_alloc)
             {
                 srenew(sb->lval, sb->nr);
                 sb->lval_alloc = sb->nr;
             }
             break;
-        case xdr_datatype_char:
+        case XdrDataType::Char:
             if (sb->nr > sb->cval_alloc)
             {
                 srenew(sb->cval, sb->nr);
                 sb->cval_alloc = sb->nr;
             }
             break;
-        case xdr_datatype_string:
+        case XdrDataType::String:
             if (sb->nr > sb->sval_alloc)
             {
                 int i;
@@ -330,13 +335,15 @@ void add_subblocks_enxblock(t_enxblock* eb, int n)
 
 static void enx_warning(const char* msg)
 {
-    if (getenv("GMX_ENX_NO_FATAL") != nullptr)
+    if (std::getenv("GMX_ENX_NO_FATAL") != nullptr)
     {
         gmx_warning("%s", msg);
     }
     else
     {
-        gmx_fatal(FARGS, "%s\n%s", msg,
+        gmx_fatal(FARGS,
+                  "%s\n%s",
+                  msg,
                   "If you want to use the correct frames before the corrupted frame and avoid this "
                   "fatal error set the env.var. GMX_ENX_NO_FATAL");
     }
@@ -424,8 +431,11 @@ void do_enxnms(ener_file_t ef, int* nre, gmx_enxnm_t** nms)
         xdr_int(xdr, &file_version);
         if (file_version > enx_version)
         {
-            gmx_fatal(FARGS, "reading tpx file (%s) version %d with version %d program",
-                      gmx_fio_getname(ef->fio), file_version, enx_version);
+            gmx_fatal(FARGS,
+                      "reading tpx file (%s) version %d with version %d program",
+                      gmx_fio_getname(ef->fio).string().c_str(),
+                      file_version,
+                      enx_version);
         }
         xdr_int(xdr, nre);
     }
@@ -451,9 +461,9 @@ static gmx_bool do_eheader(ener_file_t ef,
     int      ndisre = 0;
     int      startb = 0;
 #if !GMX_DOUBLE
-    xdr_datatype dtreal = xdr_datatype_float;
+    XdrDataType xdrDataType = XdrDataType::Float;
 #else
-    xdr_datatype dtreal = xdr_datatype_double;
+    XdrDataType xdrDataType = XdrDataType::Double;
 #endif
 
     if (bWrongPrecision)
@@ -507,8 +517,11 @@ static gmx_bool do_eheader(ener_file_t ef,
         }
         if (*bOK && *file_version > enx_version)
         {
-            gmx_fatal(FARGS, "reading tpx file (%s) version %d with version %d program",
-                      gmx_fio_getname(ef->fio), *file_version, enx_version);
+            gmx_fatal(FARGS,
+                      "reading tpx file (%s) version %d with version %d program",
+                      gmx_fio_getname(ef->fio).string().c_str(),
+                      *file_version,
+                      enx_version);
         }
         if (!gmx_fio_do_double(ef->fio, fr->t))
         {
@@ -635,8 +648,8 @@ static gmx_bool do_eheader(ener_file_t ef,
         fr->block[0].id          = enxDISRE;
         fr->block[0].sub[0].nr   = ndisre;
         fr->block[0].sub[1].nr   = ndisre;
-        fr->block[0].sub[0].type = dtreal;
-        fr->block[0].sub[1].type = dtreal;
+        fr->block[0].sub[0].type = xdrDataType;
+        fr->block[0].sub[1].type = xdrDataType;
         startb++;
     }
 
@@ -659,7 +672,7 @@ static gmx_bool do_eheader(ener_file_t ef,
                 {
                     gmx_incons("Writing an old version .edr file with too many subblocks");
                 }
-                if (fr->block[b].sub[0].type != dtreal)
+                if (fr->block[b].sub[0].type != xdrDataType)
                 {
                     gmx_incons("Writing an old version .edr file the wrong subblock type");
                 }
@@ -672,7 +685,7 @@ static gmx_bool do_eheader(ener_file_t ef,
             }
             fr->block[b].id          = b - startb;
             fr->block[b].sub[0].nr   = nrint;
-            fr->block[b].sub[0].type = dtreal;
+            fr->block[b].sub[0].type = xdrDataType;
         }
         else
         {
@@ -693,12 +706,12 @@ static gmx_bool do_eheader(ener_file_t ef,
             for (i = 0; i < nsub; i++)
             {
                 t_enxsubblock* sub    = &(fr->block[b].sub[i]); /* shortcut */
-                int            typenr = sub->type;
+                int            typenr = static_cast<int>(sub->type);
 
                 *bOK = *bOK && gmx_fio_do_int(ef->fio, typenr);
                 *bOK = *bOK && gmx_fio_do_int(ef->fio, sub->nr);
 
-                sub->type = static_cast<xdr_datatype>(typenr);
+                sub->type = static_cast<XdrDataType>(typenr);
             }
         }
     }
@@ -781,7 +794,7 @@ void done_ener_file(ener_file_t ef)
  *
  * \return TRUE if file could be open but is empty, otherwise FALSE.
  */
-static gmx_bool empty_file(const char* fn)
+static gmx_bool empty_file(const std::filesystem::path& fn)
 {
     FILE*    fp;
     char     dum;
@@ -789,8 +802,8 @@ static gmx_bool empty_file(const char* fn)
     gmx_bool bEmpty;
 
     fp     = gmx_fio_fopen(fn, "r");
-    ret    = fread(&dum, sizeof(dum), 1, fp);
-    bEmpty = (feof(fp) != 0);
+    ret    = std::fread(&dum, sizeof(dum), 1, fp);
+    bEmpty = (std::feof(fp) != 0);
     gmx_fio_fclose(fp);
 
     // bEmpty==TRUE but ret!=0 would likely be some strange I/O error, but at
@@ -799,7 +812,7 @@ static gmx_bool empty_file(const char* fn)
 }
 
 
-ener_file_t open_enx(const char* fn, const char* mode)
+ener_file_t open_enx(const std::filesystem::path& fn, const char* mode)
 {
     int               nre;
     gmx_enxnm_t*      nms          = nullptr;
@@ -827,7 +840,7 @@ ener_file_t open_enx(const char* fn, const char* mode)
             && ((fr->e_size && (fr->nre == nre)
                  && (nre * 4 * static_cast<long int>(sizeof(float)) == fr->e_size))))
         {
-            fprintf(stderr, "Opened %s as single precision energy file\n", fn);
+            fprintf(stderr, "Opened %s as single precision energy file\n", fn.string().c_str());
             free_enxnms(nre, nms);
         }
         else
@@ -844,17 +857,19 @@ ener_file_t open_enx(const char* fn, const char* mode)
             if (((fr->e_size && (fr->nre == nre)
                   && (nre * 4 * static_cast<long int>(sizeof(double)) == fr->e_size))))
             {
-                fprintf(stderr, "Opened %s as double precision energy file\n", fn);
+                fprintf(stderr, "Opened %s as double precision energy file\n", fn.string().c_str());
             }
             else
             {
                 if (empty_file(fn))
                 {
-                    gmx_fatal(FARGS, "File %s is empty", fn);
+                    gmx_fatal(FARGS, "File %s is empty", fn.string().c_str());
                 }
                 else
                 {
-                    gmx_fatal(FARGS, "Energy file %s not recognized, maybe different CPU?", fn);
+                    gmx_fatal(FARGS,
+                              "Energy file %s not recognized, maybe different CPU?",
+                              fn.string().c_str());
                 }
             }
             free_enxnms(nre, nms);
@@ -953,7 +968,7 @@ static void convert_full_sums(ener_old_t* ener_old, t_enxframe* fr)
 gmx_bool do_enx(ener_file_t ef, t_enxframe* fr)
 {
     int      file_version = -1;
-    int      i, b;
+    int      b;
     gmx_bool bRead, bOK, bOK1, bSane;
     real     tmp1, tmp2, rdum;
     /*int       d_size;*/
@@ -970,14 +985,12 @@ gmx_bool do_enx(ener_file_t ef, t_enxframe* fr)
     {
         if (bRead)
         {
-            fprintf(stderr, "\rLast energy frame read %d time %8.3f         ", ef->framenr - 1,
-                    ef->frametime);
-            fflush(stderr);
+            fprintf(stderr, "\rLast energy frame read %d time %8.3f         ", ef->framenr - 1, ef->frametime);
+            std::fflush(stderr);
 
             if (!bOK)
             {
-                fprintf(stderr, "\nWARNING: Incomplete energy frame: nr %d time %8.3f\n",
-                        ef->framenr, fr->t);
+                fprintf(stderr, "\nWARNING: Incomplete energy frame: nr %d time %8.3f\n", ef->framenr, fr->t);
             }
         }
         else
@@ -1004,15 +1017,20 @@ gmx_bool do_enx(ener_file_t ef, t_enxframe* fr)
     }
     if (!((fr->step >= 0) && bSane) && bRead)
     {
-        fprintf(stderr, "\nWARNING: there may be something wrong with energy file %s\n",
-                gmx_fio_getname(ef->fio));
-        fprintf(stderr, "Found: step=%" PRId64 ", nre=%d, nblock=%d, time=%g.\n", fr->step, fr->nre,
-                fr->nblock, fr->t);
+        fprintf(stderr,
+                "\nWARNING: there may be something wrong with energy file %s\n",
+                gmx_fio_getname(ef->fio).string().c_str());
+        fprintf(stderr,
+                "Found: step=%" PRId64 ", nre=%d, nblock=%d, time=%g.\n",
+                fr->step,
+                fr->nre,
+                fr->nblock,
+                fr->t);
     }
     if (bRead && fr->nre > fr->e_alloc)
     {
         srenew(fr->ener, fr->nre);
-        for (i = fr->e_alloc; (i < fr->nre); i++)
+        for (int i = fr->e_alloc; (i < fr->nre); i++)
         {
             fr->ener[i].e    = 0;
             fr->ener[i].eav  = 0;
@@ -1021,7 +1039,7 @@ gmx_bool do_enx(ener_file_t ef, t_enxframe* fr)
         fr->e_alloc = fr->nre;
     }
 
-    for (i = 0; i < fr->nre; i++)
+    for (int i = 0; i < fr->nre; i++)
     {
         bOK = bOK && gmx_fio_do_real(ef->fio, fr->ener[i].e);
 
@@ -1067,9 +1085,8 @@ gmx_bool do_enx(ener_file_t ef, t_enxframe* fr)
     {
         /* now read the subblocks. */
         int nsub = fr->block[b].nsub; /* shortcut */
-        int i;
 
-        for (i = 0; i < nsub; i++)
+        for (int i = 0; i < nsub; i++)
         {
             t_enxsubblock* sub = &(fr->block[b].sub[i]); /* shortcut */
 
@@ -1081,20 +1098,20 @@ gmx_bool do_enx(ener_file_t ef, t_enxframe* fr)
             /* read/write data */
             switch (sub->type)
             {
-                case xdr_datatype_float:
+                case XdrDataType::Float:
                     bOK1 = gmx_fio_ndo_float(ef->fio, sub->fval, sub->nr);
                     break;
-                case xdr_datatype_double:
+                case XdrDataType::Double:
                     bOK1 = gmx_fio_ndo_double(ef->fio, sub->dval, sub->nr);
                     break;
-                case xdr_datatype_int: bOK1 = gmx_fio_ndo_int(ef->fio, sub->ival, sub->nr); break;
-                case xdr_datatype_int64:
+                case XdrDataType::Int: bOK1 = gmx_fio_ndo_int(ef->fio, sub->ival, sub->nr); break;
+                case XdrDataType::Int64:
                     bOK1 = gmx_fio_ndo_int64(ef->fio, sub->lval, sub->nr);
                     break;
-                case xdr_datatype_char:
+                case XdrDataType::Char:
                     bOK1 = gmx_fio_ndo_uchar(ef->fio, sub->cval, sub->nr);
                     break;
-                case xdr_datatype_string:
+                case XdrDataType::String:
                     bOK1 = gmx_fio_ndo_string(ef->fio, sub->sval, sub->nr);
                     break;
                 default:
@@ -1152,7 +1169,11 @@ static real find_energy(const char* name, int nre, gmx_enxnm_t* enm, t_enxframe*
 }
 
 
-void get_enx_state(const char* fn, real t, const SimulationGroups& groups, t_inputrec* ir, t_state* state)
+void get_enx_state(const std::filesystem::path& fn,
+                   real                         t,
+                   const SimulationGroups&      groups,
+                   t_inputrec*                  ir,
+                   t_state*                     state)
 {
     /* Should match the names in mdebin.c */
     static const char* boxvel_nm[] = { "Box-Vel-XX", "Box-Vel-YY", "Box-Vel-ZZ",
@@ -1183,21 +1204,21 @@ void get_enx_state(const char* fn, real t, const SimulationGroups& groups, t_inp
 
     if (nfr == 0 || fr->t != t)
     {
-        gmx_fatal(FARGS, "Could not find frame with time %f in '%s'", t, fn);
+        gmx_fatal(FARGS, "Could not find frame with time %f in '%s'", t, fn.string().c_str());
     }
 
-    npcoupl = TRICLINIC(ir->compress) ? 6 : 3;
-    if (ir->epc == epcPARRINELLORAHMAN)
+    npcoupl = TRICLINIC(ir->pressureCouplingOptions.compress) ? 6 : 3;
+    if (ir->pressureCouplingOptions.epc == PressureCoupling::ParrinelloRahman)
     {
         clear_mat(state->boxv);
         for (i = 0; i < npcoupl; i++)
         {
             state->boxv[ind0[i]][ind1[i]] = find_energy(boxvel_nm[i], nre, enm, fr);
         }
-        fprintf(stderr, "\nREAD %d BOX VELOCITIES FROM %s\n\n", npcoupl, fn);
+        fprintf(stderr, "\nREAD %d BOX VELOCITIES FROM %s\n\n", npcoupl, fn.string().c_str());
     }
 
-    if (ir->etc == etcNOSEHOOVER)
+    if (ir->etc == TemperatureCoupling::NoseHoover)
     {
         char cns[20];
 
@@ -1219,7 +1240,7 @@ void get_enx_state(const char* fn, real t, const SimulationGroups& groups, t_inp
                 state->nosehoover_vxi[i] = find_energy(buf, nre, enm, fr);
             }
         }
-        fprintf(stderr, "\nREAD %d NOSE-HOOVER Xi chains FROM %s\n\n", state->ngtc, fn);
+        fprintf(stderr, "\nREAD %d NOSE-HOOVER Xi chains FROM %s\n\n", state->ngtc, fn.string().c_str());
 
         if (inputrecNptTrotter(ir) || inputrecNphTrotter(ir))
         {
@@ -1234,7 +1255,10 @@ void get_enx_state(const char* fn, real t, const SimulationGroups& groups, t_inp
                     state->nhpres_vxi[i] = find_energy(buf, nre, enm, fr);
                 }
             }
-            fprintf(stderr, "\nREAD %d NOSE-HOOVER BAROSTAT Xi chains FROM %s\n\n", state->nnhpres, fn);
+            fprintf(stderr,
+                    "\nREAD %d NOSE-HOOVER BAROSTAT Xi chains FROM %s\n\n",
+                    state->nnhpres,
+                    fn.string().c_str());
         }
     }
 
@@ -1272,8 +1296,8 @@ static real ener_tensor_diag(int          n,
             && std::strncmp(enm1[ind1[i]].name, enm1[ind1[j]].name, len - 2) == 0
             && (tensi[j] == d1 * DIM + d1 || tensi[j] == d2 * DIM + d2))
         {
-            prod1 *= fabs(e1[ind1[j]].e);
-            prod2 *= fabs(e2[ind2[j]].e);
+            prod1 *= std::fabs(e1[ind1[j]].e);
+            prod2 *= std::fabs(e2[ind2[j]].e);
             nfound++;
         }
     }
@@ -1376,8 +1400,13 @@ static void cmp_energies(FILE*        fp,
         }
         if (!equal_real(e1[ind1[i]].e, e2[ind2[i]].e, ftol_i, abstol_i))
         {
-            fprintf(fp, "%-15s  step %3d:  %12g,  step %3d: %12g\n", enm1[ind1[i]].name, step1,
-                    e1[ind1[i]].e, step2, e2[ind2[i]].e);
+            fprintf(fp,
+                    "%-15s  step %3d:  %12g,  step %3d: %12g\n",
+                    enm1[ind1[i]].name,
+                    step1,
+                    e1[ind1[i]].e,
+                    step2,
+                    e2[ind2[i]].e);
         }
     }
 
@@ -1439,37 +1468,37 @@ static void cmp_eblocks(t_enxframe* fr1, t_enxframe* fr2, real ftol, real abstol
                     {
                         switch (s1->type)
                         {
-                            case xdr_datatype_float:
+                            case XdrDataType::Float:
                                 for (k = 0; k < s1->nr; k++)
                                 {
                                     cmp_float(stdout, buf, i, s1->fval[k], s2->fval[k], ftol, abstol);
                                 }
                                 break;
-                            case xdr_datatype_double:
+                            case XdrDataType::Double:
                                 for (k = 0; k < s1->nr; k++)
                                 {
                                     cmp_double(stdout, buf, i, s1->dval[k], s2->dval[k], ftol, abstol);
                                 }
                                 break;
-                            case xdr_datatype_int:
+                            case XdrDataType::Int:
                                 for (k = 0; k < s1->nr; k++)
                                 {
                                     cmp_int(stdout, buf, i, s1->ival[k], s2->ival[k]);
                                 }
                                 break;
-                            case xdr_datatype_int64:
+                            case XdrDataType::Int64:
                                 for (k = 0; k < s1->nr; k++)
                                 {
                                     cmp_int64(stdout, buf, s1->lval[k], s2->lval[k]);
                                 }
                                 break;
-                            case xdr_datatype_char:
+                            case XdrDataType::Char:
                                 for (k = 0; k < s1->nr; k++)
                                 {
                                     cmp_uc(stdout, buf, i, s1->cval[k], s2->cval[k]);
                                 }
                                 break;
-                            case xdr_datatype_string:
+                            case XdrDataType::String:
                                 for (k = 0; k < s1->nr; k++)
                                 {
                                     cmp_str(stdout, buf, i, s1->sval[k], s2->sval[k]);
@@ -1484,7 +1513,11 @@ static void cmp_eblocks(t_enxframe* fr1, t_enxframe* fr2, real ftol, real abstol
     }
 }
 
-void comp_enx(const char* fn1, const char* fn2, real ftol, real abstol, const char* lastener)
+void comp_enx(const std::filesystem::path& fn1,
+              const std::filesystem::path& fn2,
+              real                         ftol,
+              real                         abstol,
+              const char*                  lastener)
 {
     int          nre, nre1, nre2;
     ener_file_t  in1, in2;
@@ -1493,7 +1526,7 @@ void comp_enx(const char* fn1, const char* fn2, real ftol, real abstol, const ch
     t_enxframe * fr1, *fr2;
     gmx_bool     b1, b2;
 
-    fprintf(stdout, "comparing energy file %s and %s\n\n", fn1, fn2);
+    fprintf(stdout, "comparing energy file %s and %s\n\n", fn1.string().c_str(), fn2.string().c_str());
 
     in1 = open_enx(fn1, "r");
     in2 = open_enx(fn2, "r");
@@ -1563,11 +1596,17 @@ void comp_enx(const char* fn1, const char* fn2, real ftol, real abstol, const ch
         b2 = do_enx(in2, fr2);
         if (b1 && !b2)
         {
-            fprintf(stdout, "\nEnd of file on %s but not on %s\n", fn2, fn1);
+            fprintf(stdout,
+                    "\nEnd of file on %s but not on %s\n",
+                    fn2.string().c_str(),
+                    fn1.string().c_str());
         }
         else if (!b1 && b2)
         {
-            fprintf(stdout, "\nEnd of file on %s but not on %s\n", fn1, fn2);
+            fprintf(stdout,
+                    "\nEnd of file on %s but not on %s\n",
+                    fn1.string().c_str(),
+                    fn2.string().c_str());
         }
         else if (!b1 && !b2)
         {
@@ -1581,8 +1620,8 @@ void comp_enx(const char* fn1, const char* fn2, real ftol, real abstol, const ch
             /* cmp_int(stdout,"nre",-1,fr1->nre,fr2->nre); */
             if ((fr1->nre >= nre) && (fr2->nre >= nre))
             {
-                cmp_energies(stdout, fr1->step, fr1->step, fr1->ener, fr2->ener, enm1, ftol, abstol,
-                             nre, ind1, ind2, maxener);
+                cmp_energies(
+                        stdout, fr1->step, fr1->step, fr1->ener, fr2->ener, enm1, ftol, abstol, nre, ind1, ind2, maxener);
             }
             /*cmp_disres(fr1,fr2,ftol,abstol);*/
             cmp_eblocks(fr1, fr2, ftol, abstol);

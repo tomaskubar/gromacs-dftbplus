@@ -1,11 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2010-2017, The GROMACS development team.
- * Copyright (c) 2019, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2010- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -19,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -28,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \internal \file
  * \brief
@@ -43,6 +41,9 @@
 #include "gmxpre.h"
 
 #include "gromacs/selection/selectionoption.h"
+
+#include <filesystem>
+#include <string>
 
 #include <gtest/gtest.h>
 
@@ -59,8 +60,10 @@
 
 #include "toputils.h"
 
-using gmx::test::TestFileManager;
-
+namespace gmx
+{
+namespace test
+{
 namespace
 {
 
@@ -430,7 +433,7 @@ TEST_F(SelectionFileOptionTest, HandlesSingleSelectionOptionFromFile)
     ASSERT_NO_THROW_GMX(assigner.startOption("sel"));
     EXPECT_NO_THROW_GMX(assigner.finishOption());
     ASSERT_NO_THROW_GMX(assigner.startOption("sf"));
-    EXPECT_NO_THROW_GMX(assigner.appendValue(TestFileManager::getInputFilePath("selfile.dat")));
+    EXPECT_NO_THROW_GMX(assigner.appendValue(TestFileManager::getInputFilePath("selfile.dat").string()));
     EXPECT_NO_THROW_GMX(assigner.finishOption());
     EXPECT_NO_THROW_GMX(assigner.finish());
     EXPECT_NO_THROW_GMX(options_.finish());
@@ -452,7 +455,7 @@ TEST_F(SelectionFileOptionTest, HandlesTwoSeparateSelectionOptions)
     ASSERT_NO_THROW_GMX(options_.addOption(SelectionOption("sel2").storeVector(&sel2).multiValue()));
 
     gmx::OptionsAssigner assigner(&options_);
-    std::string          value(TestFileManager::getInputFilePath("selfile.dat"));
+    std::string          value(TestFileManager::getInputFilePath("selfile.dat").string());
     EXPECT_NO_THROW_GMX(assigner.start());
     ASSERT_NO_THROW_GMX(assigner.startOption("sel1"));
     EXPECT_NO_THROW_GMX(assigner.finishOption());
@@ -486,7 +489,7 @@ TEST_F(SelectionFileOptionTest, HandlesTwoSelectionOptionsFromSingleFile)
     ASSERT_NO_THROW_GMX(options_.addOption(SelectionOption("sel2").storeVector(&sel2)));
 
     gmx::OptionsAssigner assigner(&options_);
-    std::string          value(TestFileManager::getInputFilePath("selfile.dat"));
+    std::string          value(TestFileManager::getInputFilePath("selfile.dat").string());
     EXPECT_NO_THROW_GMX(assigner.start());
     ASSERT_NO_THROW_GMX(assigner.startOption("sel1"));
     EXPECT_NO_THROW_GMX(assigner.finishOption());
@@ -518,7 +521,7 @@ TEST_F(SelectionFileOptionTest, HandlesRequiredOptionFromFile)
     gmx::OptionsAssigner assigner(&options_);
     EXPECT_NO_THROW_GMX(assigner.start());
     ASSERT_NO_THROW_GMX(assigner.startOption("sf"));
-    EXPECT_NO_THROW_GMX(assigner.appendValue(TestFileManager::getInputFilePath("selfile.dat")));
+    EXPECT_NO_THROW_GMX(assigner.appendValue(TestFileManager::getInputFilePath("selfile.dat").string()));
     EXPECT_NO_THROW_GMX(assigner.finishOption());
     EXPECT_NO_THROW_GMX(assigner.startOption("optsel"));
     EXPECT_NO_THROW_GMX(assigner.finishOption());
@@ -552,7 +555,7 @@ TEST_F(SelectionFileOptionTest, HandlesRequiredOptionFromFileWithOtherOptionSet)
     EXPECT_NO_THROW_GMX(assigner.appendValue("resname RC RD"));
     EXPECT_NO_THROW_GMX(assigner.finishOption());
     ASSERT_NO_THROW_GMX(assigner.startOption("sf"));
-    EXPECT_NO_THROW_GMX(assigner.appendValue(TestFileManager::getInputFilePath("selfile.dat")));
+    EXPECT_NO_THROW_GMX(assigner.appendValue(TestFileManager::getInputFilePath("selfile.dat").string()));
     EXPECT_NO_THROW_GMX(assigner.finishOption());
     EXPECT_NO_THROW_GMX(assigner.finish());
     EXPECT_NO_THROW_GMX(options_.finish());
@@ -575,7 +578,7 @@ TEST_F(SelectionFileOptionTest, HandlesTwoRequiredOptionsFromSingleFile)
     ASSERT_NO_THROW_GMX(options_.addOption(SelectionOption("sel2").storeVector(&sel2).required()));
 
     gmx::OptionsAssigner assigner(&options_);
-    std::string          value(TestFileManager::getInputFilePath("selfile.dat"));
+    std::string          value(TestFileManager::getInputFilePath("selfile.dat").string());
     EXPECT_NO_THROW_GMX(assigner.start());
     ASSERT_NO_THROW_GMX(assigner.startOption("sf"));
     EXPECT_NO_THROW_GMX(assigner.appendValue(value));
@@ -621,7 +624,7 @@ TEST_F(SelectionFileOptionTest, GivesErrorWithNonExistentFile)
     ASSERT_NO_THROW_GMX(assigner.startOption("sf"));
     // TODO: Should this be changed to an InvalidInputError?
     EXPECT_THROW_GMX(assigner.appendValue("nonexistentfile"), gmx::FileIOError);
-    EXPECT_THROW_GMX(assigner.appendValue(TestFileManager::getInputFilePath("selfile.dat")),
+    EXPECT_THROW_GMX(assigner.appendValue(TestFileManager::getInputFilePath("selfile.dat").string()),
                      gmx::InvalidInputError);
     EXPECT_NO_THROW_GMX(assigner.finishOption());
     EXPECT_NO_THROW_GMX(assigner.finish());
@@ -640,7 +643,7 @@ TEST_F(SelectionFileOptionTest, GivesErrorWithMultipleFiles)
     ASSERT_NO_THROW_GMX(assigner.startOption("sel"));
     EXPECT_NO_THROW_GMX(assigner.finishOption());
     ASSERT_NO_THROW_GMX(assigner.startOption("sf"));
-    EXPECT_NO_THROW_GMX(assigner.appendValue(TestFileManager::getInputFilePath("selfile.dat")));
+    EXPECT_NO_THROW_GMX(assigner.appendValue(TestFileManager::getInputFilePath("selfile.dat").string()));
     EXPECT_THROW_GMX(assigner.appendValue("nonexistentfile"), gmx::InvalidInputError);
     EXPECT_NO_THROW_GMX(assigner.finishOption());
     EXPECT_NO_THROW_GMX(assigner.finish());
@@ -648,3 +651,5 @@ TEST_F(SelectionFileOptionTest, GivesErrorWithMultipleFiles)
 }
 
 } // namespace
+} // namespace test
+} // namespace gmx

@@ -1,11 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2012,2014,2015,2016,2017 by the GROMACS development team.
- * Copyright (c) 2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2012- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -19,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -28,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \internal \file
  * \brief
@@ -49,6 +47,8 @@
 #include "gromacs/utility/stringutil.h"
 
 #include <string>
+#include <string_view>
+#include <tuple>
 #include <vector>
 
 #include <gmock/gmock.h>
@@ -241,8 +241,8 @@ TEST(formatAndJoinTest, Works)
 {
     const char* const words[] = { "The", "quick", "brown", "fox" };
     EXPECT_EQ("The       .quick     .brown     .fox       ",
-              gmx::formatAndJoin(gmx::ArrayRef<const char* const>(words), ".",
-                                 gmx::StringFormatter("%-10s")));
+              gmx::formatAndJoin(
+                      gmx::ArrayRef<const char* const>(words), ".", gmx::StringFormatter("%-10s")));
 
     const int values[] = { 0, 1, 4 };
     EXPECT_EQ("0,1,4",
@@ -468,6 +468,106 @@ TEST_F(TextLineWrapperTest, WrapsCorrectlyWithExtraWhitespace)
     wrapper.settings().setKeepFinalSpaces(true);
     checkText(wrapper.wrapToString(g_wrapTextWhitespace), "WrappedAt14WithTrailingWhitespace");
 }
+
+TEST(PrettyPrintListAsRangeTest, Works)
+{
+    // Empty list
+    EXPECT_EQ(prettyPrintListAsRange(gmx::ArrayRef<int>{}), "");
+
+    // Single element
+    std::vector<int> single = { 42 };
+    EXPECT_EQ(prettyPrintListAsRange(single), "42");
+
+    // Two consecutive elements
+    std::vector<int> two = { 10, 11 };
+    EXPECT_EQ(prettyPrintListAsRange(two), "10,11");
+
+    // Consecutive integers (step = 1)
+    std::vector<int> consecutive = { 0, 1, 2, 3 };
+    EXPECT_EQ(prettyPrintListAsRange(consecutive), "0-3");
+
+    std::vector<int> consecutive2 = { 5, 6, 7, 8, 9 };
+    EXPECT_EQ(prettyPrintListAsRange(consecutive2), "5-9");
+
+    // Arithmetic sequence with step != 1
+    std::vector<int> step2 = { 2, 4, 6, 8 };
+    EXPECT_EQ(prettyPrintListAsRange(step2), "2-8:2");
+
+    std::vector<int> step3 = { 0, 3, 6, 9, 12 };
+    EXPECT_EQ(prettyPrintListAsRange(step3), "0-12:3");
+
+    std::vector<int> step5 = { 10, 15, 20 };
+    EXPECT_EQ(prettyPrintListAsRange(step5), "10-20:5");
+
+    // Negative step
+    std::vector<int> negative = { 10, 8, 6, 4 };
+    EXPECT_EQ(prettyPrintListAsRange(negative), "10,8,6,4");
+
+    // Non-sequence
+    std::vector<int> nonSeq = { 2, 42, 43, 48 };
+    EXPECT_EQ(prettyPrintListAsRange(nonSeq), "2,42,43,48");
+
+    std::vector<int> nonSeq2 = { 1, 2, 4, 8, 16 };
+    EXPECT_EQ(prettyPrintListAsRange(nonSeq2), "1,2,4,8,16");
+
+    // Single break in sequence
+    std::vector<int> broken = { 1, 2, 3, 5 };
+    EXPECT_EQ(prettyPrintListAsRange(broken), "1-3,5");
+
+    // Multiple sequences
+    std::vector<int> multiSeq = { 0, 1, 2, 3, 4, 5, 6, 7, 64, 65, 66, 67, 68, 69, 70, 71 };
+    EXPECT_EQ(prettyPrintListAsRange(multiSeq), "0-7,64-71");
+
+    // Multiple sequences with steps
+    std::vector<int> multiStep = { 0, 2, 4, 6, 10, 20, 30, 40 };
+    EXPECT_EQ(prettyPrintListAsRange(multiStep), "0-6:2,10-40:10");
+
+    // Alternating sequences and singles
+    std::vector<int> mixed = { 1, 2, 3, 10, 20, 21, 22, 50 };
+    EXPECT_EQ(prettyPrintListAsRange(mixed), "1-3,10,20-22,50");
+
+    // Two singles followed by a sequence
+    std::vector<int> singlesSeq = { 5, 10, 20, 21, 22, 23 };
+    EXPECT_EQ(prettyPrintListAsRange(singlesSeq), "5,10,20-23");
+
+    // Sequence followed by two singles
+    std::vector<int> seqSingles = { 1, 2, 3, 4, 10, 20 };
+    EXPECT_EQ(prettyPrintListAsRange(seqSingles), "1-4,10,20");
+
+    // Multiple short sequences (2 elements each - should output as singles)
+    std::vector<int> shortSeqs = { 1, 2, 5, 6, 9, 10 };
+    EXPECT_EQ(prettyPrintListAsRange(shortSeqs), "1,2,5,6,9,10");
+
+    // Three sequences in a row
+    std::vector<int> threeSeq = { 0, 1, 2, 10, 11, 12, 20, 21, 22 };
+    EXPECT_EQ(prettyPrintListAsRange(threeSeq), "0-2,10-12,20-22");
+}
+
+// This doesn't work with MSVC, causes ICE. Fixed in MSVC 2022 (VS 17.5, cl.exe 19.35).
+#if !defined(_MSC_VER)
+
+TEST(CompileTimeStringJoin, Works)
+{
+    static constexpr std::string_view firstLiteral  = "Hello";
+    static constexpr std::string_view secondLiteral = " World";
+    static constexpr std::string_view thirdLiteral  = ", GROMACS";
+
+    static constexpr std::string_view combinedString =
+            gmx::CompileTimeStringJoin_v<firstLiteral, secondLiteral, thirdLiteral>;
+    static_assert(combinedString.size() == 20);
+    static_assert(combinedString == std::string_view{ "Hello World, GROMACS" });
+
+    EXPECT_EQ(std::string(combinedString), "Hello World, GROMACS");
+}
+
+#else
+TEST(DISABLED_CompileTimeStringJoin, Works)
+{
+    ADD_FAILURE() << "Compile time string join doesn't work with MSVC, causes ICE. Fixed in MSVC "
+                  << "2022 (VS 17.5, cl.exe 19.35).";
+}
+
+#endif
 
 } // namespace
 } // namespace test

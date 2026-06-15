@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2016,2017,2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2016- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \internal \file
  * \brief
@@ -41,6 +40,9 @@
 #include "gmxpre.h"
 
 #include "gromacs/fileio/readinp.h"
+
+#include <string>
+#include <vector>
 
 #include <gtest/gtest.h>
 
@@ -56,78 +58,76 @@ namespace testing
 class ReadTest : public ::testing::Test
 {
 public:
-    ReadTest() : inputField_{ { (t_inpfile(0, 0, false, false, false, "test", "")) } }, wi_()
+    ReadTest() :
+        inputField_{ { (t_inpfile(0, 0, false, false, false, "test", "")) } }, wi_({ false, 0 })
 
     {
-        wi_ = init_warning(FALSE, 0);
-        wiGuard_.reset(wi_);
     }
 
-    std::vector<t_inpfile>                         inputField_;
-    warninp_t                                      wi_;
-    gmx::unique_cptr<struct warninp, free_warning> wiGuard_;
+    std::vector<t_inpfile> inputField_;
+    WarningHandler         wi_;
 };
 
 TEST_F(ReadTest, get_eint_ReadsInteger)
 {
     inputField_.front().value_.assign("1");
-    ASSERT_EQ(1, get_eint(&inputField_, "test", 2, wi_));
+    ASSERT_EQ(1, get_eint(&inputField_, "test", 2, &wi_));
     ASSERT_FALSE(warning_errors_exist(wi_));
 }
 
 TEST_F(ReadTest, get_eint_WarnsAboutFloat)
 {
     inputField_.front().value_.assign("0.8");
-    get_eint(&inputField_, "test", 2, wi_);
+    get_eint(&inputField_, "test", 2, &wi_);
     ASSERT_TRUE(warning_errors_exist(wi_));
 }
 
 TEST_F(ReadTest, get_eint_WarnsAboutString)
 {
     inputField_.front().value_.assign("hello");
-    get_eint(&inputField_, "test", 2, wi_);
+    get_eint(&inputField_, "test", 2, &wi_);
     ASSERT_TRUE(warning_errors_exist(wi_));
 }
 
 TEST_F(ReadTest, get_eint64_ReadsInteger)
 {
     inputField_.front().value_.assign("1");
-    ASSERT_EQ(1, get_eint64(&inputField_, "test", 2, wi_));
+    ASSERT_EQ(1, get_eint64(&inputField_, "test", 2, &wi_));
     ASSERT_FALSE(warning_errors_exist(wi_));
 }
 
 TEST_F(ReadTest, get_eint64_WarnsAboutFloat)
 {
     inputField_.front().value_.assign("0.8");
-    get_eint64(&inputField_, "test", 2, wi_);
+    get_eint64(&inputField_, "test", 2, &wi_);
     ASSERT_TRUE(warning_errors_exist(wi_));
 }
 
 TEST_F(ReadTest, get_eint64_WarnsAboutString)
 {
     inputField_.front().value_.assign("hello");
-    get_eint64(&inputField_, "test", 2, wi_);
+    get_eint64(&inputField_, "test", 2, &wi_);
     ASSERT_TRUE(warning_errors_exist(wi_));
 }
 
 TEST_F(ReadTest, get_ereal_ReadsInteger)
 {
     inputField_.front().value_.assign("1");
-    ASSERT_EQ(1, get_ereal(&inputField_, "test", 2, wi_));
+    ASSERT_EQ(1, get_ereal(&inputField_, "test", 2, &wi_));
     ASSERT_FALSE(warning_errors_exist(wi_));
 }
 
 TEST_F(ReadTest, get_ereal_ReadsFloat)
 {
     inputField_.front().value_.assign("0.8");
-    ASSERT_EQ(0.8, get_ereal(&inputField_, "test", 2, wi_));
+    ASSERT_EQ(0.8, get_ereal(&inputField_, "test", 2, &wi_));
     ASSERT_FALSE(warning_errors_exist(wi_));
 }
 
 TEST_F(ReadTest, get_ereal_WarnsAboutString)
 {
     inputField_.front().value_.assign("hello");
-    get_ereal(&inputField_, "test", 2, wi_);
+    get_ereal(&inputField_, "test", 2, &wi_);
     ASSERT_TRUE(warning_errors_exist(wi_));
 }
 

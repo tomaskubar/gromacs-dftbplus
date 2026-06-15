@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2018- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \internal \file
  * \brief
@@ -49,25 +48,37 @@
 #include "gromacs/listed_forces/bonded.h"
 
 #include <cmath>
+#include <cstdint>
 
+#include <algorithm>
+#include <iterator>
+#include <limits>
 #include <memory>
+#include <ostream>
+#include <string>
+#include <tuple>
 #include <unordered_map>
+#include <vector>
 
 #include <gtest/gtest.h>
 
 #include "gromacs/listed_forces/listed_forces.h"
 #include "gromacs/math/paddedvector.h"
 #include "gromacs/math/units.h"
-#include "gromacs/math/vec.h"
-#include "gromacs/math/vectypes.h"
+#include "gromacs/mdtypes/md_enums.h"
 #include "gromacs/mdtypes/mdatom.h"
 #include "gromacs/pbcutil/ishift.h"
 #include "gromacs/pbcutil/pbc.h"
 #include "gromacs/topology/idef.h"
+#include "gromacs/topology/ifunc.h"
+#include "gromacs/utility/arrayref.h"
 #include "gromacs/utility/enumerationhelpers.h"
+#include "gromacs/utility/real.h"
 #include "gromacs/utility/strconvert.h"
 #include "gromacs/utility/stringstream.h"
 #include "gromacs/utility/textwriter.h"
+#include "gromacs/utility/vec.h"
+#include "gromacs/utility/vectypes.h"
 
 #include "testutils/refdata.h"
 #include "testutils/testasserts.h"
@@ -92,7 +103,7 @@ struct OutputQuantities
     //! Derivative with respect to lambda
     real dvdlambda = 0;
     //! Shift vectors
-    rvec fshift[N_IVEC] = { { 0 } };
+    rvec fshift[c_numShiftVectors] = { { 0 } };
     //! Forces
     alignas(GMX_REAL_MAX_SIMD_WIDTH * sizeof(real)) rvec4 f[c_numAtoms] = { { 0 } };
 };
@@ -122,7 +133,7 @@ struct iListInput
 {
 public:
     //! Function type
-    int ftype = -1;
+    std::optional<InteractionFunction> ftype;
     //! Tolerance for float evaluation
     float ftoler = 1e-6;
     //! Tolerance for double evaluation
@@ -158,7 +169,7 @@ public:
      * \param[in] krB Force constant B
      * \return The structure itself.
      */
-    iListInput setHarmonic(int ft, real rA, real krA, real rB, real krB)
+    iListInput setHarmonic(InteractionFunction ft, real rA, real krA, real rB, real krB)
     {
         iparams.harmonic.rA  = rA;
         iparams.harmonic.rB  = rB;
@@ -175,7 +186,10 @@ public:
      * \param[in] krA Force constant
      * \return The structure itself.
      */
-    iListInput setHarmonic(int ft, real rA, real krA) { return setHarmonic(ft, rA, krA, rA, krA); }
+    iListInput setHarmonic(InteractionFunction ft, real rA, real krA)
+    {
+        return setHarmonic(ft, rA, krA, rA, krA);
+    }
     /*! \brief Set parameters for cubic potential
      *
      * \param[in] b0   Equilibrium bond length
@@ -185,7 +199,7 @@ public:
      */
     iListInput setCubic(real b0, real kb, real kcub)
     {
-        ftype              = F_CUBICBONDS;
+        ftype              = InteractionFunction::CubicBonds;
         iparams.cubic.b0   = b0;
         iparams.cubic.kb   = kb;
         iparams.cubic.kcub = kcub;
@@ -205,7 +219,7 @@ public:
      */
     iListInput setMorse(real b0A, real cbA, real betaA, real b0B, real cbB, real betaB)
     {
-        ftype               = F_MORSE;
+        ftype               = InteractionFunction::MorsePotential;
         iparams.morse.b0A   = b0A;
         iparams.morse.cbA   = cbA;
         iparams.morse.betaA = betaA;
@@ -234,7 +248,7 @@ public:
      */
     iListInput setFene(real bm, real kb)
     {
-        ftype           = F_FENEBONDS;
+        ftype           = InteractionFunction::FENEBonds;
         iparams.fene.bm = bm;
         iparams.fene.kb = kb;
         return *this;
@@ -251,7 +265,7 @@ public:
      */
     iListInput setLinearAngle(real klinA, real aA, real klinB, real aB)
     {
-        ftype                  = F_LINEAR_ANGLES;
+        ftype                  = InteractionFunction::LinearAngles;
         iparams.linangle.klinA = klinA;
         iparams.linangle.aA    = aA;
         iparams.linangle.klinB = klinB;
@@ -283,7 +297,7 @@ public:
     iListInput
     setUreyBradley(real thetaA, real kthetaA, real r13A, real kUBA, real thetaB, real kthetaB, real r13B, real kUBB)
     {
-        ftype               = F_UREY_BRADLEY;
+        ftype               = InteractionFunction::UreyBradleyPotential;
         iparams.u_b.thetaA  = thetaA;
         iparams.u_b.kthetaA = kthetaA;
         iparams.u_b.r13A    = r13A;
@@ -316,7 +330,7 @@ public:
      */
     iListInput setCrossBondBonds(real r1e, real r2e, real krr)
     {
-        ftype                = F_CROSS_BOND_BONDS;
+        ftype                = InteractionFunction::CrossBondBonds;
         iparams.cross_bb.r1e = r1e;
         iparams.cross_bb.r2e = r2e;
         iparams.cross_bb.krr = krr;
@@ -332,7 +346,7 @@ public:
      */
     iListInput setCrossBondAngles(real r1e, real r2e, real r3e, real krt)
     {
-        ftype                = F_CROSS_BOND_ANGLES;
+        ftype                = InteractionFunction::CrossBondAngles;
         iparams.cross_ba.r1e = r1e;
         iparams.cross_ba.r2e = r2e;
         iparams.cross_ba.r3e = r3e;
@@ -347,7 +361,7 @@ public:
      */
     iListInput setQuarticAngles(real theta, const real c[5])
     {
-        ftype                = F_QUARTIC_ANGLES;
+        ftype                = InteractionFunction::QuarticAngles;
         iparams.qangle.theta = theta;
         iparams.qangle.c[0]  = c[0];
         iparams.qangle.c[1]  = c[1];
@@ -368,7 +382,7 @@ public:
      * \param[in] cpB  Force constant B
      * \return The structure itself.
      */
-    iListInput setPDihedrals(int ft, real phiA, real cpA, int mult, real phiB, real cpB)
+    iListInput setPDihedrals(InteractionFunction ft, real phiA, real cpA, int mult, real phiB, real cpB)
     {
         ftype              = ft;
         iparams.pdihs.phiA = phiA;
@@ -387,7 +401,7 @@ public:
      * \param[in] mult Multiplicity of the angle
      * \return The structure itself.
      */
-    iListInput setPDihedrals(int ft, real phiA, real cpA, int mult)
+    iListInput setPDihedrals(InteractionFunction ft, real phiA, real cpA, int mult)
     {
         return setPDihedrals(ft, phiA, cpA, mult, phiA, cpA);
     }
@@ -401,7 +415,7 @@ public:
      */
     iListInput setRbDihedrals(const real rbcA[NR_RBDIHS], const real rbcB[NR_RBDIHS])
     {
-        ftype = F_RBDIHS;
+        ftype = InteractionFunction::RyckaertBellemansDihedrals;
         fep   = false;
         for (int i = 0; i < NR_RBDIHS; i++)
         {
@@ -424,7 +438,7 @@ public:
      */
     iListInput setPolarization(real alpha)
     {
-        ftype                  = F_POLARIZATION;
+        ftype                  = InteractionFunction::Polarization;
         fep                    = false;
         iparams.polarize.alpha = alpha;
         return *this;
@@ -439,7 +453,7 @@ public:
      */
     iListInput setAnharmPolarization(real alpha, real drcut, real khyp)
     {
-        ftype                         = F_ANHARM_POL;
+        ftype                         = InteractionFunction::AnharmonicPolarization;
         fep                           = false;
         iparams.anharm_polarize.alpha = alpha;
         iparams.anharm_polarize.drcut = drcut;
@@ -451,17 +465,15 @@ public:
      * \param[in] a      Thole factor
      * \param[in] alpha1 Polarizability 1 (nm^3)
      * \param[in] alpha2 Polarizability 2 (nm^3)
-     * \param[in] rfac   Distance factor
      * \return The structure itself.
      */
-    iListInput setTholePolarization(real a, real alpha1, real alpha2, real rfac)
+    iListInput setTholePolarization(real a, real alpha1, real alpha2)
     {
-        ftype                = F_THOLE_POL;
+        ftype                = InteractionFunction::TholePolarization;
         fep                  = false;
         iparams.thole.a      = a;
         iparams.thole.alpha1 = alpha1;
         iparams.thole.alpha2 = alpha2;
-        iparams.thole.rfac   = rfac;
         return *this;
     }
     /*! \brief Set parameters for Water Polarization
@@ -476,7 +488,7 @@ public:
      */
     iListInput setWaterPolarization(real alpha_x, real alpha_y, real alpha_z, real rOH, real rHH, real rOD)
     {
-        ftype             = F_WATER_POL;
+        ftype             = InteractionFunction::WaterPolarization;
         fep               = false;
         iparams.wpol.al_x = alpha_x;
         iparams.wpol.al_y = alpha_y;
@@ -492,16 +504,16 @@ public:
 std::ostream& operator<<(std::ostream& out, const iListInput& input)
 {
     using std::endl;
-    out << "Function type " << input.ftype << " called " << interaction_function[input.ftype].name
-        << " ie. labelled '" << interaction_function[input.ftype].longname << "' in an energy file"
-        << endl;
+    const InteractionFunction ftype = input.ftype.value();
+    out << "Function type " << static_cast<int>(ftype) << " called " << interaction_function[ftype].name
+        << " ie. labelled '" << interaction_function[ftype].longname << "' in an energy file" << endl;
 
     // Organize to print the legacy C union t_iparams, whose
     // relevant contents vary with ftype.
     StringOutputStream stream;
     {
         TextWriter writer(&stream);
-        printInteractionParameters(&writer, input.ftype, input.iparams);
+        printInteractionParameters(&writer, input.ftype.value(), input.iparams);
     }
     out << "Function parameters " << stream.toString();
     out << "Parameters trigger FEP? " << (input.fep ? "true" : "false") << endl;
@@ -513,14 +525,13 @@ std::ostream& operator<<(std::ostream& out, const iListInput& input)
  * \param[in]  ftype  Function type
  * \param[out] iatoms Pointer to iatoms struct
  */
-void fillIatoms(int ftype, std::vector<t_iatom>* iatoms)
+void fillIatoms(std::optional<InteractionFunction> ftype, std::vector<t_iatom>* iatoms)
 {
-    std::unordered_map<int, std::vector<int>> ia = { { 2, { 0, 0, 1, 0, 1, 2, 0, 2, 3 } },
-                                                     { 3, { 0, 0, 1, 2, 0, 1, 2, 3 } },
-                                                     { 4, { 0, 0, 1, 2, 3 } },
-                                                     { 5, { 0, 0, 1, 2, 3, 0 } } };
-    EXPECT_TRUE(ftype >= 0 && ftype < F_NRE);
-    int nral = interaction_function[ftype].nratoms;
+    std::unordered_map<int, std::vector<int>> ia   = { { 2, { 0, 0, 1, 0, 1, 2, 0, 2, 3 } },
+                                                       { 3, { 0, 0, 1, 2, 0, 1, 2, 3 } },
+                                                       { 4, { 0, 0, 1, 2, 3 } },
+                                                       { 5, { 0, 0, 1, 2, 3, 0 } } };
+    int                                       nral = interaction_function[ftype.value()].nratoms;
     for (auto& i : ia[nral])
     {
         iatoms->push_back(i);
@@ -557,25 +568,28 @@ protected:
         // std::acos) differ by enough to require quite large
         // tolerances for the shift forces in mixed precision.
         float singleShiftForcesAbsoluteTolerance =
-                ((input_.ftype == F_POLARIZATION) || (input_.ftype == F_ANHARM_POL)
-                                 || (IS_ANGLE(input_.ftype))
+                ((input_.ftype == InteractionFunction::Polarization)
+                                 || (input_.ftype == InteractionFunction::AnharmonicPolarization)
+                                 || (IS_ANGLE(input_.ftype.value()))
                          ? 5e-3
                          : 5e-5);
         // Note that std::numeric_limits isn't required by the standard to
         // have an implementation for uint64_t(!) but this is likely to
         // work because that type is likely to be a typedef for one of
         // the other numerical types that happens to be 64-bits wide.
-        shiftForcesTolerance_ = FloatingPointTolerance(singleShiftForcesAbsoluteTolerance, 1e-8, 1e-6,
-                                                       1e-12, std::numeric_limits<uint64_t>::max(),
-                                                       std::numeric_limits<uint64_t>::max(), false);
+        shiftForcesTolerance_ = FloatingPointTolerance(singleShiftForcesAbsoluteTolerance,
+                                                       1e-8,
+                                                       1e-6,
+                                                       1e-12,
+                                                       std::numeric_limits<uint64_t>::max(),
+                                                       std::numeric_limits<uint64_t>::max(),
+                                                       false);
     }
     void testOneIfunc(TestReferenceChecker* checker, const std::vector<t_iatom>& iatoms, const real lambda)
     {
         SCOPED_TRACE(std::string("Testing PBC type: ") + c_pbcTypeNames[pbcType_]);
         std::vector<int>  ddgatindex = { 0, 1, 2, 3 };
-        std::vector<real> chargeA    = { 1.5, -2.0, 1.5, -1.0 };
-        t_mdatoms         mdatoms    = { 0 };
-        mdatoms.chargeA              = chargeA.data();
+        std::vector<real> charge     = { 1.5, -2.0, 1.5, -1.0 };
         /* Here we run both the standard, plain-C force+shift-forces+energy+free-energy
          * kernel flavor and the potentially optimized, with SIMD and less output,
          * force only kernels. Note that we also run the optimized kernel for free-energy
@@ -590,11 +604,22 @@ protected:
         {
             SCOPED_TRACE("Testing bonded kernel flavor: " + c_bondedKernelFlavorStrings[flavor]);
             OutputQuantities output;
-            output.energy =
-                    calculateSimpleBond(input_.ftype, iatoms.size(), iatoms.data(), &input_.iparams,
-                                        as_rvec_array(x_.data()), output.f, output.fshift, &pbc_,
-                                        lambda, &output.dvdlambda, &mdatoms,
-                                        /* struct t_fcdata * */ nullptr, ddgatindex.data(), flavor);
+            output.energy = calculateSimpleBond(input_.ftype.value(),
+                                                iatoms.size(),
+                                                iatoms.data(),
+                                                &input_.iparams,
+                                                as_rvec_array(x_.data()),
+                                                output.f,
+                                                output.fshift,
+                                                &pbc_,
+                                                lambda,
+                                                &output.dvdlambda,
+                                                charge,
+                                                /* struct t_fcdata * */ nullptr,
+                                                nullptr,
+                                                nullptr,
+                                                ddgatindex.data(),
+                                                flavor);
             // Internal consistency test of both test input
             // and bonded functions.
             EXPECT_TRUE((input_.fep || (output.dvdlambda == 0.0))) << "dvdlambda was " << output.dvdlambda;
@@ -603,7 +628,7 @@ protected:
             if (computeVirial(flavor))
             {
                 shiftForcesChecker.setDefaultTolerance(shiftForcesTolerance_);
-                shiftForcesChecker.checkVector(output.fshift[CENTRAL], "Central");
+                shiftForcesChecker.checkVector(output.fshift[c_centralShiftIndex], "Central");
             }
             else
             {
@@ -615,8 +640,9 @@ protected:
     }
     void testIfunc()
     {
+        EXPECT_TRUE(input_.ftype.has_value() && input_.ftype < InteractionFunction::Count);
         TestReferenceChecker thisChecker =
-                checker_.checkCompound("FunctionType", interaction_function[input_.ftype].name)
+                checker_.checkCompound("FunctionType", interaction_function[input_.ftype.value()].name)
                         .checkCompound("FEP", (input_.fep ? "Yes" : "No"));
         std::vector<t_iatom> iatoms;
         fillIatoms(input_.ftype, &iatoms);
@@ -644,10 +670,10 @@ TEST_P(ListedForcesTest, Ifunc)
 
 //! Function types for testing bonds. Add new terms at the end.
 std::vector<iListInput> c_InputBonds = {
-    { iListInput(2e-6F, 1e-8).setHarmonic(F_BONDS, 0.15, 500.0) },
-    { iListInput(2e-6F, 1e-8).setHarmonic(F_BONDS, 0.15, 500.0, 0.17, 400.0) },
-    { iListInput(1e-4F, 1e-8).setHarmonic(F_G96BONDS, 0.15, 50.0) },
-    { iListInput().setHarmonic(F_G96BONDS, 0.15, 50.0, 0.17, 40.0) },
+    { iListInput(2e-6F, 1e-8).setHarmonic(InteractionFunction::Bonds, 0.15, 500.0) },
+    { iListInput(2e-6F, 1e-8).setHarmonic(InteractionFunction::Bonds, 0.15, 500.0, 0.17, 400.0) },
+    { iListInput(1e-4F, 1e-8).setHarmonic(InteractionFunction::GROMOS96Bonds, 0.15, 50.0) },
+    { iListInput().setHarmonic(InteractionFunction::GROMOS96Bonds, 0.15, 50.0, 0.17, 40.0) },
     { iListInput().setCubic(0.16, 50.0, 2.0) },
     { iListInput(2e-6F, 1e-8).setMorse(0.15, 50.0, 2.0, 0.17, 40.0, 1.6) },
     { iListInput(2e-6F, 1e-8).setMorse(0.15, 30.0, 2.7) },
@@ -659,10 +685,10 @@ const real cQuarticAngles[5] = { 1.1, 2.3, 4.6, 7.8, 9.2 };
 
 //! Function types for testing angles. Add new terms at the end.
 std::vector<iListInput> c_InputAngles = {
-    { iListInput(2e-3, 1e-8).setHarmonic(F_ANGLES, 100.0, 50.0) },
-    { iListInput(2e-3, 1e-8).setHarmonic(F_ANGLES, 100.15, 50.0, 95.0, 30.0) },
-    { iListInput(8e-3, 1e-8).setHarmonic(F_G96ANGLES, 100.0, 50.0) },
-    { iListInput(8e-3, 1e-8).setHarmonic(F_G96ANGLES, 100.0, 50.0, 95.0, 30.0) },
+    { iListInput(2e-3, 1e-8).setHarmonic(InteractionFunction::Angles, 100.0, 50.0) },
+    { iListInput(2e-3, 1e-8).setHarmonic(InteractionFunction::Angles, 100.15, 50.0, 95.0, 30.0) },
+    { iListInput(8e-3, 1e-8).setHarmonic(InteractionFunction::GROMOS96Angles, 100.0, 50.0) },
+    { iListInput(8e-3, 1e-8).setHarmonic(InteractionFunction::GROMOS96Angles, 100.0, 50.0, 95.0, 30.0) },
     { iListInput().setLinearAngle(50.0, 0.4) },
     { iListInput().setLinearAngle(50.0, 0.4, 40.0, 0.6) },
     { iListInput(2e-6, 1e-8).setCrossBondBonds(0.8, 0.7, 45.0) },
@@ -683,10 +709,10 @@ const real rbc[NR_RBDIHS] = { -7.35, 13.6, 8.4, -16.7, 1.3, 12.4 };
 
 //! Function types for testing dihedrals. Add new terms at the end.
 std::vector<iListInput> c_InputDihs = {
-    { iListInput(5e-4, 1e-8).setPDihedrals(F_PDIHS, -100.0, 10.0, 2, -80.0, 20.0) },
-    { iListInput(1e-4, 1e-8).setPDihedrals(F_PDIHS, -105.0, 15.0, 2) },
-    { iListInput(2e-4, 1e-8).setHarmonic(F_IDIHS, 100.0, 50.0) },
-    { iListInput(2e-4, 1e-8).setHarmonic(F_IDIHS, 100.15, 50.0, 95.0, 30.0) },
+    { iListInput(5e-4, 1e-8).setPDihedrals(InteractionFunction::ProperDihedrals, -100.0, 10.0, 2, -80.0, 20.0) },
+    { iListInput(1e-4, 1e-8).setPDihedrals(InteractionFunction::ProperDihedrals, -105.0, 15.0, 2) },
+    { iListInput(2e-4, 1e-8).setHarmonic(InteractionFunction::ImproperDihedrals, 100.0, 50.0) },
+    { iListInput(2e-4, 1e-8).setHarmonic(InteractionFunction::ImproperDihedrals, 100.15, 50.0, 95.0, 30.0) },
     { iListInput(4e-4, 1e-8).setRbDihedrals(rbcA, rbcB) },
     { iListInput(4e-4, 1e-8).setRbDihedrals(rbc) }
 };
@@ -695,28 +721,28 @@ std::vector<iListInput> c_InputDihs = {
 std::vector<iListInput> c_InputPols = {
     { iListInput(2e-5, 1e-8).setPolarization(0.12) },
     { iListInput(2e-3, 1e-8).setAnharmPolarization(0.0013, 0.02, 1235.6) },
-    { iListInput(1.4e-3, 1e-8).setTholePolarization(0.26, 0.07, 0.09, 1.6) },
+    { iListInput(1.4e-3, 1e-8).setTholePolarization(0.26, 0.07, 0.09) },
     { iListInput(2e-3, 1e-8).setWaterPolarization(0.001, 0.0012, 0.0016, 0.095, 0.15, 0.02) },
 };
 
 //! Function types for testing polarization. Add new terms at the end.
 std::vector<iListInput> c_InputRestraints = {
-    { iListInput(1e-4, 1e-8).setPDihedrals(F_ANGRES, -100.0, 10.0, 2, -80.0, 20.0) },
-    { iListInput(1e-4, 1e-8).setPDihedrals(F_ANGRES, -105.0, 15.0, 2) },
-    { iListInput(1e-4, 1e-8).setPDihedrals(F_ANGRESZ, -100.0, 10.0, 2, -80.0, 20.0) },
-    { iListInput(1e-4, 1e-8).setPDihedrals(F_ANGRESZ, -105.0, 15.0, 2) },
-    { iListInput(2e-3, 1e-8).setHarmonic(F_RESTRANGLES, 100.0, 50.0) },
-    { iListInput(2e-3, 1e-8).setHarmonic(F_RESTRANGLES, 100.0, 50.0, 110.0, 45.0) }
+    { iListInput(1e-4, 1e-8).setPDihedrals(InteractionFunction::AngleRestraints, -100.0, 10.0, 2, -80.0, 20.0) },
+    { iListInput(1e-4, 1e-8).setPDihedrals(InteractionFunction::AngleRestraints, -105.0, 15.0, 2) },
+    { iListInput(1e-4, 1e-8).setPDihedrals(InteractionFunction::AngleZAxisRestraints, -100.0, 10.0, 2, -80.0, 20.0) },
+    { iListInput(1e-4, 1e-8).setPDihedrals(InteractionFunction::AngleZAxisRestraints, -105.0, 15.0, 2) },
+    { iListInput(2e-3, 1e-8).setHarmonic(InteractionFunction::RestrictedBendingPotential, 100.0, 50.0) },
+    { iListInput(2e-3, 1e-8).setHarmonic(InteractionFunction::RestrictedBendingPotential, 100.0, 50.0, 110.0, 45.0) }
 };
 
 //! Function types for testing bond with zero length, has zero reference length to make physical sense.
 std::vector<iListInput> c_InputBondsZeroLength = {
-    { iListInput().setHarmonic(F_BONDS, 0.0, 500.0) },
+    { iListInput().setHarmonic(InteractionFunction::Bonds, 0.0, 500.0) },
 };
 
 //! Function types for testing angles with zero angle, has zero reference angle to make physical sense.
 std::vector<iListInput> c_InputAnglesZeroAngle = {
-    { iListInput(2e-3, 1e-8).setHarmonic(F_ANGLES, 0.0, 50.0) },
+    { iListInput(2e-3, 1e-8).setHarmonic(InteractionFunction::Angles, 0.0, 50.0) },
 };
 
 } // namespace
@@ -770,50 +796,47 @@ std::vector<PaddedVector<RVec>> c_coordinatesForTestsZeroAngle = {
 //! PBC values for testing
 std::vector<PbcType> c_pbcForTests = { PbcType::No, PbcType::XY, PbcType::Xyz };
 
-// Those tests give errors with the Intel compiler (as of October 2019) and nothing else, so we disable them only there.
-#if !defined(__INTEL_COMPILER) || (__INTEL_COMPILER >= 2021)
-INSTANTIATE_TEST_CASE_P(Bond,
-                        ListedForcesTest,
-                        ::testing::Combine(::testing::ValuesIn(c_InputBonds),
-                                           ::testing::ValuesIn(c_coordinatesForTests),
-                                           ::testing::ValuesIn(c_pbcForTests)));
+INSTANTIATE_TEST_SUITE_P(Bond,
+                         ListedForcesTest,
+                         ::testing::Combine(::testing::ValuesIn(c_InputBonds),
+                                            ::testing::ValuesIn(c_coordinatesForTests),
+                                            ::testing::ValuesIn(c_pbcForTests)));
 
-INSTANTIATE_TEST_CASE_P(Angle,
-                        ListedForcesTest,
-                        ::testing::Combine(::testing::ValuesIn(c_InputAngles),
-                                           ::testing::ValuesIn(c_coordinatesForTests),
-                                           ::testing::ValuesIn(c_pbcForTests)));
+INSTANTIATE_TEST_SUITE_P(Angle,
+                         ListedForcesTest,
+                         ::testing::Combine(::testing::ValuesIn(c_InputAngles),
+                                            ::testing::ValuesIn(c_coordinatesForTests),
+                                            ::testing::ValuesIn(c_pbcForTests)));
 
-INSTANTIATE_TEST_CASE_P(Dihedral,
-                        ListedForcesTest,
-                        ::testing::Combine(::testing::ValuesIn(c_InputDihs),
-                                           ::testing::ValuesIn(c_coordinatesForTests),
-                                           ::testing::ValuesIn(c_pbcForTests)));
+INSTANTIATE_TEST_SUITE_P(Dihedral,
+                         ListedForcesTest,
+                         ::testing::Combine(::testing::ValuesIn(c_InputDihs),
+                                            ::testing::ValuesIn(c_coordinatesForTests),
+                                            ::testing::ValuesIn(c_pbcForTests)));
 
-INSTANTIATE_TEST_CASE_P(Polarize,
-                        ListedForcesTest,
-                        ::testing::Combine(::testing::ValuesIn(c_InputPols),
-                                           ::testing::ValuesIn(c_coordinatesForTests),
-                                           ::testing::ValuesIn(c_pbcForTests)));
+INSTANTIATE_TEST_SUITE_P(Polarize,
+                         ListedForcesTest,
+                         ::testing::Combine(::testing::ValuesIn(c_InputPols),
+                                            ::testing::ValuesIn(c_coordinatesForTests),
+                                            ::testing::ValuesIn(c_pbcForTests)));
 
-INSTANTIATE_TEST_CASE_P(Restraints,
-                        ListedForcesTest,
-                        ::testing::Combine(::testing::ValuesIn(c_InputRestraints),
-                                           ::testing::ValuesIn(c_coordinatesForTests),
-                                           ::testing::ValuesIn(c_pbcForTests)));
+INSTANTIATE_TEST_SUITE_P(Restraints,
+                         ListedForcesTest,
+                         ::testing::Combine(::testing::ValuesIn(c_InputRestraints),
+                                            ::testing::ValuesIn(c_coordinatesForTests),
+                                            ::testing::ValuesIn(c_pbcForTests)));
 
-INSTANTIATE_TEST_CASE_P(BondZeroLength,
-                        ListedForcesTest,
-                        ::testing::Combine(::testing::ValuesIn(c_InputBondsZeroLength),
-                                           ::testing::ValuesIn(c_coordinatesForTestsZeroBondLength),
-                                           ::testing::ValuesIn(c_pbcForTests)));
+INSTANTIATE_TEST_SUITE_P(BondZeroLength,
+                         ListedForcesTest,
+                         ::testing::Combine(::testing::ValuesIn(c_InputBondsZeroLength),
+                                            ::testing::ValuesIn(c_coordinatesForTestsZeroBondLength),
+                                            ::testing::ValuesIn(c_pbcForTests)));
 
-INSTANTIATE_TEST_CASE_P(AngleZero,
-                        ListedForcesTest,
-                        ::testing::Combine(::testing::ValuesIn(c_InputAnglesZeroAngle),
-                                           ::testing::ValuesIn(c_coordinatesForTestsZeroAngle),
-                                           ::testing::ValuesIn(c_pbcForTests)));
-#endif
+INSTANTIATE_TEST_SUITE_P(AngleZero,
+                         ListedForcesTest,
+                         ::testing::Combine(::testing::ValuesIn(c_InputAnglesZeroAngle),
+                                            ::testing::ValuesIn(c_coordinatesForTestsZeroAngle),
+                                            ::testing::ValuesIn(c_pbcForTests)));
 
 } // namespace
 

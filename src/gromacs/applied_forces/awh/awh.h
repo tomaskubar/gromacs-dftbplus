@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2015,2016,2017,2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2015- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 
 /*! \libinternal
@@ -63,21 +62,21 @@
 #ifndef GMX_AWH_H
 #define GMX_AWH_H
 
+#include <cstdint>
 #include <cstdio>
 
 #include <memory>
 #include <string>
 #include <vector>
 
-#include "gromacs/math/vectypes.h"
 #include "gromacs/utility/basedefinitions.h"
+#include "gromacs/utility/real.h"
+#include "gromacs/utility/vectypes.h"
 
 struct gmx_multisim_t;
 struct gmx_wallcycle;
-struct pull_work_t;
 struct pull_t;
 class t_state;
-struct t_commrec;
 struct t_enxframe;
 struct t_inputrec;
 enum class PbcType : int;
@@ -88,10 +87,12 @@ namespace gmx
 template<typename>
 class ArrayRef;
 struct AwhHistory;
-struct AwhParams;
+class AwhParams;
 class Bias;
 struct BiasCoupledToSystem;
+class BiasSharing;
 class ForceWithVirial;
+class MpiComm;
 
 /*! \libinternal
  * \brief Coupling of the accelerated weight histogram method (AWH) with the system.
@@ -120,7 +121,7 @@ public:
      *
      * \param[in,out] fplog              General output file, normally md.log, can be nullptr.
      * \param[in]     inputRecord        General input parameters (as set up by grompp).
-     * \param[in]     commRecord         Struct for communication, can be nullptr.
+     * \param[in]     mpiComm            The MPI communicator for intra-simulation communication.
      * \param[in]     multiSimRecord     Multi-sim handler
      * \param[in]     awhParams          AWH input parameters, consistent with the relevant
      * parts of \p inputRecord (as set up by grompp).
@@ -134,7 +135,7 @@ public:
      */
     Awh(FILE*                 fplog,
         const t_inputrec&     inputRecord,
-        const t_commrec*      commRecord,
+        const MpiComm&        mpiComm,
         const gmx_multisim_t* multiSimRecord,
         const AwhParams&      awhParams,
         const std::string&    biasInitFilename,
@@ -144,7 +145,7 @@ public:
 
     ~Awh();
 
-    /*! \brief Peform an AWH update, to be called every MD step.
+    /*! \brief Perform an AWH update, to be called every MD step.
      *
      * An update has two tasks: apply the bias force and improve
      * the bias and the free energy estimate that AWH keeps internally.
@@ -159,12 +160,12 @@ public:
      * Convergence of the bias and free energy estimate is achieved by
      * updating the AWH bias state after a certain number of samples has been collected.
      *
-     * \note Requires that pull_potential from pull.h has been called first
+     * \note Requires that pull_potential() from pull.h has been called first
      * since AWH needs the current coordinate values (the pull code checks
-     * for this).
+     * for this). Requires that pull_apply_forces() is called after this
+     * to take into account the updated pull forces AWH might be applied to.
      *
      * \param[in]     pbcType          Type of periodic boundary conditions.
-     * \param[in]     masses           Atoms masses.
      * \param[in]     neighborLambdaEnergies An array containing the energy of the system
      * in neighboring lambdas. The array is of length numLambdas+1, where numLambdas is
      * the number of free energy lambda states. Element 0 in the array is the energy
@@ -178,7 +179,6 @@ public:
      * neighboring lambda states (also including the current state). When there are no free
      * energy lambda state dimensions this can be empty.
      * \param[in]     box              Box vectors.
-     * \param[in,out] forceWithVirial  Force and virial buffers, should cover at least the local atoms.
      * \param[in]     t                Time.
      * \param[in]     step             The current MD step.
      * \param[in,out] wallcycle        Wallcycle counter, can be nullptr.
@@ -186,11 +186,9 @@ public:
      * \returns the potential energy for the bias.
      */
     real applyBiasForcesAndUpdateBias(PbcType                pbcType,
-                                      const real*            masses,
                                       ArrayRef<const double> neighborLambdaEnergies,
                                       ArrayRef<const double> neighborLambdaDhdl,
                                       const matrix           box,
-                                      gmx::ForceWithVirial*  forceWithVirial,
                                       double                 t,
                                       int64_t                step,
                                       gmx_wallcycle*         wallcycle,
@@ -199,7 +197,7 @@ public:
     /*! \brief
      * Update the AWH history in preparation for writing to checkpoint file.
      *
-     * Should be called at least on the master rank at checkpoint steps.
+     * Should be called at least on the main rank at checkpoint steps.
      *
      * Should be called with a valid \p awhHistory (is checked).
      *
@@ -211,7 +209,7 @@ public:
      * Allocate and initialize an AWH history with the given AWH state.
      *
      * This function should be called at the start of a new simulation
-     * at least on the master rank.
+     * at least on the main rank.
      * Note that only constant data will be initialized here.
      * History data is set by \ref Awh::updateHistory.
      *
@@ -222,7 +220,7 @@ public:
     /*! \brief Restore the AWH state from the given history.
      *
      * Should be called on all ranks (for internal MPI broadcast).
-     * Should pass a point to an AwhHistory on the master rank that
+     * Should pass a point to an AwhHistory on the main rank that
      * is compatible with the AWH setup in this simulation. Will throw
      * an exception if it is not compatible.
      *
@@ -235,7 +233,7 @@ public:
      * \param[in]     step  The current MD step.
      * \param[in,out] fr    Energy data frame.
      */
-    void writeToEnergyFrame(int64_t step, t_enxframe* fr) const;
+    void writeToEnergyFrame(int64_t step, t_enxframe* fr);
 
     /*! \brief Returns string "AWH" for registering AWH as an external potential provider with the pull module.
      */
@@ -275,14 +273,14 @@ private:
      */
     bool isOutputStep(int64_t step) const;
 
-private:
     std::vector<BiasCoupledToSystem> biasCoupledToSystem_; /**< AWH biases and definitions of their coupling to the system. */
-    const int64_t    seed_;   /**< Random seed for MC jumping with umbrella type bias potential. */
-    const int        nstout_; /**< Interval in steps for writing to energy file. */
-    const t_commrec* commRecord_;          /**< Pointer to the communication record. */
-    const gmx_multisim_t* multiSimRecord_; /**< Handler for multi-simulations. */
-    pull_t*               pull_;           /**< Pointer to the pull working data. */
-    double                potentialOffset_; /**< The offset of the bias potential which changes due to bias updates. */
+    const int64_t  seed_;    /**< Random seed for MC jumping with umbrella type bias potential. */
+    const int      nstout_;  /**< Interval in steps for writing to energy file. */
+    const MpiComm& mpiComm_; /**< Reference tothe MPI communicator. */
+    //! Object for sharing bias between simulations, only set when needed
+    std::unique_ptr<BiasSharing> biasSharing_;
+    pull_t*                      pull_; /**< Pointer to the pull working data. */
+    double potentialOffset_; /**< The offset of the bias potential which changes due to bias updates. */
     const int numFepLambdaStates_; /**< The number of free energy lambda states of the system. */
     int       fepLambdaState_;     /**< The current free energy lambda state. */
 };
@@ -295,7 +293,7 @@ private:
  * \param[in,out] fplog                   General output file, normally md.log, can be nullptr.
  * \param[in]     inputRecord             General input parameters (as set up by grompp).
  * \param[in]     stateGlobal             A pointer to the global state structure.
- * \param[in]     commRecord              Struct for communication, can be nullptr.
+ * \param[in]     mpiComm                 The MPI communicator for intra-simulation communication.
  * \param[in]     multiSimRecord          Multi-sim handler
  * \param[in]     startingFromCheckpoint  Whether the simulation is starting from a checkpoint
  * \param[in]     usingShellParticles     Whether the user requested shell particles (which is unsupported)
@@ -308,7 +306,7 @@ private:
 std::unique_ptr<Awh> prepareAwhModule(FILE*                 fplog,
                                       const t_inputrec&     inputRecord,
                                       t_state*              stateGlobal,
-                                      const t_commrec*      commRecord,
+                                      const MpiComm&        mpiComm,
                                       const gmx_multisim_t* multiSimRecord,
                                       bool                  startingFromCheckpoint,
                                       bool                  usingShellParticles,

@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2018- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \internal \file
  * \brief
@@ -41,31 +40,34 @@
  */
 #include "gmxpre.h"
 
-#include "topologyinformation.h"
+#include "gromacs/trajectoryanalysis/topologyinformation.h"
 
+#include <filesystem>
 #include <memory>
+#include <string>
+#include <vector>
 
 #include "gromacs/fileio/confio.h"
-#include "gromacs/math/vec.h"
+#include "gromacs/mdtypes/md_enums.h"
 #include "gromacs/pbcutil/pbc.h"
 #include "gromacs/pbcutil/rmpbc.h"
+#include "gromacs/topology/atoms.h"
 #include "gromacs/topology/mtop_util.h"
 #include "gromacs/topology/topology.h"
 #include "gromacs/utility/arrayref.h"
+#include "gromacs/utility/basedefinitions.h"
 #include "gromacs/utility/exceptions.h"
 #include "gromacs/utility/gmxassert.h"
 #include "gromacs/utility/smalloc.h"
 #include "gromacs/utility/unique_cptr.h"
+#include "gromacs/utility/vec.h"
+#include "gromacs/utility/vectypes.h"
 
 namespace gmx
 {
 
 TopologyInformation::TopologyInformation() :
-    hasLoadedMtop_(false),
-    expandedTopology_(nullptr),
-    atoms_(nullptr),
-    bTop_(false),
-    pbcType_(PbcType::Unset)
+    hasLoadedMtop_(false), expandedTopology_(nullptr), atoms_(nullptr), bTop_(false), pbcType_(PbcType::Unset)
 {
 }
 
@@ -81,7 +83,7 @@ void TopologyInformation::fillFromInputFile(const std::string& filename)
     // t_atoms that we'd keep, which we currently can't do.
     // TODO Once there are fewer callers of the file-reading
     // functionality, make them read directly into std::vector.
-    rvec *x, *v;
+    rvec *x = nullptr, *v = nullptr;
     readConfAndTopology(filename.c_str(), &bTop_, mtop_.get(), &pbcType_, &x, &v, boxtop_);
     xtop_.assign(x, x + mtop_->natoms);
     vtop_.assign(v, v + mtop_->natoms);
@@ -121,7 +123,7 @@ AtomsDataPtr makeAtoms(const TopologyInformation& top_)
     AtomsDataPtr atoms(new t_atoms);
     if (top_.hasTopology())
     {
-        *atoms = gmx_mtop_global_atoms(top_.mtop());
+        *atoms = gmx_mtop_global_atoms(*top_.mtop());
     }
     else
     {
@@ -173,7 +175,7 @@ ArrayRef<const RVec> TopologyInformation::v() const
 void TopologyInformation::getBox(matrix box) const
 {
     GMX_RELEASE_ASSERT(box != nullptr, "Must have valid box to fill");
-    copy_mat(const_cast<rvec*>(boxtop_), box);
+    copy_mat(boxtop_, box);
 }
 
 const char* TopologyInformation::name() const

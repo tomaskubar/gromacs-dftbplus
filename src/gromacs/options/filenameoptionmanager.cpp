@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2014,2015,2017,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2014- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \internal \file
  * \brief
@@ -41,10 +40,12 @@
  */
 #include "gmxpre.h"
 
-#include "filenameoptionmanager.h"
+#include "gromacs/options/filenameoptionmanager.h"
 
 #include <cstring>
 
+#include <filesystem>
+#include <memory>
 #include <string>
 
 #include "gromacs/fileio/filetypes.h"
@@ -152,7 +153,8 @@ std::string FileNameOptionManager::completeFileName(const std::string& value, co
     // TODO: Consider splitting them into a separate DirectoryOption.
     if (option.isDirectoryOption())
     {
-        if (!impl_->bInputCheckingDisabled_ && bInput && !bAllowMissing && !Directory::exists(value))
+        if (!impl_->bInputCheckingDisabled_ && bInput && !bAllowMissing
+            && !std::filesystem::is_directory(value))
         {
             std::string message =
                     formatString("Directory '%s' does not exist or is not accessible.", value.c_str());
@@ -176,6 +178,17 @@ std::string FileNameOptionManager::completeFileName(const std::string& value, co
                     std::string newValue = value.substr(0, value.length() - std::strlen(*ext));
                     if (option.isValidType(fn2ftp(newValue.c_str())))
                     {
+                        // Note that here the "completed" filename no
+                        // longer has the extension appropriate for a
+                        // compressed file. When gmx_ffopen() sees
+                        // that the uncompressed file does not exist,
+                        // it will try to open the compressed
+                        // versions, one of which exists, and thus
+                        // will be able to fulfil the user's desire.
+                        // This is not very robust; doing better might
+                        // require a more elaborate abstraction around
+                        // the concept of a filename returned by
+                        // FileNameOptionManager.
                         return newValue;
                     }
                     else
@@ -192,7 +205,7 @@ std::string FileNameOptionManager::completeFileName(const std::string& value, co
         }
         else if (fileType == efNR)
         {
-            const std::string processedValue = findExistingExtension(value, option, impl_->redirector_);
+            std::string processedValue = findExistingExtension(value, option, impl_->redirector_);
             if (!processedValue.empty())
             {
                 return processedValue;
@@ -211,7 +224,8 @@ std::string FileNameOptionManager::completeFileName(const std::string& value, co
                 std::string message = formatString(
                         "File '%s' does not exist or is not accessible.\n"
                         "The following extensions were tried to complete the file name:\n  %s",
-                        value.c_str(), joinStrings(option.extensions(), ", ").c_str());
+                        value.c_str(),
+                        joinStrings(option.extensions(), ", ").c_str());
                 GMX_THROW(InvalidInputError(message));
             }
         }
@@ -252,11 +266,11 @@ std::string FileNameOptionManager::completeDefaultFileName(const std::string&   
     {
         return std::string();
     }
-    const bool        bInput     = option.isInputFile() || option.isInputOutputFile();
+    const bool bInput = option.isInputFile() || option.isInputOutputFile();
     const std::string realPrefix = !impl_->defaultFileName_.empty() ? impl_->defaultFileName_ : prefix;
     if (bInput && !impl_->bInputCheckingDisabled_)
     {
-        const std::string completedName = findExistingExtension(realPrefix, option, impl_->redirector_);
+        std::string completedName = findExistingExtension(realPrefix, option, impl_->redirector_);
         if (!completedName.empty())
         {
             return completedName;
@@ -276,7 +290,8 @@ std::string FileNameOptionManager::completeDefaultFileName(const std::string&   
                     "No file name was provided, and the default file "
                     "'%s' does not exist or is not accessible.\n"
                     "The following extensions were tried to complete the file name:\n  %s",
-                    prefix.c_str(), joinStrings(option.extensions(), ", ").c_str());
+                    prefix.c_str(),
+                    joinStrings(option.extensions(), ", ").c_str());
             GMX_THROW(InvalidInputError(message));
         }
         else if (option.isRequired())
@@ -285,7 +300,8 @@ std::string FileNameOptionManager::completeDefaultFileName(const std::string&   
                     "Required option was not provided, and the default file "
                     "'%s' does not exist or is not accessible.\n"
                     "The following extensions were tried to complete the file name:\n  %s",
-                    prefix.c_str(), joinStrings(option.extensions(), ", ").c_str());
+                    prefix.c_str(),
+                    joinStrings(option.extensions(), ", ").c_str());
             GMX_THROW(InvalidInputError(message));
         }
         // We get here with the legacy optional behavior.

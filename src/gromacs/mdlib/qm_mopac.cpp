@@ -139,7 +139,7 @@ void init_mopac(const QMMM_QMrec& qm)
     snew(keywords, 240);
 
     sprintf(keywords, "PRECISE GEO-OK CHARGE=%d GRAD MMOK ANALYT %s\n",
-            qm.QMcharge_get(), eQMmethod_names[qm.QMmethod_get()]);
+            qm.QMcharge_get(), enumValueToString(qm.QMmethod_get()));
     nrQMatoms = qm.nrQMatoms_get();
     snew(atomicnumberQM, nrQMatoms);
     for (int i=0; i<nrQMatoms; i++)

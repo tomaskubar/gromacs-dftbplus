@@ -1,13 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
- * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2010,2014,2016,2017,2018 by the GROMACS development team.
- * Copyright (c) 2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 1991- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -21,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -30,20 +26,28 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
+ */
+/*!
+ * \defgroup module_math Module Math
+ * \brief A brief description for Module Math
  */
 #include "gmxpre.h"
 
-#include "3dtransforms.h"
+#include "gromacs/math/3dtransforms.h"
 
 #include <cmath>
 #include <cstdio>
 
-#include "gromacs/math/vec.h"
+#include <filesystem>
+
 #include "gromacs/utility/fatalerror.h"
+#include "gromacs/utility/real.h"
+#include "gromacs/utility/vec.h"
+#include "gromacs/utility/vectypes.h"
 
 #define N 4
 
@@ -112,22 +116,22 @@ void gmx_mat4_init_rotation(int axis, real angle, mat4 A)
     switch (axis)
     {
         case XX:
-            A[YY][YY] = cos(angle);
-            A[YY][ZZ] = -sin(angle);
-            A[ZZ][YY] = sin(angle);
-            A[ZZ][ZZ] = cos(angle);
+            A[YY][YY] = std::cos(angle);
+            A[YY][ZZ] = -std::sin(angle);
+            A[ZZ][YY] = std::sin(angle);
+            A[ZZ][ZZ] = std::cos(angle);
             break;
         case YY:
-            A[XX][XX] = cos(angle);
-            A[XX][ZZ] = sin(angle);
-            A[ZZ][XX] = -sin(angle);
-            A[ZZ][ZZ] = cos(angle);
+            A[XX][XX] = std::cos(angle);
+            A[XX][ZZ] = std::sin(angle);
+            A[ZZ][XX] = -std::sin(angle);
+            A[ZZ][ZZ] = std::cos(angle);
             break;
         case ZZ:
-            A[XX][XX] = cos(angle);
-            A[XX][YY] = -sin(angle);
-            A[YY][XX] = sin(angle);
-            A[YY][YY] = cos(angle);
+            A[XX][XX] = std::cos(angle);
+            A[XX][YY] = -std::sin(angle);
+            A[YY][XX] = std::sin(angle);
+            A[YY][YY] = std::cos(angle);
             break;
         default: gmx_fatal(FARGS, "Error: invalid axis: %d", axis);
     }

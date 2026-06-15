@@ -1,45 +1,47 @@
 # Packages, exported artifacts, and release engineering processes.
 
+# Special job to run cmake to output the version string and
+# regressiontest md5sum to a file
+
 prepare-release-version:
-  extends:
-    - .variables:default
-    - .rules:nightly-only-for-release
+  rules:
+    - !reference [.rules:nightly-only-for-release, rules]
   cache: {}
-  image: ${CI_REGISTRY}/gromacs/gromacs/ci-ubuntu-18.04-llvm-7-docs
+  image: ${CI_REGISTRY}/gromacs/gromacs/ci-ubuntu-24.04-llvm-19-docs
   stage: configure-build
   variables:
+    CMAKE: /usr/local/cmake-3.28.0/bin/cmake
     KUBERNETES_CPU_LIMIT: 1
     KUBERNETES_CPU_REQUEST: 1
     KUBERNETES_MEMORY_REQUEST: 2Gi
   script:
-    - cmake -P cmake/gmxVersionInfo.cmake &> version.json
+    - ${CMAKE} . -DGMX_BUILD_TARBALL=on
   artifacts:
     paths:
-      - version.json
+      - VersionInfo-partial.cmake.cmakein
 
 # Special job to package regressiontest files and have them available for testing
 # Runs during pre-build
 # Set up to only fetch the files and prepare everything for merge requests
 regressiontests:prepare:
-  extends:
-    - .variables:default
-    - .rules:merge-and-post-merge-acceptance
+  rules:
+    - !reference [.rules:merge-and-post-merge-acceptance, rules]
   cache: {}
-  image: ${CI_REGISTRY}/gromacs/gromacs/ci-ubuntu-18.04-llvm-7-docs
+  image: ${CI_REGISTRY}/gromacs/gromacs/ci-ubuntu-24.04-llvm-19-docs
   stage: configure-build
   variables:
     KUBERNETES_CPU_LIMIT: 1
     KUBERNETES_CPU_REQUEST: 1
     KUBERNETES_MEMORY_REQUEST: 2Gi
-  # Always clone the default version for this branch, master in this case
+  # Always clone the default version for this branch, release-2026 in this case
   script:
-    - export REGTESTBRANCH=master
-    - if [[ ! -z $REGRESSIONTESTBRANCH ]] ; then
+    - export REGTESTBRANCH=release-2026
+    - if [[ ! -z "$REGRESSIONTESTBRANCH" ]] ; then
       export REGTESTBRANCH=$REGRESSIONTESTBRANCH ;
       echo "Using $REGTESTBRANCH instead of default" ;
       fi
     - export CHECKOUTCOMMIT=FETCH_HEAD
-    - if [[ ! -z $REGRESSIONTESTCOMMIT ]] ; then
+    - if [[ ! -z "$REGRESSIONTESTCOMMIT" ]] ; then
       export CHECKOUTCOMMIT=$REGRESSIONTESTCOMMIT ;
       echo "Using $CHECKOUTCOMMIT instead of head of $REGTESTBRANCH" ;
       fi
@@ -63,13 +65,12 @@ regressiontests:prepare:
       - gmx-regressiontests.tar.gz
 
 regressiontests:package:
-  extends:
-    - .variables:default
-    - .rules:nightly-only-for-release
+  rules:
+    - !reference [.rules:nightly-only-for-release, rules]
   cache: {}
   # Docker image uploaded to dockerhub by user eriklindahl
   # TODO: Get DockerFile for admin/dockerfiles
-  image: ${CI_REGISTRY}/gromacs/gromacs/ci-ubuntu-18.04-llvm-7-docs
+  image: ${CI_REGISTRY}/gromacs/gromacs/ci-ubuntu-24.04-llvm-19-docs
   stage: release-package
   variables:
     KUBERNETES_CPU_LIMIT: 1
@@ -78,14 +79,13 @@ regressiontests:package:
   needs:
     - job: prepare-release-version
   script:
-    - VERSION=`cat version.json |
-      python3 -c "import json,sys; print(json.load(sys.stdin)['version'])"`
+    - VERSION=`sed -n -e '/GMX_VERSION_STRING\b/ s/.*"\(.*\)")/\1/p' VersionInfo-partial.cmake.cmakein`
     - REGTESTNAME="regressiontests-"$VERSION
     - if [[ $GROMACS_RELEASE != "true" ]] ; then
       REGTESTNAME=$REGTESTNAME-dev ;
       fi
-    - export REGTESTBRANCH=master
-    - if [[ $CI_COMMIT_REF_NAME == "master" || $CI_COMMIT_REF_NAME == "release-20"[1-2][0-9] ]] ; then
+    - export REGTESTBRANCH=release-2026
+    - if [[ $CI_COMMIT_REF_NAME == "main" || $CI_COMMIT_REF_NAME == "release-20"[1-2][0-9] ]] ; then
       export REGTESTBRANCH=$CI_COMMIT_REF_NAME ;
       fi
     - if [[ ! -d regressiontests ]] ; then
@@ -102,7 +102,7 @@ regressiontests:package:
     - git archive -o $REGTESTNAME.tar.gz --prefix $REGTESTNAME/ -9 HEAD
     - git archive -o gmx-regressiontests.tar.gz --prefix regressiontests/ -9 HEAD
     - mv $REGTESTNAME.tar.gz gmx-regressiontests.tar.gz ..
-    - echo "Build regressiontests for branch  $REGTESTBRANCH"
+    - echo "Build regressiontests $REGTESTNAME for branch  $REGTESTBRANCH"
     - cd ..
   artifacts:
     paths:
@@ -112,8 +112,9 @@ regressiontests:package:
 archive:configure:nightly:
   extends:
     - .docs:configure
-    - .rules:nightly-not-for-release
   stage: nightly-configure
+  rules:
+    - !reference [.rules:nightly-not-for-release, rules]
   dependencies: []
   variables:
     BUILD_DIR: build-package
@@ -124,7 +125,8 @@ archive:configure:nightly:
 archive:configure:release:
   extends:
     - .docs:configure
-    - .rules:nightly-only-for-release
+  rules:
+    - !reference [.rules:nightly-only-for-release, rules]
   variables:
     BUILD_DIR: build-package
     CMAKE_SIMD_OPTIONS: -DGMX_SIMD=None
@@ -138,12 +140,11 @@ archive:configure:release:
 # manually hacking things. TODO: #3361
 .archive:build:
   extends:
-    - .variables:default
     - .gromacs:base:build
     - .use-ccache
     - .before_script:default
     - .docs:build
-  image: ${CI_REGISTRY}/gromacs/gromacs/ci-ubuntu-18.04-llvm-7-docs
+  image: ${CI_REGISTRY}/gromacs/gromacs/ci-ubuntu-24.04-llvm-19-docs
   variables:
     KUBERNETES_CPU_LIMIT: 4
     KUBERNETES_CPU_REQUEST: 2
@@ -151,17 +152,16 @@ archive:configure:release:
   script:
     - rm -rf gromacs*tar.gz
     - cd $BUILD_DIR
-    - cmake --build . --target gmx -- -j4 2>&1 | tee buildLogFile.log
-    - cmake --build . --target man -- -j4 2>&1 | tee manBuildLogFile.log
-    - cmake --build . --target completion -- -j4 2>&1 | tee completionBuildLogFile.log
-    - cmake --build . --target install-guide -- -j4 2>&1 | tee installGuideBuildLogFile.log
-    - cmake --build . --target reference_checksum -- -j4 2>&1 | tee checksumBuildLogFile.log
-    - cmake --build . --target package_source -- -j4 2>&1 | tee packageBuildLogFile.log
+    - $CMAKE --build . --target gmx -- -j4 2>&1 | tee buildLogFile.log
+    - $CMAKE --build . --target man -- -j4 2>&1 | tee manBuildLogFile.log
+    - $CMAKE --build . --target completion -- -j4 2>&1 | tee completionBuildLogFile.log
+    - $CMAKE --build . --target install-guide -- -j4 2>&1 | tee installGuideBuildLogFile.log
+    - $CMAKE --build . --target package_source -- -j4 2>&1 | tee packageBuildLogFile.log
     - awk '/warning/,/warning.*generated|^$/' buildLogFile.log manBuildLogFile.log
-      completionBuildLogFile.log installGuideBuildLogFile.log checksumBuildLogFile.log
+      completionBuildLogFile.log installGuideBuildLogFile.log
       packageBuildLogFile.log | grep -v "CMake" | tee buildErrors.log || true
     - grep "cannot be built" buildLogFile.log manBuildLogFile.log
-      completionBuildLogFile.log installGuideBuildLogFile.log checksumBuildLogFile.log
+      completionBuildLogFile.log installGuideBuildLogFile.log
       packageBuildLogFile.log | tee -a buildErrors.log || true
     - if [ -s buildErrors.log ] ; then echo "Found warnings during build"; cat buildErrors.log; exit 1; fi
     - mv gromacs*tar.gz ..
@@ -173,6 +173,7 @@ archive:configure:release:
     - cd tempdir
     - tar -xf $SOURCETARBALL
     - rm -rf gromacs-*/$BUILD_DIR
+    - find gromacs-*/ -name __pycache__ -exec rm -rf '{}' '+'
     - tar -c --gzip -f $SOURCETARBALL gromacs-*/
     - mv $SOURCETARBALL ..
     - cd ..
@@ -182,14 +183,17 @@ archive:configure:release:
     when: always
     expire_in: 1 week
     paths:
-      - $BUILD_DIR/*log
+      - $BUILD_DIR/*logs
+      - $BUILD_DIR/bin
+      - $BUILD_DIR/lib
       - gromacs*tar.gz
 
 archive:build:
   extends:
     - .archive:build
-    - .rules:nightly-not-for-release
   stage: nightly-build
+  rules:
+    - !reference [.rules:nightly-not-for-release, rules]
   needs:
     - job: archive:configure:nightly
   variables:
@@ -198,44 +202,47 @@ archive:build:
 archive:package:
   extends:
     - .archive:build
-    - .rules:nightly-only-for-release
   stage: release-package
+  rules:
+    - !reference [.rules:nightly-only-for-release, rules]
   needs:
     - job: archive:configure:release
   variables:
     BUILD_DIR: build-package
 
-release-verify:
-  image: ${CI_REGISTRY}/gromacs/gromacs/ci-ubuntu-18.04-llvm-7-docs
+checksum-verify:
+  image: ${CI_REGISTRY}/gromacs/gromacs/ci-ubuntu-24.04-llvm-19-docs
   stage: release-verify
-  extends:
-    - .variables:default
-    - .rules:nightly-only-for-release
+  rules:
+    - !reference [.rules:nightly-only-for-release, rules]
   cache: {}
 
   variables:
     KUBERNETES_CPU_LIMIT: 1
     KUBERNETES_CPU_REQUEST: 1
     KUBERNETES_MEMORY_REQUEST: 2Gi
+    BUILD_DIR: build-package
   script:
-    - VERSION=`cat version.json |
-      python3 -c "import json,sys; print(json.load(sys.stdin)['version'])"`
-    - if [[ $GROMACS_RELEASE != "true" ]] ; then
-      VERSION=$VERSION-dev ;
+    - VALID_BUILD=true
+    - VERSION=`sed -n -e '/GMX_VERSION_STRING\b/ s/.*"\(.*\)")/\1/p' VersionInfo-partial.cmake.cmakein`
+    - if [[ "$GROMACS_RELEASE" != "true" ]] ; then
+      VERSION="$VERSION"-dev ;
       fi
-    - REGTEST_COMPARE=`cat version.json |
-      python3 -c "import json,sys; print(json.load(sys.stdin)['regressiontest-md5sum'])"`
-    - SOURCENAME=gromacs-$VERSION
-    - SOURCETARBALL=$SOURCENAME.tar.gz
-    - SOURCE_MD5SUM=`md5sum $SOURCETARBALL | awk '{print $1}'`
-    - REGTESTNAME=regressiontests-$VERSION
-    - REGTESTTARBALL=$REGTESTNAME.tar.gz
-    - REGTEST_MD5SUM=`md5sum $REGTESTTARBALL | awk '{print $1}'`
+    - REGTEST_COMPARE=`sed -n -e '/REGRESSIONTEST_MD5SUM/ s/.*"\(.*\)")/\1/p' VersionInfo-partial.cmake.cmakein`
+    - SOURCENAME=gromacs-"$VERSION"
+    - SOURCETARBALL="$SOURCENAME".tar.gz
+    - SOURCE_MD5SUM=`md5sum "$SOURCETARBALL" | awk '{print $1}'`
+    - REGTESTNAME=regressiontests-"$VERSION"
+    - REGTESTTARBALL="$REGTESTNAME".tar.gz
+    - REGTEST_MD5SUM=`md5sum "$REGTESTTARBALL" | awk '{print $1}'`
     - echo "$SOURCETARBALL md5sum = $SOURCE_MD5SUM"
     - echo "$REGTESTTARBALL md5sum = $REGTEST_MD5SUM"
     - echo "$REGTESTTARBALL reference md5sum = $REGTEST_COMPARE"
-    - if [[ $REGTEST_COMPARE != $REGTEST_MD5SUM && $GROMACS_RELEASE == "true" ]] ; then
+    - if [[ "$REGTEST_COMPARE" != "$REGTEST_MD5SUM" && "$GROMACS_RELEASE" == "true" ]] ; then
       echo "Mismatch in regressiontest md5sums";
+      VALID_BUILD=false;
+      fi
+    - if [[ "$VALID_BUILD" != "true" ]] ; then
       exit 1;
       fi
   dependencies:
@@ -243,27 +250,52 @@ release-verify:
     - regressiontests:package
     - prepare-release-version
 
+version-verify:
+  image: ${CI_REGISTRY}/gromacs/gromacs/ci-ubuntu-24.04-llvm-19-docs
+  stage: release-verify
+  rules:
+    - !reference [.rules:nightly-only-for-release, rules]
+  cache: {}
+
+  variables:
+    KUBERNETES_CPU_LIMIT: 1
+    KUBERNETES_CPU_REQUEST: 1
+    KUBERNETES_MEMORY_REQUEST: 2Gi
+    BUILD_DIR: release-doc-builds
+  script:
+    - VALID_BUILD=true
+    - VERSION=`sed -n -e '/GMX_VERSION_STRING\b/ s/.*"\(.*\)")/\1/p' VersionInfo-partial.cmake.cmakein`
+    - if [[ "$GROMACS_RELEASE" != "true" ]] ; then
+      VERSION="$VERSION"-dev ;
+      fi
+    - VERSION_FROM_BINARY=`"${BUILD_DIR}"/bin/gmx --version | grep "GROMACS version" | awk '{print $3}'`
+    - echo "Version name from CMake = $VERSION"
+    - echo "Version name from binary = $VERSION_FROM_BINARY"
+    - if [[ "$VERSION" != "$VERSION_FROM_BINARY" && "$GROMACS_RELEASE" == "true" ]] ; then
+      echo "Version names don't match";
+      VALID_BUILD=false;
+      fi
+    - if [[ "$VALID_BUILD" != "true" ]] ; then
+      exit 1;
+      fi
+  dependencies:
+    - webpage:dependencies
+    - prepare-release-version
+
 archive:nightly-webpage:
   extends:
     - .webpage:build
-    - .rules:nightly-not-for-release
   stage: nightly-deploy
+  rules:
+    - !reference [.rules:nightly-not-for-release, rules]
   needs:
     - job: linkchecker
       artifacts: false
     - job: webpage:build
   variables:
     BUILD_DIR: build-docs
-  before_script:
-    - eval $(ssh-agent -s)
-    - echo "$SSH_PRIVATE_KEY" | tr -d '\r' | ssh-add -
-    - mkdir -p ~/.ssh
-    - chmod 700 ~/.ssh
-    - ssh-keyscan www.gromacs.org > ~/.ssh/known_hosts # Force overwrite the known hosts so we only have that one key in it.
-    - chmod 644 ~/.ssh/known_hosts
   script:
     - tar czf webpage.tar.gz $BUILD_DIR/docs/html/
-    - rsync --chmod=u+rwX,g+rwX,o+rX -av $BUILD_DIR/docs/html/* $BUILD_DIR/docs/html/.[a-z]* pbauer@www.gromacs.org:/var/www/manual/nightly/
 
   artifacts:
     when: always
@@ -273,16 +305,34 @@ archive:nightly-webpage:
 archive:full-release:
   extends:
     - .webpage:build
-    - .rules:nightly-only-for-release
   stage: release-deploy
+  rules:
+    - !reference [.rules:nightly-only-for-release-user-triggered, rules]
   dependencies:
     - webpage:build:release
     - archive:package
     - regressiontests:package
+    - prepare-release-version
   variables:
     BUILD_DIR: release-doc-builds
+  before_script:
+    - eval $(ssh-agent -s)
+    # Ref https://gitlab.com/gitlab-examples/ssh-private-key/issues/1#note_48526556
+    - echo "$SSH_PRIVATE_KEY" | tr -d '\r' | ssh-add -
+    - mkdir -p ~/.ssh
+    - chmod 700 ~/.ssh
+    - ssh-keyscan manual.gromacs.org > ~/.ssh/known_hosts # Force overwrite the known hosts
+    - ssh-keyscan ftp.gromacs.org >> ~/.ssh/known_hosts   # as we only want these two keys.
+    - chmod 644 ~/.ssh/known_hosts
   script:
+    # Running CMake with the venv activated should not be strictly necessary,
+    # but helps to find and cache self-consistent Python and Sphinx details
+    # without additional hinting. Once CMakeCache.txt exists, the later stages
+    # should work fine without reactivating the venv.
+    - source /root/venv/py3.9/bin/activate
     - tar czf webpage.tar.gz $BUILD_DIR/docs/html/
+    - export VERSION=`sed -n -e '/GMX_VERSION_STRING\b/ s/.*"\(.*\)")/\1/p' VersionInfo-partial.cmake.cmakein`
+    - python admin/make-release-build.py --server
   artifacts:
     when: always
     paths:

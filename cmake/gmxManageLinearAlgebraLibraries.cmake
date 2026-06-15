@@ -1,10 +1,9 @@
 #
 # This file is part of the GROMACS molecular simulation package.
 #
-# Copyright (c) 2013,2014,2016,2020, by the GROMACS development team, led by
-# Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
-# and including many others, as listed in the AUTHORS file in the
-# top-level source directory and at http://www.gromacs.org.
+# Copyright 2013- The GROMACS Authors
+# and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+# Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
 #
 # GROMACS is free software; you can redistribute it and/or
 # modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
 #
 # You should have received a copy of the GNU Lesser General Public
 # License along with GROMACS; if not, see
-# http://www.gnu.org/licenses, or write to the Free Software Foundation,
+# https://www.gnu.org/licenses, or write to the Free Software Foundation,
 # Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
 #
 # If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
 # consider code for inclusion in the official distribution, but
 # derived work must not be called official GROMACS. Details are found
 # in the README & COPYING files - if they are missing, get the
-# official version at http://www.gromacs.org.
+# official version at https://www.gromacs.org.
 #
 # To help us fund GROMACS development, we humbly ask that you cite
-# the research papers on the package. Check out http://www.gromacs.org.
+# the research papers on the package. Check out https://www.gromacs.org.
 
 # Helper macro for the function below. We treat BLAS and LAPACK the same
 # way, so there's no reason to duplicate the logic for them
@@ -49,7 +48,7 @@ macro(manage_linear_algebra_library name function_in_library)
     # end, which would require caching whether the previous provider
     # was user/MKL/external/internal. It's possible (we do it for
     # FFT), but the number of times the user changes these is pretty
-    # low, so let's solve that one in master branch when we have
+    # low, so let's solve that one in main branch when we have
     # better CMake gear to support it.
     if(GMX_EXTERNAL_${name} OR NOT DEFINED GMX_EXTERNAL_${name})
         set(_find_quietly FALSE)
@@ -78,20 +77,16 @@ macro(manage_linear_algebra_library name function_in_library)
                     message(WARNING "GMX_${name}_USER library ${GMX_${name}_USER} was specified, but it may not provide ${name}. We are proceeding by assuming you know what you are doing and that linking F77-style to this library will work.")
                 endif()
 
-                if(HAVE_LIBMKL)
+                if(GMX_FFT_MKL)
                     message(STATUS "MKL and GMX_${name}_USER were both specified. Using the latter for ${name}.")
                 endif()
             endif()
+            set(GMX_DESCRIBE_${name} "External - user-supplied")
         endif()
 
-        if(NOT _library_was_found AND HAVE_LIBMKL)
+        if(NOT _library_was_found AND GMX_FFT_MKL)
             set(CMAKE_REQUIRED_LIBRARIES "${FFT_LIBRARIES}")
             set(CMAKE_REQUIRED_FLAGS "${FFT_LINKER_FLAGS}")
-            # This may also not work correctly if the user changes
-            # MKL_LIBRARIES after the first run. However,
-            # MKL_LIBRARIES is only needed
-            # for trying to use MKL with a non-Intel compiler, and we
-            # can live with that for now.
             check_function_exists(${function_in_library} _${name}_mkl_works)
             if(_${name}_mkl_works)
                 # If we ever need to compile with MKL linear algebra and
@@ -99,6 +94,7 @@ macro(manage_linear_algebra_library name function_in_library)
                 # (and probably tweak other things).
 #                list(APPEND LINEAR_ALGEBRA_LIBRARIES ${FFT_LINKER_FLAGS} ${FFT_LIBRARIES})
                 set(_library_was_found 1)
+                set(GMX_DESCRIBE_${name} "External - MKL")
             else()
                 set(_message_text "Intel's MKL was specified, and it should provide ${name}, but it does not. ")
             endif()
@@ -115,12 +111,19 @@ macro(manage_linear_algebra_library name function_in_library)
             if (${name}_FOUND)
                 set(_libraries_to_link ${${name}_LIBRARIES})
                 set(_library_was_found 1)
+                set(GMX_DESCRIBE_${name} "External - detected on the system")
             endif()
         endif()
 
-        if (NOT _library_was_found AND NOT _find_quietly)
-            message(STATUS "${_message_text}Using GROMACS built-in ${name}.")
+        if (NOT _library_was_found)
+            if (NOT _find_quietly)
+                message(STATUS "${_message_text}Using GROMACS built-in ${name}.")
+            endif()
+            set(GMX_DESCRIBE_${name} "Internal")
         endif()
+    else()
+        # GMX_EXTERNAL_${name} is explicitly FALSE
+        set(GMX_DESCRIBE_${name} "Internal")
     endif()
 
     # Default behaviour is to try to use an external library, but fall
@@ -153,7 +156,7 @@ endmacro()
 # these. If the libraries are not in a standard location, the user can
 # indicate a search path with CMAKE_PREFIX_PATH.
 #
-# However, if we are using icc+mkl (so a build command that includes
+# However, if we are using icpx+mkl (so a build command that includes
 # -mkl), then it is probably painful to try to link some other BLAS or
 # LAPACK. In that case, we use the BLAS & LAPACK provided by MKL. In
 # principle, we could offer a more configurable behaviour if/when
@@ -168,7 +171,7 @@ endmacro()
 # Inputs:
 #     GMX_EXTERNAL_BLAS     user input about whether to detect BLAS
 #     GMX_EXTERNAL_LAPACK   user input about whether to detect LAPACK
-#     HAVE_LIBMKL           true if the build will link to MKL
+#     GMX_FFT_MKL           true if the build will link to MKL for FFT
 #     FFT_LINKER_FLAGS      used iff HAVE_MKL
 #     FFT_LIBRARIES         used iff HAVE_MKL
 #     GMX_BLAS_USER         user input for BLAS libraries to use
@@ -184,6 +187,8 @@ endmacro()
 #
 # This function sets the following variables in its parent scope:
 #     LINEAR_ALGEBRA_LIBRARIES  will be set as required to add libraries required for linear algebra
+#     GMX_DESCRIBE_BLAS         describes the origin of BLAS routines used in GROMACS
+#     GMX_DESCRIBE_LAPACK       describes the origin of LAPACK routines used in GROMACS
 #
 function(gmxManageLinearAlgebraLibraries)
     include(CheckFunctionExists)
@@ -196,6 +201,8 @@ function(gmxManageLinearAlgebraLibraries)
 
     # Propagate the new local value to the parent scope
     set(LINEAR_ALGEBRA_LIBRARIES "${LINEAR_ALGEBRA_LIBRARIES}" PARENT_SCOPE)
+    set(GMX_DESCRIBE_BLAS ${GMX_DESCRIBE_BLAS} PARENT_SCOPE)
+    set(GMX_DESCRIBE_LAPACK ${GMX_DESCRIBE_LAPACK} PARENT_SCOPE)
 endfunction()
 
 gmxManageLinearAlgebraLibraries()

@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2019, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2019- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \internal \file
  * \brief Tests for the Leap-Frog integrator
@@ -46,18 +45,22 @@
 #ifndef GMX_MDLIB_TESTS_LEAPFROGTESTDATA_H
 #define GMX_MDLIB_TESTS_LEAPFROGTESTDATA_H
 
+#include <memory>
 #include <vector>
 
 #include "gromacs/gpu_utils/gpu_utils.h"
-#include "gromacs/math/vec.h"
-#include "gromacs/math/vectypes.h"
+#include "gromacs/math/matrix.h"
+#include "gromacs/math/paddedvector.h"
 #include "gromacs/mdlib/update.h"
 #include "gromacs/mdtypes/fcdata.h"
 #include "gromacs/mdtypes/group.h"
 #include "gromacs/mdtypes/inputrec.h"
 #include "gromacs/mdtypes/mdatom.h"
 #include "gromacs/mdtypes/state.h"
+#include "gromacs/utility/real.h"
 #include "gromacs/utility/stringutil.h"
+#include "gromacs/utility/vec.h"
+#include "gromacs/utility/vectypes.h"
 
 namespace gmx
 {
@@ -90,7 +93,7 @@ public:
     //! Inverse masses of the particles
     PaddedVector<real> inverseMasses_;
     //! Inverse masses of the particles per dimension
-    PaddedVector<RVec> inverseMassesPerDim_;
+    std::vector<RVec> inverseMassesPerDim_;
 
     //! MD atoms structure in which inverse masses will be passed to the integrator
     t_mdatoms mdAtoms_;
@@ -113,7 +116,7 @@ public:
     //! Period between pressure coupling steps
     float dtPressureCouple_;
     //! Matrix for Parrinello-Rahman velocity scaling
-    matrix velocityScalingMatrix_;
+    Matrix3x3 velocityScalingMatrix_;
 
     /*! \brief Constructor.
      *
@@ -125,8 +128,6 @@ public:
      * \param[in]  nstpcouple        Number of steps between pressure coupling steps (zero for no pressure coupling)
      */
     LeapFrogTestData(int numAtoms, real timestep, const rvec v0, const rvec f0, int numTCoupleGroups, int nstpcouple);
-
-    ~LeapFrogTestData();
 };
 
 } // namespace test

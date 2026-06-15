@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2015,2016,2017,2018,2019, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2015- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \defgroup module_mdrunutility Implementation of mdrun utility functionality
  * \ingroup group_mdrun
@@ -57,6 +56,8 @@
 
 #ifndef GMX_MDRUNUTILITY_HANDLERESTART_H
 #define GMX_MDRUNUTILITY_HANDLERESTART_H
+
+#include <tuple>
 
 #include "gromacs/mdrunutility/logging.h"
 #include "gromacs/utility/basedefinitions.h"
@@ -93,27 +94,38 @@ enum class StartingBehavior : int
  * If there is no checkpoint file, we return a value to indicate a new
  * simulation is starting.
  *
- * On return, \p fnm is updated with suffix strings for part numbers if we are
- * doing a restart from checkpoint and are not appending.
+ * On return, \p fnm is updated with suffix strings for part numbers
+ * if we are doing a restart from checkpoint and are not
+ * appending. Output files may have been truncated if we are
+ * restarting from a checkpoint and are appending.
  *
  * The routine also does communication to coordinate behaviour between
  * all simulations, including for error conditions.
  *
- * \throws FileIOError             When the filesystem behavior prevents the
- *                                 user's choices being implemented.
- * \throws InconsistentInputError  When the users's choices cannot be implemented.
- * \throws GromacsException        On ranks upon which the error condition was
- *                                 not detected.
+ * Note that this function looks like it does lots of different things
+ * that could be separated, but that is actually difficult.  The
+ * starting behaviour can depend on the state of the filesystem and
+ * the contents of the checkpoint header, each of which we only want
+ * to read once, so we can't easily separate the decision of what to
+ * do from the details of doing it (e.g. changing output filenames or
+ * truncating output files).
  *
- * \param[in]    isSimulationMaster Whether this rank is the master rank of a simulation
- * \param[in]    communicator       MPI communicator
+ * \throws FileIOError               When the filesystem behavior prevents the
+ *                                   user's choices being implemented.
+ * \throws InconsistentInputError    When the users's choices cannot be implemented.
+ * \throws ParallelConsistencyError  On ranks upon which the error condition was
+ *                                   not detected.
+ *
+ * \param[in]    isSimulationMain   Whether this rank is the main rank of a simulation
+ * \param[in]    communicator       MPI communicator across which error behaviour must
+ *                                  be kept consistent
  * \param[in]    ms                 Handles multi-simulations.
  * \param[in]    appendingBehavior  User choice for appending
  * \param[in]    nfile              Size of fnm struct
  * \param[inout] fnm                Filename parameters to mdrun
  *
- * \return  Description of how mdrun is starting */
-std::tuple<StartingBehavior, LogFilePtr> handleRestart(bool                  isSimulationMaster,
+ * \return  Description of how mdrun is starting and log file pointer */
+std::tuple<StartingBehavior, LogFilePtr> handleRestart(bool                  isSimulationMain,
                                                        MPI_Comm              communicator,
                                                        const gmx_multisim_t* ms,
                                                        AppendingBehavior     appendingBehavior,

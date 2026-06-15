@@ -1,13 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
- * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2016,2017 by the GROMACS development team.
- * Copyright (c) 2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 1991- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -21,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -30,41 +26,52 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 
-#ifndef _checkpoint_h
-#define _checkpoint_h
+#ifndef GMX_FILEIO_CHECKPOINT_H
+#define GMX_FILEIO_CHECKPOINT_H
 
+#include <cstdint>
 #include <cstdio>
 
+#include <filesystem>
+#include <limits>
+#include <string>
+#include <string_view>
 #include <vector>
 
 #include "gromacs/compat/pointers.h"
-#include "gromacs/math/vectypes.h"
 #include "gromacs/utility/basedefinitions.h"
-#include "gromacs/utility/gmxmpi.h"
 #include "gromacs/utility/keyvaluetreebuilder.h"
+#include "gromacs/utility/vectypes.h"
 
 class energyhistory_t;
 struct gmx_file_position_t;
 struct ObservablesHistory;
-struct t_commrec;
 struct t_fileio;
 struct t_inputrec;
 class t_state;
 struct t_trxframe;
+enum class IntegrationAlgorithm : int;
+enum class SwapType : int;
+enum class LambdaWeightCalculation : int;
+enum class CheckPointVersion : int;
 
 namespace gmx
 {
 
-struct MdModulesNotifier;
+struct MDModulesNotifiers;
+class MpiComm;
 class KeyValueTreeObject;
 class ReadCheckpointDataHolder;
 class WriteCheckpointDataHolder;
+
+//! The maximum number of atoms that can be stored in a checkpoint file
+static constexpr int64_t sc_checkpointMaxAtomCount = std::numeric_limits<unsigned int>::max() / 3;
 
 /*! \brief Read to a key-value-tree value used for checkpointing.
  *
@@ -81,18 +88,18 @@ class WriteCheckpointDataHolder;
  */
 template<typename ValueType>
 void readKvtCheckpointValue(compat::not_null<ValueType*> value,
-                            const std::string&           name,
-                            const std::string&           identifier,
+                            std::string_view             name,
+                            std::string_view             identifier,
                             const KeyValueTreeObject&    kvt);
 //! \copydoc readKvtCheckpointValue
 extern template void readKvtCheckpointValue(compat::not_null<std::int64_t*> value,
-                                            const std::string&              name,
-                                            const std::string&              identifier,
+                                            std::string_view                name,
+                                            std::string_view                identifier,
                                             const KeyValueTreeObject&       kvt);
 //! \copydoc readKvtCheckpointValue
 extern template void readKvtCheckpointValue(compat::not_null<real*>   value,
-                                            const std::string&        name,
-                                            const std::string&        identifier,
+                                            std::string_view          name,
+                                            std::string_view          identifier,
                                             const KeyValueTreeObject& kvt);
 
 /*! \brief Write to a key-value-tree used for checkpointing.
@@ -107,53 +114,19 @@ extern template void readKvtCheckpointValue(compat::not_null<real*>   value,
  */
 template<typename ValueType>
 void writeKvtCheckpointValue(const ValueType&          value,
-                             const std::string&        name,
-                             const std::string&        identifier,
+                             std::string_view          name,
+                             std::string_view          identifier,
                              KeyValueTreeObjectBuilder kvtBuilder);
 //! \copydoc writeKvtCheckpointValue
 extern template void writeKvtCheckpointValue(const std::int64_t&       value,
-                                             const std::string&        name,
-                                             const std::string&        identifier,
+                                             std::string_view          name,
+                                             std::string_view          identifier,
                                              KeyValueTreeObjectBuilder kvtBuilder);
 //! \copydoc writeKvtCheckpointValue
 extern template void writeKvtCheckpointValue(const real&               value,
-                                             const std::string&        name,
-                                             const std::string&        identifier,
+                                             std::string_view          name,
+                                             std::string_view          identifier,
                                              KeyValueTreeObjectBuilder kvtBuilder);
-
-/*! \libinternal
- * \brief Provides the MdModules with the checkpointed data on the master rank.
- */
-struct MdModulesCheckpointReadingDataOnMaster
-{
-    //! The data of the MdModules that is stored in the checkpoint file
-    const KeyValueTreeObject& checkpointedData_;
-    //! The version of the read ceckpoint file
-    int checkpointFileVersion_;
-};
-
-/*! \libinternal
- * \brief Provides the MdModules with the communication record to broadcast.
- */
-struct MdModulesCheckpointReadingBroadcast
-{
-    //! The communicator
-    MPI_Comm communicator_;
-    //! Whether the run is executed in parallel
-    bool isParallelRun_;
-    //! The version of the read file version
-    int checkpointFileVersion_;
-};
-
-/*! \libinternal \brief Writing the MdModules data to a checkpoint file.
- */
-struct MdModulesWriteCheckpointData
-{
-    //! Builder for the Key-Value-Tree to store the MdModule checkpoint data
-    KeyValueTreeObjectBuilder builder_;
-    //! The version of the read file version
-    int checkpointFileVersion_;
-};
 
 } // namespace gmx
 
@@ -162,6 +135,72 @@ struct MdModulesWriteCheckpointData
 
 // TODO Replace this mechanism with std::array<char, 1024> or similar.
 #define CPTSTRLEN 1024
+
+/*! \brief Enum of values that describe the contents of a cpt file
+ * whose format matches a version number
+ *
+ * The enum helps the code be more self-documenting and ensure merges
+ * do not silently resolve when two patches make the same bump. When
+ * changing checkpoint contents, add a new element just above Count
+ * in this enumeration, and write code that does the right thing
+ * according to the value of file_version.
+ */
+enum class CheckPointVersion : int
+{
+    //! Unknown initial version
+    UnknownVersion0,
+    //! Unknown version 1
+    UnknownVersion1,
+    //! Store magic number to validate file.
+    AddMagicNumber,
+    //! Store which sim this is.
+    SafeSimulationPart,
+    //! Store energy data.
+    EkinDataAndFlags,
+    //! Store current step.
+    SafeSteps,
+    //! Cutoff before version 4.5.
+    Version45,
+    //! Unknown version 7.
+    UnknownVersion7,
+    //! Store checksum.
+    FileChecksumAndSize,
+    //! Unknown version 9.
+    UnknownVersion9,
+    //! Safe NH chains for thermostat.
+    NoseHooverThermostat,
+    //! Safe NH chains for barostat.
+    NoseHooverBarostat,
+    //! Safe host info.
+    HostInformation,
+    //! Activate double build.
+    DoublePrecisionBuild,
+    //! Lambda stuff.
+    LambdaStateAndHistory,
+    //! ED stuff.
+    EssentialDynamics,
+    //! Swap state stuff.
+    SwapState,
+    //! AWH history flags added.
+    AwhHistoryFlags,
+    //! Remove functionality that makes mdrun builds non-reproducible.
+    RemoveBuildMachineInformation,
+    //! Allow using COM of previous step as pull group PBC reference.
+    ComPrevStepAsPullGroupReference,
+    //! Added possibility to output average pull force and position.
+    PullAverage,
+    //! Added checkpointing for MDModules.
+    MDModules,
+    //! Added checkpointing for modular simulator.
+    ModularSimulator,
+    //! Added local (per walker) weight contribution to each point in AWH.
+    AwhLocalWeightSum,
+    //! The total number of checkpoint versions.
+    Count,
+    //! Current version
+    CurrentVersion = Count - 1
+};
+
 
 /*!
  * \brief
@@ -183,7 +222,7 @@ struct MdModulesWriteCheckpointData
 struct CheckpointHeaderContents
 {
     //! Version of checkpoint file read from disk.
-    int file_version;
+    CheckPointVersion file_version;
     //! Version string.
     char version[CPTSTRLEN];
     //! Deprecated string for time.
@@ -199,11 +238,11 @@ struct CheckpointHeaderContents
     //! Time string.
     char ftime[CPTSTRLEN];
     //! Which integrator is in use.
-    int eIntegrator;
+    IntegrationAlgorithm eIntegrator;
     //! Which part of the simulation this is.
-    int simulation_part;
+    int simulation_part = 0;
     //! Which step the checkpoint is at.
-    int64_t step;
+    int64_t step = 0;
     //! Current simulation time.
     double t;
     //! Number of nodes used for simulation,
@@ -237,46 +276,49 @@ struct CheckpointHeaderContents
     //! Essential dynamics states.
     int nED;
     //! Enum for coordinate swapping.
-    int eSwapCoords;
+    SwapType eSwapCoords;
     //! Whether the checkpoint was written by modular simulator.
     bool isModularSimulatorCheckpoint = false;
 };
 
 /*! \brief Low-level checkpoint writing function */
-void write_checkpoint_data(t_fileio*                         fp,
+void write_checkpoint_data(const std::filesystem::path&      filename,
                            CheckpointHeaderContents          headerContents,
                            gmx_bool                          bExpanded,
-                           int                               elamstats,
+                           LambdaWeightCalculation           elamstats,
                            t_state*                          state,
                            ObservablesHistory*               observablesHistory,
-                           const gmx::MdModulesNotifier&     notifier,
+                           const gmx::MDModulesNotifiers&    mdModulesNotifiers,
                            std::vector<gmx_file_position_t>* outputfiles,
                            gmx::WriteCheckpointDataHolder*   modularSimulatorCheckpointData);
 
 /* Loads a checkpoint from fn for run continuation.
  * Generates a fatal error on system size mismatch.
- * The master node reads the file
+ * The main node reads the file
  * and communicates all the modified number of steps,
  * but not the state itself.
  * With reproducibilityRequested warns about version, build, #ranks differences.
  */
-void load_checkpoint(const char*                    fn,
+void load_checkpoint(const std::filesystem::path&   fn,
                      t_fileio*                      logfio,
-                     const t_commrec*               cr,
-                     const ivec                     dd_nc,
+                     const gmx::MpiComm&            mpiCommSimulation,
                      t_inputrec*                    ir,
                      t_state*                       state,
                      ObservablesHistory*            observablesHistory,
                      gmx_bool                       reproducibilityRequested,
-                     const gmx::MdModulesNotifier&  mdModulesNotifier,
+                     const gmx::MDModulesNotifiers& mdModulesNotifiers,
                      gmx::ReadCheckpointDataHolder* modularSimulatorCheckpointData,
                      bool                           useModularSimulator);
 
-/* Read everything that can be stored in t_trxframe from a checkpoint file */
-void read_checkpoint_trxframe(struct t_fileio* fp, t_trxframe* fr);
+/*! \brief Read everything that can be stored in t_trxframe from a checkpoint file
+ *
+ * \param[in]  filename         Name of checkpoint file from which to read
+ * \param[out] fr               Trajectory frame into which to read
+ */
+void read_checkpoint_trxframe(const std::filesystem::path& filename, t_trxframe* fr);
 
 /* Print the complete contents of checkpoint file fn to out */
-void list_checkpoint(const char* fn, FILE* out);
+void list_checkpoint(const std::filesystem::path& fn, FILE* out);
 
 /*!\brief Read simulation step and part from a checkpoint file
  *
@@ -286,17 +328,17 @@ void list_checkpoint(const char* fn, FILE* out);
  * \param[out] simulation_part  The part of the simulation that wrote the checkpoint
  * \param[out] step             The final step number of the simulation that wrote the checkpoint
  *
- * The output variables will both contain 0 if filename is NULL, the file
- * does not exist, or is not readable. */
-void read_checkpoint_part_and_step(const char* filename, int* simulation_part, int64_t* step);
+ * \throws FileIOError if the file cannot be opened */
+void read_checkpoint_part_and_step(const std::filesystem::path& filename, int* simulation_part, int64_t* step);
 
 /*!\brief Return header information from an open checkpoint file.
  *
  * Used by mdrun to handle restarts
  *
- * \param[in]  fp               Handle to open checkpoint file
+ * \param[in]  filename         Name of checkpoint file
  * \param[out] outputfiles      Container of output file names from the previous run. */
 CheckpointHeaderContents
-read_checkpoint_simulation_part_and_filenames(t_fileio* fp, std::vector<gmx_file_position_t>* outputfiles);
+read_checkpoint_simulation_part_and_filenames(const std::filesystem::path&      filename,
+                                              std::vector<gmx_file_position_t>* outputfiles);
 
 #endif

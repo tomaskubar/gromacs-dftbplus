@@ -1,11 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2011-2018, The GROMACS development team.
- * Copyright (c) 2019, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2011- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -19,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -28,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \internal \file
  * \brief
@@ -42,7 +40,7 @@
  */
 #include "gmxpre.h"
 
-#include "stringutil.h"
+#include "gromacs/utility/stringutil.h"
 
 #include <cctype>
 #include <cstdarg>
@@ -54,6 +52,7 @@
 #include <string>
 #include <vector>
 
+#include "gromacs/utility/arrayref.h"
 #include "gromacs/utility/exceptions.h"
 #include "gromacs/utility/gmxassert.h"
 
@@ -63,7 +62,7 @@ namespace gmx
 std::size_t countWords(const char* s)
 {
     std::size_t nWords = 0;
-    // Use length variable to avoid N^2 complexity when executing strlen(s) every iteration
+    // Use length variable to avoid N^2 complexity when executing std::strlen(s) every iteration
     std::size_t length = std::strlen(s);
 
     for (std::size_t i = 0; i < length; i++)
@@ -133,16 +132,16 @@ std::string stripString(const std::string& str)
 
 std::string formatString(gmx_fmtstr const char* fmt, ...)
 {
-    va_list ap;
+    std::va_list ap;
     va_start(ap, fmt);
     std::string result = formatStringV(fmt, ap);
     va_end(ap);
     return result;
 }
 
-std::string formatStringV(const char* fmt, va_list ap)
+std::string formatStringV(const char* fmt, std::va_list ap)
 {
-    va_list           ap_copy;
+    std::va_list      ap_copy;
     char              staticBuf[1024];
     int               length = 1024;
     std::vector<char> dynamicBuf;
@@ -200,11 +199,11 @@ std::vector<std::string> splitString(const std::string& str)
 std::vector<std::string> splitDelimitedString(const std::string& str, char delim)
 {
     std::vector<std::string> result;
-    size_t                   currPos = 0;
-    const size_t             len     = str.length();
+    const size_t             len = str.length();
     if (len > 0)
     {
-        size_t nextDelim;
+        size_t nextDelim = 0;
+        size_t currPos   = 0;
         do
         {
             nextDelim = str.find(delim, currPos);
@@ -304,9 +303,24 @@ std::string replaceAllWords(const std::string& input, const std::string& from, c
 bool equalCaseInsensitive(const std::string& source, const std::string& target)
 {
     return source.length() == target.length()
-           && std::equal(source.begin(), source.end(), target.begin(), [](const char& s, const char& t) {
-                  return std::tolower(s) == std::tolower(t);
-              });
+           && std::equal(source.begin(),
+                         source.end(),
+                         target.begin(),
+                         [](const char& s, const char& t)
+                         { return std::tolower(s) == std::tolower(t); });
+}
+
+bool equalIgnoreDash(const std::string& source, const std::string& target)
+{
+    return source.length() == target.length()
+           && std::equal(source.begin(),
+                         source.end(),
+                         target.begin(),
+                         [](const char& s, const char& t)
+                         {
+                             return ((s == '-' || s == '_') ? std::toupper(s) : s)
+                                    == ((t == '-' || t == '_') ? std::toupper(t) : t);
+                         });
 }
 
 bool equalCaseInsensitive(const std::string& source, const std::string& target, size_t maxLengthOfComparison)
@@ -328,8 +342,24 @@ bool equalCaseInsensitive(const std::string& source, const std::string& target, 
         }
         comparisonEnd = source.begin() + maxLengthOfComparison;
     }
-    return std::equal(source.begin(), comparisonEnd, target.begin(),
+    return std::equal(source.begin(),
+                      comparisonEnd,
+                      target.begin(),
                       [](const char& s, const char& t) { return std::tolower(s) == std::tolower(t); });
+}
+
+std::string toUpperCase(const std::string& text)
+{
+    std::string result(text);
+    std::transform(result.begin(), result.end(), result.begin(), toupper);
+    return result;
+}
+
+std::string toLowerCase(const std::string& text)
+{
+    std::string result(text);
+    std::transform(result.begin(), result.end(), result.begin(), tolower);
+    return result;
 }
 
 /********************************************************************
@@ -337,11 +367,7 @@ bool equalCaseInsensitive(const std::string& source, const std::string& target, 
  */
 
 TextLineWrapperSettings::TextLineWrapperSettings() :
-    maxLength_(0),
-    indent_(0),
-    firstLineIndent_(-1),
-    bKeepFinalSpaces_(false),
-    continuationChar_('\0')
+    maxLength_(0), indent_(0), firstLineIndent_(-1), bKeepFinalSpaces_(false), continuationChar_('\0')
 {
 }
 
@@ -470,6 +496,60 @@ std::vector<std::string> TextLineWrapper::wrapToVector(const std::string& input)
         lineStart = nextLineStart;
     }
     return result;
+}
+
+std::string prettyPrintListAsRange(ArrayRef<const int> list)
+{
+    if (list.empty())
+    {
+        return "";
+    }
+    if (list.size() == 1)
+    {
+        return std::to_string(list[0]);
+    }
+
+    std::vector<std::string> parts;
+    size_t                   i = 0;
+
+    while (i < list.size())
+    {
+        size_t start = i;
+
+        // Try to find an arithmetic sequence starting at position i
+        if (i + 1 < list.size())
+        {
+            int    step = list[i + 1] - list[i];
+            size_t end  = i + 1;
+
+            // Extend the sequence as far as possible
+            while (end + 1 < list.size() && list[end + 1] - list[end] == step)
+            {
+                ++end;
+            }
+
+            // If we found a sequence of at least 3 elements, format it
+            if (end - start >= 2 && step > 0)
+            {
+                if (step == 1)
+                {
+                    parts.push_back(gmx::formatString("%d-%d", list[start], list[end]));
+                }
+                else
+                {
+                    parts.push_back(gmx::formatString("%d-%d:%d", list[start], list[end], step));
+                }
+                i = end + 1;
+                continue;
+            }
+        }
+
+        // Not a sequence (or too short), just add the single element
+        parts.push_back(std::to_string(list[i]));
+        ++i;
+    }
+
+    return gmx::joinStrings(parts, ",");
 }
 
 } // namespace gmx

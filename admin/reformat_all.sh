@@ -1,11 +1,10 @@
-#!/bin/bash
+#!/usr/bin/env bash
 #
 # This file is part of the GROMACS molecular simulation package.
 #
-# Copyright (c) 2014,2015,2016,2017,2019, by the GROMACS development team, led by
-# Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
-# and including many others, as listed in the AUTHORS file in the
-# top-level source directory and at http://www.gromacs.org.
+# Copyright 2014- The GROMACS Authors
+# and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+# Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
 #
 # GROMACS is free software; you can redistribute it and/or
 # modify it under the terms of the GNU Lesser General Public License
@@ -19,7 +18,7 @@
 #
 # You should have received a copy of the GNU Lesser General Public
 # License along with GROMACS; if not, see
-# http://www.gnu.org/licenses, or write to the Free Software Foundation,
+# https://www.gnu.org/licenses, or write to the Free Software Foundation,
 # Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
 #
 # If you want to redistribute modifications to GROMACS, please
@@ -28,12 +27,12 @@
 # consider code for inclusion in the official distribution, but
 # derived work must not be called official GROMACS. Details are found
 # in the README & COPYING files - if they are missing, get the
-# official version at http://www.gromacs.org.
+# official version at https://www.gromacs.org.
 #
 # To help us fund GROMACS development, we humbly ask that you cite
-# the research papers on the package. Check out http://www.gromacs.org.
+# the research papers on the package. Check out https://www.gromacs.org.
 
-# This script runs uncrustify, clang-format, copyright header checks, or include sorter on
+# This script runs clang-format, copyright header checks, or include sorter on
 # all applicable files in the source tree.
 #
 # See `reformat_all.sh -h` for a brief usage, and docs/dev-manual/code-formatting.rst
@@ -41,9 +40,9 @@
 
 function usage() {
     echo "usage: reformat_all.sh [-f|--force]"
-    echo "           [--filter=(complete_formatting|clangformat|uncrustify|copyright|includesort)]"
+    echo "           [--filter=(complete_formatting|clangformat|copyright)]"
     echo "           [--pattern=<pattern>] [<action>] [-B=<build dir>]"
-    echo "<action>: (list-files|uncrustify|clang-format*|copyright|includesort) (*=default)"
+    echo "<action>: (list-files|clang-format*|copyright) (*=default)"
 }
 
 filter=default
@@ -51,9 +50,8 @@ force=
 patterns=()
 action=clang-format
 for arg in "$@" ; do
-    if [[ "$arg" == "list-files" || "$arg" == "uncrustify" ||
-          "$arg" == "clang-format" || "$arg" == "copyright" ||
-          "$arg" == "includesort" ]] ; then
+    if [[ "$arg" == "list-files" ||
+          "$arg" == "clang-format" || "$arg" == "copyright" ]] ; then
         action=$arg
     elif [[ "$arg" == --filter=* ]] ; then
         filter=${arg#--filter=}
@@ -85,23 +83,9 @@ case "$action" in
     list-files)
         command=cat
         ;;
-    uncrustify)
-        # Check that uncrustify is present
-        if [ -z "$UNCRUSTIFY" ] ; then
-            echo "Please set the path to uncrustify using UNCRUSTIFY."
-            echo "Note that you need a custom version of uncrustify."
-            echo "See comments in the script file for how to get one."
-            exit 2
-        fi
-        if ! which "$UNCRUSTIFY" 1>/dev/null ; then
-            echo "Uncrustify not found: $UNCRUSTIFY"
-            exit 2
-        fi
-        command="xargs $UNCRUSTIFY -c admin/uncrustify.cfg --no-backup"
-        ;;
     clang-format)
         if [ -z "$CLANG_FORMAT" ] ; then
-            CLANG_FORMAT=clang-format-7
+            CLANG_FORMAT=clang-format-18
         fi
         if ! which "$CLANG_FORMAT" 1>/dev/null ; then
             echo "clang-format not found. Specify one with CLANG_FORMAT"
@@ -111,13 +95,6 @@ case "$action" in
         ;;
     copyright)
         command="xargs admin/copyright.py --check"
-        ;;
-    includesort)
-        if [ -z "${builddir}" ] ; then
-            echo "Build directory must be set with -B for includesort."
-            exit 2
-        fi
-        command="docs/doxygen/includesorter.py -S . -B ${builddir} -F -"
         ;;
     *)
         echo "Unknown action: $action"
@@ -133,12 +110,6 @@ if [[ "$filter" == "default" ]] ; then
 fi
 
 case "$filter" in
-    includesort)
-        filter_re="(complete_formatting|includesort)"
-        ;;
-    uncrustify)
-        filter_re="(uncrustify)"
-        ;;
     copyright)
         filter_re="(complete_formatting|copyright)"
         ;;

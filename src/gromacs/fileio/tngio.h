@@ -1,11 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2013,2014,2015,2016,2017 by the GROMACS development team.
- * Copyright (c) 2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2013- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -19,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -28,20 +26,24 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 
 #ifndef GMX_FILEIO_TNGIO_H
 #define GMX_FILEIO_TNGIO_H
 
+#include <cstdint>
 #include <cstdio>
 
-#include "gromacs/math/vectypes.h"
+#include <filesystem>
+#include <string>
+
 #include "gromacs/utility/basedefinitions.h"
 #include "gromacs/utility/real.h"
+#include "gromacs/utility/vectypes.h"
 
 struct gmx_mtop_t;
 struct t_inputrec;
@@ -62,7 +64,7 @@ class ArrayRef;
  *
  * Handles all I/O errors internally via fatal error
  */
-void gmx_tng_open(const char* filename, char mode, gmx_tng_trajectory_t* tng_data_p);
+void gmx_tng_open(const std::filesystem::path& filename, char mode, gmx_tng_trajectory_t* tng_data_p);
 
 /*! \brief Finish writing a TNG trajectory file */
 void gmx_tng_close(gmx_tng_trajectory_t* tng);
@@ -140,14 +142,14 @@ void fflush_tng(gmx_tng_trajectory_t tng);
 float gmx_tng_get_time_of_final_frame(gmx_tng_trajectory_t tng);
 
 /*! \brief Prepare to write TNG output from trajectory conversion tools */
-void gmx_prepare_tng_writing(const char*              filename,
-                             char                     mode,
-                             gmx_tng_trajectory_t*    in,
-                             gmx_tng_trajectory_t*    out,
-                             int                      nAtoms,
-                             const struct gmx_mtop_t* mtop,
-                             gmx::ArrayRef<const int> index,
-                             const char*              indexGroupName);
+void gmx_prepare_tng_writing(const std::filesystem::path& filename,
+                             char                         mode,
+                             gmx_tng_trajectory_t*        in,
+                             gmx_tng_trajectory_t*        out,
+                             int                          nAtoms,
+                             const struct gmx_mtop_t*     mtop,
+                             gmx::ArrayRef<const int>     index,
+                             const char*                  indexGroupName);
 
 /*! \brief Write a trxframe to a TNG file
  *
@@ -207,5 +209,13 @@ int gmx_tng_get_box_output_interval(gmx_tng_trajectory_t gmx_tng);
  *
  * \return The box output interval, or -1 when TNG support is not available. */
 int gmx_tng_get_lambda_output_interval(gmx_tng_trajectory_t gmx_tng);
+
+namespace gmx
+{
+
+//! Returns information for describing the TNG support
+std::string tngDescription();
+
+} // namespace gmx
 
 #endif /* GMX_FILEIO_TNGIO_H */

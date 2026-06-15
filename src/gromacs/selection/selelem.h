@@ -1,11 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2009-2017, The GROMACS development team.
- * Copyright (c) 2019, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2009- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -19,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -28,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \internal \file
  * \brief
@@ -50,6 +48,8 @@
 #ifndef GMX_SELECTION_SELELEM_H
 #define GMX_SELECTION_SELELEM_H
 
+#include <cstdio>
+
 #include <memory>
 #include <string>
 
@@ -67,6 +67,7 @@ struct gmx_sel_evaluate_t;
 struct gmx_sel_mempool_t;
 
 struct t_compiler_data;
+struct gmx_ana_indexgrps_t;
 
 namespace gmx
 {
@@ -281,17 +282,17 @@ public:
     /*! \brief
      * Allocates memory and performs common initialization.
      *
-     * \param[in] type     Type of selection element to create.
+     * \param[in] elemType     Type of selection element to create.
      * \param[in] location Location of the element.
      *
-     * \a type is set to \p type,
+     * \a type is set to \p elemType,
      * \a v::type is set to \ref GROUP_VALUE for boolean and comparison
      * expressions and \ref NO_VALUE for others, and
      * \ref SEL_ALLOCVAL is set for non-root elements (\ref SEL_ALLOCDATA
      * is also set for \ref SEL_BOOLEAN elements).
      * All the pointers are set to NULL.
      */
-    SelectionTreeElement(e_selelem_t type, const SelectionLocation& location);
+    SelectionTreeElement(e_selelem_t elemType, const SelectionLocation& location);
     ~SelectionTreeElement();
 
     //! Frees the memory allocated for the \a v union.
@@ -426,7 +427,8 @@ public:
      */
     int flags;
     //! Data required by the evaluation function.
-    union {
+    union
+    {
         /*! \brief Index group data for several element types.
          *
          *  - \ref SEL_CONST : if the value type is \ref GROUP_VALUE,
@@ -452,13 +454,7 @@ public:
         //! Operation type for \ref SEL_BOOLEAN elements.
         e_boolean_t boolt;
         //! Operation type for \ref SEL_ARITHMETIC elements.
-        struct
-        {
-            //! Operation type.
-            e_arithmetic_t type;
-            //! String representation.
-            char* opstr;
-        } arith;
+        e_arithmetic_t type;
         //! Associated selection parameter for \ref SEL_SUBEXPRREF elements.
         struct gmx_ana_selparam_t* param;
         //! The string/number used to reference the group.

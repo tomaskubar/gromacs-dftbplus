@@ -1,13 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
- * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2016,2017 by the GROMACS development team.
- * Copyright (c) 2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 1991- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -21,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -30,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 #include "gmxpre.h"
 
@@ -41,15 +37,21 @@
 
 #include <cassert>
 #include <cctype>
+#include <cstddef>
 #include <cstring>
 
+#include <algorithm>
+#include <array>
+#include <iterator>
 #include <string>
 
 #include "gromacs/fileio/gmxfio.h"
 #include "gromacs/fileio/oenv.h"
-#include "gromacs/math/vec.h"
+#include "gromacs/mdrun/binary_information.h"
+#include "gromacs/mdspan/layouts.h"
+#include "gromacs/mdspan/mdspan.h"
+#include "gromacs/utility/arrayref.h"
 #include "gromacs/utility/basedefinitions.h"
-#include "gromacs/utility/binaryinformation.h"
 #include "gromacs/utility/coolstuff.h"
 #include "gromacs/utility/cstringutil.h"
 #include "gromacs/utility/exceptions.h"
@@ -57,6 +59,7 @@
 #include "gromacs/utility/futil.h"
 #include "gromacs/utility/smalloc.h"
 #include "gromacs/utility/sysinfo.h"
+#include "gromacs/utility/vec.h"
 
 gmx_bool output_env_get_print_xvgr_codes(const gmx_output_env_t* oenv)
 {
@@ -69,7 +72,7 @@ static char* xvgrstr(const std::string& gmx, const gmx_output_env_t* oenv, char*
 {
     /* Supported greek letter names and corresponding xmgrace/xmgr symbols */
     const char* sym[]  = { "beta",  "chi", "delta", "eta", "lambda", "mu",
-                          "omega", "phi", "psi",   "rho", "theta",  nullptr };
+                           "omega", "phi", "psi",   "rho", "theta",  nullptr };
     const char  symc[] = { 'b', 'c', 'd', 'h', 'l', 'm', 'w', 'f', 'y', 'r', 'q', '\0' };
     gmx_bool    bXVGR;
     int         g, b, i;
@@ -88,7 +91,8 @@ static char* xvgrstr(const std::string& gmx, const gmx_output_env_t* oenv, char*
             gmx_fatal(FARGS,
                       "Output buffer length in xvgstr (%d) too small to process xvg input string "
                       "'%s'",
-                      buflen, gmx.c_str());
+                      buflen,
+                      gmx.c_str());
         }
         if (gmx[g] == '\\')
         {
@@ -148,7 +152,7 @@ static char* xvgrstr(const std::string& gmx, const gmx_output_env_t* oenv, char*
                     default: buf[b] = '\0'; break;
                 }
                 g++;
-                b = strlen(buf);
+                b = std::strlen(buf);
             }
             else if (gmx[g] == '8')
             {
@@ -261,12 +265,12 @@ void xvgr_header(FILE*                   fp,
     }
 }
 
-FILE* xvgropen_type(const char*             fn,
-                    const char*             title,
-                    const std::string&      xaxis,
-                    const std::string&      yaxis,
-                    int                     exvg_graph_type,
-                    const gmx_output_env_t* oenv)
+FILE* xvgropen_type(const std::filesystem::path& fn,
+                    const char*                  title,
+                    const std::string&           xaxis,
+                    const std::string&           yaxis,
+                    int                          exvg_graph_type,
+                    const gmx_output_env_t*      oenv)
 {
     FILE* fp;
 
@@ -277,11 +281,11 @@ FILE* xvgropen_type(const char*             fn,
     return fp;
 }
 
-FILE* xvgropen(const char*             fn,
-               const char*             title,
-               const std::string&      xaxis,
-               const std::string&      yaxis,
-               const gmx_output_env_t* oenv)
+FILE* xvgropen(const std::filesystem::path& fn,
+               const char*                  title,
+               const std::string&           xaxis,
+               const std::string&           yaxis,
+               const gmx_output_env_t*      oenv)
 {
     return xvgropen_type(fn, title, xaxis, yaxis, exvggtXNY, oenv);
 }
@@ -318,7 +322,10 @@ void xvgr_world(FILE* out, real xmin, real ymin, real xmax, real ymax, const gmx
                 "@ world ymin %g\n"
                 "@ world xmax %g\n"
                 "@ world ymax %g\n",
-                xmin, ymin, xmax, ymax);
+                xmin,
+                ymin,
+                xmax,
+                ymax);
     }
 }
 
@@ -327,15 +334,8 @@ static bool stringIsEmpty(const std::string& s)
     return s.empty();
 }
 
-static bool stringIsEmpty(const char* s)
+void xvgrLegend(FILE* out, gmx::ArrayRef<const std::string> setNames, const struct gmx_output_env_t* oenv)
 {
-    return (s == nullptr || s[0] == '\0');
-}
-
-template<typename T>
-static void xvgr_legend(FILE* out, int nsets, const T* setname, const gmx_output_env_t* oenv)
-{
-    int  i;
     char buf[STRLEN];
 
     if (output_env_get_print_xvgr_codes(oenv))
@@ -346,55 +346,47 @@ static void xvgr_legend(FILE* out, int nsets, const T* setname, const gmx_output
         fprintf(out, "@ legend loctype view\n");
         fprintf(out, "@ legend %g, %g\n", 0.78, 0.8);
         fprintf(out, "@ legend length %d\n", 2);
-        for (i = 0; (i < nsets); i++)
+        int currentSet = 0;
+        for (const auto& name : setNames)
         {
-            if (!stringIsEmpty(setname[i]))
+            if (!stringIsEmpty(name))
             {
                 if (output_env_get_xvg_format(oenv) == XvgFormat::Xmgr)
                 {
-                    fprintf(out, "@ legend string %d \"%s\"\n", i, xvgrstr(setname[i], oenv, buf, STRLEN));
+                    fprintf(out, "@ legend string %d \"%s\"\n", currentSet, xvgrstr(name, oenv, buf, STRLEN));
                 }
                 else
                 {
-                    fprintf(out, "@ s%d legend \"%s\"\n", i, xvgrstr(setname[i], oenv, buf, STRLEN));
+                    fprintf(out, "@ s%d legend \"%s\"\n", currentSet, xvgrstr(name, oenv, buf, STRLEN));
                 }
             }
+            ++currentSet;
         }
     }
 }
 
-void xvgrLegend(FILE* out, const std::vector<std::string>& setNames, const struct gmx_output_env_t* oenv)
+void xvgrNewDataset(FILE* out, int nr_first, gmx::ArrayRef<const std::string> setNames, const gmx_output_env_t* oenv)
 {
-    xvgr_legend(out, setNames.size(), setNames.data(), oenv);
-}
-void xvgr_legend(FILE* out, int nsets, const char* const* setnames, const struct gmx_output_env_t* oenv)
-{
-    xvgr_legend<const char*>(out, nsets, setnames, oenv);
-}
-
-void xvgr_new_dataset(FILE* out, int nr_first, int nsets, const char** setname, const gmx_output_env_t* oenv)
-{
-    int  i;
     char buf[STRLEN];
 
     if (output_env_get_print_xvgr_codes(oenv))
     {
         fprintf(out, "@\n");
-        for (i = 0; (i < nsets); i++)
+        int currentSet = nr_first;
+        for (const auto& name : setNames)
         {
-            if (setname[i])
+            if (!name.empty())
             {
                 if (output_env_get_xvg_format(oenv) == XvgFormat::Xmgr)
                 {
-                    fprintf(out, "@ legend string %d \"%s\"\n", i + nr_first,
-                            xvgrstr(setname[i], oenv, buf, STRLEN));
+                    fprintf(out, "@ legend string %d \"%s\"\n", currentSet, xvgrstr(name, oenv, buf, STRLEN));
                 }
                 else
                 {
-                    fprintf(out, "@ s%d legend \"%s\"\n", i + nr_first,
-                            xvgrstr(setname[i], oenv, buf, STRLEN));
+                    fprintf(out, "@ s%d legend \"%s\"\n", currentSet, xvgrstr(name, oenv, buf, STRLEN));
                 }
             }
+            ++currentSet;
         }
     }
     else
@@ -413,8 +405,8 @@ void xvgr_line_props(FILE* out, int NrSet, int LineStyle, int LineColor, const g
     }
 }
 
-static const char* LocTypeStr[] = { "view", "world" };
-static const char* BoxFillStr[] = { "none", "color", "pattern" };
+static constexpr std::array<const char*, 2> LocTypeStr = { "view", "world" };
+static constexpr std::array<const char*, 3> BoxFillStr = { "none", "color", "pattern" };
 
 void xvgr_box(FILE*                   out,
               int                     LocType,
@@ -470,21 +462,21 @@ static char* fgets3(FILE* fp, char** ptr, int* len, int maxlen)
                 curp          = 0;
             }
         }
-        if (fgets(*ptr + curp, len_remaining, fp) == nullptr)
+        if (std::fgets(*ptr + curp, len_remaining, fp) == nullptr)
         {
             /* if last line, skip */
             return nullptr;
         }
         curp += len_remaining - 1; /* overwrite the nul char in next iteration */
         len_remaining = 1;
-    } while ((std::strchr(*ptr, '\n') == nullptr) && (feof(fp) == 0));
+    } while ((std::strchr(*ptr, '\n') == nullptr) && (std::feof(fp) == 0));
 
     if (*len + STRLEN >= maxlen)
     {
         return nullptr; /* this line was too long */
     }
 
-    if (feof(fp))
+    if (std::feof(fp))
     {
         /* We reached EOF before '\n', skip this last line. */
         return nullptr;
@@ -550,7 +542,7 @@ static char* read_xvgr_string(const char* line)
     return str;
 }
 
-int read_xvg_legend(const char* fn, double*** y, int* ny, char** subtitle, char*** legend)
+int read_xvg_legend(const std::filesystem::path& fn, double*** y, int* ny, char** subtitle, char*** legend)
 {
     FILE*    fp;
     char*    ptr;
@@ -674,7 +666,7 @@ int read_xvg_legend(const char* fn, double*** y, int* ny, char** subtitle, char*
             }
             if (k != nny)
             {
-                fprintf(stderr, "Only %d columns on line %d in file %s\n", k, line, fn);
+                fprintf(stderr, "Only %d columns on line %d in file %s\n", k, line, fn.string().c_str());
                 for (; (k < nny); k++)
                 {
                     yy[k][nx] = 0.0;
@@ -706,10 +698,9 @@ int read_xvg_legend(const char* fn, double*** y, int* ny, char** subtitle, char*
     return nx;
 }
 
-int read_xvg(const char* fn, double*** y, int* ny)
+int read_xvg(const std::filesystem::path& fn, double*** y, int* ny)
 {
-    gmx::MultiDimArray<std::vector<double>, gmx::dynamicExtents2D> xvgData =
-            readXvgData(std::string(fn));
+    gmx::MultiDimArray<std::vector<double>, gmx::dynamicExtents2D> xvgData = readXvgData(fn);
 
     int numColumns = xvgData.extent(0);
     int numRows    = xvgData.extent(1);
@@ -731,7 +722,10 @@ int read_xvg(const char* fn, double*** y, int* ny)
     return nx;
 }
 
-gmx::MultiDimArray<std::vector<double>, gmx::dynamicExtents2D> readXvgData(const std::string& fn)
+namespace
+{
+//! Internal reading of xvg data, before changing layout.
+gmx::MultiDimArray<std::vector<double>, gmx::dynamicExtents2D> readXvgDataInternal(const std::filesystem::path& fn)
 {
     FILE* fp = gmx_fio_fopen(fn.c_str(), "r");
     char* ptr;
@@ -740,7 +734,7 @@ gmx::MultiDimArray<std::vector<double>, gmx::dynamicExtents2D> readXvgData(const
     char* tmpbuf;
     int   len = STRLEN;
 
-    //! This only gets properly set after the first line of data is read
+    // This only gets properly set after the first line of data is read
     int numColumns = 0;
     int numRows    = 0;
     snew(tmpbuf, len);
@@ -786,7 +780,11 @@ gmx::MultiDimArray<std::vector<double>, gmx::dynamicExtents2D> readXvgData(const
 
         if (columnCount != numColumns)
         {
-            fprintf(stderr, "Only %d columns on line %d in file %s\n", columnCount, line, fn.c_str());
+            fprintf(stderr,
+                    "Only %d columns on line %d in file %s\n",
+                    columnCount,
+                    line,
+                    fn.string().c_str());
             for (; (columnCount < numColumns); columnCount++)
             {
                 xvgData.push_back(0.0);
@@ -802,6 +800,16 @@ gmx::MultiDimArray<std::vector<double>, gmx::dynamicExtents2D> readXvgData(const
     gmx::MultiDimArray<std::vector<double>, gmx::dynamicExtents2D> xvgDataAsArray(numRows, numColumns);
     std::copy(std::begin(xvgData), std::end(xvgData), begin(xvgDataAsArray.asView()));
 
+    return xvgDataAsArray;
+}
+
+} // namespace
+
+gmx::MultiDimArray<std::vector<double>, gmx::dynamicExtents2D> readXvgData(const std::filesystem::path& fn)
+{
+    auto      xvgDataAsArray = readXvgDataInternal(fn);
+    const int numRows        = xvgDataAsArray.extent(0);
+    const int numColumns     = xvgDataAsArray.extent(1);
     gmx::MultiDimArray<std::vector<double>, gmx::dynamicExtents2D> xvgDataAsArrayTransposed(
             numColumns, numRows);
     for (std::ptrdiff_t row = 0; row < numRows; ++row)
@@ -815,15 +823,53 @@ gmx::MultiDimArray<std::vector<double>, gmx::dynamicExtents2D> readXvgData(const
     return xvgDataAsArrayTransposed;
 }
 
-void write_xvg(const char* fn, const char* title, int nx, int ny, real** y, const char** leg, const gmx_output_env_t* oenv)
+gmx::MultiDimArray<std::vector<double>, gmx::dynamicExtents2D>
+readXvgTimeSeries(const std::filesystem::path& fn, std::optional<real> startTime, std::optional<real> endTime)
+{
+    auto fullDataSet = readXvgDataInternal(fn);
+    if (!startTime.has_value() && !endTime.has_value())
+    {
+        // This code is only used in tests so we don't care about NRVO
+        CLANG_DIAGNOSTIC_IGNORE_WNRVO;
+        return fullDataSet;
+        CLANG_DIAGNOSTIC_RESET_WNRVO;
+    }
+    const int numRows    = fullDataSet.extent(0);
+    const int numColumns = fullDataSet.extent(1);
+    gmx::MultiDimArray<std::vector<double>, gmx::dynamicExtents2D> reducedDataSet(numRows, numColumns);
+    int reducedRows = 0;
+    for (std::ptrdiff_t row = 0; row < numRows; ++row)
+    {
+        const bool timeLargerThanStartTime = !startTime.has_value() || (fullDataSet(row, 0) > *startTime);
+        const bool timeSmallerThanEndTime = !endTime.has_value() || (fullDataSet(row, 0) < *endTime);
+        if (timeLargerThanStartTime && timeSmallerThanEndTime)
+        {
+            for (std::ptrdiff_t column = 0; column < numColumns; ++column)
+            {
+                reducedDataSet(reducedRows, column) = fullDataSet(row, column);
+            }
+            ++reducedRows;
+        }
+    }
+    reducedDataSet.resize(reducedRows, numColumns);
+    return reducedDataSet;
+}
+
+void write_xvg(const std::filesystem::path&     fn,
+               const char*                      title,
+               int                              nx,
+               int                              ny,
+               real**                           y,
+               gmx::ArrayRef<const std::string> leg,
+               const gmx_output_env_t*          oenv)
 {
     FILE* fp;
     int   i, j;
 
     fp = xvgropen(fn, title, "X", "Y", oenv);
-    if (leg)
+    if (!leg.empty())
     {
-        xvgr_legend(fp, ny - 1, leg, oenv);
+        xvgrLegend(fp, leg, oenv);
     }
     for (i = 0; (i < nx); i++)
     {
@@ -836,17 +882,17 @@ void write_xvg(const char* fn, const char* title, int nx, int ny, real** y, cons
     xvgrclose(fp);
 }
 
-real** read_xvg_time(const char* fn,
-                     gmx_bool    bHaveT,
-                     gmx_bool    bTB,
-                     real        tb,
-                     gmx_bool    bTE,
-                     real        te,
-                     int         nsets_in,
-                     int*        nset,
-                     int*        nval,
-                     real*       dt,
-                     real**      t)
+real** read_xvg_time(const std::filesystem::path& fn,
+                     gmx_bool                     bHaveT,
+                     gmx_bool                     bTB,
+                     real                         tb,
+                     gmx_bool                     bTE,
+                     real                         te,
+                     int                          nsets_in,
+                     int*                         nset,
+                     int*                         nval,
+                     real*                        dt,
+                     real**                       t)
 {
     FILE* fp;
 #define MAXLINELEN 16384
@@ -876,7 +922,7 @@ real** read_xvg_time(const char* fn,
         }
         n         = 0;
         bEndOfSet = FALSE;
-        while (!bEndOfSet && fgets(line0, MAXLINELEN, fp))
+        while (!bEndOfSet && std::fgets(line0, MAXLINELEN, fp))
         {
             line = line0;
             /* Remove whitespace */
@@ -893,7 +939,7 @@ real** read_xvg_time(const char* fn,
                     a = sscanf(line, "%lf%lf", &dbl, &dbl);
                     if (a == 0)
                     {
-                        gmx_fatal(FARGS, "Expected a number in %s on line:\n%s", fn, line0);
+                        gmx_fatal(FARGS, "Expected a number in %s on line:\n%s", fn.string().c_str(), line0);
                     }
                     else if (a == 1)
                     {
@@ -984,15 +1030,17 @@ real** read_xvg_time(const char* fn,
                     a++;
                     line += nchar;
                 }
-                if (line0[strlen(line0) - 1] != '\n')
+                if (line0[std::strlen(line0) - 1] != '\n')
                 {
-                    fprintf(stderr, "File %s does not end with a newline, ignoring the last line\n", fn);
+                    fprintf(stderr,
+                            "File %s does not end with a newline, ignoring the last line\n",
+                            fn.string().c_str());
                 }
                 else if (bTimeInRange)
                 {
                     if (a == 0)
                     {
-                        fprintf(stderr, "Ignoring invalid line in %s:\n%s", fn, line0);
+                        fprintf(stderr, "Ignoring invalid line in %s:\n%s", fn.string().c_str(), line0);
                     }
                     else
                     {
@@ -1001,7 +1049,9 @@ real** read_xvg_time(const char* fn,
                             fprintf(stderr,
                                     "Invalid line in %s:\n%s"
                                     "Using zeros for the last %d sets\n",
-                                    fn, line0, narg - a);
+                                    fn.string().c_str(),
+                                    line0,
+                                    narg - a);
                         }
                         n++;
                     }

@@ -1,13 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
- * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2016,2017 by the GROMACS development team.
- * Copyright (c) 2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 1991- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -21,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -30,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 #include "gmxpre.h"
 
@@ -43,13 +39,19 @@
 #include <cstring>
 
 #include <algorithm>
+#include <filesystem>
 #include <list>
+#include <memory>
+#include <string>
+#include <vector>
 
 #include "gromacs/commandline/cmdlinehelpcontext.h"
 #include "gromacs/commandline/cmdlinehelpwriter.h"
 #include "gromacs/commandline/cmdlineparser.h"
+#include "gromacs/fileio/filetypes.h"
 #include "gromacs/fileio/oenv.h"
 #include "gromacs/fileio/timecontrol.h"
+#include "gromacs/options/abstractoption.h"
 #include "gromacs/options/basicoptions.h"
 #include "gromacs/options/behaviorcollection.h"
 #include "gromacs/options/filenameoption.h"
@@ -90,7 +92,7 @@ int opt2parg_int(const char* option, int nparg, t_pargs pa[])
 
     for (i = 0; (i < nparg); i++)
     {
-        if (strcmp(pa[i].option, option) == 0)
+        if (std::strcmp(pa[i].option, option) == 0)
         {
             return *pa[i].u.i;
         }
@@ -105,7 +107,7 @@ gmx_bool opt2parg_bool(const char* option, int nparg, t_pargs pa[])
 
     for (i = 0; (i < nparg); i++)
     {
-        if (strcmp(pa[i].option, option) == 0)
+        if (std::strcmp(pa[i].option, option) == 0)
         {
             return *pa[i].u.b;
         }
@@ -122,7 +124,7 @@ real opt2parg_real(const char* option, int nparg, t_pargs pa[])
 
     for (i = 0; (i < nparg); i++)
     {
-        if (strcmp(pa[i].option, option) == 0)
+        if (std::strcmp(pa[i].option, option) == 0)
         {
             return *pa[i].u.r;
         }
@@ -137,7 +139,7 @@ const char* opt2parg_str(const char* option, int nparg, t_pargs pa[])
 
     for (i = 0; (i < nparg); i++)
     {
-        if (strcmp(pa[i].option, option) == 0)
+        if (std::strcmp(pa[i].option, option) == 0)
         {
             return *(pa[i].u.c);
         }
@@ -152,7 +154,7 @@ gmx_bool opt2parg_bSet(const char* option, int nparg, const t_pargs* pa)
 
     for (i = 0; (i < nparg); i++)
     {
-        if (strcmp(pa[i].option, option) == 0)
+        if (std::strcmp(pa[i].option, option) == 0)
         {
             return pa[i].bSet;
         }
@@ -169,7 +171,7 @@ const char* opt2parg_enum(const char* option, int nparg, t_pargs pa[])
 
     for (i = 0; (i < nparg); i++)
     {
-        if (strcmp(pa[i].option, option) == 0)
+        if (std::strcmp(pa[i].option, option) == 0)
         {
             return pa[i].u.c[0];
         }
@@ -189,8 +191,9 @@ namespace
 {
 
 //! Names for XvgFormat
-const gmx::EnumerationArray<XvgFormat, const char*> c_xvgFormatNames = { { "xmgrace", "xmgr",
-                                                                           "none" } };
+const gmx::EnumerationArray<XvgFormat, const char*> c_xvgFormatNames = {
+    { "xmgrace", "xmgr", "none" }
+};
 
 /*! \brief Returns the default xvg format, as modified by GMX_VIEW_XVG
  * if that environment variable is set.
@@ -199,7 +202,7 @@ const gmx::EnumerationArray<XvgFormat, const char*> c_xvgFormatNames = { { "xmgr
  */
 XvgFormat getDefaultXvgFormat()
 {
-    const char* const select = getenv("GMX_VIEW_XVG");
+    const char* const select = std::getenv("GMX_VIEW_XVG");
     if (select != nullptr)
     {
         for (XvgFormat c : keysOf(c_xvgFormatNames))
@@ -262,10 +265,10 @@ private:
     struct FileNameData
     {
         //! Creates a conversion helper for a given `t_filenm` struct.
-        explicit FileNameData(t_filenm* fnm) : fnm(fnm), optionInfo(nullptr) {}
+        explicit FileNameData(t_filenm* fnm) : fnm_(fnm), optionInfo(nullptr) {}
 
         //! t_filenm structure to receive the final values.
-        t_filenm* fnm;
+        t_filenm* fnm_;
         //! Option info object for the created FileNameOption.
         FileNameOptionInfo* optionInfo;
         //! Value storage for the created FileNameOption.
@@ -275,15 +278,12 @@ private:
     {
         //! Creates a conversion helper for a given `t_pargs` struct.
         explicit ProgramArgData(t_pargs* pa) :
-            pa(pa),
-            optionInfo(nullptr),
-            enumIndex(0),
-            boolValue(false)
+            pa_(pa), optionInfo(nullptr), enumIndex(0), boolValue(false)
         {
         }
 
         //! t_pargs structure to receive the final values.
-        t_pargs* pa;
+        t_pargs* pa_;
         //! Option info object for the created option.
         OptionInfo* optionInfo;
         //! Value storage for a non-enum StringOption (unused for other types).
@@ -320,7 +320,7 @@ void OptionsAdapter::filenmToOptions(Options* options, t_filenm* fnm)
     {
         defName = ftp2defnm(fnm->ftp);
     }
-    else if (Path::hasExtension(defName))
+    else if (std::filesystem::path(defName).has_extension())
     {
         defType = fn2ftp(defName);
         GMX_RELEASE_ASSERT(defType != efNR, "File name option specifies an invalid extension");
@@ -414,30 +414,30 @@ void OptionsAdapter::copyValues()
     {
         if (file->optionInfo->isSet())
         {
-            file->fnm->flag |= ffSET;
+            file->fnm_->flag |= ffSET;
         }
-        file->fnm->filenames = file->values;
+        file->fnm_->filenames = file->values;
     }
     std::list<ProgramArgData>::const_iterator arg;
     for (arg = programArgs_.begin(); arg != programArgs_.end(); ++arg)
     {
-        arg->pa->bSet = arg->optionInfo->isSet();
-        switch (arg->pa->type)
+        arg->pa_->bSet = arg->optionInfo->isSet();
+        switch (arg->pa_->type)
         {
             case etSTR:
             {
-                if (arg->pa->bSet)
+                if (arg->pa_->bSet)
                 {
                     std::vector<const char*>::const_iterator pos =
                             std::find(argv_.begin(), argv_.end(), arg->stringValue);
                     GMX_RELEASE_ASSERT(pos != argv_.end(),
                                        "String argument got a value not in argv");
-                    *arg->pa->u.c = *pos;
+                    *arg->pa_->u.c = *pos;
                 }
                 break;
             }
-            case etBOOL: *arg->pa->u.b = arg->boolValue; break;
-            case etENUM: *arg->pa->u.c = arg->pa->u.c[arg->enumIndex + 1]; break;
+            case etBOOL: *arg->pa_->u.b = arg->boolValue; break;
+            case etENUM: *arg->pa_->u.c = arg->pa_->u.c[arg->enumIndex + 1]; break;
             default:
                 // For other types, there is nothing type-specific to do.
                 break;
@@ -542,7 +542,7 @@ gmx_bool parse_common_args(int*               argc,
         {
             GMX_RELEASE_ASSERT(gmx_node_rank() == 0,
                                "Help output should be handled higher up and "
-                               "only get called only on the master rank");
+                               "only get called only on the main rank");
             gmx::CommandLineHelpWriter(options)
                     .setHelpText(gmx::constArrayRefFromArray<const char*>(desc, ndesc))
                     .setKnownIssues(gmx::constArrayRefFromArray(bugs, nbugs))
@@ -565,15 +565,15 @@ gmx_bool parse_common_args(int*               argc,
         /* Extract Time info from arguments */
         if (bBeginTimeSet)
         {
-            setTimeValue(TBEGIN, tbegin);
+            setTimeValue(TimeControl::Begin, tbegin);
         }
         if (bEndTimeSet)
         {
-            setTimeValue(TEND, tend);
+            setTimeValue(TimeControl::End, tend);
         }
         if (bDtSet)
         {
-            setTimeValue(TDELTA, tdelta);
+            setTimeValue(TimeControl::Delta, tdelta);
         }
 
         adapter.copyValues();

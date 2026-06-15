@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2020- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,18 +26,22 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 
 #include "gmxpre.h"
 
 #include "simulationinputhandle.h"
 
+#include <string>
 #include <utility>
+#include <vector>
 
+#include "gromacs/commandline/filenm.h"
+#include "gromacs/fileio/filetypes.h"
 #include "gromacs/mdrun/legacymdrunoptions.h"
 
 namespace gmx
@@ -58,8 +61,7 @@ class SimulationInput
 {
 public:
     SimulationInput(const char* tprFilename, const char* cpiFilename) :
-        tprFilename_(tprFilename),
-        cpiFilename_(cpiFilename)
+        tprFilename_(tprFilename), cpiFilename_(cpiFilename)
     {
     }
 
@@ -76,9 +78,9 @@ public:
     {
     }
 
-    SimulationInputHandleImpl(const SimulationInputHandleImpl&) = default;
-    SimulationInputHandleImpl& operator=(const SimulationInputHandleImpl&) = default;
-    SimulationInputHandleImpl(SimulationInputHandleImpl&&) noexcept        = default;
+    SimulationInputHandleImpl(const SimulationInputHandleImpl&)                = default;
+    SimulationInputHandleImpl& operator=(const SimulationInputHandleImpl&)     = default;
+    SimulationInputHandleImpl(SimulationInputHandleImpl&&) noexcept            = default;
     SimulationInputHandleImpl& operator=(SimulationInputHandleImpl&&) noexcept = default;
 
     [[nodiscard]] SimulationInput* simulationInput() const { return simulationInput_.get(); }
@@ -112,11 +114,11 @@ detail::SimulationInputHandleImplDeleter::SimulationInputHandleImplDeleter(
 detail::SimulationInputHandleImplDeleter::SimulationInputHandleImplDeleter(
         SimulationInputHandleImplDeleter&&) noexcept = default;
 
-detail::SimulationInputHandleImplDeleter& detail::SimulationInputHandleImplDeleter::
-                                          operator=(const SimulationInputHandleImplDeleter&) noexcept = default;
+detail::SimulationInputHandleImplDeleter& detail::SimulationInputHandleImplDeleter::operator=(
+        const SimulationInputHandleImplDeleter&) noexcept = default;
 
-detail::SimulationInputHandleImplDeleter& detail::SimulationInputHandleImplDeleter::
-                                          operator=(SimulationInputHandleImplDeleter&&) noexcept = default;
+detail::SimulationInputHandleImplDeleter& detail::SimulationInputHandleImplDeleter::operator=(
+        SimulationInputHandleImplDeleter&&) noexcept = default;
 
 void detail::SimulationInputHandleImplDeleter::operator()(SimulationInputHandleImpl* impl) const
 {
@@ -190,7 +192,7 @@ SimulationInputHandle makeSimulationInput(const LegacyMdrunOptions& options)
     // filenames until a communications context is known.
     const auto* const tprFilename = ftp2fn(efTPR, options.filenames.size(), options.filenames.data());
     const auto* const cpiFilename = opt2fn("-cpi", options.filenames.size(), options.filenames.data());
-    auto              simulationInput = std::make_unique<SimulationInput>(tprFilename, cpiFilename);
+    auto simulationInput = std::make_unique<SimulationInput>(tprFilename, cpiFilename);
     auto impl = std::make_unique<detail::SimulationInputHandleImpl>(std::move(simulationInput));
 
     return SimulationInputHandle(std::move(impl));

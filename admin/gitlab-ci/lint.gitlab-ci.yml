@@ -1,65 +1,116 @@
 # Repository cleanliness. Source tidiness, linting, and policy compliance.
 
-clang-tidy:configure-push:
+clang-tidy:configure-mr:
   extends:
     - .gromacs:base:configure
     - .use-clang:base
-    - .rules:basic-push
-  image: ${CI_REGISTRY}/gromacs/gromacs/ci-ubuntu-18.04-llvm-9
+  rules:
+    - !reference [.rules:merge-requests, rules]
+  image: ${CI_REGISTRY}/gromacs/gromacs/ci-ubuntu-22.04-llvm-18-cuda-12.1.0
   variables:
-    CMAKE: /usr/local/cmake-3.15.7/bin/cmake
-    COMPILER_MAJOR_VERSION: 9
+    CMAKE: /usr/local/cmake-3.29.8/bin/cmake
+    COMPILER_MAJOR_VERSION: 18
     BUILD_DIR: build-clang-tidy
     CMAKE_EXTRA_OPTIONS: -DCLANG_TIDY=clang-tidy-$COMPILER_MAJOR_VERSION -DGMX_CLANG_TIDY=ON -DGMX_COMPILER_WARNINGS=ON -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
 
+# This configuration prepares to test "all" files in a GROMACS build
+# with clang-tidy.  Such runs take a long time, so we deliberately
+# configure this post-merge per-commit configuration without many
+# "external" things and SIMD kernels. Those change rarely. When we do
+# change them, the pre-submit clang-tidy build will check them.
+#
+# TODO: rebuild lint container with system XDR so this configuration
+#       avoids compiling the internal version
+# TODO: GROMACS currently builds and links all of thread-MPI even
+#       when configured without it. Reduce this footprint.
 clang-tidy:configure-schedule:
   extends:
     - .gromacs:base:configure
     - .use-clang:base
-    - .rules:nightly-not-for-release
-  image: ${CI_REGISTRY}/gromacs/gromacs/ci-ubuntu-18.04-llvm-9
+  rules:
+    - !reference [.rules:post-merge-acceptance, rules]
+  image: ${CI_REGISTRY}/gromacs/gromacs/ci-ubuntu-22.04-llvm-18-cuda-12.1.0
   variables:
-    CMAKE: /usr/local/cmake-3.15.7/bin/cmake
-    COMPILER_MAJOR_VERSION: 9
+    CMAKE: /usr/local/cmake-3.29.8/bin/cmake
+    COMPILER_MAJOR_VERSION: 18
     BUILD_DIR: build-clang-tidy
-    CMAKE_EXTRA_OPTIONS: -DCLANG_TIDY=clang-tidy-$COMPILER_MAJOR_VERSION -DGMX_CLANG_TIDY=ON -DGMX_COMPILER_WARNINGS=ON
+    CMAKE_EXTRA_OPTIONS: -DCLANG_TIDY=clang-tidy-$COMPILER_MAJOR_VERSION -DGMX_CLANG_TIDY=ON -DGMX_COMPILER_WARNINGS=ON -DGMX_THREAD_MPI=off -DGMX_USE_LMFIT=none -DGMX_USE_COLVARS=none -DGMX_USE_MUPARSER=none -DGMX_USE_TNG=off -DGMX_USE_SIMD_KERNELS=off
+
+clang-tidy:configure-schedule-cuda:
+  extends:
+    - .gromacs:base:configure
+    - .use-clang:base
+    - .use-cuda
+  rules:
+    - !reference [.rules:post-merge-acceptance, rules]
+  image: ${CI_REGISTRY}/gromacs/gromacs/ci-ubuntu-22.04-llvm-18-cuda-12.1.0
+  variables:
+    CMAKE: /usr/local/cmake-3.29.8/bin/cmake
+    COMPILER_MAJOR_VERSION: 18
+    BUILD_DIR: build-clang-tidy
+    CMAKE_EXTRA_OPTIONS: -DCLANG_TIDY=clang-tidy-$COMPILER_MAJOR_VERSION -DGMX_CLANG_TIDY=ON -DGMX_COMPILER_WARNINGS=ON -DGMX_CLANG_CUDA=ON -DGMX_USE_SIMD_KERNELS=OFF
 
 clang-tidy:build:
   extends:
     - .gromacs:base:build
     - .use-ccache
-    - .variables:default
-    - .rules:nightly-not-for-release
   stage: source-check
-  image: ${CI_REGISTRY}/gromacs/gromacs/ci-ubuntu-18.04-llvm-9
+  rules:
+    - !reference [.rules:post-merge-acceptance, rules]
+  image: ${CI_REGISTRY}/gromacs/gromacs/ci-ubuntu-22.04-llvm-18-cuda-12.1.0
   needs:
     - job: clang-tidy:configure-schedule
   variables:
-    CMAKE: /usr/local/cmake-3.15.7/bin/cmake
+    CMAKE: /usr/local/cmake-3.29.8/bin/cmake
     BUILD_DIR: build-clang-tidy
 
+clang-tidy:build-cuda:
+  extends:
+    - .gromacs:base:build
+    - .use-ccache
+  stage: source-check
+  rules:
+    - !reference [.rules:post-merge-acceptance, rules]
+  image: ${CI_REGISTRY}/gromacs/gromacs/ci-ubuntu-22.04-llvm-18-cuda-12.1.0
+  needs:
+    - job: clang-tidy:configure-schedule-cuda
+  variables:
+    CMAKE: /usr/local/cmake-3.29.8/bin/cmake
+    BUILD_DIR: build-clang-tidy
+  script:
+    # Don't use the standard build script because clang-18 can't compile
+    # several of our source files. Since we don't need the clang-tidy+cuda
+    # build to link, we omit those files and also don't link any executables
+    - set -e
+    - cd $BUILD_DIR
+    - $CMAKE --build . --target libgromacs -- -j$KUBERNETES_CPU_LIMIT
+    # Remove object files to minimize artifact size
+    - find . -mindepth 1 -name '*.o' ! -type l -printf '%p\n' -delete 2>&1 > remove-build-objects.log
+
+# This test has logic so that only the files changed in this merge request
+# are examined by clang-tidy
 clang-tidy:test:
   extends:
     - .gromacs:base:build
-    - .variables:default
-    - .rules:basic-push
+  rules:
+    - !reference [.rules:merge-requests, rules]
+  allow_failure: true
   stage: source-check
-  image: ${CI_REGISTRY}/gromacs/gromacs/ci-ubuntu-18.04-llvm-9
+  image: ${CI_REGISTRY}/gromacs/gromacs/ci-ubuntu-22.04-llvm-18-cuda-12.1.0
   needs:
-    - job: clang-tidy:configure-push
+    - job: clang-tidy:configure-mr
   variables:
-    CMAKE: /usr/local/cmake-3.15.7/bin/cmake
-    COMPILER_MAJOR_VERSION: 9
+    CMAKE: /usr/local/cmake-3.29.8/bin/cmake
+    COMPILER_MAJOR_VERSION: 18
     BUILD_DIR: build-clang-tidy
-    EXTRA_INSTALLS: clang-tidy-$COMPILER_MAJOR_VERSION
     KUBERNETES_CPU_LIMIT: 4
     KUBERNETES_CPU_REQUEST: 2
     KUBERNETES_MEMORY_REQUEST: 4Gi
   script:
     # Make sure that a Python interpreter can be found for `/bin/env python`
     - test -x /usr/bin/python || update-alternatives --install /usr/bin/python python /usr/bin/python3 1
-    # TODO (issue #3272) `master` is not appropriate for use on release-xxxx branches, how should we handle that?
-    - REV=$(git fetch -q https://gitlab.com/gromacs/gromacs.git master && git show -s --pretty=format:"%h" `git merge-base FETCH_HEAD HEAD`)
+    - TARGET_BRANCH=${CI_MERGE_REQUEST_TARGET_BRANCH_NAME:-release-2026}
+    - REV=$(git fetch -q https://gitlab.com/gromacs/gromacs.git $TARGET_BRANCH && git show -s --pretty=format:"%h" `git merge-base FETCH_HEAD HEAD`)
     - HEAD_REV=$(git show -s --pretty=format:"%h" HEAD)
     - if [[ "$REV" == "$HEAD_REV" ]] ; then
         REV="HEAD~1" ;
@@ -67,7 +118,7 @@ clang-tidy:test:
     - echo "Revision used for branch point is $REV"
     - git show -s $REV
     - RUN_CLANG_TIDY=run-clang-tidy-$COMPILER_MAJOR_VERSION bash admin/clang-tidy.sh check --parallel=$KUBERNETES_CPU_LIMIT --warnings=clang-tidy.log --rev=$REV -B=$BUILD_DIR
-    - grep -i "found code issues" clang-tidy.log | tee code-lint.txt || true
+    - grep -i "found code issues|warnings" clang-tidy.log | tee code-lint.txt || true
     - if [ -s code-lint.txt ] ; then echo "clang-tidy.sh found issues"; exit 1; fi
   artifacts:
     when: on_failure
@@ -76,50 +127,80 @@ clang-tidy:test:
       - code-lint.txt
 
 clang-format:
-  extends:
-    - .variables:default
-    - .rules:basic-push
+  rules:
+    - !reference [.rules:merge-requests, rules]
   cache: {}
   stage: pre-build
-  image: ${CI_REGISTRY}/gromacs/gromacs/ci-ubuntu-18.04-llvm-7-docs
+  image: ${CI_REGISTRY}/gromacs/gromacs/ci-ubuntu-22.04-llvm-18-cuda-12.1.0
   variables:
-    COMPILER_MAJOR_VERSION: 7
+    COMPILER_MAJOR_VERSION: 18
     KUBERNETES_CPU_LIMIT: 1
     KUBERNETES_CPU_REQUEST: 1
     KUBERNETES_MEMORY_REQUEST: 2Gi
-    EXTRA_INSTALLS: clang-format-$COMPILER_MAJOR_VERSION
   script:
-    # TODO (issue #3272) `master` is not appropriate for use on release-xxxx branches, how should we handle that?
-    - REV=$(git fetch -q https://gitlab.com/gromacs/gromacs.git master && git show -s --pretty=format:"%h" `git merge-base FETCH_HEAD HEAD`)
+    - TARGET_BRANCH=${CI_MERGE_REQUEST_TARGET_BRANCH_NAME:-release-2026}
+    - REV=$(git fetch -q https://gitlab.com/gromacs/gromacs.git $TARGET_BRANCH && git show -s --pretty=format:"%h" `git merge-base FETCH_HEAD HEAD`)
     - HEAD_REV=$(git show -s --pretty=format:"%h" HEAD)
     - if [[ "$REV" == "$HEAD_REV" ]] ; then
-        REV="HEAD~1" ;
+      REV="HEAD~1" ;
       fi
     - echo "Revision used for branch point is $REV"
     - git show -s $REV
-    - CLANG_FORMAT=clang-format-$COMPILER_MAJOR_VERSION admin/clang-format.sh check --rev=$REV --warnings=clang-format.log
+    - HAVE_ERROR=
+    - CLANG_FORMAT=clang-format-$COMPILER_MAJOR_VERSION admin/clang-format.sh check --rev=$REV --warnings=clang-format.log || HAVE_ERROR=1
     - grep -i "needs formatting" clang-format.log | tee formatting.txt || true
-    - if [ -s formatting.txt ] ; then echo "clang-format.sh found issues"; exit 1; fi
+    - if [ -n "${HAVE_ERROR}" -o -s formatting.txt ] ; then
+      echo "clang-format.sh found issues!" ;
+      echo "🩹🩹🩹 Patch below (can also be downloaded from artifacts) 🩹🩹🩹" ;
+      CLANG_FORMAT=clang-format-$COMPILER_MAJOR_VERSION admin/clang-format.sh --rev=$REV diff | tee clang-format.patch ;
+      exit 1 ;
+      fi
   artifacts:
     when: on_failure
     paths:
       - clang-format.log
+      - clang-format.patch
       - formatting.txt
 
-copyright-check:
-  extends:
-    - .variables:default
-    - .rules:basic-push
+python-format:
+  rules:
+    - !reference [.rules:merge-requests, rules]
   cache: {}
   stage: pre-build
-  image: ${CI_REGISTRY}/gromacs/gromacs/ci-ubuntu-18.04-llvm-7-docs
+  image: ${CI_REGISTRY_IMAGE}/ci-ubuntu-24.04-llvm-19-docs
+  variables:
+    COMPILER_MAJOR_VERSION: 19
+    KUBERNETES_CPU_LIMIT: 1
+    KUBERNETES_CPU_REQUEST: 1
+    KUBERNETES_MEMORY_REQUEST: 2Gi
+  script:
+    - BLACK="/root/venv/py3.9/bin/python -m black --config .black.toml -W $KUBERNETES_CPU_LIMIT"
+    - echo "Using 'black' version " $($BLACK --version)
+    - HAVE_ERROR=
+    - $BLACK --check --verbose --diff . > black-format.log || HAVE_ERROR=1
+    - if [ -n "${HAVE_ERROR}" -o -s black-format.log ] ; then
+      echo "Python formatter found issues (see black-format.log)" ;
+      echo "🩹🩹🩹 Patch below (can also be downloaded from artifacts) 🩹🩹🩹" ;
+      cat black-format.log ;
+      exit 1 ;
+      fi
+  artifacts:
+    when: on_failure
+    paths:
+      - black-format.log
+
+copyright-check:
+  rules:
+    - !reference [.rules:merge-requests, rules]
+  cache: {}
+  stage: pre-build
+  image: ${CI_REGISTRY}/gromacs/gromacs/ci-ubuntu-24.04-llvm-19-docs
   variables:
     KUBERNETES_CPU_LIMIT: 1
     KUBERNETES_CPU_REQUEST: 1
     KUBERNETES_MEMORY_REQUEST: 2Gi
   script:
-    # TODO (issue #3272) `master` is not appropriate for use on release-xxxx branches, how should we handle that?
-    - REV=$(git fetch -q https://gitlab.com/gromacs/gromacs.git master && git show -s --pretty=format:"%h" `git merge-base FETCH_HEAD HEAD`)
+    - REV=$(git fetch -q https://gitlab.com/gromacs/gromacs.git release-2026 && git show -s --pretty=format:"%h" `git merge-base FETCH_HEAD HEAD`)
     - HEAD_REV=$(git show -s --pretty=format:"%h" HEAD)
     - if [[ "$REV" == "$HEAD_REV" ]] ; then
         REV="HEAD~1" ;
@@ -142,10 +223,10 @@ copyright-check:
 
 check-source:
   extends:
-    - .variables:default
     - .docs:build
     - .before_script:default
-    - .rules:basic-push
+  rules:
+    - !reference [.rules:merge-requests, rules]
   cache: {}
   stage: source-check
   needs:
@@ -159,6 +240,8 @@ check-source:
   script:
     - CMAKE=${CMAKE:-$(which cmake)}
     - cd $BUILD_DIR
+    - which $CMAKE
+    - $CMAKE --version
     - $CMAKE --build . --target check-source
     - awk '/warning.*include style.*order/,/You can use.*rst|^$/' docs/doxygen/check-source.log | tee doxygenError.txt || true
     - awk '/warning:.*includes/,/unnecessarily|^$/' docs/doxygen/check-source.log | tee -a doxygenError.txt || true
@@ -177,9 +260,12 @@ check-source:
 linkchecker:
   extends:
     - .webpage:build
-    - .rules:nightly-not-for-release
   stage: nightly-build
+  rules:
+    - !reference [.rules:nightly-not-for-release, rules]
   dependencies:
+    - webpage:build
+  needs:
     - webpage:build
   variables:
     KUBERNETES_CPU_LIMIT: 1

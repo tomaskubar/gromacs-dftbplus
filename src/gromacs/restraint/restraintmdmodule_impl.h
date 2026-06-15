@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2018- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 
 #ifndef GROMACS_RESTRAINTMDMODULE_IMPL_H
@@ -50,7 +49,6 @@
 #include "gromacs/domdec/domdec_struct.h"
 #include "gromacs/domdec/ga2la.h"
 #include "gromacs/gmxlib/network.h"
-#include "gromacs/math/vec.h"
 #include "gromacs/mdtypes/commrec.h"
 #include "gromacs/mdtypes/iforceprovider.h"
 #include "gromacs/mdtypes/imdmodule.h"
@@ -60,6 +58,7 @@
 #include "gromacs/pbcutil/pbc.h"
 #include "gromacs/restraint/restraintpotential.h"
 #include "gromacs/utility/arrayref.h"
+#include "gromacs/utility/vec.h"
 
 namespace gmx
 {
@@ -116,7 +115,8 @@ public:
     /*!
      * \brief Get the position of this site at time t.
      *
-     * \param cr Communications record.
+     * \param mpiComm Communication object for my group.
+     * \param dd      Pointer to domain decomposition object, pass nullptr when DD is not in use.
      * \param nx Number of locally available atoms (size of local atom data arrays)
      * \param x Array of locally available atom coordinates.
      * \param t the current time.
@@ -127,17 +127,21 @@ public:
      * In the long term, we would prefer to also allow client code to preregister interest in a
      * position at a given time, or issue "futures".
      */
-    RVec centerOfMass(const t_commrec& cr, size_t nx, ArrayRef<const RVec> x, double gmx_unused t)
+    RVec centerOfMass(const MpiComm&       mpiComm,
+                      const gmx_domdec_t*  dd,
+                      size_t               nx,
+                      ArrayRef<const RVec> x,
+                      double gmx_unused    t)
     {
         // Center of mass to return for the site. Currently the only form of site
         // implemented is as a global atomic coordinate.
         gmx::RVec r = { 0, 0, 0 };
-        if (DOMAINDECOMP(&cr)) // Domain decomposition
+        if (dd) // Domain decomposition
         {
             // Get global-to-local indexing structure
-            auto crossRef = cr.dd->ga2la;
+            auto* crossRef = dd->ga2la.get();
             GMX_ASSERT(crossRef, "Domain decomposition must provide global/local cross-reference.");
-            if (const auto localIndex = crossRef->findHome(index_))
+            if (const auto* localIndex = crossRef->findHome(index_))
             {
                 GMX_ASSERT(localIndex,
                            "Expect not to reach this point if findHome does not find index_.");
@@ -161,7 +165,7 @@ public:
             // \todo use generalized "pull group" facility when available.
             std::array<double, 3> buffer{ { r[0], r[1], r[2] } };
             // This should be an all-reduce sum, which gmx_sumd appears to be.
-            gmx_sumd(3, buffer.data(), &cr);
+            mpiComm.sumReduce(buffer);
             r[0] = static_cast<real>(buffer[0]);
             r[1] = static_cast<real>(buffer[1]);
             r[2] = static_cast<real>(buffer[2]);
@@ -284,7 +288,7 @@ public:
      *
      * \{
      */
-    RestraintMDModuleImpl(RestraintMDModuleImpl&&) noexcept = default;
+    RestraintMDModuleImpl(RestraintMDModuleImpl&&) noexcept            = default;
     RestraintMDModuleImpl& operator=(RestraintMDModuleImpl&&) noexcept = default;
     /*! \} */
 

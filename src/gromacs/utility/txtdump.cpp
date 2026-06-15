@@ -1,13 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
- * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2017,2018 by the GROMACS development team.
- * Copyright (c) 2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 1991- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -21,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -30,27 +26,49 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 #include "gmxpre.h"
 
+#include "gromacs/utility/txtdump.h"
+
+#include "gromacs/utility/basedefinitions.h"
+#include "gromacs/utility/real.h"
+
 /* This file is completely threadsafe - please keep it that way! */
 
-#include "txtdump.h"
-
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 
 #include "gromacs/utility/cstringutil.h"
+#include "gromacs/utility/textwriter.h"
+
+namespace gmx
+{
+
+bool checkIfAvailable(TextWriter* writer, const char* description, const void* p)
+{
+    if (!p)
+    {
+        writer->writeStringFormatted("%s: not available\n", description);
+    }
+    return (p != nullptr);
+}
+
+void printTitleAndSize(TextWriter* writer, const char* title, const int n)
+{
+    writer->writeStringFormatted("%s (%d):\n", title, n);
+}
+
+} // namespace gmx
 
 int pr_indent(FILE* fp, int n)
 {
-    int i;
-
-    for (i = 0; i < n; i++)
+    for (int i = 0; i < n; i++)
     {
         fprintf(fp, " ");
     }
@@ -93,13 +111,11 @@ int pr_title_nxn(FILE* fp, int indent, const char* title, int n1, int n2)
 
 void pr_reals(FILE* fp, int indent, const char* title, const real* vec, int n)
 {
-    int i;
-
     if (available(fp, vec, indent, title))
     {
         pr_indent(fp, indent);
         fprintf(fp, "%s:\t", title);
-        for (i = 0; i < n; i++)
+        for (int i = 0; i < n; i++)
         {
             fprintf(fp, "  %10g", vec[i]);
         }
@@ -109,13 +125,11 @@ void pr_reals(FILE* fp, int indent, const char* title, const real* vec, int n)
 
 void pr_doubles(FILE* fp, int indent, const char* title, const double* vec, int n)
 {
-    int i;
-
     if (available(fp, vec, indent, title))
     {
         pr_indent(fp, indent);
         fprintf(fp, "%s:\t", title);
-        for (i = 0; i < n; i++)
+        for (int i = 0; i < n; i++)
         {
             fprintf(fp, "  %10g", vec[i]);
         }
@@ -125,28 +139,18 @@ void pr_doubles(FILE* fp, int indent, const char* title, const double* vec, int 
 
 void pr_reals_of_dim(FILE* fp, int indent, const char* title, const real* vec, int n, int dim)
 {
-    int         i, j;
     const char* fshort = "%12.5e";
     const char* flong  = "%15.8e";
-    const char* format;
-
-    if (getenv("GMX_PRINT_LONGFORMAT") != nullptr)
-    {
-        format = flong;
-    }
-    else
-    {
-        format = fshort;
-    }
+    const char* format = (std::getenv("GMX_PRINT_LONGFORMAT") != nullptr) ? flong : fshort;
 
     if (available(fp, vec, indent, title))
     {
         indent = pr_title_nxn(fp, indent, title, n, dim);
-        for (i = 0; i < n; i++)
+        for (int i = 0; i < n; i++)
         {
             pr_indent(fp, indent);
             fprintf(fp, "%s[%5d]={", title, i);
-            for (j = 0; j < dim; j++)
+            for (int j = 0; j < dim; j++)
             {
                 if (j != 0)
                 {
@@ -191,14 +195,12 @@ void pr_str(FILE* fp, int indent, const char* title, const char* s)
     fprintf(fp, "%-30s = %s\n", title, s);
 }
 
-void pr_strings(FILE* fp, int indent, const char* title, char*** nm, int n, gmx_bool bShowNumbers)
+void pr_strings(FILE* fp, int indent, const char* title, const char* const* const* nm, int n, gmx_bool bShowNumbers)
 {
-    int i;
-
     if (available(fp, nm, indent, title))
     {
         indent = pr_title_n(fp, indent, title, n);
-        for (i = 0; i < n; i++)
+        for (int i = 0; i < n; i++)
         {
             pr_indent(fp, indent);
             fprintf(fp, "%s[%d]={name=\"%s\"}\n", title, bShowNumbers ? i : -1, *(nm[i]));

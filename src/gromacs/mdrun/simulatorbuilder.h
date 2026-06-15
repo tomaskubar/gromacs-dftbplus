@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2019-2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2019- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \internal
  * \brief Declares the simulator builder for mdrun
@@ -41,13 +40,15 @@
 #ifndef GMX_MDRUN_SIMULATORBUILDER_H
 #define GMX_MDRUN_SIMULATORBUILDER_H
 
+#include <cstdio>
+
 #include <memory>
 
-
 class energyhistory_t;
-struct gmx_ekindata_t;
+class gmx_ekindata_t;
 struct gmx_enerdata_t;
 struct gmx_enfrot;
+struct gmx_localtop_t;
 struct gmx_mtop_t;
 struct gmx_multisim_t;
 struct gmx_output_env_t;
@@ -56,13 +57,13 @@ struct gmx_walltime_accounting;
 struct ObservablesHistory;
 struct pull_t;
 struct ReplicaExchangeParameters;
+class SwapCoords;
 struct t_commrec;
 struct t_filenm;
 struct t_forcerec;
 struct t_inputrec;
 struct t_nrnb;
 class t_state;
-struct t_swap;
 
 namespace gmx
 {
@@ -75,8 +76,9 @@ class MdrunScheduleWorkload;
 class MembedHolder;
 class MDAtoms;
 class MDLogger;
-struct MdModulesNotifier;
+struct MDModulesNotifiers;
 struct MdrunOptions;
+class ObservablesReducerBuilder;
 class ReadCheckpointDataHolder;
 enum class StartingBehavior;
 class StopHandlerBuilder;
@@ -92,9 +94,7 @@ public:
     SimulatorConfig(const MdrunOptions&    mdrunOptions,
                     StartingBehavior       startingBehavior,
                     MdrunScheduleWorkload* runScheduleWork) :
-        mdrunOptions_(mdrunOptions),
-        startingBehavior_(startingBehavior),
-        runScheduleWork_(runScheduleWork)
+        mdrunOptions_(mdrunOptions), startingBehavior_(startingBehavior), runScheduleWork_(runScheduleWork)
     {
     }
     // TODO: Specify copy and move semantics.
@@ -118,10 +118,12 @@ struct SimulatorStateData
 {
     //! Build collection of current state data.
     SimulatorStateData(t_state*            globalState,
+                       t_state*            localState,
                        ObservablesHistory* observablesHistory,
                        gmx_enerdata_t*     enerdata,
                        gmx_ekindata_t*     ekindata) :
         globalState_p(globalState),
+        localState_p(localState),
         observablesHistory_p(observablesHistory),
         enerdata_p(enerdata),
         ekindata_p(ekindata)
@@ -133,6 +135,8 @@ struct SimulatorStateData
 
     //! Handle to global state of the simulation.
     t_state* globalState_p;
+    //! Handle to local state of the simulation.
+    t_state* localState_p;
     //! Handle to current simulation history.
     ObservablesHistory* observablesHistory_p;
     //! Handle to collected data for energy groups.
@@ -150,16 +154,18 @@ class SimulatorEnv
 {
 public:
     //! Build from current simulation environment.
-    SimulatorEnv(FILE*             fplog,
-                 t_commrec*        commRec,
-                 gmx_multisim_t*   multisimCommRec,
-                 const MDLogger&   logger,
-                 gmx_output_env_t* outputEnv) :
+    SimulatorEnv(FILE*                      fplog,
+                 t_commrec*                 commRec,
+                 gmx_multisim_t*            multisimCommRec,
+                 const MDLogger&            logger,
+                 gmx_output_env_t*          outputEnv,
+                 ObservablesReducerBuilder* observablesReducerBuilder) :
         fplog_{ fplog },
         commRec_{ commRec },
         multisimCommRec_{ multisimCommRec },
         logger_{ logger },
-        outputEnv_{ outputEnv }
+        outputEnv_{ outputEnv },
+        observablesReducerBuilder_{ observablesReducerBuilder }
     {
     }
 
@@ -173,6 +179,8 @@ public:
     const MDLogger& logger_;
     //! Handle to file output handling.
     const gmx_output_env_t* outputEnv_;
+    //! Builder for coordinator of reduction for observables
+    ObservablesReducerBuilder* observablesReducerBuilder_;
 };
 
 /*! \brief
@@ -183,18 +191,16 @@ class Profiling
 public:
     //! Build profiling information collection.
     Profiling(t_nrnb* nrnb, gmx_walltime_accounting* walltimeAccounting, gmx_wallcycle* wallCycle) :
-        nrnb(nrnb),
-        wallCycle(wallCycle),
-        walltimeAccounting(walltimeAccounting)
+        nrnb_(nrnb), wallCycle_(wallCycle), wallTimeAccounting_(walltimeAccounting)
     {
     }
 
     //! Handle to datastructure.
-    t_nrnb* nrnb;
+    t_nrnb* nrnb_;
     //! Handle to wallcycle stuff.
-    gmx_wallcycle* wallCycle;
+    gmx_wallcycle* wallCycle_;
     //! Handle to wallcycle time accounting stuff.
-    gmx_walltime_accounting* walltimeAccounting;
+    gmx_walltime_accounting* wallTimeAccounting_;
 };
 
 /*! \brief
@@ -205,16 +211,14 @@ class ConstraintsParam
 public:
     //! Build collection with handle to actual objects.
     ConstraintsParam(Constraints* constraints, gmx_enfrot* enforcedRotation, VirtualSitesHandler* vSite) :
-        constr(constraints),
-        enforcedRotation(enforcedRotation),
-        vsite(vSite)
+        constr(constraints), enforcedRotation_(enforcedRotation), vsite(vSite)
     {
     }
 
     //! Handle to constraint object.
     Constraints* constr;
     //! Handle to information about using enforced rotation.
-    gmx_enfrot* enforcedRotation;
+    gmx_enfrot* enforcedRotation_;
     //! Handle to vsite stuff.
     VirtualSitesHandler* vsite;
 };
@@ -227,10 +231,7 @@ class LegacyInput
 public:
     //! Build collection from legacy input data.
     LegacyInput(int filenamesSize, const t_filenm* filenamesData, t_inputrec* inputRec, t_forcerec* forceRec) :
-        numFile(filenamesSize),
-        filenames(filenamesData),
-        inputrec(inputRec),
-        forceRec(forceRec)
+        numFile(filenamesSize), filenames(filenamesData), inputrec(inputRec), forceRec_(forceRec)
     {
     }
 
@@ -241,7 +242,7 @@ public:
     //! Handle to simulation input record.
     t_inputrec* inputrec;
     //! Handle to simulation force record.
-    t_forcerec* forceRec;
+    t_forcerec* forceRec_;
 };
 
 /*! \brief SimulatorBuilder parameter type for InteractiveMD.
@@ -254,23 +255,22 @@ class InteractiveMD
 {
 public:
     //! Create handle to IMD information.
-    explicit InteractiveMD(ImdSession* imdSession) : imdSession(imdSession) {}
+    explicit InteractiveMD(ImdSession* imdSession) : imdSession_(imdSession) {}
 
     //! Internal handle to IMD info.
-    ImdSession* imdSession;
+    ImdSession* imdSession_;
 };
 
 class SimulatorModules
 {
 public:
-    SimulatorModules(IMDOutputProvider* mdOutputProvider, const MdModulesNotifier& notifier) :
-        outputProvider(mdOutputProvider),
-        mdModulesNotifier(notifier)
+    SimulatorModules(IMDOutputProvider* mdOutputProvider, const MDModulesNotifiers& notifiers) :
+        outputProvider(mdOutputProvider), mdModulesNotifiers(notifiers)
     {
     }
 
-    IMDOutputProvider*       outputProvider;
-    const MdModulesNotifier& mdModulesNotifier;
+    IMDOutputProvider*        outputProvider;
+    const MDModulesNotifiers& mdModulesNotifiers;
 };
 
 class CenterOfMassPulling
@@ -292,10 +292,10 @@ class IonSwapping
 {
 public:
     //! Create handle.
-    IonSwapping(t_swap* ionSwap) : ionSwap(ionSwap) {}
+    IonSwapping(SwapCoords* ionSwap) : ionSwap_(ionSwap) {}
 
     //! Internal storage for handle.
-    t_swap* ionSwap;
+    SwapCoords* ionSwap_;
 };
 
 /*! \brief
@@ -305,16 +305,17 @@ class TopologyData
 {
 public:
     //! Build collection from simulation data.
-    TopologyData(gmx_mtop_t* globalTopology, MDAtoms* mdAtoms) :
-        top_global(globalTopology),
-        mdAtoms(mdAtoms)
+    TopologyData(const gmx_mtop_t& globalTopology, gmx_localtop_t* localTopology, MDAtoms* mdAtoms) :
+        globalTopology_(globalTopology), localTopology_(localTopology), mdAtoms_(mdAtoms)
     {
     }
 
     //! Handle to global simulation topology.
-    gmx_mtop_t* top_global;
+    const gmx_mtop_t& globalTopology_;
+    //! Handle to local simulation topology.
+    gmx_localtop_t* localTopology_;
     //! Handle to information about MDAtoms.
-    MDAtoms* mdAtoms;
+    MDAtoms* mdAtoms_;
 };
 
 /*! \brief
@@ -342,12 +343,19 @@ public:
 class SimulatorBuilder
 {
 public:
+    /*!
+     * \brief Default constructor for SimulatorBuilder.
+     */
+    SimulatorBuilder();
+
+    /*!
+     * \brief Default destructor for SimulatorBuilder.
+     */
+    ~SimulatorBuilder();
+
     void add(MembedHolder&& membedHolder);
 
-    void add(std::unique_ptr<StopHandlerBuilder> stopHandlerBuilder)
-    {
-        stopHandlerBuilder_ = std::move(stopHandlerBuilder);
-    }
+    void add(std::unique_ptr<StopHandlerBuilder> stopHandlerBuilder);
 
     void add(SimulatorStateData&& simulatorStateData)
     {
@@ -464,4 +472,4 @@ private:
 
 } // namespace gmx
 
-#endif // GMX_MDRUN_SIMULATORBUILDER_SIMULATORBUILDER_H
+#endif // GMX_MDRUN_SIMULATORBUILDER_H

@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2019- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \internal \file
  * \brief Defines the modular simulator
@@ -43,11 +42,19 @@
 
 #include "modularsimulator.h"
 
+#include <cstdlib>
+
+#include <filesystem>
+#include <optional>
+#include <string_view>
+
 #include "gromacs/commandline/filenm.h"
+#include "gromacs/compat/pointers.h"
 #include "gromacs/domdec/domdec.h"
 #include "gromacs/ewald/pme.h"
 #include "gromacs/ewald/pme_load_balancing.h"
 #include "gromacs/ewald/pme_pp.h"
+#include "gromacs/fileio/checkpoint.h"
 #include "gromacs/gmxlib/nrnb.h"
 #include "gromacs/listed_forces/listed_forces.h"
 #include "gromacs/mdlib/checkpointhandler.h"
@@ -56,36 +63,56 @@
 #include "gromacs/mdlib/energyoutput.h"
 #include "gromacs/mdlib/mdatoms.h"
 #include "gromacs/mdlib/resethandler.h"
-#include "gromacs/mdlib/update.h"
 #include "gromacs/mdrun/replicaexchange.h"
 #include "gromacs/mdrun/shellfc.h"
 #include "gromacs/mdrunutility/handlerestart.h"
 #include "gromacs/mdrunutility/printtime.h"
+#include "gromacs/mdtypes/checkpointdata.h"
 #include "gromacs/mdtypes/commrec.h"
 #include "gromacs/mdtypes/fcdata.h"
 #include "gromacs/mdtypes/forcerec.h"
 #include "gromacs/mdtypes/inputrec.h"
+#include "gromacs/mdtypes/md_enums.h"
 #include "gromacs/mdtypes/mdatom.h"
 #include "gromacs/mdtypes/mdrunoptions.h"
 #include "gromacs/mdtypes/observableshistory.h"
+#include "gromacs/modularsimulator/energydata.h"
+#include "gromacs/modularsimulator/freeenergyperturbationdata.h"
+#include "gromacs/modularsimulator/modularsimulatorinterfaces.h"
+#include "gromacs/modularsimulator/propagator.h"
 #include "gromacs/nbnxm/nbnxm.h"
+#include "gromacs/topology/ifunc.h"
 #include "gromacs/topology/mtop_util.h"
 #include "gromacs/topology/topology.h"
+#include "gromacs/trajectory/trajectoryframe.h"
 #include "gromacs/utility/fatalerror.h"
+#include "gromacs/utility/gmxassert.h"
+#include "gromacs/utility/int64_to_int.h"
+#include "gromacs/utility/logger.h"
+#include "gromacs/utility/message_string_collector.h"
+#include "gromacs/utility/vectypes.h"
 
+#include "andersentemperaturecoupling.h"
 #include "computeglobalselement.h"
 #include "constraintelement.h"
+#include "expandedensembleelement.h"
+#include "firstorderpressurecoupling.h"
 #include "forceelement.h"
+#include "mttk.h"
+#include "nosehooverchains.h"
 #include "parrinellorahmanbarostat.h"
+#include "pullelement.h"
 #include "simulatoralgorithm.h"
 #include "statepropagatordata.h"
 #include "velocityscalingtemperaturecoupling.h"
+
+struct gmx_multisim_t;
 
 namespace gmx
 {
 void ModularSimulator::run()
 {
-    GMX_LOG(legacySimulatorData_->mdlog.info)
+    GMX_LOG(legacySimulatorData_->mdLog_.info)
             .asParagraph()
             .appendText("Using the modular simulator.");
 
@@ -103,94 +130,272 @@ void ModularSimulator::run()
 
 void ModularSimulator::addIntegrationElements(ModularSimulatorAlgorithmBuilder* builder)
 {
-    if (legacySimulatorData_->inputrec->eI == eiMD)
+    const bool isTrotter = inputrecNvtTrotter(legacySimulatorData_->inputRec_)
+                           || inputrecNptTrotter(legacySimulatorData_->inputRec_)
+                           || inputrecNphTrotter(legacySimulatorData_->inputRec_);
+    if (legacySimulatorData_->inputRec_->eI == IntegrationAlgorithm::MD)
     {
         // The leap frog integration algorithm
         builder->add<ForceElement>();
         builder->add<StatePropagatorData::Element>();
-        if (legacySimulatorData_->inputrec->etc == etcVRESCALE
-            || legacySimulatorData_->inputrec->etc == etcBERENDSEN)
+        if (legacySimulatorData_->inputRec_->etc == TemperatureCoupling::VRescale
+            || legacySimulatorData_->inputRec_->etc == TemperatureCoupling::Berendsen
+            || legacySimulatorData_->inputRec_->etc == TemperatureCoupling::NoseHoover)
         {
-            builder->add<VelocityScalingTemperatureCoupling>(-1, UseFullStepKE::No,
-                                                             ReportPreviousStepConservedEnergy::No);
+            builder->add<VelocityScalingTemperatureCoupling>(Offset(-1),
+                                                             UseFullStepKE::No,
+                                                             ReportPreviousStepConservedEnergy::No,
+                                                             PropagatorTag("LeapFrogPropagator"));
         }
-        builder->add<Propagator<IntegrationStep::LeapFrog>>(legacySimulatorData_->inputrec->delta_t,
-                                                            RegisterWithThermostat::True,
-                                                            RegisterWithBarostat::True);
-        if (legacySimulatorData_->constr)
+        builder->add<Propagator<IntegrationStage::LeapFrog>>(
+                PropagatorTag("LeapFrogPropagator"), TimeStep(legacySimulatorData_->inputRec_->delta_t));
+        if (legacySimulatorData_->constr_)
         {
             builder->add<ConstraintsElement<ConstraintVariable::Positions>>();
         }
-        builder->add<ComputeGlobalsElement<ComputeGlobalsAlgorithm::LeapFrog>>();
-        builder->add<EnergyData::Element>();
-        if (legacySimulatorData_->inputrec->epc == epcPARRINELLORAHMAN)
+
+        if (legacySimulatorData_->inputRec_->bPull)
         {
-            builder->add<ParrinelloRahmanBarostat>(-1);
+            builder->add<PullElement>();
+        }
+
+        builder->add<ComputeGlobalsElement<ComputeGlobalsAlgorithm::LeapFrog>>();
+        if (legacySimulatorData_->inputRec_->pressureCouplingOptions.epc == PressureCoupling::ParrinelloRahman)
+        {
+            builder->add<ParrinelloRahmanBarostat>(Offset(-1), PropagatorTag("LeapFrogPropagator"));
+        }
+        else if (legacySimulatorData_->inputRec_->pressureCouplingOptions.epc == PressureCoupling::Berendsen
+                 || legacySimulatorData_->inputRec_->pressureCouplingOptions.epc == PressureCoupling::CRescale)
+        {
+            builder->add<FirstOrderPressureCoupling>(0, ReportPreviousStepConservedEnergy::No);
         }
     }
-    else if (legacySimulatorData_->inputrec->eI == eiVV)
+    else if (legacySimulatorData_->inputRec_->eI == IntegrationAlgorithm::VV && !isTrotter)
     {
         // The velocity verlet integration algorithm
         builder->add<ForceElement>();
-        builder->add<Propagator<IntegrationStep::VelocitiesOnly>>(
-                0.5 * legacySimulatorData_->inputrec->delta_t, RegisterWithThermostat::False,
-                RegisterWithBarostat::True);
-        if (legacySimulatorData_->constr)
+        builder->add<Propagator<IntegrationStage::VelocitiesOnly>>(
+                PropagatorTag("VelocityHalfStep"),
+                TimeStep(0.5 * legacySimulatorData_->inputRec_->delta_t));
+        if (legacySimulatorData_->constr_)
         {
             builder->add<ConstraintsElement<ConstraintVariable::Velocities>>();
         }
         builder->add<ComputeGlobalsElement<ComputeGlobalsAlgorithm::VelocityVerlet>>();
+        // Here, we have x / v / f at the full time step
         builder->add<StatePropagatorData::Element>();
-        if (legacySimulatorData_->inputrec->etc == etcVRESCALE
-            || legacySimulatorData_->inputrec->etc == etcBERENDSEN)
+        if (legacySimulatorData_->inputRec_->bExpanded)
+        {
+            builder->add<ExpandedEnsembleElement>();
+        }
+        if (legacySimulatorData_->inputRec_->etc == TemperatureCoupling::VRescale
+            || legacySimulatorData_->inputRec_->etc == TemperatureCoupling::Berendsen)
         {
             builder->add<VelocityScalingTemperatureCoupling>(
-                    0, UseFullStepKE::Yes, ReportPreviousStepConservedEnergy::Yes);
+                    Offset(0),
+                    UseFullStepKE::Yes,
+                    ReportPreviousStepConservedEnergy::Yes,
+                    PropagatorTag("VelocityHalfAndPositionFullStep"));
         }
-        builder->add<Propagator<IntegrationStep::VelocityVerletPositionsAndVelocities>>(
-                legacySimulatorData_->inputrec->delta_t, RegisterWithThermostat::True,
-                RegisterWithBarostat::False);
-        if (legacySimulatorData_->constr)
+        else if (ETC_ANDERSEN(legacySimulatorData_->inputRec_->etc))
+        {
+            builder->add<AndersenTemperatureCoupling>();
+        }
+        builder->add<Propagator<IntegrationStage::VelocityVerletPositionsAndVelocities>>(
+                PropagatorTag("VelocityHalfAndPositionFullStep"),
+                TimeStep(legacySimulatorData_->inputRec_->delta_t));
+        if (legacySimulatorData_->constr_)
         {
             builder->add<ConstraintsElement<ConstraintVariable::Positions>>();
         }
-        builder->add<ComputeGlobalsElement<ComputeGlobalsAlgorithm::VelocityVerlet>>();
-        builder->add<EnergyData::Element>();
-        if (legacySimulatorData_->inputrec->epc == epcPARRINELLORAHMAN)
+
+        if (legacySimulatorData_->inputRec_->bPull)
         {
-            builder->add<ParrinelloRahmanBarostat>(-1);
+            builder->add<PullElement>();
+        }
+
+        builder->add<ComputeGlobalsElement<ComputeGlobalsAlgorithm::VelocityVerlet>>();
+        if (legacySimulatorData_->inputRec_->pressureCouplingOptions.epc == PressureCoupling::ParrinelloRahman)
+        {
+            builder->add<ParrinelloRahmanBarostat>(Offset(-1), PropagatorTag("VelocityHalfStep"));
+        }
+        else if (legacySimulatorData_->inputRec_->pressureCouplingOptions.epc == PressureCoupling::Berendsen
+                 || legacySimulatorData_->inputRec_->pressureCouplingOptions.epc == PressureCoupling::CRescale)
+        {
+            builder->add<FirstOrderPressureCoupling>(0, ReportPreviousStepConservedEnergy::Yes);
+        }
+    }
+    else if (legacySimulatorData_->inputRec_->eI == IntegrationAlgorithm::VV && isTrotter)
+    {
+        // For a new simulation, avoid the first Trotter half step
+        const auto scheduleTrotterFirstHalfOnInitStep =
+                ((legacySimulatorData_->startingBehavior_ == StartingBehavior::NewSimulation)
+                         ? ScheduleOnInitStep::No
+                         : ScheduleOnInitStep::Yes);
+        // Define the tags and offsets for MTTK pressure scaling
+        const MttkPropagatorConnectionDetails mttkPropagatorConnectionDetails = {
+            PropagatorTag("ScaleMTTKXPre"),  PropagatorTag("ScaleMTTKXPost"),  Offset(0),
+            PropagatorTag("ScaleMTTKVPre1"), PropagatorTag("ScaleMTTKVPost1"), Offset(1),
+            PropagatorTag("ScaleMTTKVPre2"), PropagatorTag("ScaleMTTKVPost2"), Offset(0)
+        };
+
+        builder->add<ForceElement>();
+        // Propagate velocities from t-dt/2 to t
+        if (legacySimulatorData_->inputRec_->pressureCouplingOptions.epc == PressureCoupling::Mttk)
+        {
+            builder->add<Propagator<IntegrationStage::ScaleVelocities>>(
+                    PropagatorTag("ScaleMTTKVPre1"));
+        }
+        builder->add<Propagator<IntegrationStage::VelocitiesOnly>>(
+                PropagatorTag("VelocityHalfStep1"),
+                TimeStep(0.5 * legacySimulatorData_->inputRec_->delta_t));
+        if (legacySimulatorData_->inputRec_->pressureCouplingOptions.epc == PressureCoupling::Mttk)
+        {
+            builder->add<Propagator<IntegrationStage::ScaleVelocities>>(
+                    PropagatorTag("ScaleMTTKVPost1"));
+        }
+        if (legacySimulatorData_->constr_)
+        {
+            builder->add<ConstraintsElement<ConstraintVariable::Velocities>>();
+        }
+        builder->add<ComputeGlobalsElement<ComputeGlobalsAlgorithm::VelocityVerlet>>();
+
+        // Propagate extended system variables from t-dt/2 to t
+        if (legacySimulatorData_->inputRec_->pressureCouplingOptions.epc == PressureCoupling::Mttk)
+        {
+            builder->add<MttkElement>(
+                    Offset(-1), scheduleTrotterFirstHalfOnInitStep, mttkPropagatorConnectionDetails);
+        }
+        if (legacySimulatorData_->inputRec_->etc == TemperatureCoupling::NoseHoover)
+        {
+            builder->add<NoseHooverChainsElement>(NhcUsage::System,
+                                                  Offset(-1),
+                                                  UseFullStepKE::Yes,
+                                                  scheduleTrotterFirstHalfOnInitStep,
+                                                  PropagatorTag("ScaleNHC"));
+            builder->add<Propagator<IntegrationStage::ScaleVelocities>>(PropagatorTag("ScaleNHC"));
+        }
+        if (legacySimulatorData_->inputRec_->pressureCouplingOptions.epc == PressureCoupling::Mttk)
+        {
+            builder->add<NoseHooverChainsElement>(NhcUsage::Barostat,
+                                                  Offset(-1),
+                                                  UseFullStepKE::Yes,
+                                                  scheduleTrotterFirstHalfOnInitStep,
+                                                  mttkPropagatorConnectionDetails);
+        }
+        // We have a full state at time t here
+        builder->add<StatePropagatorData::Element>();
+        if (legacySimulatorData_->inputRec_->bExpanded)
+        {
+            builder->add<ExpandedEnsembleElement>();
+        }
+
+        // Propagate extended system variables from t to t+dt/2
+        if (legacySimulatorData_->inputRec_->pressureCouplingOptions.epc == PressureCoupling::Mttk)
+        {
+            builder->add<NoseHooverChainsElement>(NhcUsage::Barostat,
+                                                  Offset(0),
+                                                  UseFullStepKE::Yes,
+                                                  ScheduleOnInitStep::Yes,
+                                                  mttkPropagatorConnectionDetails);
+        }
+        if (legacySimulatorData_->inputRec_->etc == TemperatureCoupling::NoseHoover)
+        {
+            builder->add<NoseHooverChainsElement>(NhcUsage::System,
+                                                  Offset(0),
+                                                  UseFullStepKE::Yes,
+                                                  ScheduleOnInitStep::Yes,
+                                                  PropagatorTag("VelocityHalfStep2"));
+        }
+        if (legacySimulatorData_->inputRec_->pressureCouplingOptions.epc == PressureCoupling::Mttk)
+        {
+            builder->add<MttkElement>(Offset(0), ScheduleOnInitStep::Yes, mttkPropagatorConnectionDetails);
+            builder->add<Propagator<IntegrationStage::ScaleVelocities>>(
+                    PropagatorTag("ScaleMTTKVPre2"));
+        }
+
+        // Propagate velocities from t to t+dt/2
+        builder->add<Propagator<IntegrationStage::VelocitiesOnly>>(
+                PropagatorTag("VelocityHalfStep2"),
+                TimeStep(0.5 * legacySimulatorData_->inputRec_->delta_t));
+        if (legacySimulatorData_->inputRec_->pressureCouplingOptions.epc == PressureCoupling::Mttk)
+        {
+            builder->add<Propagator<IntegrationStage::ScaleVelocities>>(
+                    PropagatorTag("ScaleMTTKVPost2"));
+            builder->add<Propagator<IntegrationStage::ScalePositions>>(
+                    PropagatorTag("ScaleMTTKXPre"));
+        }
+        // Propagate positions from t to t+dt
+        builder->add<Propagator<IntegrationStage::PositionsOnly>>(
+                PropagatorTag("PositionFullStep"), TimeStep(legacySimulatorData_->inputRec_->delta_t));
+        if (legacySimulatorData_->inputRec_->pressureCouplingOptions.epc == PressureCoupling::Mttk)
+        {
+            builder->add<Propagator<IntegrationStage::ScalePositions>>(
+                    PropagatorTag("ScaleMTTKXPost"));
+        }
+        if (legacySimulatorData_->constr_)
+        {
+            builder->add<ConstraintsElement<ConstraintVariable::Positions>>();
+        }
+
+        if (legacySimulatorData_->inputRec_->bPull)
+        {
+            builder->add<PullElement>();
+        }
+
+        builder->add<ComputeGlobalsElement<ComputeGlobalsAlgorithm::VelocityVerlet>>();
+
+        // Propagate box from t to t+dt
+        if (legacySimulatorData_->inputRec_->pressureCouplingOptions.epc == PressureCoupling::Mttk)
+        {
+            builder->add<MttkBoxScaling>(mttkPropagatorConnectionDetails);
+        }
+        else if (legacySimulatorData_->inputRec_->pressureCouplingOptions.epc == PressureCoupling::CRescale)
+        {
+            // Legacy implementation allows combination of C-Rescale with Trotter Nose-Hoover
+            builder->add<FirstOrderPressureCoupling>(0, ReportPreviousStepConservedEnergy::Yes);
         }
     }
     else
     {
         gmx_fatal(FARGS, "Integrator not implemented for the modular simulator.");
     }
+    builder->add<EnergyData::Element>();
 }
 
-bool ModularSimulator::isInputCompatible(bool                             exitOnFailure,
-                                         const t_inputrec*                inputrec,
-                                         bool                             doRerun,
-                                         const gmx_mtop_t&                globalTopology,
-                                         const gmx_multisim_t*            ms,
-                                         const ReplicaExchangeParameters& replExParams,
-                                         const t_fcdata*                  fcd,
-                                         bool                             doEssentialDynamics,
-                                         bool                             doMembed)
+namespace
 {
-    auto conditionalAssert = [exitOnFailure](bool condition, const char* message) {
-        if (exitOnFailure)
-        {
-            GMX_RELEASE_ASSERT(condition, message);
-        }
-        return condition;
-    };
+
+/*! \brief Describe any incompatibilities because of functionality not
+ * implemented in modular simulator
+ *
+ * Note that https://gitlab.com/gromacs/gromacs/-/tree/ptmerz-modularsimulator-feature-branch
+ * contains draft implementations for feature support that could be included here
+ * if there is interest.
+ *
+ * \returns A collection of messages describing any incompatibilities identified */
+MessageStringCollector getReasonsForIncompatibility(const t_inputrec*                inputrec,
+                                                    const bool                       doRerun,
+                                                    const gmx_mtop_t&                globalTopology,
+                                                    const gmx_multisim_t*            ms,
+                                                    const ReplicaExchangeParameters& replExParams,
+                                                    const t_fcdata*                  fcd,
+                                                    const bool doEssentialDynamics,
+                                                    const bool doMembed,
+                                                    const bool useGpuForUpdate)
+{
+    MessageStringCollector reasonsForIncompatibility;
+    reasonsForIncompatibility.startContext(
+            "Modular simulator cannot be used because it does not support one or more things "
+            "required by the simulation:");
 
     // GMX_USE_MODULAR_SIMULATOR allows to use modular simulator also for non-standard uses,
     // such as the leap-frog integrator
-    const auto modularSimulatorExplicitlyTurnedOn = (getenv("GMX_USE_MODULAR_SIMULATOR") != nullptr);
+    const auto modularSimulatorExplicitlyTurnedOn = (std::getenv("GMX_USE_MODULAR_SIMULATOR") != nullptr);
     // GMX_USE_MODULAR_SIMULATOR allows to use disable modular simulator for all uses,
     // including the velocity-verlet integrator used by default
-    const auto modularSimulatorExplicitlyTurnedOff = (getenv("GMX_DISABLE_MODULAR_SIMULATOR") != nullptr);
+    const auto modularSimulatorExplicitlyTurnedOff =
+            (std::getenv("GMX_DISABLE_MODULAR_SIMULATOR") != nullptr);
 
     GMX_RELEASE_ASSERT(
             !(modularSimulatorExplicitlyTurnedOn && modularSimulatorExplicitlyTurnedOff),
@@ -200,92 +405,49 @@ bool ModularSimulator::isInputCompatible(bool                             exitOn
             "or unset both to recover default behavior.");
 
     GMX_RELEASE_ASSERT(
-            !(modularSimulatorExplicitlyTurnedOff && inputrec->eI == eiVV
-              && inputrec->epc == epcPARRINELLORAHMAN),
+            !(modularSimulatorExplicitlyTurnedOff && inputrec->eI == IntegrationAlgorithm::VV
+              && inputrec->pressureCouplingOptions.epc == PressureCoupling::ParrinelloRahman),
             "Cannot use a Parrinello-Rahman barostat with md-vv and "
             "GMX_DISABLE_MODULAR_SIMULATOR=ON, "
             "as the Parrinello-Rahman barostat is not implemented in the legacy simulator. Unset "
             "GMX_DISABLE_MODULAR_SIMULATOR or use a different pressure control algorithm.");
 
-    bool isInputCompatible = conditionalAssert(
-            inputrec->eI == eiMD || inputrec->eI == eiVV,
+    reasonsForIncompatibility.appendIf(
+            inputrec->eI != IntegrationAlgorithm::MD && inputrec->eI != IntegrationAlgorithm::VV,
             "Only integrators md and md-vv are supported by the modular simulator.");
-    isInputCompatible = isInputCompatible
-                        && conditionalAssert(inputrec->eI != eiMD || modularSimulatorExplicitlyTurnedOn,
-                                             "Set GMX_USE_MODULAR_SIMULATOR=ON to use the modular "
-                                             "simulator with integrator md.");
-    isInputCompatible =
-            isInputCompatible
-            && conditionalAssert(!doRerun, "Rerun is not supported by the modular simulator.");
-    isInputCompatible = isInputCompatible
-                        && conditionalAssert(inputrec->etc == etcNO || inputrec->etc == etcVRESCALE
-                                                     || inputrec->etc == etcBERENDSEN,
-                                             "Only v-rescale and Berendsen thermostat are "
-                                             "supported by the modular simulator.");
-    isInputCompatible =
-            isInputCompatible
-            && conditionalAssert(
-                       inputrec->epc == epcNO || inputrec->epc == epcPARRINELLORAHMAN,
-                       "Only Parrinello-Rahman barostat is supported by the modular simulator.");
-    isInputCompatible =
-            isInputCompatible
-            && conditionalAssert(
-                       !(inputrecNptTrotter(inputrec) || inputrecNphTrotter(inputrec)
-                         || inputrecNvtTrotter(inputrec)),
-                       "Legacy Trotter decomposition is not supported by the modular simulator.");
-    isInputCompatible = isInputCompatible
-                        && conditionalAssert(inputrec->efep == efepNO || inputrec->efep == efepYES
-                                                     || inputrec->efep == efepSLOWGROWTH,
-                                             "Expanded ensemble free energy calculation is not "
-                                             "supported by the modular simulator.");
-    isInputCompatible = isInputCompatible
-                        && conditionalAssert(!inputrec->bPull,
-                                             "Pulling is not supported by the modular simulator.");
-    isInputCompatible =
-            isInputCompatible
-            && conditionalAssert(inputrec->opts.ngacc == 1 && inputrec->opts.acc[0][XX] == 0.0
-                                         && inputrec->opts.acc[0][YY] == 0.0
-                                         && inputrec->opts.acc[0][ZZ] == 0.0 && inputrec->cos_accel == 0.0,
-                                 "Acceleration is not supported by the modular simulator.");
-    isInputCompatible =
-            isInputCompatible
-            && conditionalAssert(inputrec->opts.ngfrz == 1 && inputrec->opts.nFreeze[0][XX] == 0
-                                         && inputrec->opts.nFreeze[0][YY] == 0
-                                         && inputrec->opts.nFreeze[0][ZZ] == 0,
-                                 "Freeze groups are not supported by the modular simulator.");
-    isInputCompatible =
-            isInputCompatible
-            && conditionalAssert(
-                       inputrec->deform[XX][XX] == 0.0 && inputrec->deform[XX][YY] == 0.0
-                               && inputrec->deform[XX][ZZ] == 0.0 && inputrec->deform[YY][XX] == 0.0
-                               && inputrec->deform[YY][YY] == 0.0 && inputrec->deform[YY][ZZ] == 0.0
-                               && inputrec->deform[ZZ][XX] == 0.0 && inputrec->deform[ZZ][YY] == 0.0
-                               && inputrec->deform[ZZ][ZZ] == 0.0,
-                       "Deformation is not supported by the modular simulator.");
-    isInputCompatible =
-            isInputCompatible
-            && conditionalAssert(gmx_mtop_interaction_count(globalTopology, IF_VSITE) == 0,
-                                 "Virtual sites are not supported by the modular simulator.");
-    isInputCompatible = isInputCompatible
-                        && conditionalAssert(!inputrec->bDoAwh,
-                                             "AWH is not supported by the modular simulator.");
-    isInputCompatible =
-            isInputCompatible
-            && conditionalAssert(gmx_mtop_ftype_count(globalTopology, F_DISRES) == 0,
-                                 "Distance restraints are not supported by the modular simulator.");
-    isInputCompatible =
-            isInputCompatible
-            && conditionalAssert(
-                       gmx_mtop_ftype_count(globalTopology, F_ORIRES) == 0,
-                       "Orientation restraints are not supported by the modular simulator.");
-    isInputCompatible =
-            isInputCompatible
-            && conditionalAssert(ms == nullptr,
-                                 "Multi-sim are not supported by the modular simulator.");
-    isInputCompatible =
-            isInputCompatible
-            && conditionalAssert(replExParams.exchangeInterval == 0,
-                                 "Replica exchange is not supported by the modular simulator.");
+    reasonsForIncompatibility.appendIf(
+            inputrec->eI == IntegrationAlgorithm::MD && !modularSimulatorExplicitlyTurnedOn,
+            "Set GMX_USE_MODULAR_SIMULATOR=ON to use the modular "
+            "simulator with integrator md.");
+    reasonsForIncompatibility.appendIf(
+            inputrec->useMts, "Multiple time stepping is not supported by the modular simulator.");
+    reasonsForIncompatibility.appendIf(doRerun, "Rerun is not supported by the modular simulator.");
+    reasonsForIncompatibility.appendIf(inputrec->useConstantAcceleration || inputrec->cos_accel != 0.0,
+                                       "Acceleration is not supported by the modular simulator.");
+    reasonsForIncompatibility.appendIf(inputrecFrozenAtoms(inputrec),
+                                       "Freeze groups are not supported by the modular simulator.");
+    reasonsForIncompatibility.appendIf(
+            inputrec->deform[XX][XX] != 0.0 || inputrec->deform[XX][YY] != 0.0
+                    || inputrec->deform[XX][ZZ] != 0.0 || inputrec->deform[YY][XX] != 0.0
+                    || inputrec->deform[YY][YY] != 0.0 || inputrec->deform[YY][ZZ] != 0.0
+                    || inputrec->deform[ZZ][XX] != 0.0 || inputrec->deform[ZZ][YY] != 0.0
+                    || inputrec->deform[ZZ][ZZ] != 0.0,
+            "Deformation is not supported by the modular simulator.");
+    reasonsForIncompatibility.appendIf(gmx_mtop_interaction_count(globalTopology, IF_VSITE) > 0,
+                                       "Virtual sites are not supported by the modular simulator.");
+    reasonsForIncompatibility.appendIf(inputrec->bDoAwh,
+                                       "AWH is not supported by the modular simulator.");
+    reasonsForIncompatibility.appendIf(
+            gmx_mtop_ftype_count(globalTopology, InteractionFunction::DistanceRestraints) > 0,
+            "Distance restraints are not supported by the modular simulator.");
+    reasonsForIncompatibility.appendIf(
+            gmx_mtop_ftype_count(globalTopology, InteractionFunction::OrientationRestraints) > 0,
+            "Orientation restraints are not supported by the modular simulator.");
+    reasonsForIncompatibility.appendIf(ms != nullptr,
+                                       "Multi-sim are not supported by the modular simulator.");
+    reasonsForIncompatibility.appendIf(
+            replExParams.exchangeInterval != 0,
+            "Replica exchange is not supported by the modular simulator.");
 
     int numEnsembleRestraintSystems;
     if (fcd)
@@ -294,61 +456,101 @@ bool ModularSimulator::isInputCompatible(bool                             exitOn
     }
     else
     {
-        auto distantRestraintEnsembleEnvVar = getenv("GMX_DISRE_ENSEMBLE_SIZE");
+        auto* distantRestraintEnsembleEnvVar = std::getenv("GMX_DISRE_ENSEMBLE_SIZE");
         numEnsembleRestraintSystems =
                 (ms != nullptr && distantRestraintEnsembleEnvVar != nullptr)
-                        ? static_cast<int>(strtol(distantRestraintEnsembleEnvVar, nullptr, 10))
+                        ? static_cast<int>(std::strtol(distantRestraintEnsembleEnvVar, nullptr, 10))
                         : 0;
     }
-    isInputCompatible =
-            isInputCompatible
-            && conditionalAssert(numEnsembleRestraintSystems <= 1,
-                                 "Ensemble restraints are not supported by the modular simulator.");
-    isInputCompatible =
-            isInputCompatible
-            && conditionalAssert(!doSimulatedAnnealing(inputrec),
-                                 "Simulated annealing is not supported by the modular simulator.");
-    isInputCompatible =
-            isInputCompatible
-            && conditionalAssert(!inputrec->bSimTemp,
-                                 "Simulated tempering is not supported by the modular simulator.");
-    isInputCompatible = isInputCompatible
-                        && conditionalAssert(!inputrec->bExpanded,
-                                             "Expanded ensemble simulations are not supported by "
-                                             "the modular simulator.");
-    isInputCompatible =
-            isInputCompatible
-            && conditionalAssert(!doEssentialDynamics,
-                                 "Essential dynamics is not supported by the modular simulator.");
-    isInputCompatible = isInputCompatible
-                        && conditionalAssert(inputrec->eSwapCoords == eswapNO,
-                                             "Ion / water position swapping is not supported by "
-                                             "the modular simulator.");
-    isInputCompatible =
-            isInputCompatible
-            && conditionalAssert(!inputrec->bIMD,
-                                 "Interactive MD is not supported by the modular simulator.");
-    isInputCompatible =
-            isInputCompatible
-            && conditionalAssert(!doMembed,
-                                 "Membrane embedding is not supported by the modular simulator.");
-    // TODO: Change this to the boolean passed when we merge the user interface change for the GPU update.
-    isInputCompatible =
-            isInputCompatible
-            && conditionalAssert(
-                       getenv("GMX_FORCE_UPDATE_DEFAULT_GPU") == nullptr,
-                       "Integration on the GPU is not supported by the modular simulator.");
+    reasonsForIncompatibility.appendIf(
+            numEnsembleRestraintSystems > 1,
+            "Ensemble restraints are not supported by the modular simulator.");
+    reasonsForIncompatibility.appendIf(
+            doSimulatedAnnealing(*inputrec),
+            "Simulated annealing is not supported by the modular simulator.");
+    reasonsForIncompatibility.appendIf(
+            inputrec->bSimTemp, "Simulated tempering is not supported by the modular simulator.");
+    reasonsForIncompatibility.appendIf(
+            doEssentialDynamics, "Essential dynamics is not supported by the modular simulator.");
+    reasonsForIncompatibility.appendIf(inputrec->eSwapCoords != SwapType::No,
+                                       "Ion / water position swapping is not supported by "
+                                       "the modular simulator.");
+    reasonsForIncompatibility.appendIf(inputrec->bIMD,
+                                       "Interactive MD is not supported by the modular simulator.");
+    reasonsForIncompatibility.appendIf(
+            doMembed, "Membrane embedding is not supported by the modular simulator.");
+
+    reasonsForIncompatibility.appendIf(
+            useGpuForUpdate, "Integration on the GPU is not supported by the modular simulator.");
+
     // Modular simulator is centered around NS updates
     // TODO: think how to handle nstlist == 0
-    isInputCompatible = isInputCompatible
-                        && conditionalAssert(inputrec->nstlist != 0,
-                                             "Simulations without neighbor list update are not "
-                                             "supported by the modular simulator.");
-    isInputCompatible = isInputCompatible
-                        && conditionalAssert(!GMX_FAHCORE,
-                                             "GMX_FAHCORE not supported by the modular simulator.");
+    reasonsForIncompatibility.appendIf(inputrec->nstlist == 0,
+                                       "Simulations without neighbor list update are not "
+                                       "supported by the modular simulator.");
+    reasonsForIncompatibility.appendIf(GMX_FAHCORE,
+                                       "GMX_FAHCORE not supported by the modular simulator.");
+    if (!reasonsForIncompatibility.isEmpty()
+        && (inputrec->eI == IntegrationAlgorithm::VV
+            && inputrec->pressureCouplingOptions.epc == PressureCoupling::ParrinelloRahman))
+    {
+        gmx_fatal(FARGS,
+                  "Requested Parrinello-Rahman barostat with md-vv. This combination is only "
+                  "available in the modular simulator. Some other selected options are, however, "
+                  "only available in the legacy simulator. Use a different pressure control "
+                  "algorithm.");
+    }
+    reasonsForIncompatibility.finishContext();
+    return reasonsForIncompatibility;
+}
 
-    return isInputCompatible;
+} // namespace
+
+bool ModularSimulator::isInputCompatible(const MDLogger&                  mdlog,
+                                         const t_inputrec*                inputrec,
+                                         bool                             doRerun,
+                                         const gmx_mtop_t&                globalTopology,
+                                         const gmx_multisim_t*            ms,
+                                         const ReplicaExchangeParameters& replExParams,
+                                         const t_fcdata*                  fcd,
+                                         bool                             doEssentialDynamics,
+                                         bool                             doMembed,
+                                         bool                             useGpuForUpdate)
+{
+    // Ensure assertions in this function are run even when the
+    // modular simulator is explicitly turned off.
+    const MessageStringCollector reasonsForIncompatibility = getReasonsForIncompatibility(
+            inputrec, doRerun, globalTopology, ms, replExParams, fcd, doEssentialDynamics, doMembed, useGpuForUpdate);
+
+    if (const bool modularSimulatorExplicitlyTurnedOff = (getenv("GMX_DISABLE_MODULAR_SIMULATOR") != nullptr);
+        modularSimulatorExplicitlyTurnedOff)
+    {
+        return false;
+    }
+    if (!reasonsForIncompatibility.isEmpty())
+    {
+        const std::string message = reasonsForIncompatibility.toString();
+        if (const bool modularSimulatorExplicitlyTurnedOn = (getenv("GMX_USE_MODULAR_SIMULATOR") != nullptr);
+            modularSimulatorExplicitlyTurnedOn)
+        {
+            GMX_THROW(InconsistentInputError("Modular simulator was required. " + message));
+        }
+        else
+        {
+            if (inputrec->eI == IntegrationAlgorithm::VV)
+            {
+                // Probably only users using the velocity-Verlet
+                // integrator are interested in the modular simulator,
+                // so we can minimize the noise in the log file and
+                // perhaps subsequent confusion by keeping quiet about
+                // the modular simulator in the other cases.
+                GMX_LOG(mdlog.info).asParagraph().appendText(message);
+            }
+            return false;
+        }
+    }
+    // Modular simulator is compatible and wasn't explicitly turned off, so use it!
+    return true;
 }
 
 ModularSimulator::ModularSimulator(std::unique_ptr<LegacySimulatorData>      legacySimulatorData,
@@ -359,19 +561,59 @@ ModularSimulator::ModularSimulator(std::unique_ptr<LegacySimulatorData>      leg
     checkInputForDisabledFunctionality();
 }
 
+ModularSimulator::~ModularSimulator() = default;
+
 void ModularSimulator::checkInputForDisabledFunctionality()
 {
-    isInputCompatible(true, legacySimulatorData_->inputrec, legacySimulatorData_->mdrunOptions.rerun,
-                      *legacySimulatorData_->top_global, legacySimulatorData_->ms,
-                      legacySimulatorData_->replExParams, legacySimulatorData_->fr->fcdata.get(),
-                      opt2bSet("-ei", legacySimulatorData_->nfile, legacySimulatorData_->fnm),
-                      legacySimulatorData_->membed != nullptr);
-    if (legacySimulatorData_->observablesHistory->edsamHistory)
+    const MessageStringCollector reasonsForIncompatibility = getReasonsForIncompatibility(
+            legacySimulatorData_->inputRec_,
+            legacySimulatorData_->mdrunOptions_.rerun,
+            legacySimulatorData_->topGlobal_,
+            legacySimulatorData_->ms_,
+            legacySimulatorData_->replExParams_,
+            legacySimulatorData_->fr_->fcdata.get(),
+            opt2bSet("-ei", legacySimulatorData_->nFile_, legacySimulatorData_->fnm_),
+            legacySimulatorData_->membed_ != nullptr,
+            false);
+    const bool simulationIsCompatibleWithModularSimulator = reasonsForIncompatibility.isEmpty();
+    // The reasons should have been explained to the user before
+    // choosing the modular simulator, so assert now.
+    GMX_RELEASE_ASSERT(simulationIsCompatibleWithModularSimulator,
+                       reasonsForIncompatibility.toString().c_str());
+
+    if (legacySimulatorData_->observablesHistory_->edsamHistory)
     {
         gmx_fatal(FARGS,
                   "The checkpoint is from a run with essential dynamics sampling, "
                   "but the current run did not specify the -ei option. "
                   "Either specify the -ei option to mdrun, or do not use this checkpoint file.");
+    }
+}
+
+void ModularSimulator::readCheckpointToTrxFrame(t_trxframe*               fr,
+                                                ReadCheckpointDataHolder* readCheckpointDataHolder,
+                                                const CheckpointHeaderContents& checkpointHeaderContents)
+{
+    GMX_RELEASE_ASSERT(checkpointHeaderContents.isModularSimulatorCheckpoint,
+                       "ModularSimulator::readCheckpointToTrxFrame can only read checkpoints "
+                       "written by modular simulator.");
+    fr->bStep = true;
+    fr->step = int64_to_int(checkpointHeaderContents.step, "conversion of checkpoint to trajectory");
+    fr->bTime = true;
+    fr->time  = checkpointHeaderContents.t;
+
+    fr->bAtoms = false;
+
+    StatePropagatorData::readCheckpointToTrxFrame(
+            fr, readCheckpointDataHolder->checkpointData(StatePropagatorData::checkpointID()));
+    if (readCheckpointDataHolder->keyExists(FreeEnergyPerturbationData::checkpointID()))
+    {
+        FreeEnergyPerturbationData::readCheckpointToTrxFrame(
+                fr, readCheckpointDataHolder->checkpointData(FreeEnergyPerturbationData::checkpointID()));
+    }
+    else
+    {
+        FreeEnergyPerturbationData::readCheckpointToTrxFrame(fr, std::nullopt);
     }
 }
 

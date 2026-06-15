@@ -1,12 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2009,2010,2011,2012,2013 by the GROMACS development team.
- * Copyright (c) 2014,2015,2016,2017,2018 by the GROMACS development team.
- * Copyright (c) 2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2009- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -20,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -29,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \internal \file
  * \brief
@@ -46,6 +43,12 @@
 #include <cstdlib>
 #include <cstring>
 
+#include <list>
+#include <string>
+
+#include "gromacs/selection/indexutil.h"
+#include "gromacs/selection/selparam.h"
+#include "gromacs/selection/selvalue.h"
 #include "gromacs/utility/arraysize.h"
 #include "gromacs/utility/exceptions.h"
 #include "gromacs/utility/smalloc.h"
@@ -55,6 +58,8 @@
 #include "selelem.h"
 #include "selmethod.h"
 #include "selmethod_impl.h"
+
+struct gmx_mtop_t;
 
 /*! \internal
  * \brief
@@ -68,7 +73,8 @@
 typedef struct
 {
     /** Value for each atom to match. */
-    union {
+    union
+    {
         int*   i;
         char** s;
         void*  ptr;
@@ -81,7 +87,8 @@ typedef struct
      */
     int nas;
     /** Values to match against. */
-    union {
+    union
+    {
         int*   i;
         char** s;
         void*  ptr;
@@ -116,7 +123,6 @@ static void* init_data_same(int npar, gmx_ana_selparam_t* param);
  * \param   param Initialized method parameters (should point to a copy of
  *      ::smparams_same_int or ::smparams_same_str).
  * \param   data  Pointer to \ref t_methoddata_same to initialize.
- * \returns 0 on success, -1 on failure.
  */
 static void init_same(const gmx_mtop_t* top, int npar, gmx_ana_selparam_t* param, void* data);
 /** Frees the data allocated for the \p same selection method. */
@@ -249,11 +255,11 @@ void _gmx_selelem_custom_init_same(gmx_ana_selmethod_t**                        
 
     const gmx::SelectionParserValueList& kwvalues = params->front().values();
     if (kwvalues.size() != 1 || !kwvalues.front().hasExpressionValue()
-        || kwvalues.front().expr->type != SEL_EXPRESSION)
+        || kwvalues.front().expr_->type != SEL_EXPRESSION)
     {
         GMX_THROW(gmx::InvalidInputError("'same' should be followed by a single keyword"));
     }
-    gmx_ana_selmethod_t* kwmethod = kwvalues.front().expr->u.expr.method;
+    gmx_ana_selmethod_t* kwmethod = kwvalues.front().expr_->u.expr.method;
     if (kwmethod->type == STR_VALUE)
     {
         *method = &sm_same_str;
@@ -270,7 +276,7 @@ void _gmx_selelem_custom_init_same(gmx_ana_selmethod_t**                        
             GMX_THROW(gmx::InvalidInputError(
                     "'same ... as' should be followed by a single expression"));
         }
-        const gmx::SelectionTreeElementPointer& child = asvalues.front().expr;
+        const gmx::SelectionTreeElementPointer& child = asvalues.front().expr_;
         /* Create a second keyword evaluation element for the keyword given as
          * the first parameter, evaluating the keyword in the group given by the
          * second parameter. */
@@ -354,7 +360,7 @@ static void init_frame_same_int(const gmx::SelMethodEvalContext& /*context*/, vo
 
     if (!d->bSorted)
     {
-        qsort(d->as.i, d->nas, sizeof(d->as.i[0]), &cmp_int);
+        std::qsort(d->as.i, d->nas, sizeof(d->as.i[0]), &cmp_int);
         /* More identical values may become adjacent after sorting. */
         for (i = 1, j = 0; i < d->nas; ++i)
         {
@@ -451,7 +457,7 @@ static void evaluate_same_int(const gmx::SelMethodEvalContext& /*context*/,
  */
 static int cmp_str(const void* a, const void* b)
 {
-    return strcmp(*static_cast<char* const*>(a), *static_cast<char* const*>(b));
+    return std::strcmp(*static_cast<char* const*>(a), *static_cast<char* const*>(b));
 }
 
 static void init_frame_same_str(const gmx::SelMethodEvalContext& /*context*/, void* data)
@@ -470,7 +476,7 @@ static void init_frame_same_str(const gmx::SelMethodEvalContext& /*context*/, vo
     d->as_s_sorted[0] = d->as.s[0];
     for (i = 1, j = 0; i < d->nas; ++i)
     {
-        if (strcmp(d->as.s[i], d->as_s_sorted[j]) != 0)
+        if (std::strcmp(d->as.s[i], d->as_s_sorted[j]) != 0)
         {
             ++j;
             d->as_s_sorted[j] = d->as.s[i];
@@ -478,11 +484,11 @@ static void init_frame_same_str(const gmx::SelMethodEvalContext& /*context*/, vo
     }
     d->nas = j + 1;
 
-    qsort(d->as_s_sorted, d->nas, sizeof(d->as_s_sorted[0]), &cmp_str);
+    std::qsort(d->as_s_sorted, d->nas, sizeof(d->as_s_sorted[0]), &cmp_str);
     /* More identical values may become adjacent after sorting. */
     for (i = 1, j = 0; i < d->nas; ++i)
     {
-        if (strcmp(d->as_s_sorted[i], d->as_s_sorted[j]) != 0)
+        if (std::strcmp(d->as_s_sorted[i], d->as_s_sorted[j]) != 0)
         {
             ++j;
             d->as_s_sorted[j] = d->as_s_sorted[i];
@@ -516,7 +522,7 @@ static void evaluate_same_str(const gmx::SelMethodEvalContext& /*context*/,
         void* ptr = nullptr;
         if (d->nas > 0)
         {
-            ptr = bsearch(&d->val.s[j], d->as_s_sorted, d->nas, sizeof(d->as_s_sorted[0]), &cmp_str);
+            ptr = std::bsearch(&d->val.s[j], d->as_s_sorted, d->nas, sizeof(d->as_s_sorted[0]), &cmp_str);
         }
         /* Check whether the value was found in the as list. */
         if (ptr == nullptr)
@@ -524,7 +530,7 @@ static void evaluate_same_str(const gmx::SelMethodEvalContext& /*context*/,
             /* If not, skip all atoms with the same value. */
             const char* tmpval = d->val.s[j];
             ++j;
-            while (j < g->isize && strcmp(d->val.s[j], tmpval) == 0)
+            while (j < g->isize && std::strcmp(d->val.s[j], tmpval) == 0)
             {
                 ++j;
             }
@@ -533,7 +539,7 @@ static void evaluate_same_str(const gmx::SelMethodEvalContext& /*context*/,
         {
             const char* tmpval = d->val.s[j];
             /* Copy all the atoms with this value to the output. */
-            while (j < g->isize && strcmp(d->val.s[j], tmpval) == 0)
+            while (j < g->isize && std::strcmp(d->val.s[j], tmpval) == 0)
             {
                 out->u.g->index[out->u.g->isize++] = g->index[j];
                 ++j;

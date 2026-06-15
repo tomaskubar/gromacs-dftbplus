@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2018- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 #ifndef GMX_GPU_UTILS_GPUTRAITS_SYCL_H
 #define GMX_GPU_UTILS_GPUTRAITS_SYCL_H
@@ -47,25 +46,90 @@
 #include <cstddef>
 
 #include "gromacs/gpu_utils/gmxsycl.h"
+#include "gromacs/utility/vectypes.h"
 
+#define GMX_HOST_ATTRIBUTE
+#define GMX_DEVICE_ATTRIBUTE
+#define GMX_HOSTDEVICE_ATTRIBUTE GMX_HOST_ATTRIBUTE GMX_DEVICE_ATTRIBUTE
+#if defined(SYCL_EXT_ONEAPI_ASSERT) && SYCL_EXT_ONEAPI_ASSERT && !defined(NDEBUG)
+#    define GMX_DEVICE_ASSERT(condition) assert(condition)
+#else
+#    define GMX_DEVICE_ASSERT(condition)
+#endif
+
+//! Type of device texture object. In SYCL, that would be \c sycl::image, but it's not used.
 using DeviceTexture = void*;
 
 //! \brief Single GPU call timing event, not used with SYCL
 using CommandEvent = void*;
 
+// TODO: Issue #3312
 //! Convenience alias.
-using float4 = cl::sycl::float4;
+using Float4 = sycl::float4;
+//! Convenience alias. Not using sycl::float3 due to alignment issues.
+using Float3 = gmx::RVec;
+//! Convenience alias for 3-wide float in shared device kernels
+using DeviceFloat3 = gmx::RVec;
+//! Convenience alias for sycl::float2
+using Float2 = sycl::float2;
+//! Convenience alias for sycl::int3
+using Int3 = sycl::int3;
+//! Convenience alias for sycl::int4
+using Int4 = sycl::int4;
 
-//! Convenience alias. Not using cl::sycl::float3 due to alignment issues.
-using float3 = gmx::RVec;
+//! Convenience alias for 4-wide float in shared device kernels.
+struct DeviceFloat4
+{
+    DeviceFloat4(sycl::float4 in) : storage_(in) {}
 
-//! Convenience alias for cl::sycl::float2
-using float2 = cl::sycl::float2;
+    template<typename Index>
+    float operator[](Index i) const
+    {
+        switch (i)
+        {
+            case 0: return storage_.x();
+            case 1: return storage_.y();
+            case 2: return storage_.z();
+            default: GMX_DEVICE_ASSERT(i == 3); return storage_.w();
+        }
+    }
+    operator sycl::float4() const { return storage_; }
+
+    alignas(16) sycl::float4 storage_;
+};
+
+//! Convenience alias for int3 in shared device kernels
+using DeviceInt3 = sycl::int3;
+
+//! Convenience alias for int4 in shared device kernels
+using DeviceInt4 = sycl::int4;
+
+//! Convenience alias for sycl global device memory
+template<typename T>
+using DeviceGlobalPtr = sycl::global_ptr<T>;
+//! Convenience alias for sycl local device memory
+template<typename T>
+using DeviceLocalPtr = sycl::local_ptr<T>;
+//! Convenience alias for sycl private device memory
+template<typename T>
+using DevicePrivatePtr = sycl::private_ptr<T>;
+
+
+static inline DeviceInt4 loadInt4(DeviceGlobalPtr<const int> input, const int index)
+{
+    DeviceInt4 value;
+    value.load(index, input);
+    return value;
+}
 
 /*! \internal \brief
- * GPU kernels scheduling description. This is same in OpenCL/CUDA.
- * Provides reasonable defaults, one typically only needs to set the GPU stream
- * and non-1 work sizes.
+ * GPU kernels scheduling description.
+ * One typically only needs to set non-1 work sizes.
+ *
+ * \note This struct uses CUDA/OpenCL layout, with the first dimension being contiguous.
+ *       It is different from the SYCL standard, where the last dimension is contiguous.
+ *       The transpose is to be performed internally in ISyclKernelFunctor::launch.
+ * \note \c sharedMemorySize is ignored in SYCL.
  */
 struct KernelLaunchConfig
 {
@@ -78,8 +142,14 @@ struct KernelLaunchConfig
 };
 
 /*! \brief Sets whether device code can use arrays that are embedded in structs.
- * \todo Probably can, must check
+ *
+ * That is not technically true for SYCL, since DeviceBuffer holds not only the memory pointer,
+ * but also the context.
+ *
+ * But our \c prepareGpuKernelArguments and \c launchGpuKernel functions deal
+ * with that, so we can pass embedded buffers to them, which is what this
+ * constant actually controls.
  */
-#define c_canEmbedBuffers false
+static constexpr bool c_canEmbedBuffers = true;
 
 #endif

@@ -1,7 +1,7 @@
 Using Doxygen
 =============
 
-This page documents how Doxygen is set up in the |Gromacs| source tree,
+This section documents how Doxygen is set up in the |Gromacs| source tree,
 as well as guidelines for adding new Doxygen comments.  Examples are included,
 as well as tips and tricks for avoiding Doxygen warnings.  The guidelines focus
 on C++ code and other new code that follows the new module layout.
@@ -63,13 +63,13 @@ module.
 Building the documentation
 --------------------------
 
-If you simply want to see up-to-date documentation, you can go to
-http://jenkins.gromacs.org/job/Documentation_Nightly_master/javadoc/html-lib/index.xhtml
-to see the documentation for the current development version.
-Jenkins also runs Doxygen for all changes pushed to Gerrit for
-release-5-0 and master branches, and the
-resulting documentation can be viewed from the link posted by Jenkins.  The
-Doxygen build is marked as unstable if it introduces any Doxygen warnings.
+If you want to see up-to-date documentation, you can download artifacts from
+the ``webpage`` job of the latest scheduled pipeline for a corresponding branch
+(https://gitlab.com/gromacs/gromacs/-/pipelines?page=1&scope=all&source=schedule).
+CI also runs Doxygen for all changes pushed to GitLab for
+release and main branches, and the resulting documentation can be
+found in the artifacts of the corresponding ``webpage`` job.
+The Doxygen job will fail if it introduces any Doxygen warnings.
 
 You may need to build the documentation locally if you want to check the
 results after adding/modifying a significant amount of comments.  This is
@@ -548,7 +548,7 @@ of ``\addtogroup`` to add multiple functions into a module group without repeate
    */
   int gmx_function(int value);
 
-  /* Any . in the brief description should be escaped as \. */
+  /* Any . in the brief description, except at the end, should be escaped as \. */
   /** Brief description for this function. */
   int gmx_simple_function();
 

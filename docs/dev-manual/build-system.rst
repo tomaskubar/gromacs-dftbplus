@@ -5,7 +5,7 @@ Build system overview
 
 The |Gromacs| build system uses CMake (version
 |CMAKE_MINIMUM_REQUIRED_VERSION| or newer is required) to generate the
-actual build system for the build tool choosen by the user.  See CMake
+actual build system for the build tool chosen by the user.  See CMake
 documentation for general introduction to CMake and how to use it.  This
 documentation focuses on how the |Gromacs| build system is organized and
 implemented, and what features it provides to developers (some of which may be
@@ -55,13 +55,13 @@ testing. Their implementations can be found in ``cmake/gmxBuildTypeXXX.cmake``.
 **Reference**
   This build type compiles a version of |Gromacs| aimed solely at correctness. All
   parallelization and optimization possibilities are disabled. This build type is
-  compiled with gcc 5 to generate the regression test reference values, against
+  compiled with GCC 11 to generate the regression test reference values, against
   which all other |Gromacs| builds are tested.
 
 **RelWithAssert**
   As Release, but removes ``-DNDEBUG`` from compiler command lines, which makes
   all assertion statements active (and can have other safety-related side effects
-  in |Gromacs| and code upon which it depends)
+  in |Gromacs| and code upon which it depends).
 
 **Profile**
   As Release, but adds ``-pg`` for use with profiling tools. This is not
@@ -69,21 +69,25 @@ testing. Their implementations can be found in ``cmake/gmxBuildTypeXXX.cmake``.
   be useful for the tools.
 
 **TSAN**
-  Builds |Gromacs| for use with ThreadSanitzer in gcc and clang
-  (http://clang.llvm.org/docs/ThreadSanitizer.html) to detect
+  Builds |Gromacs| for use with
+  `ThreadSanitizer <https://clang.llvm.org/docs/ThreadSanitizer.html>`__
+  in GCC and Clang to detect
   data races. This disables the use of atomics in ThreadMPI,
   preferring the mutex-based implementation.
 
 **ASAN**
-  Builds |Gromacs| for use with AddressSanitzer in gcc and
-  clang (http://clang.llvm.org/docs/AddressSanitizer.html) to
+  Builds |Gromacs| for use with
+  `AddressSanitizer <https://clang.llvm.org/docs/AddressSanitizer.html>`__
+  in GCC and Clang to
   detect many kinds of memory mis-use. By default, AddressSanitizer
-  includes LeakSanitizer.
+  includes LeakSanitizer (LSAN) but in many cases GROMACS suppresses
+  leak detection either from particular functions known to leak, or in bulk.
 
 **MSAN**
-  Builds |Gromacs| for use with AddressSanitzer in clang
-  (http://clang.llvm.org/docs/MemorySanitizer.html) to detect
-  reads of unitialized memory. This functionality requires that
+  Builds |Gromacs| for use with
+  `MemorySanitizer <https://clang.llvm.org/docs/MemorySanitizer.html>`__
+  in Clang to detect
+  reads of uninitialized memory. This functionality requires that
   dependencies of the |Gromacs| build have been built in a compatible
   way (roughly, static libraries with ``-g -fsanitize=memory
   -fno-omit-frame-pointer``), which generally requires at least the C++
@@ -93,9 +97,16 @@ testing. Their implementations can be found in ``cmake/gmxBuildTypeXXX.cmake``.
   ``GMX_MSAN_PATH``. Only internal XDR and internal fftpack are
   supported at this time.
 
+**UBSAN**
+  Builds |Gromacs| for use with
+  `UndefinedBehaviorSanitizer <https://clang.llvm.org/docs/UndefinedBehaviorSanitizer.html>`__
+  in GCC and Clang  to detect undefined behavior during execution. The
+  checks performed during execution have a small cost and do not impact
+  address space layout and application binary interface.
+
 For all of the sanitizer builds, to get readable stack traces, you may
 need to ensure that the ``ASAN_SYMBOLIZER_PATH`` environment variable
-(or your ``PATH``) include that of the ``llvm-symbolizer`` binary.
+(or your ``PATH``) includes that of the ``llvm-symbolizer`` binary.
 
 With some generators, CMake generates the build system for more than a
 single ``CMAKE_BUILD_TYPE`` from one pass over the ``CMakeLists.txt``
@@ -165,9 +176,15 @@ Variables affecting compilation/linking
 
 .. cmake:: GMX_BROKEN_CALLOC
 
+   Enable emulation of ``calloc`` via ``malloc``/``memset``.
+   Only needed on machines with a broken ``calloc(3)``, e.g. in ``-lgmalloc``
+   on Cray XT3.
+   Defaults to ``OFF``, and there should not be any need to change this unless
+   you are sure it is required.
+
 .. cmake:: GMX_BUILD_FOR_COVERAGE
 
-   Special variable set ``ON`` by Jenkins when doing a build for the coverage
+   Special variable set ``ON`` by CI when doing a build for the coverage
    job.  Allows the build system to set options to produce as useful coverage
    metrics as possible.  Currently, it disables all asserts to avoid them
    showing up as poor conditional coverage.
@@ -176,30 +193,25 @@ Variables affecting compilation/linking
 
    .. todo:: This could likely be replaced by a (yet another) build type.
 
-.. cmake:: GMX_BUILD_MDRUN_ONLY
-
-   If set ``ON``, the build system is configured to only build and install a
-   single :file:`mdrun` executable.  To be fully functional, the installed
-   :file:`mdrun` requires a standard |Gromacs| installation (with
-   ``GMX_BUILD_MDRUN_ONLY=OFF``) in the same installation prefix, as the
-   mdrun-only build does not install any data files or scripts, only the
-   binary.  This is intended for cases where one wants to/needs to compile one
-   or more instances of :file:`mdrun` with different build options (e.g., MPI
-   or SIMD) than the full installation with the other utilities.
-   Defaults to ``OFF``, in which case a single :file:`gmx` executable is built
-   and installed, together with all the supporting files.  :command:`mdrun` can
-   be executed as :command:`gmx mdrun`.
-
 .. cmake:: GMX_BUILD_OWN_FFTW
 
+   If set ``ON``, |Gromacs| build system will download and build FFTW from source
+   automatically. Not supported on Windows or with ``ninja`` build system.
+   In complicated scenarios (e.g., when cross-compiling or using a toolchain
+   file), we recommend not relying on this feature and building FFTW manually.
+
 .. cmake:: GMX_BUILD_SHARED_EXE
+
+   Build executables as shared binaries. If not set, this disables ``-rpath`` and dynamic
+   linker flags in an attempt to build a static binary, but this may require setting up
+   the toolchain properly and making appropriate libraries available. Defaults to ``ON``.
 
 .. cmake:: GMX_COMPILER_WARNINGS
 
    If set ``ON``, various compiler warnings are enabled for compilers that
-   Jenkins uses for verification.
+   CI uses for verification.
    Defaults to ``OFF`` when building from a source tarball so that users
-   compiling with versions not tested on Jenkins are not exposed to our rather
+   compiling with versions not tested in CI are not exposed to our rather
    aggressive warning flags that can trigger a lot of warnings with, e.g., new
    versions of the compilers we use.
    When building from a git repository, defaults to ``ON``.
@@ -214,7 +226,7 @@ Variables affecting compilation/linking
 
 .. cmake:: GMX_ENABLE_CCACHE
 
-    If set to ``ON``, attempts to set up the `ccache <https://ccache.samba.org>`_
+    If set to ``ON``, attempts to set up the `ccache <https://ccache.dev/>`_
     caching compiler wrapper to speed up repeated builds.
     The ``ccache`` executable is searched for with ``find_package()`` if CMake
     is being run with a compatible build type.
@@ -226,7 +238,7 @@ Variables affecting compilation/linking
 
 .. cmake:: GMX_INSTALL_DATASUBDIR
 
-   Sets the subdirectory under CMAKE_INSTALL_DATADIR where GROMACS-specific
+   Sets the subdirectory under CMAKE_INSTALL_DATADIR where |Gromacs|-specific
    read-only architecture-independent data files are installed. The default
    is ``gromacs``, which means the files will go under ``share/gromacs``.
    To alter the ``share`` part, change CMAKE_INSTALL_DATADIR.
@@ -238,30 +250,29 @@ Variables affecting compilation/linking
    which is actually either a single- or double-precision type,
    according to the value of this flag. Some parts of the code
    deliberately use single- or double-precision types, and these are
-   unaffected by this setting. See reference manual for further
-   information.
-
-.. cmake:: GMX_RELAXED_DOUBLE_PRECISION
-
-   Permit a double-precision configuration to compute some quantities
-   to single-precision accuracy. Particularly on architectures where
-   only double-precision SIMD is available (e.g. Sparc machines such
-   as the K computer), it is faster to default to ``GMX_DOUBLE=ON``
-   and use SIMD than to use ``GMX_DOUBLE=OFF`` and use no
-   SIMD. However, if the user does not need full double precision,
-   then some optimizations can achieve the equivalent of
-   single-precision results (e.g. fewer Newton-Raphson iterations for
-   a reciprocal square root computation).
-
-.. cmake:: GMX_EXTRAE
+   unaffected by this setting. See
+   :doc:`Mixed or Double precision </reference-manual/definitions>`
+   for further information.
 
 .. cmake:: GMX_EXTERNAL_BLAS
 
+   If not set (the default), CMake will first try to use an external BLAS library,
+   and, if unsuccessful, fall back to using the one bundled with |Gromacs|.
+   If set to ``OFF``, CMake will use the bundled one immediately.
+   If set to ``ON``, CMake will use the external one, and raise an error if it is not found.
+
 .. cmake:: GMX_EXTERNAL_LAPACK
+
+   See ``GMX_EXTERNAL_BLAS``.
 
 .. cmake:: GMX_EXTERNAL_TNG
 
+   Use external TNG library for trajectory-file handling. Default: ``OFF``.
+
 .. cmake:: GMX_FFT_LIBRARY
+
+   Choose the CPU FFT library to use. Possible values: ``fftw``, ``mkl``, ``fftpack``.
+   The default selection depends on the compiler and build type.
 
 .. cmake:: GMX_GIT_VERSION_INFO
 
@@ -274,9 +285,13 @@ Variables affecting compilation/linking
 
 .. cmake:: GMX_GPU
 
+   Choose the backend for GPU offload. Possible values: ``CUDA``, ``OpenCL``, ``SYCL``.
+   Please see the :ref:`Installation guide <gmx-gpu-support>` for more information.
+
 .. cmake:: GMX_CLANG_CUDA
 
    Use clang for compiling CUDA GPU code, both host and device.
+   Please see the :ref:`Installation guide <gmx-gpu-support>` for more information.
 
 .. cmake:: GMX_CUDA_CLANG_FLAGS
 
@@ -288,32 +303,66 @@ Variables affecting compilation/linking
    standard CMake package ``GNUInstallDirs``).
    See :doc:`relocatable-binaries` for how this influences the build.
 
-.. cmake:: GMX_LOAD_PLUGINS
+.. cmake:: GMX_USE_PLUGINS
+
+   Enable support for dynamic plugins (e.g. VMD-supported file formats).
+   Default: ``OFF``.
 
 .. cmake:: GMX_MPI
 
+   Enable MPI (not thread-MPI) support for inter-node parallelism. Defaults to ``OFF``.
+   Please see the :ref:`Installation guide <mpi-support>` for more information.
+
 .. cmake:: GMX_OPENMP
+
+   Enable OpenMP support. Default is ``ON``.
 
 .. cmake:: GMX_PREFER_STATIC_LIBS
 
+   Prefer statically linking to external libraries. Defaults to ``OFF``, unless
+   ``GMX_BUILD_SHARED_EXE`` is disabled.
+
 .. cmake:: GMX_SIMD
 
-.. cmake:: GMX_SOFTWARE_INVSQRT
+   Choose SIMD instruction set to use. Default is: ``Auto`` (best one for the current CPU).
+   Please see the :ref:`Installation guide <gmx-simd-support>` for more information.
 
 .. cmake:: GMX_THREAD_MPI
 
+   Enable thread-MPI support for intra-node parallelism. Defaults to ``ON``.
+
 .. cmake:: GMX_USE_RDTSCP
+
+   Use low-latency ``RDTSCP`` instruction for x86 CPU-based timers for mdrun execution.
+   Ignored on non-x86 machines. Might need to be set to ``OFF`` when compiling for
+   for heterogeneous environments or a very old x86 CPU.
 
 .. cmake:: GMX_USE_TNG
 
+   Use the TNG library for trajectory I/O. Defaults to ``ON``.
+
+.. cmake:: GMX_USE_ITT
+
+   Use the Intel ITT library for annotating |Gromacs| tasks in the Intel tracing tools.
+   Defaults to ``OFF``.
+   Relies on the ``VTUNE_PROFILER_DIR`` environment variable set when loading
+   the oneAPI toolkit to find the library.
+
+.. cmake:: GMX_USE_NVTX
+
+   Use the NVTX library for annotating |Gromacs| tasks in the NVIDIA tracing tools.
+   Defaults to ``OFF``.
+   Relies on the ``CUDA_HOME`` environment variable to find the library.
+
+.. cmake:: GMX_USE_ROCTX
+
+   Use the ROC-TX library for annotating |Gromacs| tasks in the AMD ROCm tracing tools.
+   Defaults to ``OFF``.
+   Relies on the ``ROCM_HOME`` environment variable to find the library.
+
 .. cmake:: GMX_VMD_PLUGIN_PATH
 
-.. cmake:: GMX_X11
-
-.. cmake:: GMX_XML
-
-   Currently, this option has no effect on the compilation or linking, since
-   there is no code outside the tests that would use :file:`libxml2`.
+   Path to VMD plugins for molfile I/O. Only used when ``GMX_USE_PLUGINS`` is enabled.
 
 Variables affecting the ``all`` target
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -344,30 +393,34 @@ Variables affecting the ``all`` target
 .. cmake:: GMX_DEVELOPER_BUILD
 
    If set ``ON``, the ``all`` target will include also the test binaries using
-   Google Test (if :cmake:`GMX_BUILD_UNITTESTS` is ``ON``).
-   Also, :cmake:`GMX_COMPILER_WARNINGS` is always enabled.
+   Google Test (if :cmake:`GMX_BUILD_UNITTESTS` is ``ON``), while ``webpage``
+   target will also include Reference manual in PDF format.
+   Also, :cmake:`GMX_COMPILER_WARNINGS` and
+   `CMAKE_EXPORT_COMPILE_COMMANDS <https://cmake.org/cmake/help/latest/variable/CMAKE_EXPORT_COMPILE_COMMANDS.html>`__
+   are always enabled.
    In the future, other developer convenience features (as well as features
    inconvenient for a general user) can be added to the set controlled by this
    variable.
 
 .. cmake:: GMX_CLANG_TIDY
 
-  `clang-tidy <http://releases.llvm.org/9.0.0/tools/clang/tools/extra/docs/clang-tidy/index.html>`_
-  is used for static code analysis and (some) automated fixing of issues detected. clang-tidy is easy to install. It is contained in
-  the llvm binary `package <http://releases.llvm.org/download.html#9.0.0>`_. Only
-  version 9.0.* with libstdc++<7 or libc++ is supported. Others might miss tests or give false positives.
-  It is run automatically in gitlab CI for each commit. Many checks have fixes which can automatically be
+  `clang-tidy <https://releases.llvm.org/18.0.0/tools/clang/tools/extra/docs/clang-tidy/index.html>`_
+  is used for static code analysis and (some) automated fixing of issues detected. clang-tidy is easy to install.
+  It is contained in
+  the llvm binary `package <http://releases.llvm.org/download.html#18.0.0>`_. Only
+  version 18.0.* is supported. Others might miss tests or give false positives.
+  It is run automatically in GitLab CI for each commit. Many checks have fixes which can automatically be
   applied. To run it, the build has to be configured with
   ``cmake -DGMX_CLANG_TIDY=ON -DCMAKE_BUILD_TYPE=Debug``.
   Any ``CMAKE_BUILD_TYPE`` which enables asserts (e.g. ASAN) works. Such a configured build will
   run both the compiler as well as clang-tidy when building. The name of the clang-tidy executable is set with
   ``-DCLANG_TIDY=...``, and the full path to it can be set with ``-DCLANG_TIDY_EXE=...``.
-  To apply the automatic fixes to the issue identified clang-tidy should be run seperately (running clang-tidy
+  To apply the automatic fixes to the issues identified, clang-tidy should be run separately (running clang-tidy
   with ``-fix-errors`` as part of the build can corrupt header files). To fix a specific file run
   ``clang-tidy -fix-errors -header-filter '.*' {file}``, to fix all files in parallel
   ``run-clang-tidy.py -fix -header-filter '.*' '(?<!/selection/parser\.cpp|selection/scanner\.cpp)$'``,
   and to fix all modified files ``run-clang-tidy.py -fix -header-filter '.*' $(git diff HEAD --name-only)``.
-  The run-clang-tidy.py script is in the
+  The :file:`run-clang-tidy.py` script is in the
   ``share/clang/`` subfolder of the llvm distribution. ``clang-tidy`` has to be able to find the
   ``compile_commands.json`` file. Either run from the build folder or add a symlink to the source folder.
   :cmake:`GMX_ENABLE_CCACHE` does not work with clang-tidy.
@@ -375,14 +428,28 @@ Variables affecting the ``all`` target
 Variables affecting special targets
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+.. cmake:: GMX_INSTALL_LEGACY_API
+
+    Default ``OFF``. If set to ``ON``, headers will be installed to ``gromacs/``
+    in the CMake header destination folder to allow use of the ``::gmx`` C++
+    namespace, supported by the :file:`libgromacs` library.
+    See `Legacy API <../doxygen/html-user/index.xhtml>`_.
+
+.. cmake:: GMX_INSTALL_NBLIB_API
+
+    If set to ``ON`` (default, when :cmake:`BUILD_SHARED_LIBS` on non-Windows platforms),
+    build and install the :file:`libnb_gmx` and :file:`nblib/` headers.
+    See :ref:`nblib`.
+
 .. cmake:: GMXAPI
 
-    If set ``ON``, the additional ``gmxapi`` C++ library is configured and the
+    If set ``ON`` (default, when :cmake:`BUILD_SHARED_LIBS` on non-Windows platforms),
+    the additional ``gmxapi`` C++ library is configured and the
     ``gmxapi`` headers will be installed. Provides the additional build tree
     targets ``gmxapi-cppdocs`` and ``gmxapi-cppdocs-dev`` when Doxygen is
     available. Also exports CMake configuration files for ``gmxapi`` that allow
     ``find_package(gmxapi)`` to import the ``Gromacs::gmxapi`` CMake target in
-    client projects that search the GROMACS installation root.
+    client projects that search the |Gromacs| installation root.
 
 .. cmake:: GMX_BUILD_MANUAL
 
@@ -406,7 +473,7 @@ Variables affecting special targets
 .. cmake:: GMX_BUILD_UNITTESTS
 
    If ``ON``, test binaries using Google Test are built (either as the separate
-   ``tests`` targer, or also as part of the ``all`` target, depending on
+   ``tests`` target, or also as part of the ``all`` target, depending on
    :cmake:`GMX_DEVELOPER_BUILD`).  All dependencies required for building the
    tests (Google Test and Google Mock frameworks, and tinyxml2) are
    included in :file:`src/external/`.
@@ -450,7 +517,7 @@ External libraries
 
    List external libraries used (either from src/external/, or from the
    system), whether they are required or optional, what functionality they
-   provide for Gromacs, and how to control their use.
+   provide for |Gromacs|, and how to control their use.
 
 Special targets
 ---------------
@@ -470,7 +537,7 @@ check-source
    Runs a custom Python checker script to check for various source-level
    issues.  Uses Doxygen XML documentation as well as rudimentary parsing of
    some parts of the source files.
-   This target is used as part of the Jenkins documentation job.
+   This target is used as part of the CI.
    All CMake code is currently in :file:`docs/doxygen/`.
    See :doc:`gmxtree`.
 completion
@@ -487,14 +554,14 @@ dep-graphs*
 doxygen-*
    Targets that run Doxygen to generate the documentation.
    The ``doxygen-all`` target runs as part of the ``webpage`` target, which in
-   turn runs as part of the Jenkins documentation job.
+   turn runs as part of the CI.
    All CMake code is in :file:`docs/doxygen/`.
    See :doc:`doxygen`.
 gmxapi-cppdocs
     Builds API documentation for gmxapi. Useful to authors of client software.
     Documentation is generated in :file:`docs/api-user` in the build directory.
 gmxapi-cppdocs-dev
-    Extract documentation for gmxapi and GROMACS developers to
+    Extract documentation for gmxapi and |Gromacs| developers to
     :file:`docs/api-dev`.
 install-guide
    Runs Sphinx to generate a plain-text INSTALL file for the source package.
@@ -525,8 +592,8 @@ tests
    See :doc:`testutils`.
 webpage
    Collection target that runs the other documentation targets to generate the
-   full set of HTML (and linked) documentaion.
-   This target is used as part of the Jenkins documentation job.
+   full set of HTML (and linked) documentation.
+   This target is used as part of the CI.
    All CMake code is in :file:`docs/`.
 webpage-sphinx
    Runs Sphinx to generate most content for the HTML documentation (the set of

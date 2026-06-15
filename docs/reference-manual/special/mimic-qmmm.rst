@@ -11,7 +11,7 @@ To find information about other QM/MM implementations in
 Within a QM/MM approach, typically a small part of the system
 (e.g. active site of an enzyme where a chemical reaction can take place)
 is treated at the QM level of theory (as we cannot neglect electronic
-degrees of freedom while descibing some processes e.g.  chemical 
+degrees of freedom while describing some processes e.g.  chemical
 reactions), while the rest of the system (remainder of the
 protein, solvent, etc.) is described by the classical forcefield (MM).
 
@@ -133,7 +133,7 @@ Preparing the input file for |Gromacs|
 In order to setup the :ref:`mdp` file for a MiMiC simulation one needs
 to add two options:
 
-#. :mdp-value:`integrator=mimic` to enable MiMiC workflow within GROMACS.
+#. :mdp-value:`integrator=mimic` to enable MiMiC workflow within |Gromacs|.
 #. ``QMMM-grps=<name_of_qm_index_group>`` to indicate all the atoms
    that are going to be handled by CPMD.
 
@@ -154,8 +154,8 @@ Preparing the input file for CPMD
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 This section will only describe the MiMiC-related input in CPMD - for the
 configuration of a DFT-related options - please refer to the `CPMD manual
-<http://www.cpmd.org/downloadable-files/no-authentication/manual_v4_0_1.pdf>`__.
-After preparing the input for GROMACS and having obtained the
+<https://www.cpmd.org/>`__.
+After preparing the input for |Gromacs| and having obtained the
 preprocessed topology file, simply run the Python
 preprocessor script provided within the MiMiC distribution to obtain
 MiMiC-related part of the CPMD input file. The usage of the script is simple:
@@ -233,12 +233,11 @@ descriptions of keywords that can be found in this part of CPMD input:
     is present)
 
     (OPTIONAL) ``MULTIPOLE ORDER`` - The next line will contain the order at which
-    the multipolar exansion will be truncated (default 2, maximum 20).
+    the multipolar expansion will be truncated (default 2, maximum 20).
 
 The ``&ATOMS`` section of CPMD input file contains all the QM atoms
 within the system and has a default CPMD formatting. Please refer
-to the `CPMD manual
-<http://www.cpmd.org/downloadable-files/no-authentication/manual_v4_0_1.pdf>`__
+to the `CPMD manual <https://www.cpmd.org/>`__
 to adjust it to your needs(one will need to set the correct pseudo-potential
 for each atom species).
 

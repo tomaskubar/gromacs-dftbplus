@@ -1,13 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
- * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2016,2017 by the GROMACS development team.
- * Copyright (c) 2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 1991- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -21,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -30,32 +26,41 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 #include "gmxpre.h"
 
 #include <cmath>
+#include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 
 #include <algorithm>
+#include <array>
+#include <filesystem>
+#include <string>
+#include <vector>
 
+#include "gromacs/commandline/filenm.h"
 #include "gromacs/commandline/pargs.h"
 #include "gromacs/commandline/viewit.h"
 #include "gromacs/correlationfunctions/autocorr.h"
 #include "gromacs/fileio/enxio.h"
+#include "gromacs/fileio/filetypes.h"
 #include "gromacs/fileio/gmxfio.h"
+#include "gromacs/fileio/oenv.h"
 #include "gromacs/fileio/tpxio.h"
 #include "gromacs/fileio/trxio.h"
+#include "gromacs/fileio/xdr_datatype.h"
 #include "gromacs/fileio/xvgr.h"
 #include "gromacs/gmxana/gmx_ana.h"
 #include "gromacs/gmxana/gstat.h"
 #include "gromacs/math/functions.h"
 #include "gromacs/math/units.h"
-#include "gromacs/math/vec.h"
 #include "gromacs/mdlib/energyoutput.h"
 #include "gromacs/mdtypes/inputrec.h"
 #include "gromacs/mdtypes/md_enums.h"
@@ -64,13 +69,22 @@
 #include "gromacs/topology/mtop_util.h"
 #include "gromacs/topology/topology.h"
 #include "gromacs/trajectory/energyframe.h"
+#include "gromacs/utility/arrayref.h"
 #include "gromacs/utility/arraysize.h"
+#include "gromacs/utility/basedefinitions.h"
 #include "gromacs/utility/cstringutil.h"
+#include "gromacs/utility/exceptions.h"
 #include "gromacs/utility/fatalerror.h"
 #include "gromacs/utility/gmxassert.h"
 #include "gromacs/utility/pleasecite.h"
+#include "gromacs/utility/real.h"
 #include "gromacs/utility/smalloc.h"
 #include "gromacs/utility/strconvert.h"
+#include "gromacs/utility/stringutil.h"
+#include "gromacs/utility/vec.h"
+#include "gromacs/utility/vectypes.h"
+
+struct gmx_output_env_t;
 
 static const int NOTSET = -23451;
 
@@ -138,7 +152,7 @@ static int* select_by_name(int nre, gmx_enxnm_t* nm, int* nset)
     const char* fm2   = "%3d  %-34s";
     char**      newnm = nullptr;
 
-    if ((getenv("GMX_ENER_VERBOSE")) != nullptr)
+    if ((std::getenv("GMX_ENER_VERBOSE")) != nullptr)
     {
         bVerbose = FALSE;
     }
@@ -225,38 +239,39 @@ static int* select_by_name(int nre, gmx_enxnm_t* nm, int* nset)
             {
                 if (!bEOF)
                 {
-                    /* First try to read an integer */
-                    nss = sscanf(ptr, "%d", &nind);
-                    if (nss == 1)
+                    /* First, try to match an exact field name */
+                    nmatch = 0;
+                    for (nind = 0; nind < nre; nind++)
                     {
-                        /* Zero means end of input */
-                        if (nind == 0)
+                        if (gmx_strcasecmp(newnm[nind], ptr) == 0)
                         {
-                            bEOF = TRUE;
+                            bE[nind] = TRUE;
+                            nmatch++;
                         }
-                        else if ((1 <= nind) && (nind <= nre))
+                    }
+                    if (nmatch == 0)
+                    {
+                        /* Second, try to read an integer */
+                        nss = sscanf(ptr, "%d", &nind);
+                        if (nss == 1)
                         {
-                            bE[nind - 1] = TRUE;
+                            /* Zero means end of input */
+                            if (nind == 0)
+                            {
+                                bEOF = TRUE;
+                            }
+                            else if ((1 <= nind) && (nind <= nre))
+                            {
+                                bE[nind - 1] = TRUE;
+                            }
+                            else
+                            {
+                                fprintf(stderr, "number %d is out of range\n", nind);
+                            }
                         }
                         else
                         {
-                            fprintf(stderr, "number %d is out of range\n", nind);
-                        }
-                    }
-                    else
-                    {
-                        /* Now try to read a string */
-                        nmatch = 0;
-                        for (nind = 0; nind < nre; nind++)
-                        {
-                            if (gmx_strcasecmp(newnm[nind], ptr) == 0)
-                            {
-                                bE[nind] = TRUE;
-                                nmatch++;
-                            }
-                        }
-                        if (nmatch == 0)
-                        {
+                            /* Finally, match on part of the field name */
                             i      = std::strlen(ptr);
                             nmatch = 0;
                             for (nind = 0; nind < nre; nind++)
@@ -318,59 +333,95 @@ static void get_dhdl_parms(const char* topnm, t_inputrec* ir)
     read_tpx(topnm, ir, box, &natoms, nullptr, nullptr, &mtop);
 }
 
+// Computes and writes the shear viscosity using the Einstein relation
 static void einstein_visco(const char*             fn,
                            const char*             fni,
                            int                     nsets,
-                           int                     nint,
-                           real**                  eneint,
-                           real                    V,
-                           real                    T,
+                           const enerdata_t&       edat,
+                           const real              volume,
+                           const real              temperature,
+                           const int               numRestarts,
+                           const int               numBlocks,
                            double                  dt,
                            const gmx_output_env_t* oenv)
 {
-    FILE * fp0, *fp1;
-    double av[4], avold[4];
-    double fac, di;
-    int    i, j, m, nf4;
+    constexpr int c_numSets = 3;
 
-    nf4 = nint / 4 + 1;
+    GMX_RELEASE_ASSERT(nsets == c_numSets, "Only nsets=3 is currently supported");
 
-    for (i = 0; i <= nsets; i++)
+    /* Determine integrals of the off-diagonal pressure elements */
+    const int                          nint = edat.nframes + 1;
+    std::array<std::vector<double>, 3> eneint;
+    for (int i = 0; i < c_numSets; i++)
     {
-        avold[i] = 0;
+        eneint[i].resize(nint, 0.0);
     }
-    fp0 = xvgropen(fni, "Shear viscosity integral", "Time (ps)", "(kg m\\S-1\\N s\\S-1\\N ps)", oenv);
-    fp1 = xvgropen(fn, "Shear viscosity using Einstein relation", "Time (ps)",
-                   "(kg m\\S-1\\N s\\S-1\\N)", oenv);
-    for (i = 0; i < nf4; i++)
+    for (int i = 0; i < edat.nframes; i++)
     {
-        for (m = 0; m <= nsets; m++)
+        const double fac = dt / edat.points[i];
+        eneint[0][i + 1] = eneint[0][i] + 0.5 * (edat.s[1].es[i].sum + edat.s[3].es[i].sum) * fac;
+        eneint[1][i + 1] = eneint[1][i] + 0.5 * (edat.s[2].es[i].sum + edat.s[6].es[i].sum) * fac;
+        eneint[2][i + 1] = eneint[2][i] + 0.5 * (edat.s[5].es[i].sum + edat.s[7].es[i].sum) * fac;
+    }
+
+    if (numBlocks <= 0)
+    {
+        GMX_THROW(
+                gmx::InvalidInputError("The number of averaging blocks for computing the viscosity "
+                                       "using Einstein should be positive"));
+    }
+
+    const int nintBlock = nint / numBlocks + 1;
+
+    if (numRestarts <= 0)
+    {
+        GMX_THROW(
+                gmx::InvalidInputError("The number of restarts for computing the viscosity using "
+                                       "Einstein should be positive"));
+    }
+
+    const int stepSize = std::max(nintBlock / numRestarts, 1);
+
+    printf("\n");
+    printf("Computing shear viscosity using the Einstein relation with %d start points separated "
+           "by %g ps\n",
+           gmx::divideRoundUp(nintBlock, stepSize),
+           stepSize * dt);
+
+
+    std::array<double, c_numSets + 1> avold = { 0.0 };
+
+    FILE* fp0 = xvgropen(fni, "Shear viscosity integral", "Time (ps)", "(kg m\\S-1\\N s\\S-1\\N ps)", oenv);
+    FILE* fp1 = xvgropen(
+            fn, "Shear viscosity using Einstein relation", "Time (ps)", "(kg m\\S-1\\N s\\S-1\\N)", oenv);
+    for (int i = 0; i < nintBlock; i += stepSize)
+    {
+        std::array<double, c_numSets + 1> av = { 0.0 };
+
+        for (int m = 0; m < c_numSets; m++)
         {
-            av[m] = 0;
-        }
-        for (j = 0; j < nint - i; j++)
-        {
-            for (m = 0; m < nsets; m++)
+            for (int j = 0; j < nint - i; j++)
             {
-                di = gmx::square(eneint[m][j + i] - eneint[m][j]);
+                double di = gmx::square(eneint[m][j + i] - eneint[m][j]);
 
                 av[m] += di;
-                av[nsets] += di / nsets;
+                av[c_numSets] += di / c_numSets;
             }
         }
         /* Convert to SI for the viscosity */
-        fac = (V * NANO * NANO * NANO * PICO * 1e10) / (2 * BOLTZMANN * T) / (nint - i);
+        const double fac = (volume * gmx::c_nano * gmx::c_nano * gmx::c_nano * gmx::c_pico * 1e10)
+                           / (2 * gmx::c_boltzmann * temperature) / (nint - i);
         fprintf(fp0, "%10g", i * dt);
-        for (m = 0; (m <= nsets); m++)
+        for (int m = 0; m <= c_numSets; m++)
         {
             av[m] = fac * av[m];
             fprintf(fp0, "  %10g", av[m]);
         }
         fprintf(fp0, "\n");
         fprintf(fp1, "%10g", (i + 0.5) * dt);
-        for (m = 0; (m <= nsets); m++)
+        for (int m = 0; m <= c_numSets; m++)
         {
-            fprintf(fp1, "  %10g", (av[m] - avold[m]) / dt);
+            fprintf(fp1, "  %10g", (av[m] - avold[m]) / (stepSize * dt));
             avold[m] = av[m];
         }
         fprintf(fp1, "\n");
@@ -574,7 +625,7 @@ static void calc_averages(int nset, enerdata_t* edat, int nbmin, int nbmax)
         }
         else
         {
-            edat->s[i].rmsd = std::sqrt(sum2 / np - gmx::square(edat->s[i].av));
+            edat->s[i].rmsd = std::sqrt(std::max(sum2 / np - gmx::square(edat->s[i].av), 0.0));
         }
 
         if (edat->nframes > 1)
@@ -596,8 +647,12 @@ static void calc_averages(int nset, enerdata_t* edat, int nbmin, int nbmax)
             if (debug)
             {
                 char buf1[STEPSTRSIZE], buf2[STEPSTRSIZE];
-                fprintf(debug, "Requested %d blocks, we have %d blocks, min %s nsteps %s\n", nb,
-                        eee[nb].b, gmx_step_str(eee[nb].nst_min, buf1), gmx_step_str(edat->nsteps, buf2));
+                fprintf(debug,
+                        "Requested %d blocks, we have %d blocks, min %s nsteps %s\n",
+                        nb,
+                        eee[nb].b,
+                        gmx_step_str(eee[nb].nst_min, buf1),
+                        gmx_step_str(edat->nsteps, buf2));
             }
             if (eee[nb].b == nb && 5 * nb * eee[nb].nst_min >= 4 * edat->nsteps)
             {
@@ -709,15 +764,15 @@ static void remove_drift(int nset, int nbmin, int nbmax, real dt, enerdata_t* ed
     }
 }
 
-static void calc_fluctuation_props(FILE*       fp,
-                                   gmx_bool    bDriftCorr,
-                                   real        dt,
-                                   int         nset,
-                                   int         nmol,
-                                   char**      leg,
-                                   enerdata_t* edat,
-                                   int         nbmin,
-                                   int         nbmax)
+static void calc_fluctuation_props(FILE*                            fp,
+                                   gmx_bool                         bDriftCorr,
+                                   real                             dt,
+                                   int                              nset,
+                                   int                              nmol,
+                                   gmx::ArrayRef<const std::string> leg,
+                                   enerdata_t*                      edat,
+                                   int                              nbmin,
+                                   int                              nbmax)
 {
     int    i, j;
     double vv, v, h, varv, hh, varh, tt, cv, cp, alpha, kappa, dcp, varet;
@@ -733,7 +788,7 @@ static void calc_fluctuation_props(FILE*       fp,
     const char* my_ener[] = { "Volume", "Enthalpy", "Temperature", "Total Energy" };
     int         ii[eNR];
 
-    NANO3 = NANO * NANO * NANO;
+    NANO3 = gmx::c_nano * gmx::c_nano * gmx::c_nano;
     if (!bDriftCorr)
     {
         fprintf(fp,
@@ -747,7 +802,9 @@ static void calc_fluctuation_props(FILE*       fp,
     }
     for (i = 0; (i < eNR); i++)
     {
-        for (ii[i] = 0; (ii[i] < nset && (gmx_strcasecmp(leg[ii[i]], my_ener[i]) != 0)); ii[i]++) {}
+        for (ii[i] = 0; (ii[i] < nset && (gmx_strcasecmp(leg[ii[i]].c_str(), my_ener[i]) != 0)); ii[i]++)
+        {
+        }
 /*        if (ii[i] < nset)
             fprintf(fp,"Found %s data.\n",my_ener[i]);
  */ }
@@ -766,15 +823,15 @@ if ((ii[eVol] < nset) && (ii[eTemp] < nset))
 {
     vv    = edat->s[ii[eVol]].av * NANO3;
     varv  = gmx::square(edat->s[ii[eVol]].rmsd * NANO3);
-    kappa = (varv / vv) / (BOLTZMANN * tt);
+    kappa = (varv / vv) / (gmx::c_boltzmann * tt);
 }
 /* Enthalpy */
 hh = varh = NOTSET;
 if ((ii[eEnth] < nset) && (ii[eTemp] < nset))
 {
-    hh   = KILO * edat->s[ii[eEnth]].av / AVOGADRO;
-    varh = gmx::square(KILO * edat->s[ii[eEnth]].rmsd / AVOGADRO);
-    cp   = AVOGADRO * ((varh / nmol) / (BOLTZMANN * tt * tt));
+    hh   = gmx::c_kilo * edat->s[ii[eEnth]].av / gmx::c_avogadro;
+    varh = gmx::square(gmx::c_kilo * edat->s[ii[eEnth]].rmsd / gmx::c_avogadro);
+    cp   = gmx::c_avogadro * ((varh / nmol) / (gmx::c_boltzmann * tt * tt));
 }
 /* Total energy */
 if ((ii[eEtot] < nset) && (hh == NOTSET) && (tt != NOTSET))
@@ -783,7 +840,7 @@ if ((ii[eEtot] < nset) && (hh == NOTSET) && (tt != NOTSET))
        by checking whether the enthalpy was computed.
      */
     varet = gmx::square(edat->s[ii[eEtot]].rmsd);
-    cv    = KILO * ((varet / nmol) / (BOLTZ * tt * tt));
+    cv    = gmx::c_kilo * ((varet / nmol) / (gmx::c_boltz * tt * tt));
 }
 /* Alpha, dcp */
 if ((ii[eVol] < nset) && (ii[eEnth] < nset) && (ii[eTemp] < nset))
@@ -793,7 +850,7 @@ if ((ii[eVol] < nset) && (ii[eEnth] < nset) && (ii[eTemp] < nset))
     for (j = 0; (j < edat->nframes); j++)
     {
         v = edat->s[ii[eVol]].ener[j] * NANO3;
-        h = KILO * edat->s[ii[eEnth]].ener[j] / AVOGADRO;
+        h = gmx::c_kilo * edat->s[ii[eEnth]].ener[j] / gmx::c_avogadro;
         v_sum += v;
         h_sum += h;
         vh_sum += (v * h);
@@ -801,8 +858,8 @@ if ((ii[eVol] < nset) && (ii[eEnth] < nset) && (ii[eTemp] < nset))
     vh_aver = vh_sum / edat->nframes;
     v_aver  = v_sum / edat->nframes;
     h_aver  = h_sum / edat->nframes;
-    alpha   = (vh_aver - v_aver * h_aver) / (v_aver * BOLTZMANN * tt * tt);
-    dcp     = (v_aver * AVOGADRO / nmol) * tt * gmx::square(alpha) / (kappa);
+    alpha   = (vh_aver - v_aver * h_aver) / (v_aver * gmx::c_boltzmann * tt * tt);
+    dcp     = (v_aver * gmx::c_avogadro / nmol) * tt * gmx::square(alpha) / (kappa);
 }
 
 if (tt != NOTSET)
@@ -814,26 +871,27 @@ if (tt != NOTSET)
     fprintf(fp, "\nTemperature dependent fluctuation properties at T = %g.\n", tt);
     fprintf(fp, "\nHeat capacities obtained from fluctuations do *not* include\n");
     fprintf(fp, "quantum corrections. If you want to get a more accurate estimate\n");
-    fprintf(fp, "please use the g_dos program.\n\n");
+    fprintf(fp, "please use the gmx dos program.\n\n");
     fprintf(fp,
             "WARNING: Please verify that your simulations are converged and perform\n"
-            "a block-averaging error analysis (not implemented in g_energy yet)\n");
+            "a block-averaging error analysis (not implemented in gmx energy yet)\n");
 
     if (debug != nullptr)
     {
         if (varv != NOTSET)
         {
-            fprintf(fp, "varv  =  %10g (m^6)\n", varv * AVOGADRO / nmol);
+            fprintf(fp, "varv  =  %10g (m^6)\n", varv * gmx::c_avogadro / nmol);
         }
     }
     if (vv != NOTSET)
     {
-        fprintf(fp, "Volume                                   = %10g m^3/mol\n", vv * AVOGADRO / nmol);
+        fprintf(fp, "Volume                                   = %10g m^3/mol\n", vv * gmx::c_avogadro / nmol);
     }
     if (varh != NOTSET)
     {
-        fprintf(fp, "Enthalpy                                 = %10g kJ/mol\n",
-                hh * AVOGADRO / (KILO * nmol));
+        fprintf(fp,
+                "Enthalpy                                 = %10g kJ/mol\n",
+                hh * gmx::c_avogadro / (gmx::c_kilo * nmol));
     }
     if (alpha != NOTSET)
     {
@@ -856,7 +914,7 @@ if (tt != NOTSET)
     {
         fprintf(fp, "Cp-Cv                                    =  %10g J/(mol K)\n", dcp);
     }
-    please_cite(fp, "Allen1987a");
+    please_cite(fp, "Allen2017");
 }
 else
 {
@@ -864,32 +922,35 @@ else
 }
 }
 
-static void analyse_ener(gmx_bool                bCorr,
-                         const char*             corrfn,
-                         const char*             eviscofn,
-                         const char*             eviscoifn,
-                         gmx_bool                bFee,
-                         gmx_bool                bSum,
-                         gmx_bool                bFluct,
-                         gmx_bool                bVisco,
-                         const char*             visfn,
-                         int                     nmol,
-                         int64_t                 start_step,
-                         double                  start_t,
-                         int64_t                 step,
-                         double                  t,
-                         real                    reftemp,
-                         enerdata_t*             edat,
-                         int                     nset,
-                         const int               set[],
-                         const gmx_bool*         bIsEner,
-                         char**                  leg,
-                         gmx_enxnm_t*            enm,
-                         real                    Vaver,
-                         real                    ezero,
-                         int                     nbmin,
-                         int                     nbmax,
-                         const gmx_output_env_t* oenv)
+static void analyse_ener(gmx_bool                         bCorr,
+                         const char*                      corrfn,
+                         const char*                      eviscofn,
+                         const char*                      eviscoifn,
+                         gmx_bool                         bFee,
+                         gmx_bool                         bSum,
+                         gmx_bool                         bFluct,
+                         const bool                       computeACViscosity,
+                         const bool                       computeEinsteinViscosity,
+                         const int                        einsteinRestarts,
+                         const int                        einsteinBlocks,
+                         const char*                      visfn,
+                         int                              nmol,
+                         int64_t                          start_step,
+                         double                           start_t,
+                         int64_t                          step,
+                         double                           t,
+                         real                             reftemp,
+                         enerdata_t*                      edat,
+                         int                              nset,
+                         const int                        set[],
+                         const gmx_bool*                  bIsEner,
+                         gmx::ArrayRef<const std::string> leg,
+                         gmx_enxnm_t*                     enm,
+                         real                             Vaver,
+                         real                             ezero,
+                         int                              nbmin,
+                         int                              nbmax,
+                         const gmx_output_env_t*          oenv)
 {
     FILE* fp;
     /* Check out the printed manual for equations! */
@@ -913,8 +974,12 @@ static void analyse_ener(gmx_bool                bCorr,
         /* Calculate the time difference */
         delta_t = t - start_t;
 
-        fprintf(stdout, "\nStatistics over %s steps [ %.4f through %.4f ps ], %d data sets\n",
-                gmx_step_str(nsteps, buf), start_t, t, nset);
+        fprintf(stdout,
+                "\nStatistics over %s steps [ %.4f through %.4f ps ], %d data sets\n",
+                gmx_step_str(nsteps, buf),
+                start_t,
+                t,
+                nset);
 
         calc_averages(nset, edat, nbmin, nbmax);
 
@@ -960,16 +1025,23 @@ static void analyse_ener(gmx_bool                bCorr,
             {
                 if (!edat->s[i].bExactStat)
                 {
-                    fprintf(stdout, " '%s'", leg[i]);
+                    fprintf(stdout, " '%s'", leg[i].c_str());
                 }
             }
-            fprintf(stdout, " %s has statistics over %d points (frames)\n",
-                    nnotexact == 1 ? "is" : "are", edat->nframes);
+            fprintf(stdout,
+                    " %s has statistics over %d points (frames)\n",
+                    nnotexact == 1 ? "is" : "are",
+                    edat->nframes);
             fprintf(stdout, "All other statistics are over %s points\n", gmx_step_str(edat->npoints, buf));
         }
         fprintf(stdout, "\n");
 
-        fprintf(stdout, "%-24s %10s %10s %10s %10s", "Energy", "Average", "Err.Est.", "RMSD",
+        fprintf(stdout,
+                "%-24s %10s %10s %10s %10s",
+                "Energy",
+                "Average",
+                "Err.Est.",
+                "RMSD",
                 "Tot-Drift");
         if (bFee)
         {
@@ -987,7 +1059,7 @@ static void analyse_ener(gmx_bool                bCorr,
         expEtot = 0;
         if (bFee)
         {
-            beta = 1.0 / (BOLTZ * reftemp);
+            beta = 1.0 / (gmx::c_boltz * reftemp);
             snew(fee, nset);
         }
         for (i = 0; (i < nset); i++)
@@ -1010,15 +1082,15 @@ static void analyse_ener(gmx_bool                bCorr,
 
                 fee[i] = std::log(expE / edat->nframes) / beta + aver / nmol;
             }
-            if (std::strstr(leg[i], "empera") != nullptr)
+            if (std::strstr(leg[i].c_str(), "empera") != nullptr)
             {
                 Temp = aver;
             }
-            else if (std::strstr(leg[i], "olum") != nullptr)
+            else if (std::strstr(leg[i].c_str(), "olum") != nullptr)
             {
                 Vaver = aver;
             }
-            else if (std::strstr(leg[i], "essure") != nullptr)
+            else if (std::strstr(leg[i].c_str(), "essure") != nullptr)
             {
                 Pres = aver;
             }
@@ -1043,7 +1115,7 @@ static void analyse_ener(gmx_bool                bCorr,
             }
 
             ee_pr(pr_errest, sizeof(eebuf), eebuf);
-            fprintf(stdout, "%-24s %10g %10s %10g %10g", leg[i], pr_aver, eebuf, pr_stddev, totaldrift);
+            fprintf(stdout, "%-24s %10g %10s %10g %10g", leg[i].c_str(), pr_aver, eebuf, pr_stddev, totaldrift);
             if (bFee)
             {
                 fprintf(stdout, "  %10g", fee[i]);
@@ -1063,12 +1135,20 @@ static void analyse_ener(gmx_bool                bCorr,
         {
             totaldrift = (edat->nsteps - 1) * esum->s[0].slope;
             ee_pr(esum->s[0].ee / nmol, sizeof(eebuf), eebuf);
-            fprintf(stdout, "%-24s %10g %10s %10s %10g  (%s)", "Total", esum->s[0].av / nmol, eebuf,
-                    "--", totaldrift / nmol, enm[set[0]].unit);
+            fprintf(stdout,
+                    "%-24s %10g %10s %10s %10g  (%s)",
+                    "Total",
+                    esum->s[0].av / nmol,
+                    eebuf,
+                    "--",
+                    totaldrift / nmol,
+                    enm[set[0]].unit);
             /* pr_aver,pr_stddev,a,totaldrift */
             if (bFee)
             {
-                fprintf(stdout, "  %10g  %10g\n", std::log(expEtot) / beta + esum->s[0].av / nmol,
+                fprintf(stdout,
+                        "  %10g  %10g\n",
+                        std::log(expEtot) / beta + esum->s[0].av / nmol,
                         std::log(expEtot) / beta);
             }
             else
@@ -1086,12 +1166,11 @@ static void analyse_ener(gmx_bool                bCorr,
         {
             Dt = 0;
         }
-        if (bVisco)
+        if (computeACViscosity || computeEinsteinViscosity)
         {
-            const char* leg[] = { "Shear", "Bulk" };
-            real        factor;
-            real**      eneset;
-            real**      eneint;
+            std::array<std::string, 2> localLeg = { "Shear", "Bulk" };
+            real                       factor;
+            real**                     eneset;
 
             /* Assume pressure tensor is in Pxx Pxy Pxz Pyx Pyy Pyz Pzx Pzy Pzz */
 
@@ -1115,66 +1194,73 @@ static void analyse_ener(gmx_bool                bCorr,
                 eneset[11][i] -= Pres;
             }
 
-            /* Determine integrals of the off-diagonal pressure elements */
-            snew(eneint, 3);
-            for (i = 0; i < 3; i++)
+            if (computeEinsteinViscosity)
             {
-                snew(eneint[i], edat->nframes + 1);
-            }
-            eneint[0][0] = 0;
-            eneint[1][0] = 0;
-            eneint[2][0] = 0;
-            for (i = 0; i < edat->nframes; i++)
-            {
-                eneint[0][i + 1] =
-                        eneint[0][i]
-                        + 0.5 * (edat->s[1].es[i].sum + edat->s[3].es[i].sum) * Dt / edat->points[i];
-                eneint[1][i + 1] =
-                        eneint[1][i]
-                        + 0.5 * (edat->s[2].es[i].sum + edat->s[6].es[i].sum) * Dt / edat->points[i];
-                eneint[2][i + 1] =
-                        eneint[2][i]
-                        + 0.5 * (edat->s[5].es[i].sum + edat->s[7].es[i].sum) * Dt / edat->points[i];
+                einstein_visco(
+                        eviscofn, eviscoifn, 3, *edat, Vaver, Temp, einsteinRestarts, einsteinBlocks, Dt, oenv);
             }
 
-            einstein_visco(eviscofn, eviscoifn, 3, edat->nframes + 1, eneint, Vaver, Temp, Dt, oenv);
-
-            for (i = 0; i < 3; i++)
+            if (computeACViscosity)
             {
-                sfree(eneint[i]);
+                /*do_autocorr(corrfn,buf,nenergy,3,eneset,Dt,eacNormal,TRUE);*/
+                /* Do it for shear viscosity */
+                std::strcpy(buf, "Shear Viscosity");
+                low_do_autocorr(corrfn,
+                                oenv,
+                                buf,
+                                edat->nframes,
+                                3,
+                                (edat->nframes + 1) / 2,
+                                eneset,
+                                Dt,
+                                eacNormal,
+                                1,
+                                TRUE,
+                                FALSE,
+                                FALSE,
+                                0.0,
+                                0.0,
+                                0);
+
+                /* Now for bulk viscosity */
+                std::strcpy(buf, "Bulk Viscosity");
+                low_do_autocorr(corrfn,
+                                oenv,
+                                buf,
+                                edat->nframes,
+                                1,
+                                (edat->nframes + 1) / 2,
+                                &(eneset[11]),
+                                Dt,
+                                eacNormal,
+                                1,
+                                TRUE,
+                                FALSE,
+                                FALSE,
+                                0.0,
+                                0.0,
+                                0);
+
+                factor = (Vaver * 1e-26 / (gmx::c_boltzmann * Temp)) * Dt;
+                fp     = xvgropen(visfn, buf, "Time (ps)", "\\8h\\4 (cp)", oenv);
+                xvgrLegend(fp, localLeg, oenv);
+
+                /* Use trapezium rule for integration */
+                integral = 0;
+                intBulk  = 0;
+                nout     = get_acfnout();
+                if ((nout < 2) || (nout >= edat->nframes / 2))
+                {
+                    nout = edat->nframes / 2;
+                }
+                for (i = 1; (i < nout); i++)
+                {
+                    integral += 0.5 * (eneset[0][i - 1] + eneset[0][i]) * factor;
+                    intBulk += 0.5 * (eneset[11][i - 1] + eneset[11][i]) * factor;
+                    fprintf(fp, "%10g  %10g  %10g\n", (i * Dt), integral, intBulk);
+                }
+                xvgrclose(fp);
             }
-            sfree(eneint);
-
-            /*do_autocorr(corrfn,buf,nenergy,3,eneset,Dt,eacNormal,TRUE);*/
-            /* Do it for shear viscosity */
-            std::strcpy(buf, "Shear Viscosity");
-            low_do_autocorr(corrfn, oenv, buf, edat->nframes, 3, (edat->nframes + 1) / 2, eneset,
-                            Dt, eacNormal, 1, TRUE, FALSE, FALSE, 0.0, 0.0, 0);
-
-            /* Now for bulk viscosity */
-            std::strcpy(buf, "Bulk Viscosity");
-            low_do_autocorr(corrfn, oenv, buf, edat->nframes, 1, (edat->nframes + 1) / 2,
-                            &(eneset[11]), Dt, eacNormal, 1, TRUE, FALSE, FALSE, 0.0, 0.0, 0);
-
-            factor = (Vaver * 1e-26 / (BOLTZMANN * Temp)) * Dt;
-            fp     = xvgropen(visfn, buf, "Time (ps)", "\\8h\\4 (cp)", oenv);
-            xvgr_legend(fp, asize(leg), leg, oenv);
-
-            /* Use trapezium rule for integration */
-            integral = 0;
-            intBulk  = 0;
-            nout     = get_acfnout();
-            if ((nout < 2) || (nout >= edat->nframes / 2))
-            {
-                nout = edat->nframes / 2;
-            }
-            for (i = 1; (i < nout); i++)
-            {
-                integral += 0.5 * (eneset[0][i - 1] + eneset[0][i]) * factor;
-                intBulk += 0.5 * (eneset[11][i - 1] + eneset[11][i]) * factor;
-                fprintf(fp, "%10g  %10g  %10g\n", (i * Dt), integral, intBulk);
-            }
-            xvgrclose(fp);
 
             for (i = 0; i < 12; i++)
             {
@@ -1195,7 +1281,7 @@ static void analyse_ener(gmx_bool                bCorr,
 #if 0
             do_autocorr(corrfn, oenv, buf, edat->nframes,
                         bSum ? 1                 : nset,
-                        bSum ? &edat->s[nset-1].ener : eneset,
+                        bSum ? &edat->s[nset-1].energyGroupPairTerms : eneset,
                         (delta_t/edat->nframes), eacNormal, FALSE);
 #endif
         }
@@ -1219,28 +1305,29 @@ static void print1(FILE* fp, gmx_bool bDp, real e)
     }
 }
 
-static void fec(const char*             ene2fn,
-                const char*             runavgfn,
-                real                    reftemp,
-                int                     nset,
-                const int               set[],
-                char*                   leg[],
-                enerdata_t*             edat,
-                double                  time[],
-                const gmx_output_env_t* oenv)
+static void fec(const char*                      ene2fn,
+                const char*                      runavgfn,
+                real                             reftemp,
+                int                              nset,
+                const int                        set[],
+                gmx::ArrayRef<const std::string> leg,
+                enerdata_t*                      edat,
+                double                           time[],
+                const gmx_output_env_t*          oenv)
 {
-    const char*  ravgleg[] = { "\\8D\\4E = E\\sB\\N-E\\sA\\N", "<e\\S-\\8D\\4E/kT\\N>\\s0..t\\N" };
-    FILE*        fp;
-    ener_file_t  enx;
-    int          timecheck, nenergy, nenergy2, maxenergy;
-    int          i, j;
-    gmx_bool     bCont;
-    real         aver, beta;
-    real**       eneset2;
-    double       dE, sum;
-    gmx_enxnm_t* enm = nullptr;
-    t_enxframe*  fr;
-    char         buf[22];
+    std::array<std::string, 2> ravgleg = { "\\8D\\4E = E\\sB\\N-E\\sA\\N",
+                                           "<e\\S-\\8D\\4E/kT\\N>\\s0..t\\N" };
+    FILE*                      fp;
+    ener_file_t                enx;
+    int                        timecheck, nenergy, nenergy2, maxenergy;
+    int                        i, j;
+    gmx_bool                   bCont;
+    real                       aver, beta;
+    real**                     eneset2;
+    double                     dE, sum;
+    gmx_enxnm_t*               enm = nullptr;
+    t_enxframe*                fr;
+    char                       buf[22];
 
     /* read second energy file */
     snew(fr, 1);
@@ -1285,8 +1372,11 @@ static void fec(const char*             ene2fn,
 
                 if (fr->t != time[nenergy2])
                 {
-                    fprintf(stderr, "\nWARNING time mismatch %g!=%g at frame %s\n", fr->t,
-                            time[nenergy2], gmx_step_str(fr->step, buf));
+                    fprintf(stderr,
+                            "\nWARNING time mismatch %g!=%g at frame %s\n",
+                            fr->t,
+                            time[nenergy2],
+                            gmx_step_str(fr->step, buf));
                 }
                 for (i = 0; i < nset; i++)
                 {
@@ -1308,18 +1398,24 @@ static void fec(const char*             ene2fn,
     fp = nullptr;
     if (runavgfn)
     {
-        fp = xvgropen(runavgfn, "Running average free energy difference", "Time (" unit_time ")",
-                      "\\8D\\4E (" unit_energy ")", oenv);
-        xvgr_legend(fp, asize(ravgleg), ravgleg, oenv);
+        fp = xvgropen(runavgfn,
+                      "Running average free energy difference",
+                      "Time (" unit_time ")",
+                      "\\8D\\4E (" unit_energy ")",
+                      oenv);
+        xvgrLegend(fp, ravgleg, oenv);
     }
     fprintf(stdout, "\n%-24s %10s\n", "Energy", "dF = -kT ln < exp(-(EB-EA)/kT) >A");
     sum  = 0;
-    beta = 1.0 / (BOLTZ * reftemp);
+    beta = 1.0 / (gmx::c_boltz * reftemp);
     for (i = 0; i < nset; i++)
     {
-        if (gmx_strcasecmp(leg[i], enm[set[i]].name) != 0)
+        if (gmx_strcasecmp(leg[i].c_str(), enm[set[i]].name) != 0)
         {
-            fprintf(stderr, "\nWARNING energy set name mismatch %s!=%s\n", leg[i], enm[set[i]].name);
+            fprintf(stderr,
+                    "\nWARNING energy set name mismatch %s!=%s\n",
+                    leg[i].c_str(),
+                    enm[set[i]].name);
         }
         for (j = 0; j < nenergy; j++)
         {
@@ -1327,11 +1423,11 @@ static void fec(const char*             ene2fn,
             sum += std::exp(-dE * beta);
             if (fp)
             {
-                fprintf(fp, "%10g %10g %10g\n", time[j], dE, -BOLTZ * reftemp * std::log(sum / (j + 1)));
+                fprintf(fp, "%10g %10g %10g\n", time[j], dE, -gmx::c_boltz * reftemp * std::log(sum / (j + 1)));
             }
         }
-        aver = -BOLTZ * reftemp * std::log(sum / nenergy);
-        fprintf(stdout, "%-24s %10g\n", leg[i], aver);
+        aver = -gmx::c_boltz * reftemp * std::log(sum / nenergy);
+        fprintf(stdout, "%-24s %10g\n", leg[i].c_str(), aver);
     }
     if (fp)
     {
@@ -1353,9 +1449,9 @@ static void do_dhdl(t_enxframe*             fr,
                     const gmx_output_env_t* oenv)
 {
     const char *dhdl = "dH/d\\lambda", *deltag = "\\DeltaH", *lambda = "\\lambda";
-    char        title[STRLEN], label_x[STRLEN], label_y[STRLEN], legend[STRLEN];
+    char        title[STRLEN], label_x[STRLEN], label_y[STRLEN];
     char        buf[STRLEN];
-    int         nblock_hist = 0, nblock_dh = 0, nblock_dhcoll = 0;
+    int         nblock_hist = 0, nblock_dh = 0;
     int         i, j, k;
     /* coll data */
     double       temp = 0, start_time = 0, delta_time = 0, start_lambda = 0;
@@ -1378,8 +1474,7 @@ static void do_dhdl(t_enxframe*             fr,
         }
         else if (fr->block[i].id == enxDHCOLL)
         {
-            nblock_dhcoll++;
-            if ((fr->block[i].nsub < 1) || (fr->block[i].sub[0].type != xdr_datatype_double)
+            if ((fr->block[i].nsub < 1) || (fr->block[i].sub[0].type != XdrDataType::Double)
                 || (fr->block[i].sub[0].nr < 5))
             {
                 gmx_fatal(FARGS, "Unexpected block data");
@@ -1409,7 +1504,9 @@ static void do_dhdl(t_enxframe*             fr,
                 for (j = 0; j < n_lambda_vec; j++)
                 {
                     native_lambda_vec[j] = fr->block[i].sub[0].dval[5 + j];
-                    lambda_components[j] = efpt_singular_names[fr->block[i].sub[1].ival[2 + j]];
+                    lambda_components[j] =
+                            enumValueToStringSingular(static_cast<FreeEnergyPerturbationCouplingType>(
+                                    fr->block[i].sub[1].ival[2 + j]));
                 }
             }
         }
@@ -1436,7 +1533,7 @@ static void do_dhdl(t_enxframe*             fr,
                call open_dhdl to open the file */
             /* TODO this is an ugly hack that needs to be fixed: this will only
                work if the order of data is always the same and if we're
-               only using the g_energy compiled with the mdrun that produced
+               only using the gmx energy compiled with the mdrun that produced
                the ener.edr. */
             *fp_dhdl = open_dhdl(filename, ir, oenv);
         }
@@ -1470,8 +1567,8 @@ static void do_dhdl(t_enxframe*             fr,
                 int     nhist, derivative;
 
                 /* check the block types etc. */
-                if ((blk->nsub < 2) || (blk->sub[0].type != xdr_datatype_double)
-                    || (blk->sub[1].type != xdr_datatype_int64) || (blk->sub[0].nr < 2)
+                if ((blk->nsub < 2) || (blk->sub[0].type != XdrDataType::Double)
+                    || (blk->sub[1].type != XdrDataType::Int64) || (blk->sub[0].nr < 2)
                     || (blk->sub[1].nr < 2))
                 {
                     gmx_fatal(FARGS, "Unexpected block data in file");
@@ -1482,21 +1579,17 @@ static void do_dhdl(t_enxframe*             fr,
                 derivative     = blk->sub[1].lval[1];
                 for (j = 0; j < nhist; j++)
                 {
-                    const char* lg[1];
+                    const std::string legend =
+                            derivative ? gmx::formatString("N(%s | %s=%g)", dhdl, lambda, start_lambda)
+                                       : gmx::formatString("N(%s(%s=%g) | %s=%g)",
+                                                           deltag,
+                                                           lambda,
+                                                           foreign_lambda,
+                                                           lambda,
+                                                           start_lambda);
                     x0 = blk->sub[1].lval[2 + j];
 
-                    if (!derivative)
-                    {
-                        sprintf(legend, "N(%s(%s=%g) | %s=%g)", deltag, lambda, foreign_lambda,
-                                lambda, start_lambda);
-                    }
-                    else
-                    {
-                        sprintf(legend, "N(%s | %s=%g)", dhdl, lambda, start_lambda);
-                    }
-
-                    lg[0] = legend;
-                    xvgr_new_dataset(*fp_dhdl, setnr, 1, lg, oenv);
+                    xvgrNewDataset(*fp_dhdl, setnr, gmx::arrayRefFromArray(&legend, 1), oenv);
                     setnr++;
                     for (k = 0; k < blk->sub[j + 2].nr; k++)
                     {
@@ -1556,7 +1649,7 @@ static void do_dhdl(t_enxframe*             fr,
                 if (blk->id == enxDH)
                 {
                     double value;
-                    if (blk->sub[2].type == xdr_datatype_float)
+                    if (blk->sub[2].type == XdrDataType::Float)
                     {
                         value = blk->sub[2].fval[i];
                     }
@@ -1568,8 +1661,7 @@ static void do_dhdl(t_enxframe*             fr,
 
                     if (j == 1 && ir->bExpanded)
                     {
-                        fprintf(*fp_dhdl, "%4d",
-                                static_cast<int>(value)); /* if expanded ensembles and zero, this is a state value, it's an integer. We need a cleaner conditional than if j==1! */
+                        fprintf(*fp_dhdl, "%4d", static_cast<int>(value)); /* if expanded ensembles and zero, this is a state value, it's an integer. We need a cleaner conditional than if j==1! */
                     }
                     else
                     {
@@ -1668,63 +1760,87 @@ int gmx_energy(int argc, char* argv[])
         "where E[SUB]A[sub] and E[SUB]B[sub] are the energies from the first and second energy",
         "files, and the average is over the ensemble A. The running average",
         "of the free energy difference is printed to a file specified by [TT]-ravg[tt].",
-        "[BB]Note[bb] that the energies must both be calculated from the same trajectory."
+        "[BB]Note[bb] that the energies must both be calculated from the same trajectory.[PAR]",
 
+        "For liquids, viscosities can be calculated by integrating the auto-correlation function ",
+        "of, or by using the Einstein formula for, the off-diagonal pressure elements. ",
+        "The option [TT]-vis[tt] turns calculation of the shear and bulk viscosity through ",
+        "integration of the auto-correlation function. For accurate results, this requires ",
+        "extremely frequent computation and output of the pressure tensor. ",
+        "The Einstein formula does not require frequent output and is therefore more convenient. ",
+        "Note that frequent pressure calculation (nstcalcenergy mdp parameter) is still needed. ",
+        "Option [TT]-evicso[tt] gives this shear viscosity estimate and option [TT]-eviscoi[tt] ",
+        "the integral. Using one of these two options also triggers the other. ",
+        "The viscosity is computed from integrals averaged over uniformly distributed ",
+        "[TT]-einstein_restarts[tt] starting points, which are sampled over one block out of ",
+        "[TT]-einstein_blocks[tt] of the trajectory."
     };
     static gmx_bool bSum = FALSE, bFee = FALSE, bPrAll = FALSE, bFluct = FALSE, bDriftCorr = FALSE;
     static gmx_bool bDp = FALSE, bMutot = FALSE, bOrinst = FALSE, bOvec = FALSE, bFluctProps = FALSE;
-    static int      nmol = 1, nbmin = 5, nbmax = 5;
-    static real     reftemp = 300.0, ezero = 0;
-    t_pargs         pa[] = {
+    static int  nmol = 1, nbmin = 5, nbmax = 5;
+    static real reftemp = 300.0, ezero = 0;
+    static int  einsteinRestarts = 100;
+    static int  einsteinBlocks   = 4;
+    t_pargs     pa[]             = {
         { "-fee", FALSE, etBOOL, { &bFee }, "Do a free energy estimate" },
         { "-fetemp",
-          FALSE,
-          etREAL,
-          { &reftemp },
-          "Reference temperature for free energy calculation" },
+                          FALSE,
+                          etREAL,
+                          { &reftemp },
+                          "Reference temperature for free energy calculation" },
         { "-zero", FALSE, etREAL, { &ezero }, "Subtract a zero-point energy" },
         { "-sum",
-          FALSE,
-          etBOOL,
-          { &bSum },
-          "Sum the energy terms selected rather than display them all" },
+                          FALSE,
+                          etBOOL,
+                          { &bSum },
+                          "Sum the energy terms selected rather than display them all" },
         { "-dp", FALSE, etBOOL, { &bDp }, "Print energies in high precision" },
         { "-nbmin", FALSE, etINT, { &nbmin }, "Minimum number of blocks for error estimate" },
         { "-nbmax", FALSE, etINT, { &nbmax }, "Maximum number of blocks for error estimate" },
         { "-mutot",
-          FALSE,
-          etBOOL,
-          { &bMutot },
-          "Compute the total dipole moment from the components" },
+                          FALSE,
+                          etBOOL,
+                          { &bMutot },
+                          "Compute the total dipole moment from the components" },
         { "-aver",
-          FALSE,
-          etBOOL,
-          { &bPrAll },
-          "Also print the exact average and rmsd stored in the energy frames (only when 1 term is "
-          "requested)" },
+                          FALSE,
+                          etBOOL,
+                          { &bPrAll },
+                          "Also print the exact average and rmsd stored in the energy frames (only when 1 term is "
+                                          "requested)" },
         { "-nmol",
-          FALSE,
-          etINT,
-          { &nmol },
-          "Number of molecules in your sample: the energies are divided by this number" },
+                          FALSE,
+                          etINT,
+                          { &nmol },
+                          "Number of molecules in your sample: the energies are divided by this number" },
         { "-fluct_props",
-          FALSE,
-          etBOOL,
-          { &bFluctProps },
-          "Compute properties based on energy fluctuations, like heat capacity" },
+                          FALSE,
+                          etBOOL,
+                          { &bFluctProps },
+                          "Compute properties based on energy fluctuations, like heat capacity" },
         { "-driftcorr",
-          FALSE,
-          etBOOL,
-          { &bDriftCorr },
-          "Useful only for calculations of fluctuation properties. The drift in the observables "
-          "will be subtracted before computing the fluctuation properties." },
+                          FALSE,
+                          etBOOL,
+                          { &bDriftCorr },
+                          "Useful only for calculations of fluctuation properties. The drift in the observables "
+                                          "will be subtracted before computing the fluctuation properties." },
         { "-fluc",
-          FALSE,
-          etBOOL,
-          { &bFluct },
-          "Calculate autocorrelation of energy fluctuations rather than energy itself" },
+                          FALSE,
+                          etBOOL,
+                          { &bFluct },
+                          "Calculate autocorrelation of energy fluctuations rather than energy itself" },
         { "-orinst", FALSE, etBOOL, { &bOrinst }, "Analyse instantaneous orientation data" },
-        { "-ovec", FALSE, etBOOL, { &bOvec }, "Also plot the eigenvectors with [TT]-oten[tt]" }
+        { "-ovec", FALSE, etBOOL, { &bOvec }, "Also plot the eigenvectors with [TT]-oten[tt]" },
+        { "-einstein_restarts",
+                          FALSE,
+                          etINT,
+                          { &einsteinRestarts },
+                          "Number of restarts for computing the viscosity using the Einstein relation" },
+        { "-einstein_blocks",
+                          FALSE,
+                          etINT,
+                          { &einsteinBlocks },
+                          "Number of averaging windows for computing the viscosity using the Einstein relation" }
     };
     static const char* setnm[] = { "Pres-XX", "Pres-XY",     "Pres-XZ", "Pres-YX",
                                    "Pres-YY", "Pres-YZ",     "Pres-ZX", "Pres-ZY",
@@ -1739,20 +1855,20 @@ int gmx_energy(int argc, char* argv[])
     t_enxframe * frame, *fr = nullptr;
     int          cur = 0;
 #define NEXT (1 - cur)
-    int               nre, nfr;
-    int64_t           start_step;
-    real              start_t;
-    gmx_bool          bDHDL;
-    gmx_bool          bFoundStart, bCont, bVisco;
-    double            sum, dbl;
-    double*           time = nullptr;
-    real              Vaver;
-    int *             set     = nullptr, i, j, nset, sss;
-    gmx_bool*         bIsEner = nullptr;
-    char**            leg     = nullptr;
-    char              buf[256];
-    gmx_output_env_t* oenv;
-    int               dh_blocks = 0, dh_hists = 0, dh_samples = 0, dh_lambdas = 0;
+    int                      nre, nfr;
+    int64_t                  start_step;
+    real                     start_t;
+    gmx_bool                 bDHDL;
+    gmx_bool                 bFoundStart, bCont;
+    double                   sum, dbl;
+    double*                  time = nullptr;
+    real                     Vaver;
+    int *                    set     = nullptr, i, j, nset, sss;
+    gmx_bool*                bIsEner = nullptr;
+    std::vector<std::string> leg;
+    char                     buf[256];
+    gmx_output_env_t*        oenv;
+    int                      dh_blocks = 0, dh_hists = 0, dh_samples = 0, dh_lambdas = 0;
 
     t_filenm fnm[] = {
         { efEDR, "-f", nullptr, ffREAD },        { efEDR, "-f2", nullptr, ffOPTRD },
@@ -1768,8 +1884,8 @@ int gmx_energy(int argc, char* argv[])
 
     npargs = asize(pa);
     ppa    = add_acf_pargs(&npargs, pa);
-    if (!parse_common_args(&argc, argv, PCA_CAN_VIEW | PCA_CAN_BEGIN | PCA_CAN_END, NFILE, fnm,
-                           npargs, ppa, asize(desc), desc, 0, nullptr, &oenv))
+    if (!parse_common_args(
+                &argc, argv, PCA_CAN_VIEW | PCA_CAN_BEGIN | PCA_CAN_END, NFILE, fnm, npargs, ppa, asize(desc), desc, 0, nullptr, &oenv))
     {
         sfree(ppa);
         return 0;
@@ -1785,14 +1901,17 @@ int gmx_energy(int argc, char* argv[])
 
     Vaver = -1;
 
-    bVisco = opt2bSet("-vis", NFILE, fnm);
+    const bool computeACViscosity = opt2bSet("-vis", NFILE, fnm);
+    // Assign 'true' if either -evisco or -eviscoi flags are specified
+    const bool computeEinsteinViscosity =
+            opt2bSet("-evisco", NFILE, fnm) || opt2bSet("-eviscoi", NFILE, fnm);
 
     t_inputrec  irInstance;
     t_inputrec* ir = &irInstance;
 
     if (!bDHDL)
     {
-        if (bVisco)
+        if (computeACViscosity || computeEinsteinViscosity)
         {
             nset = asize(setnm);
             snew(set, nset);
@@ -1815,6 +1934,11 @@ int gmx_energy(int argc, char* argv[])
                         if (1 != scanf("%lf", &dbl))
                         {
                             gmx_fatal(FARGS, "Error reading user input");
+                        }
+                        if (dbl <= 0)
+                        {
+                            GMX_THROW(gmx::InvalidInputError(
+                                    "The box volume needs to be a positive real number."));
                         }
                         Vaver = dbl;
                     }
@@ -1849,29 +1973,32 @@ int gmx_energy(int argc, char* argv[])
         }
         out = xvgropen(opt2fn("-o", NFILE, fnm), "GROMACS Energies", "Time (ps)", buf, oenv);
 
-        snew(leg, nset + 1);
         for (i = 0; (i < nset); i++)
         {
-            leg[i] = enm[set[i]].name;
+            leg.emplace_back(enm[set[i]].name);
         }
         if (bSum)
         {
-            leg[nset] = gmx_strdup("Sum");
-            xvgr_legend(out, nset + 1, leg, oenv);
+            leg.emplace_back("Sum");
         }
-        else
-        {
-            xvgr_legend(out, nset, leg, oenv);
-        }
+        xvgrLegend(out, leg, oenv);
 
         snew(bIsEner, nset);
         for (i = 0; (i < nset); i++)
         {
             bIsEner[i] = FALSE;
-            for (j = 0; (j <= F_ETOT); j++)
+            for (j = static_cast<int>(InteractionFunction::Bonds);
+                 (j <= static_cast<int>(InteractionFunction::TotalEnergy));
+                 j++)
             {
                 bIsEner[i] = bIsEner[i]
-                             || (gmx_strcasecmp(interaction_function[j].longname, leg[i]) == 0);
+                             || (gmx_strcasecmp(interaction_function[j].longname, leg[i].c_str()) == 0);
+            }
+            bIsEner[i] = bIsEner[i] || gmx::equalCaseInsensitive(pvEnergyFieldName, leg[i]);
+            bIsEner[i] = bIsEner[i] || gmx::equalCaseInsensitive(enthalpyEnergyFieldName, leg[i]);
+            for (const char* name : virialEnergyFieldNames)
+            {
+                bIsEner[i] = bIsEner[i] || gmx::equalCaseInsensitive(name, leg[i]);
             }
         }
         if (bPrAll && nset > 1)
@@ -2021,8 +2148,7 @@ int gmx_energy(int argc, char* argv[])
             }
             if (bDHDL)
             {
-                do_dhdl(fr, ir, &fp_dhdl, opt2fn("-odh", NFILE, fnm), bDp, &dh_blocks, &dh_hists,
-                        &dh_samples, &dh_lambdas, oenv);
+                do_dhdl(fr, ir, &fp_dhdl, opt2fn("-odh", NFILE, fnm), bDp, &dh_blocks, &dh_hists, &dh_samples, &dh_lambdas, oenv);
             }
 
             /*******************************************
@@ -2110,11 +2236,35 @@ int gmx_energy(int argc, char* argv[])
     else
     {
         double dt = (frame[cur].t - start_t) / (edat.nframes - 1);
-        analyse_ener(opt2bSet("-corr", NFILE, fnm), opt2fn("-corr", NFILE, fnm),
-                     opt2fn("-evisco", NFILE, fnm), opt2fn("-eviscoi", NFILE, fnm), bFee, bSum,
-                     bFluct, bVisco, opt2fn("-vis", NFILE, fnm), nmol, start_step, start_t,
-                     frame[cur].step, frame[cur].t, reftemp, &edat, nset, set, bIsEner, leg, enm,
-                     Vaver, ezero, nbmin, nbmax, oenv);
+        analyse_ener(opt2bSet("-corr", NFILE, fnm),
+                     opt2fn("-corr", NFILE, fnm),
+                     opt2fn("-evisco", NFILE, fnm),
+                     opt2fn("-eviscoi", NFILE, fnm),
+                     bFee,
+                     bSum,
+                     bFluct,
+                     computeACViscosity,
+                     computeEinsteinViscosity,
+                     einsteinRestarts,
+                     einsteinBlocks,
+                     opt2fn("-vis", NFILE, fnm),
+                     nmol,
+                     start_step,
+                     start_t,
+                     frame[cur].step,
+                     frame[cur].t,
+                     reftemp,
+                     &edat,
+                     nset,
+                     set,
+                     bIsEner,
+                     leg,
+                     enm,
+                     Vaver,
+                     ezero,
+                     nbmin,
+                     nbmax,
+                     oenv);
         if (bFluctProps)
         {
             calc_fluctuation_props(stdout, bDriftCorr, dt, nset, nmol, leg, &edat, nbmin, nbmax);
@@ -2122,8 +2272,7 @@ int gmx_energy(int argc, char* argv[])
     }
     if (opt2bSet("-f2", NFILE, fnm))
     {
-        fec(opt2fn("-f2", NFILE, fnm), opt2fn("-ravg", NFILE, fnm), reftemp, nset, set, leg, &edat,
-            time, oenv);
+        fec(opt2fn("-f2", NFILE, fnm), opt2fn("-ravg", NFILE, fnm), reftemp, nset, set, leg, &edat, time, oenv);
     }
     // Clean up!
     done_enerdata_t(nset, &edat);
@@ -2134,7 +2283,6 @@ int gmx_energy(int argc, char* argv[])
     free_enxnms(nre, enm);
     sfree(ppa);
     sfree(set);
-    sfree(leg);
     sfree(bIsEner);
     {
         const char* nxy = "-nxy";

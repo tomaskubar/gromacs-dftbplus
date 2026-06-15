@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2020- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \internal \file
  * \brief
@@ -49,9 +48,14 @@
 
 #include <unordered_map>
 
-#include "nblib/pbc.hpp"
-#include "definitions.h"
-#include "nblib/util/internal.h"
+#include "gromacs/utility/arrayref.h"
+
+#include "nblib/listed_forces/definitions.h"
+#include "nblib/util/util.hpp"
+
+#include "pbc.hpp"
+
+#define NBLIB_ALWAYS_INLINE __attribute((always_inline))
 
 namespace nblib
 {
@@ -73,31 +77,29 @@ inline void gmxRVecZeroWorkaround<gmx::RVec>(gmx::RVec& value)
 }
 } // namespace detail
 
-/*! \internal \brief object to store forces for multithreaded listed forces computation
+/*! \internal \brief proxy object to access forces in an underlying buffer
+ *
+ * Depending on the index, either the underlying main buffer, or local
+ * storage for outliers is accessed. This object does not own the main buffer.
  *
  */
 template<class T>
-class ForceBuffer
+class ForceBufferProxy
 {
     using HashMap = std::unordered_map<int, T>;
 
 public:
-    ForceBuffer() : rangeStart(0), rangeEnd(0) { }
+    ForceBufferProxy() : rangeStart_(0), rangeEnd_(0) {}
 
-    ForceBuffer(T* mbuf, int rs, int re) :
-        masterForceBuffer(mbuf),
-        rangeStart(rs),
-        rangeEnd(re)
-    {
-    }
+    ForceBufferProxy(int rangeStart, int rangeEnd) : rangeStart_(rangeStart), rangeEnd_(rangeEnd) {}
 
-    void clear() { outliers.clear(); }
+    void clearOutliers() { outliers.clear(); }
 
     inline NBLIB_ALWAYS_INLINE T& operator[](int i)
     {
-        if (i >= rangeStart && i < rangeEnd)
+        if (i >= rangeStart_ && i < rangeEnd_)
         {
-            return masterForceBuffer[i];
+            return mainForceBuffer[i];
         }
         else
         {
@@ -115,12 +117,17 @@ public:
     typename HashMap::const_iterator begin() { return outliers.begin(); }
     typename HashMap::const_iterator end() { return outliers.end(); }
 
-    [[nodiscard]] bool inRange(int index) const { return (index >= rangeStart && index < rangeEnd); }
+    [[nodiscard]] bool inRange(int index) const
+    {
+        return (index >= rangeStart_ && index < rangeEnd_);
+    }
+
+    void setMainBuffer(gmx::ArrayRef<T> buffer) { mainForceBuffer = buffer; }
 
 private:
-    T*  masterForceBuffer;
-    int rangeStart;
-    int rangeEnd;
+    gmx::ArrayRef<T> mainForceBuffer;
+    int              rangeStart_;
+    int              rangeEnd_;
 
     HashMap outliers;
 };
@@ -150,14 +157,14 @@ static int computeChunkIndex(int index, int totalRange, int nSplits)
  * \param nSplits number to divide the total work by
  * \return
  */
-inline
-std::vector<ListedInteractionData> splitListedWork(const ListedInteractionData& interactions,
-                                                   int                          totalRange,
-                                                   int                          nSplits)
+inline std::vector<ListedInteractionData> splitListedWork(const ListedInteractionData& interactions,
+                                                          int                          totalRange,
+                                                          int                          nSplits)
 {
     std::vector<ListedInteractionData> workDivision(nSplits);
 
-    auto splitOneElement = [totalRange, nSplits, &workDivision](const auto& inputElement) {
+    auto splitOneElement = [totalRange, nSplits, &workDivision](const auto& inputElement)
+    {
         // the index of inputElement in the ListedInteractionsTuple
         constexpr int elementIndex =
                 FindIndex<std::decay_t<decltype(inputElement)>, ListedInteractionData>{};
@@ -190,5 +197,7 @@ std::vector<ListedInteractionData> splitListedWork(const ListedInteractionData& 
 }
 
 } // namespace nblib
+
+#undef NBLIB_ALWAYS_INLINE
 
 #endif // NBLIB_LISTEDFORCSES_HELPERS_HPP

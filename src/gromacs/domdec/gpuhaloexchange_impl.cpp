@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2019- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \internal \file
  *
@@ -47,12 +46,23 @@
 
 #include "config.h"
 
+#include <memory>
 #include <utility>
 
 #include "gromacs/domdec/gpuhaloexchange.h"
+#include "gromacs/gpu_utils/devicebuffer_datatype.h"
 #include "gromacs/utility/gmxassert.h"
+#include "gromacs/utility/vectypes.h"
 
-#if !GMX_GPU_CUDA
+class DeviceContext;
+class GpuEventSynchronizer;
+namespace gmx
+{
+template<typename T, size_t capacity_>
+class FixedCapacityVector;
+} // namespace gmx
+struct gmx_domdec_t;
+struct gmx_wallcycle;
 
 namespace gmx
 {
@@ -66,9 +76,8 @@ class GpuHaloExchange::Impl
 GpuHaloExchange::GpuHaloExchange(gmx_domdec_t* /* dd */,
                                  int /* dimIndex */,
                                  MPI_Comm /* mpi_comm_mysim */,
+                                 MPI_Comm /* mpi_comm_mysim_world */,
                                  const DeviceContext& /* deviceContext */,
-                                 const DeviceStream& /*streamLocal */,
-                                 const DeviceStream& /*streamNonLocal */,
                                  int /*pulse */,
                                  gmx_wallcycle* /*wcycle*/) :
     impl_(nullptr)
@@ -96,16 +105,18 @@ void GpuHaloExchange::reinitHalo(DeviceBuffer<RVec> /* d_coordinatesBuffer */,
 }
 
 /*!\brief apply X halo exchange stub. */
-void GpuHaloExchange::communicateHaloCoordinates(const matrix /* box */,
-                                                 GpuEventSynchronizer* /*coordinatesOnDeviceEvent*/)
+GpuEventSynchronizer* GpuHaloExchange::communicateHaloCoordinates(const matrix /* box */,
+                                                                  GpuEventSynchronizer* /*dependencyEvent*/)
 {
     GMX_ASSERT(!impl_,
                "A CPU stub for GPU Halo Exchange exchange was called insted of the correct "
                "implementation.");
+    return nullptr;
 }
 
 /*!\brief apply F halo exchange stub. */
-void GpuHaloExchange::communicateHaloForces(bool gmx_unused accumulateForces)
+void GpuHaloExchange::communicateHaloForces(bool /* accumulateForces */,
+                                            FixedCapacityVector<GpuEventSynchronizer*, 2>* /*dependencyEvents*/)
 {
     GMX_ASSERT(!impl_,
                "A CPU stub for GPU Halo Exchange was called insted of the correct implementation.");
@@ -119,6 +130,92 @@ GpuEventSynchronizer* GpuHaloExchange::getForcesReadyOnDeviceEvent()
     return nullptr;
 }
 
-} // namespace gmx
+GpuHaloExchangeNvshmemHelper::GpuHaloExchangeNvshmemHelper(const gmx_domdec_t&  dd,
+                                                           const DeviceContext& context,
+                                                           const DeviceStream&  stream,
+                                                           const std::optional<int>& /* peerRank */,
+                                                           gmx_wallcycle* /*wcycle*/,
+                                                           MPI_Comm /*mpi_comm_mygroup*/,
+                                                           MPI_Comm /*mpi_comm_mysim_world*/) :
+    dd_(dd), stream_(stream), context_(context)
+{
+    GMX_ASSERT(false,
+               "A CPU stub for GPU Halo Exchange was called insted of the correct implementation.");
+}
 
-#endif // !GMX_GPU_CUDA
+GpuHaloExchangeNvshmemHelper::~GpuHaloExchangeNvshmemHelper() = default;
+
+// NOLINTNEXTLINE(readability-convert-member-functions-to-static)
+DeviceBuffer<uint64_t> GpuHaloExchangeNvshmemHelper::getSyncBuffer() const
+{
+    GMX_ASSERT(false,
+               "A CPU stub for GPU Halo Exchange was called insted of the correct implementation.");
+    return DeviceBuffer<uint64_t>{};
+}
+
+// NOLINTNEXTLINE(readability-convert-member-functions-to-static)
+int GpuHaloExchangeNvshmemHelper::totalPulsesAndDims() const
+{
+    GMX_ASSERT(false,
+               "A CPU stub for GPU Halo Exchange was called insted of the correct implementation.");
+    return -1;
+}
+
+// NOLINTNEXTLINE(readability-convert-member-functions-to-static)
+void GpuHaloExchangeNvshmemHelper::allocateAndInitSignalBufs(int /* totalDimsAndPulses */)
+{
+    GMX_ASSERT(false,
+               "A CPU stub for GPU Halo Exchange was called insted of the correct implementation.");
+}
+
+// NOLINTNEXTLINE(readability-convert-member-functions-to-static)
+void GpuHaloExchangeNvshmemHelper::reinit()
+{
+    GMX_ASSERT(false,
+               "A CPU stub for GPU Halo Exchange was called insted of the correct implementation.");
+}
+
+// NOLINTNEXTLINE(readability-convert-member-functions-to-static)
+void GpuHaloExchangeNvshmemHelper::reinitAllHaloExchanges(const t_commrec& /*cr*/,
+                                                          DeviceBuffer<RVec> /*d_coordinatesBuffer*/,
+                                                          DeviceBuffer<RVec> /*d_forcesBuffer*/)
+{
+    GMX_ASSERT(false,
+               "A CPU stub for GPU Halo Exchange was called insted of the correct implementation.");
+}
+
+// NOLINTNEXTLINE(readability-convert-member-functions-to-static)
+GpuEventSynchronizer* GpuHaloExchangeNvshmemHelper::launchAllCoordinateExchanges(const matrix /*box*/,
+                                                                                 GpuEventSynchronizer* /*dependencyEvent*/)
+{
+    GMX_ASSERT(false,
+               "A CPU stub for GPU Halo Exchange was called insted of the correct implementation.");
+    return nullptr;
+}
+
+// NOLINTNEXTLINE(readability-convert-member-functions-to-static)
+GpuEventSynchronizer* GpuHaloExchangeNvshmemHelper::launchAllForceExchanges(
+        bool /*accumulateForces*/,
+        FixedCapacityVector<GpuEventSynchronizer*, 2>* /*dependencyEvents*/)
+{
+    GMX_ASSERT(false,
+               "A CPU stub for GPU Halo Exchange was called insted of the correct implementation.");
+    return nullptr;
+}
+
+// NOLINTNEXTLINE(readability-convert-member-functions-to-static)
+void GpuHaloExchangeNvshmemHelper::destroyAllHaloExchangeBuffers()
+{
+    GMX_ASSERT(false,
+               "A CPU stub for GPU Halo Exchange was called insted of the correct implementation.");
+}
+
+// NOLINTNEXTLINE(readability-convert-member-functions-to-static)
+GpuEventSynchronizer* GpuHaloExchangeNvshmemHelper::getForcesReadyOnDeviceEvent()
+{
+    GMX_ASSERT(false,
+               "A CPU stub for GPU Halo Exchange was called insted of the correct implementation.");
+    return nullptr;
+}
+
+} // namespace gmx

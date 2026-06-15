@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2019, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2019- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \internal \file
  * \brief
@@ -43,15 +42,26 @@
 
 #include "gromacs/math/gausstransform.h"
 
+#include <cstddef>
+
+#include <algorithm>
 #include <array>
+#include <functional>
+#include <iterator>
 #include <numeric>
+#include <string>
 #include <vector>
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
-#include "gromacs/math/vec.h"
 #include "gromacs/mdspan/extensions.h"
+#include "gromacs/mdspan/extents.h"
+#include "gromacs/mdspan/mdspan.h"
+#include "gromacs/utility/arrayref.h"
+#include "gromacs/utility/real.h"
+#include "gromacs/utility/vec.h"
+#include "gromacs/utility/vectypes.h"
 
 #include "testutils/testasserts.h"
 #include "testutils/testmatchers.h"
@@ -90,10 +100,11 @@ TEST(GaussianOn1DLattice, isCorrect)
     FloatingPointTolerance tolerance(defaultFloatTolerance());
     const real             amplitude = 1.0;
     gauss1d.spread(amplitude, shift);
-    std::array<float, 2 * spreadWidth + 1> expected = {
-        0.0047816522419452667236328125, 0.2613909542560577392578125, 0.65811407566070556640625,
-        0.07631497085094451904296875, 0.000407583254855126142501831054688
-    };
+    std::array<float, 2 * spreadWidth + 1> expected = { 0.0047816522419452667236328125,
+                                                        0.2613909542560577392578125,
+                                                        0.65811407566070556640625,
+                                                        0.07631497085094451904296875,
+                                                        0.000407583254855126142501831054688 };
     EXPECT_THAT(expected, Pointwise(FloatEq(tolerance), viewOnResult));
 }
 
@@ -109,13 +120,14 @@ TEST(GaussianOn1DLattice, complementaryAmplitudesSumToZero)
     gauss1d.spread(amplitude, shift);
     std::vector<float> sumOfComplementaryGaussians;
     // keep a copy of the first Gaussian
-    std::copy(std::begin(viewOnResult), std::end(viewOnResult),
-              std::back_inserter(sumOfComplementaryGaussians));
+    std::copy(std::begin(viewOnResult), std::end(viewOnResult), std::back_inserter(sumOfComplementaryGaussians));
 
     gauss1d.spread(-amplitude, shift);
     // add the two spread Gaussians
-    std::transform(std::begin(viewOnResult), std::end(viewOnResult),
-                   std::begin(sumOfComplementaryGaussians), std::begin(sumOfComplementaryGaussians),
+    std::transform(std::begin(viewOnResult),
+                   std::end(viewOnResult),
+                   std::begin(sumOfComplementaryGaussians),
+                   std::begin(sumOfComplementaryGaussians),
                    std::plus<>());
     // Expect all zeros
     std::array<float, 2 * spreadWidth + 1> expected = {};

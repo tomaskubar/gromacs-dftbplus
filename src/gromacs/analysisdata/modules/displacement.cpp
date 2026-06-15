@@ -1,11 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2010-2018, The GROMACS development team.
- * Copyright (c) 2019, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2010- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -19,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -28,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \internal \file
  * \brief
@@ -42,14 +40,19 @@
  */
 #include "gmxpre.h"
 
-#include "displacement.h"
+#include "gromacs/analysisdata/modules/displacement.h"
 
+#include <memory>
+#include <vector>
+
+#include "gromacs/analysisdata/abstractdata.h"
 #include "gromacs/analysisdata/dataframe.h"
 #include "gromacs/analysisdata/datamodulemanager.h"
 #include "gromacs/analysisdata/modules/histogram.h"
 #include "gromacs/math/utilities.h"
 #include "gromacs/utility/exceptions.h"
 #include "gromacs/utility/gmxassert.h"
+#include "gromacs/utility/real.h"
 #include "gromacs/utility/smalloc.h"
 
 namespace gmx
@@ -149,13 +152,13 @@ void AnalysisDataDisplacementModule::setMSDHistogram(const AnalysisDataBinAverag
 }
 
 
-AnalysisDataFrameRef AnalysisDataDisplacementModule::tryGetDataFrameInternal(int /*index*/) const
+AnalysisDataFrameRef AnalysisDataDisplacementModule::tryGetDataFrameInternal(size_t /*index*/) const
 {
     return AnalysisDataFrameRef();
 }
 
 
-bool AnalysisDataDisplacementModule::requestStorageInternal(int /*nframes*/)
+bool AnalysisDataDisplacementModule::requestStorageInternal(size_t /*nframes*/)
 {
     return false;
 }
@@ -252,8 +255,6 @@ void AnalysisDataDisplacementModule::frameFinished(const AnalysisDataFrameHeader
         return;
     }
 
-    int step, i;
-
     if (_impl->nstored == 2)
     {
         if (_impl->histm)
@@ -266,7 +267,7 @@ void AnalysisDataDisplacementModule::frameFinished(const AnalysisDataFrameHeader
     AnalysisDataFrameHeader header(_impl->nstored - 2, _impl->t, 0);
     moduleManager().notifyFrameStart(header);
 
-    for (i = _impl->ci - _impl->nmax, step = 1; step < _impl->nstored && i != _impl->ci;
+    for (int i = _impl->ci - _impl->nmax, step = 1; step < _impl->nstored && i != _impl->ci;
          i -= _impl->nmax, ++step)
     {
         if (i < 0)

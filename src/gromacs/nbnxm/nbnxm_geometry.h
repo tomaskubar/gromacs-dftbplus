@@ -1,11 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2012,2013,2014,2015,2016 by the GROMACS development team.
- * Copyright (c) 2017,2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2012- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -19,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -28,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \internal \file
  *
@@ -44,13 +42,18 @@
 #ifndef GMX_NBNXM_NBNXM_GEOMETRY_H
 #define GMX_NBNXM_NBNXM_GEOMETRY_H
 
-#include "gromacs/math/vectypes.h"
-#include "gromacs/nbnxm/nbnxm.h"
+#include <filesystem>
+
+#include "gromacs/math/functions.h"
 #include "gromacs/simd/simd.h"
 #include "gromacs/utility/fatalerror.h"
+#include "gromacs/utility/real.h"
+#include "gromacs/utility/vectypes.h"
 
-#include "pairlist.h"
+#include "nbnxm_enums.h"
 
+namespace gmx
+{
 
 /*! \brief Returns the base-2 log of n.
  * *
@@ -58,72 +61,97 @@
  */
 static inline int get_2log(int n)
 {
-    int log2;
-
-    log2 = 0;
-    while ((1 << log2) < n)
-    {
-        log2++;
-    }
-    if ((1 << log2) != n)
+    if (!isPowerOfTwo(n))
     {
         gmx_fatal(FARGS, "nbnxn na_c (%d) is not a power of 2", n);
     }
 
-    return log2;
+    return log2I(n);
 }
 
-namespace Nbnxm
+//! The nbnxn i-cluster size in atoms for the given NBNxM kernel type
+static constexpr int sc_iClusterSize(const NbnxmKernelType kernelType)
 {
+    switch (kernelType)
+    {
+        case NbnxmKernelType::Cpu4x4_PlainC:
+        case NbnxmKernelType::Cpu4xN_Simd_4xN:
+        case NbnxmKernelType::Cpu4xN_Simd_2xNN: return 4;
+        case NbnxmKernelType::Cpu1x1_PlainC: return 1;
+        case NbnxmKernelType::NotSet:
+        case NbnxmKernelType::Count: return 0;
+        // all other cases are GPU kernels and are handled in the gpu specific method.
+        default: return sc_gpuClusterSize(PairlistType::Count);
+    }
+}
 
-/*! \brief The nbnxn i-cluster size in atoms for each nbnxn kernel type */
-static constexpr gmx::EnumerationArray<KernelType, int> IClusterSizePerKernelType = {
-    { 0, c_nbnxnCpuIClusterSize, c_nbnxnCpuIClusterSize, c_nbnxnCpuIClusterSize,
-      c_nbnxnGpuClusterSize, c_nbnxnGpuClusterSize }
-};
-
-/*! \brief The nbnxn j-cluster size in atoms for each nbnxn kernel type */
-static constexpr gmx::EnumerationArray<KernelType, int> JClusterSizePerKernelType = {
-    { 0, c_nbnxnCpuIClusterSize,
+/*! \brief The nbnxn j-cluster size in atoms for the given NBNxM kernel type
+ *
+ * \note When including this file in files compiled for SYCL devices only,
+ *       this function can not be called for SIMD kernel types. This is asserted.
+ */
+static constexpr int sc_jClusterSize(const NbnxmKernelType kernelType)
+{
+    switch (kernelType)
+    {
+        case NbnxmKernelType::Cpu4x4_PlainC: return 4;
 #if GMX_SIMD
-      GMX_SIMD_REAL_WIDTH, GMX_SIMD_REAL_WIDTH / 2,
+        case NbnxmKernelType::Cpu4xN_Simd_4xN: return GMX_SIMD_REAL_WIDTH;
+        case NbnxmKernelType::Cpu4xN_Simd_2xNN: return GMX_SIMD_REAL_WIDTH / 2;
 #else
-      0, 0,
+        case NbnxmKernelType::Cpu4xN_Simd_4xN: return 0;
+        case NbnxmKernelType::Cpu4xN_Simd_2xNN: return 0;
 #endif
-      c_nbnxnGpuClusterSize, c_nbnxnGpuClusterSize / 2 }
-};
-
-/*! \brief Returns whether the pair-list corresponding to nb_kernel_type is simple */
-static inline bool kernelTypeUsesSimplePairlist(const KernelType kernelType)
-{
-    return (kernelType == KernelType::Cpu4x4_PlainC || kernelType == KernelType::Cpu4xN_Simd_4xN
-            || kernelType == KernelType::Cpu4xN_Simd_2xNN);
+        case NbnxmKernelType::Cpu1x1_PlainC: return 1;
+        case NbnxmKernelType::NotSet:
+        case NbnxmKernelType::Count: return 0;
+        // all other cases are GPU kernels and are handled in the gpu specific method.
+        default: return sc_gpuSplitJClusterSize(PairlistType::Count);
+    }
 }
 
 //! Returns whether a SIMD kernel is in use
-static inline bool kernelTypeIsSimd(const KernelType kernelType)
+static constexpr bool kernelTypeIsSimd(const NbnxmKernelType kernelType)
 {
-    return (kernelType == KernelType::Cpu4xN_Simd_4xN || kernelType == KernelType::Cpu4xN_Simd_2xNN);
+    return (kernelType == NbnxmKernelType::Cpu4xN_Simd_4xN
+            || kernelType == NbnxmKernelType::Cpu4xN_Simd_2xNN);
 }
 
-} // namespace Nbnxm
+//! Returns whether a plain-C kernel is in use
+static constexpr bool kernelTypeIsPlainC(const NbnxmKernelType kernelType)
+{
+    return (kernelType == NbnxmKernelType::Cpu4x4_PlainC || kernelType == NbnxmKernelType::Cpu1x1_PlainC);
+}
+
+
+/*! \brief Returns whether the pair-list corresponding to \p kernelType is simple */
+static constexpr bool kernelTypeUsesSimplePairlist(const NbnxmKernelType kernelType)
+{
+    return (kernelTypeIsPlainC(kernelType) || kernelTypeIsSimd(kernelType));
+}
+
+/*! \brief Returns the increase in pairlist radius when including volume of pairs beyond rlist
+ *
+ * Due to the cluster size the total volume of the pairlist is (much) more
+ * than 4/3*pi*rlist^3. This function returns the increase in radius
+ * required to match the volume of the pairlist including the atoms pairs
+ * that are beyond rlist.
+ *
+ * \note This routine does not know which cluster layout is used and assumes the most common one.
+ *       Therefore this should only be used to estimates, not for setting a pair list buffer.
+ */
+real nbnxmPairlistVolumeRadiusIncrease(bool useGpu, real atomDensity);
 
 /*! \brief Returns the effective list radius of the pair-list
  *
  * Due to the cluster size the effective pair-list is longer than
  * that of a simple atom pair-list. This function gives the extra distance.
  *
- * NOTE: If the i- and j-cluster sizes are identical and you know
- *       the physical dimensions of the clusters, use the next function
- *       for more accurate results
+ * \note This routine does not know which cluster layout is used and assumes the most common one.
+ *       Therefore this should only be used to estimates, not for setting a pair list buffer.
  */
-real nbnxn_get_rlist_effective_inc(int jClusterSize, real atomDensity);
+real nbnxn_get_rlist_effective_inc(int clusterSize, const RVec& averageClusterBoundingBox);
 
-/*! \brief Returns the effective list radius of the pair-list
- *
- * Due to the cluster size the effective pair-list is longer than
- * that of a simple atom pair-list. This function gives the extra distance.
- */
-real nbnxn_get_rlist_effective_inc(int clusterSize, const gmx::RVec& averageClusterBoundingBox);
+} // namespace gmx
 
 #endif

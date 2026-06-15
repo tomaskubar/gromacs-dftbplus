@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2015,2016,2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2015- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \file
  * \brief
@@ -45,6 +44,8 @@
 
 #include <cmath>
 #include <cstdint>
+
+#include <type_traits>
 
 #include "gromacs/utility/gmxassert.h"
 #include "gromacs/utility/real.h"
@@ -441,8 +442,8 @@ constexpr int64_t exactDiv(int64_t a, int64_t b)
 
 /*! \brief Round float to int
  *
- * Rounding behavior is round to nearest. Rounding of halfway cases is implemention defined
- * (either halway to even or halway away from zero).
+ * Rounding behavior is round to nearest. Rounding of halfway cases is implementation defined
+ * (either halfway to even or halfway away from zero).
  */
 /* Implementation details: It is assumed that FE_TONEAREST is default and not changed by anyone.
  * Currently the implementation is using rint(f) because 1) on all known HW that is faster than
@@ -454,22 +455,92 @@ constexpr int64_t exactDiv(int64_t a, int64_t b)
  */
 static inline int roundToInt(float x)
 {
-    return static_cast<int>(rintf(x));
+    return static_cast<int>(std::rintf(x));
 }
 //! Round double to int
 static inline int roundToInt(double x)
 {
-    return static_cast<int>(rint(x));
+    return static_cast<int>(std::rint(x));
 }
 //! Round float to int64_t
 static inline int64_t roundToInt64(float x)
 {
-    return static_cast<int>(rintf(x));
+    return static_cast<int64_t>(std::rintf(x));
 }
 //! Round double to int64_t
 static inline int64_t roundToInt64(double x)
 {
-    return static_cast<int>(rint(x));
+    return static_cast<int64_t>(std::rint(x));
+}
+
+//! \brief Check whether \p v is an integer power of 2.
+template<typename T, typename = std::enable_if_t<std::is_integral_v<T>>>
+#if (defined(__NVCC__) && !defined(__CUDACC_RELAXED_CONSTEXPR__)) || defined(__HIPCC__)
+/* In CUDA 11, a constexpr function cannot be called from a function with incompatible execution
+ * space, unless --expt-relaxed-constexpr flag is set */
+__host__ __device__
+#endif
+        static constexpr bool
+        isPowerOfTwo(const T v)
+{
+    return (v > 0) && ((v & (v - 1)) == 0);
+}
+
+/*! \brief Return \p numerator divided by \p denominator rounded up to the next integer.
+ *
+ * \param[in] numerator   Numerator, a non-negative integer.
+ * \param[in] denominator Denominator, a positive integer.
+ *
+ * \warning The sum of \p numerator and \p denominator should fit into \c T
+ */
+template<typename T>
+#if (defined(__NVCC__) && !defined(__CUDACC_RELAXED_CONSTEXPR__)) || defined(__HIPCC__)
+/* In CUDA 11, a constexpr function cannot be called from a function with incompatible execution
+ * space, unless --expt-relaxed-constexpr flag is set */
+__host__ __device__
+#endif
+        constexpr T
+        divideRoundUp(T numerator, T denominator)
+{
+    static_assert(std::is_integral_v<T>, "Only integer types are supported");
+    // only check this in a host context, as we don't have GMX_ASSERT for device code
+#if !(defined(__NVCC__)) && !(defined(__HIPCC__)) && !(defined(__SYCL_DEVICE_ONLY__))
+    GMX_ASSERT(std::is_unsigned_v<T> || numerator >= 0, "Nominator should be non-negative");
+    GMX_ASSERT(denominator > 0, "Denominator should be positive");
+#endif
+    return (numerator + denominator - 1) / denominator;
+}
+
+/*! \brief
+ * Return \p x modulo \p period such that it is within the interval [-0.5*period, 0.5*period]
+ *
+ * A shift of +/- 'period' is applied, if needed.
+ *
+ * \param[in] x       Value to correct, should be within the interval [-1.5*period, 1.5*period]
+ * \param[in] period  The period
+ *
+ * \returns \p x modulo \p period that is within the interval [-0.5*period, 0.5*period]
+ */
+template<typename T>
+T makePeriodic(const T x, const T period)
+{
+    static_assert(std::is_floating_point_v<T>, "Only floating point types are supported");
+
+    GMX_ASSERT(x >= -1.5 * period && x <= 1.5 * period,
+               "We should have -1.5*period <= x <= 1.5*period");
+
+    constexpr T half       = 0.5;
+    const T     halfPeriod = half * period;
+
+    if (x > halfPeriod)
+    {
+        return x - period;
+    }
+    else if (x < -halfPeriod)
+    {
+        return x + period;
+    }
+    return x;
 }
 
 } // namespace gmx

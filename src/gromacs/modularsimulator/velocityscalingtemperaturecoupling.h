@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2019- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \internal \file
  * \brief Declares a velocity-scaling temperature coupling element for
@@ -45,19 +44,37 @@
 #ifndef GMX_MODULARSIMULATOR_VELOCITYSCALINGTEMPERATURECOUPLING_H
 #define GMX_MODULARSIMULATOR_VELOCITYSCALINGTEMPERATURECOUPLING_H
 
+#include <cstdint>
+
+#include <memory>
+#include <optional>
+#include <string>
+#include <vector>
+
+#include "gromacs/mdtypes/checkpointdata.h"
 #include "gromacs/utility/arrayref.h"
+#include "gromacs/utility/real.h"
 
 #include "energydata.h"
 #include "modularsimulatorinterfaces.h"
 #include "propagator.h"
 
 struct t_commrec;
+enum class TemperatureCoupling : int;
 
 namespace gmx
 {
 class ITemperatureCouplingImpl;
 class LegacySimulatorData;
+class ObservablesReducer;
 struct TemperatureCouplingData;
+class FreeEnergyPerturbationData;
+class GlobalCommunicationHelper;
+class ModularSimulatorAlgorithmBuilderHelper;
+class StatePropagatorData;
+enum class ReferenceTemperatureChangeAlgorithm;
+template<CheckpointDataOperation operation>
+class CheckpointData;
 
 //! Enum describing whether the thermostat is using full or half step kinetic energy
 enum class UseFullStepKE
@@ -66,17 +83,6 @@ enum class UseFullStepKE
     No,
     Count
 };
-
-//! Enum describing whether the thermostat is reporting conserved energy from the previous step
-enum class ReportPreviousStepConservedEnergy
-{
-    Yes,
-    No,
-    Count
-};
-
-//! Typedef to match current use of ints as types.
-using TemperatureCouplingType = int;
 
 /*! \internal
  * \ingroup module_modularsimulator
@@ -89,22 +95,25 @@ using TemperatureCouplingType = int;
  * implementations of the ITemperatureCouplingImpl interface, while the element
  * handles the scheduling and interfacing with other elements.
  */
-class VelocityScalingTemperatureCoupling final : public ISimulatorElement, public ICheckpointHelperClient
+class VelocityScalingTemperatureCoupling final :
+    public ISimulatorElement,
+    public ICheckpointHelperClient,
+    public IEnergySignallerClient
 {
 public:
     //! Constructor
-    VelocityScalingTemperatureCoupling(int                               nstcouple,
-                                       int                               offset,
-                                       UseFullStepKE                     useFullStepKE,
+    VelocityScalingTemperatureCoupling(int           nstcouple,
+                                       int           offset,
+                                       UseFullStepKE useFullStepKE,
                                        ReportPreviousStepConservedEnergy reportPreviousConservedEnergy,
-                                       int64_t                           seed,
-                                       int                               numTemperatureGroups,
-                                       double                            couplingTimeStep,
-                                       const real*                       referenceTemperature,
-                                       const real*                       couplingTime,
-                                       const real*                       numDegreesOfFreedom,
-                                       EnergyData*                       energyData,
-                                       TemperatureCouplingType           couplingType);
+                                       int64_t             seed,
+                                       int                 numTemperatureGroups,
+                                       double              couplingTimeStep,
+                                       const real*         referenceTemperature,
+                                       const real*         couplingTime,
+                                       const real*         numDegreesOfFreedom,
+                                       EnergyData*         energyData,
+                                       TemperatureCoupling couplingType);
 
     /*! \brief Register run function for step / time
      *
@@ -119,16 +128,18 @@ public:
     //! No element teardown needed
     void elementTeardown() override {}
 
-    //! Contribution to the conserved energy (called by energy data)
-    [[nodiscard]] real conservedEnergyContribution() const;
-
     //! Connect this to propagator
-    void connectWithPropagator(const PropagatorThermostatConnection& connectionData);
+    void connectWithMatchingPropagator(const PropagatorConnection& connectionData,
+                                       const PropagatorTag&        propagatorTag);
 
     //! ICheckpointHelperClient write checkpoint implementation
-    void saveCheckpointState(std::optional<WriteCheckpointData> checkpointData, const t_commrec* cr) override;
+    void saveCheckpointState(std::optional<WriteCheckpointData> checkpointData,
+                             const MpiComm&                     mpiComm,
+                             gmx_domdec_t*                      dd) override;
     //! ICheckpointHelperClient read checkpoint implementation
-    void restoreCheckpointState(std::optional<ReadCheckpointData> checkpointData, const t_commrec* cr) override;
+    void restoreCheckpointState(std::optional<ReadCheckpointData> checkpointData,
+                                const MpiComm&                    mpiComm,
+                                gmx_domdec_t*                     dd) override;
     //! ICheckpointHelperClient key implementation
     const std::string& clientID() override;
 
@@ -139,7 +150,9 @@ public:
      * \param statePropagatorData  Pointer to the \c StatePropagatorData object
      * \param energyData  Pointer to the \c EnergyData object
      * \param freeEnergyPerturbationData  Pointer to the \c FreeEnergyPerturbationData object
-     * \param globalCommunicationHelper  Pointer to the \c GlobalCommunicationHelper object
+     * \param globalCommunicationHelper   Pointer to the \c GlobalCommunicationHelper object
+     * \param observablesReducer          Pointer to the \c ObservablesReducer object
+     * \param propagatorTag  Tag of the propagator to connect to
      * \param offset  The step offset at which the thermostat is applied
      * \param useFullStepKE  Whether full step or half step KE is used
      * \param reportPreviousStepConservedEnergy  Report the previous or the current step conserved energy
@@ -153,11 +166,17 @@ public:
                           EnergyData*                             energyData,
                           FreeEnergyPerturbationData*             freeEnergyPerturbationData,
                           GlobalCommunicationHelper*              globalCommunicationHelper,
-                          int                                     offset,
+                          ObservablesReducer*                     observablesReducer,
+                          Offset                                  offset,
                           UseFullStepKE                           useFullStepKE,
-                          ReportPreviousStepConservedEnergy reportPreviousStepConservedEnergy);
+                          ReportPreviousStepConservedEnergy       reportPreviousStepConservedEnergy,
+                          const PropagatorTag&                    propagatorTag);
 
 private:
+    //! Update the reference temperature
+    void updateReferenceTemperature(ArrayRef<const real>                temperatures,
+                                    ReferenceTemperatureChangeAlgorithm algorithm);
+
     //! The frequency at which the thermostat is applied
     const int nstcouple_;
     //! If != 0, offset the step at which the thermostat is applied
@@ -172,15 +191,18 @@ private:
     //! The coupling time step - simulation time step x nstcouple_
     const double couplingTimeStep_;
     //! Coupling temperature per group
-    const std::vector<real> referenceTemperature_;
+    std::vector<real> referenceTemperature_;
     //! Coupling time per group
     const std::vector<real> couplingTime_;
     //! Number of degrees of freedom per group
     const std::vector<real> numDegreesOfFreedom_;
     //! Work exerted by thermostat per group
     std::vector<double> temperatureCouplingIntegral_;
-    //! Work exerted by thermostat per group (backup from previous step)
-    std::vector<double> temperatureCouplingIntegralPreviousStep_;
+
+    //! Current conserved energy contribution
+    real conservedEnergyContribution_;
+    //! Step of current conserved energy contribution
+    Step conservedEnergyContributionStep_;
 
     // TODO: Clarify relationship to data objects and find a more robust alternative to raw pointers (#3583)
     //! Pointer to the energy data (for ekindata)
@@ -191,6 +213,8 @@ private:
 
     //! Set new lambda value (at T-coupling steps)
     void setLambda(Step step);
+    //! Contribution to the conserved energy
+    [[nodiscard]] real conservedEnergyContribution() const;
 
     //! The temperature coupling implementation
     std::unique_ptr<ITemperatureCouplingImpl> temperatureCouplingImpl_;
@@ -200,6 +224,11 @@ private:
     //! Helper function to read from / write to CheckpointData
     template<CheckpointDataOperation operation>
     void doCheckpointData(CheckpointData<operation>* checkpointData);
+
+    //! IEnergySignallerClient implementation
+    std::optional<SignallerCallback> registerEnergyCallback(EnergySignallerEvent event) override;
+    //! The next communicated energy calculation step
+    Step nextEnergyCalculationStep_;
 };
 
 } // namespace gmx

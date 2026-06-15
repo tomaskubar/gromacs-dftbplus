@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2020- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \libinternal \file
  * \brief Provides the checkpoint data structure for the modular simulator
@@ -42,13 +41,23 @@
 #ifndef GMX_MODULARSIMULATOR_CHECKPOINTDATA_H
 #define GMX_MODULARSIMULATOR_CHECKPOINTDATA_H
 
-#include <optional>
+#include <cstdint>
+#include <cstdio>
 
-#include "gromacs/math/vectypes.h"
+#include <optional>
+#include <string>
+#include <type_traits>
+#include <vector>
+
+#include "gromacs/math/multidimarray.h"
 #include "gromacs/utility/arrayref.h"
 #include "gromacs/utility/exceptions.h"
+#include "gromacs/utility/gmxassert.h"
+#include "gromacs/utility/keyvaluetree.h"
 #include "gromacs/utility/keyvaluetreebuilder.h"
+#include "gromacs/utility/real.h"
 #include "gromacs/utility/stringutil.h"
+#include "gromacs/utility/vectypes.h"
 
 namespace gmx
 {
@@ -77,7 +86,58 @@ enum class CheckpointDataOperation
  *
  * \tparam operation  Whether we are reading or writing
  * \tparam T          The type of values stored in the ArrayRef
- * \param container   The container the ArrayRef is referencing to
+ * \param container   The container the ArrayRef is referencing
+ * \return            The ArrayRef
+ *
+ * \see ArrayRef
+ *
+ * This overload suits use cases like
+ *
+ *  serialize(makeCheckpointArrayRef<operation, real>(someVector));
+ *
+ * where the container is an L-value whose lifetime is sufficient for the use case.
+ *
+ * \ingroup module_modularsimulator
+ */
+template<CheckpointDataOperation operation, typename T>
+ArrayRef<std::conditional_t<operation == CheckpointDataOperation::Write || std::is_const_v<T>, const typename T::value_type, typename T::value_type>>
+makeCheckpointArrayRef(T& container)
+{
+    return container;
+}
+
+/*! \internal
+ * \brief Get an ArrayRef whose const-ness is defined by the checkpointing operation
+ *
+ * \tparam operation  Whether we are reading or writing
+ * \tparam T          The type of values stored in the ArrayRef
+ * \param container   The ephemeral container the ArrayRef is referencing
+ * \return            The ArrayRef
+ *
+ * \see ArrayRef
+ *
+ * This overload suits use cases like
+ *
+ *  serialize(makeCheckpointArrayRef<operation, real>(arrayRefFromArray(legacyPtr, n)));
+ *
+ * where the "container" is an R-value whose lifetime is sufficient for the use case.
+ *
+ * \ingroup module_modularsimulator
+ */
+template<CheckpointDataOperation operation, typename T>
+ArrayRef<std::conditional_t<operation == CheckpointDataOperation::Write || std::is_const_v<T>, const typename T::value_type, typename T::value_type>>
+makeCheckpointArrayRef(T&& container)
+{
+    return container;
+}
+
+/*! \internal
+ * \brief Get an ArrayRef to a C array whose const-ness is defined by the checkpointing operation
+ *
+ * \tparam operation  Whether we are reading or writing
+ * \tparam T          The type of values stored in the ArrayRef
+ * \param begin       Pointer to the beginning of array.
+ * \param size        Number of elements in array.
  * \return            The ArrayRef
  *
  * \see ArrayRef
@@ -85,10 +145,10 @@ enum class CheckpointDataOperation
  * \ingroup module_modularsimulator
  */
 template<CheckpointDataOperation operation, typename T>
-ArrayRef<std::conditional_t<operation == CheckpointDataOperation::Write || std::is_const<T>::value, const typename T::value_type, typename T::value_type>>
-makeCheckpointArrayRef(T& container)
+ArrayRef<std::conditional_t<operation == CheckpointDataOperation::Write || std::is_const_v<T>, const T, T>>
+makeCheckpointArrayRefFromArray(T* begin, size_t size)
 {
-    return container;
+    return ArrayRef<T>(begin, begin + size);
 }
 
 /*! \internal
@@ -102,9 +162,9 @@ makeCheckpointArrayRef(T& container)
 template<typename T>
 struct IsSerializableType
 {
-    static bool const value = std::is_same<T, std::string>::value || std::is_same<T, bool>::value
-                              || std::is_same<T, int>::value || std::is_same<T, int64_t>::value
-                              || std::is_same<T, float>::value || std::is_same<T, double>::value;
+    static bool const value = std::is_same_v<T, std::string> || std::is_same_v<T, bool>
+                              || std::is_same_v<T, int> || std::is_same_v<T, int64_t>
+                              || std::is_same_v<T, float> || std::is_same_v<T, double>;
 };
 
 /*! \internal
@@ -112,7 +172,7 @@ struct IsSerializableType
  * \brief Struct allowing to check if enum has a serializable underlying type
  */
 //! {
-template<typename T, bool = std::is_enum<T>::value>
+template<typename T, bool = std::is_enum_v<T>>
 struct IsSerializableEnum
 {
     static bool const value = IsSerializableType<std::underlying_type_t<T>>::value;
@@ -323,7 +383,15 @@ VersionEnum checkpointVersion(WriteCheckpointData* checkpointData,
     return programVersion;
 }
 
+inline ReadCheckpointData::CheckpointData(const KeyValueTreeObject& inputTree) :
+    inputTree_(&inputTree)
+{
+}
 
+inline WriteCheckpointData::CheckpointData(KeyValueTreeObjectBuilder&& outputTreeBuilder) :
+    outputTreeBuilder_(outputTreeBuilder)
+{
+}
 /*! \libinternal
  * \brief Holder for read checkpoint data
  *
@@ -350,6 +418,9 @@ public:
      * \return            A CheckpointData object representing a subset of the current object
      */
     [[nodiscard]] ReadCheckpointData checkpointData(const std::string& key) const;
+
+    //! Write the contents of the Checkpoint to file
+    void dump(FILE* out) const;
 
 private:
     //! KV-tree read from checkpoint
@@ -466,8 +537,7 @@ inline void ReadCheckpointData::arrayRef(const std::string& key, ArrayRef<RVec> 
     for (; outputIt != outputEnd && inputIt != inputEnd; outputIt++, inputIt++)
     {
         auto storedRVec = inputIt->asObject()["RVec"].asArray().values();
-        *outputIt       = { storedRVec[XX].cast<real>(), storedRVec[YY].cast<real>(),
-                      storedRVec[ZZ].cast<real>() };
+        *outputIt = { storedRVec[XX].cast<real>(), storedRVec[YY].cast<real>(), storedRVec[ZZ].cast<real>() };
     }
 }
 
@@ -519,15 +589,6 @@ inline WriteCheckpointData WriteCheckpointData::subCheckpointData(const std::str
     return CheckpointData(outputTreeBuilder_->addObject(key));
 }
 
-inline ReadCheckpointData::CheckpointData(const KeyValueTreeObject& inputTree) :
-    inputTree_(&inputTree)
-{
-}
-
-inline WriteCheckpointData::CheckpointData(KeyValueTreeObjectBuilder&& outputTreeBuilder) :
-    outputTreeBuilder_(outputTreeBuilder)
-{
-}
 //! \endcond
 
 } // namespace gmx

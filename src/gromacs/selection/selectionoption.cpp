@@ -1,11 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2010-2018, The GROMACS development team.
- * Copyright (c) 2019, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2010- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -19,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -28,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \internal \file
  * \brief
@@ -42,17 +40,27 @@
  */
 #include "gmxpre.h"
 
-#include "selectionoption.h"
+#include "gromacs/selection/selectionoption.h"
+
+#include <cstddef>
 
 #include <string>
+#include <vector>
 
+#include "gromacs/options/abstractoption.h"
+#include "gromacs/options/abstractoptionstorage.h"
+#include "gromacs/options/optionflags.h"
 #include "gromacs/options/optionmanagercontainer.h"
 #include "gromacs/selection/selection.h"
+#include "gromacs/selection/selectionenums.h"
 #include "gromacs/selection/selectionfileoption.h"
 #include "gromacs/selection/selectionoptionmanager.h"
+#include "gromacs/utility/any.h"
+#include "gromacs/utility/arrayref.h"
 #include "gromacs/utility/exceptions.h"
+#include "gromacs/utility/flags.h"
 #include "gromacs/utility/gmxassert.h"
-#include "gromacs/utility/messagestringcollector.h"
+#include "gromacs/utility/message_string_collector.h"
 
 #include "selectionfileoptionstorage.h"
 #include "selectionoptionstorage.h"
@@ -86,7 +94,7 @@ std::string SelectionOptionStorage::formatSingleValue(const Selection& value) co
 }
 
 
-std::vector<Any> SelectionOptionStorage::normalizeValues(const std::vector<Any>& /*values*/) const
+[[noreturn]] std::vector<Any> SelectionOptionStorage::normalizeValues(const std::vector<Any>& /*values*/) const
 {
     GMX_THROW(NotImplementedError("Selection options not supported in this context"));
 }
@@ -164,10 +172,8 @@ void SelectionOptionStorage::setAllowedValueCount(int count)
     {
         // Should not throw because efOption_DontCheckMinimumCount is set.
         setMinValueCount(count);
-        if (valueCount() > 0 && valueCount() < count)
-        {
-            errors.append("Too few (valid) values provided");
-        }
+        errors.appendIf((valueCount() > 0 && valueCount() < count),
+                        "Too few (valid) values provided");
     }
     try
     {
@@ -299,6 +305,16 @@ void SelectionFileOptionStorage::processSet()
     {
         GMX_THROW(InvalidInputError("No file name provided"));
     }
+}
+
+std::vector<Any> SelectionFileOptionStorage::defaultValues() const
+{
+    return {};
+}
+
+std::vector<Any> SelectionFileOptionStorage::normalizeValues(const std::vector<Any>& values) const
+{
+    return values;
 }
 
 

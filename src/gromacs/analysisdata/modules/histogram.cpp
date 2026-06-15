@@ -1,11 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2010,2011,2012,2013,2014 by the GROMACS development team.
- * Copyright (c) 2015,2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2010- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -19,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -28,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \internal \file
  * \brief
@@ -42,22 +40,31 @@
  */
 #include "gmxpre.h"
 
-#include "histogram.h"
+#include "gromacs/analysisdata/modules/histogram.h"
 
 #include <cmath>
+#include <cstdint>
 
 #include <limits>
+#include <memory>
 #include <vector>
 
+#include "gromacs/analysisdata/abstractdata.h"
 #include "gromacs/analysisdata/dataframe.h"
+#include "gromacs/analysisdata/datamodule.h"
 #include "gromacs/analysisdata/datastorage.h"
 #include "gromacs/analysisdata/framelocaldata.h"
 #include "gromacs/math/functions.h"
-#include "gromacs/utility/basedefinitions.h"
 #include "gromacs/utility/exceptions.h"
 #include "gromacs/utility/gmxassert.h"
+#include "gromacs/utility/real.h"
 
 #include "frameaverager.h"
+
+namespace gmx
+{
+class AnalysisDataParallelOptions;
+} // namespace gmx
 
 namespace
 {
@@ -96,12 +103,7 @@ AnalysisHistogramSettingsInitializer::AnalysisHistogramSettingsInitializer() :
  */
 
 AnalysisHistogramSettings::AnalysisHistogramSettings() :
-    firstEdge_(0.0),
-    lastEdge_(0.0),
-    binWidth_(0.0),
-    inverseBinWidth_(0.0),
-    binCount_(0),
-    bAll_(false)
+    firstEdge_(0.0), lastEdge_(0.0), binWidth_(0.0), inverseBinWidth_(0.0), binCount_(0), bAll_(false)
 {
 }
 
@@ -113,7 +115,6 @@ AnalysisHistogramSettings::AnalysisHistogramSettings(const AnalysisHistogramSett
                        "Histogram end value must be larger than start value");
     GMX_RELEASE_ASSERT(!isDefined(settings.binWidth_) || settings.binWidth_ > 0.0,
                        "Histogram bin width must be positive");
-    GMX_RELEASE_ASSERT(settings.binCount_ >= 0, "Histogram bin count must be positive");
 
     if (!isDefined(settings.max_))
     {
@@ -187,16 +188,16 @@ AnalysisHistogramSettings::AnalysisHistogramSettings(const AnalysisHistogramSett
 }
 
 
-int AnalysisHistogramSettings::findBin(real y) const
+size_t AnalysisHistogramSettings::findBin(real y) const
 {
     if (y < firstEdge_)
     {
-        return bAll_ ? 0 : -1;
+        return bAll_ ? 0 : npos;
     }
-    int bin = static_cast<int>((y - firstEdge_) * inverseBinWidth_);
+    size_t bin = static_cast<size_t>((y - firstEdge_) * inverseBinWidth_);
     if (bin >= binCount_)
     {
-        return bAll_ ? binCount_ - 1 : -1;
+        return bAll_ ? binCount_ - 1 : npos;
     }
     return bin;
 }
@@ -267,43 +268,22 @@ void AbstractAverageHistogram::init(const AnalysisHistogramSettings& settings)
 
 AverageHistogramPointer AbstractAverageHistogram::resampleDoubleBinWidth(bool bIntegerBins) const
 {
-    int nbins;
-    if (bIntegerBins)
-    {
-        nbins = (rowCount() + 1) / 2;
-    }
-    else
-    {
-        nbins = rowCount() / 2;
-    }
+    const int nbins = bIntegerBins ? (rowCount() + 1) / 2 : rowCount() / 2;
 
     AverageHistogramPointer dest(new StaticAverageHistogram(
             histogramFromBins(settings().firstEdge(), nbins, 2 * xstep()).integerBins(bIntegerBins)));
     dest->setColumnCount(columnCount());
     dest->allocateValues();
 
-    int i, j;
-    for (i = j = 0; i < nbins; ++i)
+    for (int i = 0, j = 0; i < nbins; ++i)
     {
         const bool bFirstHalfBin = (bIntegerBins && i == 0);
-        for (int c = 0; c < columnCount(); ++c)
+        for (size_t c = 0; c < columnCount(); ++c)
         {
-            real v1, v2;
-            real e1, e2;
-            if (bFirstHalfBin)
-            {
-                v1 = value(0, c).value();
-                e1 = value(0, c).error();
-                v2 = 0;
-                e2 = 0;
-            }
-            else
-            {
-                v1 = value(j, c).value();
-                e1 = value(j, c).error();
-                v2 = value(j + 1, c).value();
-                e2 = value(j + 1, c).error();
-            }
+            const real v1 = bFirstHalfBin ? value(0, c).value() : value(j, c).value();
+            const real v2 = bFirstHalfBin ? 0 : value(j + 1, c).value();
+            const real e1 = bFirstHalfBin ? value(0, c).error() : value(j, c).error();
+            const real e2 = bFirstHalfBin ? 0 : value(j + 1, c).error();
             dest->value(i, c).setValue(v1 + v2, std::sqrt(e1 * e1 + e2 * e2));
         }
         if (bFirstHalfBin)
@@ -330,10 +310,10 @@ AverageHistogramPointer AbstractAverageHistogram::clone() const
 
 void AbstractAverageHistogram::normalizeProbability()
 {
-    for (int c = 0; c < columnCount(); ++c)
+    for (size_t c = 0; c < columnCount(); ++c)
     {
         double sum = 0;
-        for (int i = 0; i < rowCount(); ++i)
+        for (size_t i = 0; i < rowCount(); ++i)
         {
             sum += value(i, c).value();
         }
@@ -346,10 +326,10 @@ void AbstractAverageHistogram::normalizeProbability()
 
 void AbstractAverageHistogram::makeCumulative()
 {
-    for (int c = 0; c < columnCount(); ++c)
+    for (size_t c = 0; c < columnCount(); ++c)
     {
         double sum = 0;
-        for (int i = 0; i < rowCount(); ++i)
+        for (size_t i = 0; i < rowCount(); ++i)
         {
             sum += value(i, c).value();
             // Clear the error, as we don't cumulate that.
@@ -361,9 +341,9 @@ void AbstractAverageHistogram::makeCumulative()
 }
 
 
-void AbstractAverageHistogram::scaleSingle(int index, real factor)
+void AbstractAverageHistogram::scaleSingle(size_t index, real factor)
 {
-    for (int i = 0; i < rowCount(); ++i)
+    for (size_t i = 0; i < rowCount(); ++i)
     {
         value(i, index).value() *= factor;
         value(i, index).error() *= factor;
@@ -373,7 +353,7 @@ void AbstractAverageHistogram::scaleSingle(int index, real factor)
 
 void AbstractAverageHistogram::scaleAll(real factor)
 {
-    for (int i = 0; i < columnCount(); ++i)
+    for (size_t i = 0; i < columnCount(); ++i)
     {
         scaleSingle(i, factor);
     }
@@ -382,9 +362,9 @@ void AbstractAverageHistogram::scaleAll(real factor)
 
 void AbstractAverageHistogram::scaleAllByVector(const real factor[])
 {
-    for (int c = 0; c < columnCount(); ++c)
+    for (size_t c = 0; c < columnCount(); ++c)
     {
-        for (int i = 0; i < rowCount(); ++i)
+        for (size_t i = 0; i < rowCount(); ++i)
         {
             value(i, c).value() *= factor[i];
             value(i, c).error() *= factor[i];
@@ -455,7 +435,7 @@ void BasicAverageHistogramModule::dataStarted(AbstractAnalysisData* data)
 {
     setColumnCount(data->dataSetCount());
     averagers_.resize(data->dataSetCount());
-    for (int i = 0; i < data->dataSetCount(); ++i)
+    for (size_t i = 0; i < data->dataSetCount(); ++i)
     {
         GMX_RELEASE_ASSERT(rowCount() == data->columnCount(i),
                            "Inconsistent data sizes, something is wrong in the initialization");
@@ -479,10 +459,10 @@ void BasicAverageHistogramModule::frameFinished(const AnalysisDataFrameHeader& /
 void BasicAverageHistogramModule::dataFinished()
 {
     allocateValues();
-    for (int i = 0; i < columnCount(); ++i)
+    for (size_t i = 0; i < columnCount(); ++i)
     {
         averagers_[i].finish();
-        for (int j = 0; j < rowCount(); ++j)
+        for (size_t j = 0; j < rowCount(); ++j)
         {
             value(j, i).setValue(averagers_[i].average(j), std::sqrt(averagers_[i].variance(j)));
         }
@@ -534,8 +514,7 @@ BasicHistogramImpl::BasicHistogramImpl() : averager_(new BasicAverageHistogramMo
 
 
 BasicHistogramImpl::BasicHistogramImpl(const AnalysisHistogramSettings& settings) :
-    settings_(settings),
-    averager_(new BasicAverageHistogramModule(settings))
+    settings_(settings), averager_(new BasicAverageHistogramModule(settings))
 {
 }
 
@@ -605,7 +584,7 @@ const AnalysisHistogramSettings& AnalysisDataSimpleHistogramModule::settings() c
 }
 
 
-int AnalysisDataSimpleHistogramModule::frameCount() const
+size_t AnalysisDataSimpleHistogramModule::frameCount() const
 {
     return impl_->storage_.frameCount();
 }
@@ -617,7 +596,7 @@ int AnalysisDataSimpleHistogramModule::flags() const
 }
 
 
-bool AnalysisDataSimpleHistogramModule::parallelDataStarted(AbstractAnalysisData*              data,
+bool AnalysisDataSimpleHistogramModule::parallelDataStarted(AbstractAnalysisData* data,
                                                             const AnalysisDataParallelOptions& options)
 {
     addModule(impl_->averager_);
@@ -650,8 +629,8 @@ void AnalysisDataSimpleHistogramModule::pointsAdded(const AnalysisDataPointSetRe
     {
         if (points.present(i))
         {
-            const int bin = settings().findBin(points.y(i));
-            if (bin != -1)
+            const size_t bin = settings().findBin(points.y(i));
+            if (bin != AnalysisHistogramSettings::npos)
             {
                 handle.value(bin) += 1;
             }
@@ -665,7 +644,7 @@ void AnalysisDataSimpleHistogramModule::frameFinished(const AnalysisDataFrameHea
     Impl::FrameLocalData::FrameHandle handle      = impl_->accumulator_.frameData(header.index());
     AnalysisDataStorageFrame&         frame       = impl_->storage_.startFrame(header);
     const int                         columnCount = settings().binCount();
-    for (int s = 0; s < dataSetCount(); ++s)
+    for (size_t s = 0; s < dataSetCount(); ++s)
     {
         Impl::FrameLocalData::DataSetHandle dataSet = handle.dataSet(s);
         frame.selectDataSet(s);
@@ -678,7 +657,7 @@ void AnalysisDataSimpleHistogramModule::frameFinished(const AnalysisDataFrameHea
 }
 
 
-void AnalysisDataSimpleHistogramModule::frameFinishedSerial(int frameIndex)
+void AnalysisDataSimpleHistogramModule::frameFinishedSerial(size_t frameIndex)
 {
     impl_->storage_.finishFrameSerial(frameIndex);
 }
@@ -690,13 +669,13 @@ void AnalysisDataSimpleHistogramModule::dataFinished()
 }
 
 
-AnalysisDataFrameRef AnalysisDataSimpleHistogramModule::tryGetDataFrameInternal(int index) const
+AnalysisDataFrameRef AnalysisDataSimpleHistogramModule::tryGetDataFrameInternal(size_t index) const
 {
     return impl_->storage_.tryGetDataFrame(index);
 }
 
 
-bool AnalysisDataSimpleHistogramModule::requestStorageInternal(int nframes)
+bool AnalysisDataSimpleHistogramModule::requestStorageInternal(size_t nframes)
 {
     return impl_->storage_.requestStorage(nframes);
 }
@@ -755,7 +734,7 @@ const AnalysisHistogramSettings& AnalysisDataWeightedHistogramModule::settings()
 }
 
 
-int AnalysisDataWeightedHistogramModule::frameCount() const
+size_t AnalysisDataWeightedHistogramModule::frameCount() const
 {
     return impl_->storage_.frameCount();
 }
@@ -798,8 +777,8 @@ void AnalysisDataWeightedHistogramModule::pointsAdded(const AnalysisDataPointSet
     {
         GMX_THROW(APIError("Invalid data layout"));
     }
-    int bin = settings().findBin(points.y(0));
-    if (bin != -1)
+    size_t bin = settings().findBin(points.y(0));
+    if (bin != AnalysisHistogramSettings::npos)
     {
         Impl::FrameLocalData::DataSetHandle handle =
                 impl_->accumulator_.frameDataSet(points.frameIndex(), points.dataSetIndex());
@@ -815,12 +794,12 @@ void AnalysisDataWeightedHistogramModule::frameFinished(const AnalysisDataFrameH
 {
     Impl::FrameLocalData::FrameHandle handle      = impl_->accumulator_.frameData(header.index());
     AnalysisDataStorageFrame&         frame       = impl_->storage_.startFrame(header);
-    const int                         columnCount = settings().binCount();
-    for (int s = 0; s < dataSetCount(); ++s)
+    const size_t                      columnCount = settings().binCount();
+    for (size_t s = 0; s < dataSetCount(); ++s)
     {
         Impl::FrameLocalData::DataSetHandle dataSet = handle.dataSet(s);
         frame.selectDataSet(s);
-        for (int i = 0; i < columnCount; ++i)
+        for (size_t i = 0; i < columnCount; ++i)
         {
             frame.setValue(i, dataSet.value(i));
         }
@@ -829,7 +808,7 @@ void AnalysisDataWeightedHistogramModule::frameFinished(const AnalysisDataFrameH
 }
 
 
-void AnalysisDataWeightedHistogramModule::frameFinishedSerial(int frameIndex)
+void AnalysisDataWeightedHistogramModule::frameFinishedSerial(size_t frameIndex)
 {
     impl_->storage_.finishFrameSerial(frameIndex);
 }
@@ -841,13 +820,13 @@ void AnalysisDataWeightedHistogramModule::dataFinished()
 }
 
 
-AnalysisDataFrameRef AnalysisDataWeightedHistogramModule::tryGetDataFrameInternal(int index) const
+AnalysisDataFrameRef AnalysisDataWeightedHistogramModule::tryGetDataFrameInternal(size_t index) const
 {
     return impl_->storage_.tryGetDataFrame(index);
 }
 
 
-bool AnalysisDataWeightedHistogramModule::requestStorageInternal(int nframes)
+bool AnalysisDataWeightedHistogramModule::requestStorageInternal(size_t nframes)
 {
     return impl_->storage_.requestStorage(nframes);
 }
@@ -910,7 +889,7 @@ void AnalysisDataBinAverageModule::dataStarted(AbstractAnalysisData* data)
 {
     setColumnCount(data->dataSetCount());
     impl_->averagers_.resize(data->dataSetCount());
-    for (int i = 0; i < data->dataSetCount(); ++i)
+    for (size_t i = 0; i < data->dataSetCount(); ++i)
     {
         impl_->averagers_[i].setColumnCount(rowCount());
     }
@@ -926,8 +905,8 @@ void AnalysisDataBinAverageModule::pointsAdded(const AnalysisDataPointSetRef& po
     {
         GMX_THROW(APIError("Invalid data layout"));
     }
-    int bin = settings().findBin(points.y(0));
-    if (bin != -1)
+    size_t bin = settings().findBin(points.y(0));
+    if (bin != AnalysisHistogramSettings::npos)
     {
         AnalysisDataFrameAverager& averager = impl_->averagers_[points.dataSetIndex()];
         for (int i = 1; i < points.columnCount(); ++i)
@@ -944,11 +923,11 @@ void AnalysisDataBinAverageModule::frameFinished(const AnalysisDataFrameHeader& 
 void AnalysisDataBinAverageModule::dataFinished()
 {
     allocateValues();
-    for (int i = 0; i < columnCount(); ++i)
+    for (size_t i = 0; i < columnCount(); ++i)
     {
         AnalysisDataFrameAverager& averager = impl_->averagers_[i];
         averager.finish();
-        for (int j = 0; j < rowCount(); ++j)
+        for (size_t j = 0; j < rowCount(); ++j)
         {
             value(j, i).setValue(averager.average(j), std::sqrt(averager.variance(j)));
         }

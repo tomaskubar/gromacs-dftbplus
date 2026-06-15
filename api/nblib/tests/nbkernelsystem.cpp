@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2020- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \internal \file
  * \brief
@@ -42,15 +41,31 @@
  * \author Sebastian Keller <keller@cscs.ch>
  * \author Artem Zhmurov <zhmurov@gmail.com>
  */
+#include <cstddef>
+
+#include <algorithm>
+#include <iterator>
+#include <memory>
+#include <string>
+#include <vector>
+
 #include <gtest/gtest.h>
 
 #include "gromacs/topology/exclusionblocks.h"
-#include "nblib/forcecalculator.h"
-#include "nblib/gmxsetup.h"
+#include "gromacs/utility/arrayref.h"
+#include "gromacs/utility/vectypes.h"
+
+#include "nblib/basicdefinitions.h"
+#include "nblib/gmxcalculatorcpu.h"
 #include "nblib/integrator.h"
-#include "nblib/tests/testhelpers.h"
-#include "nblib/tests/testsystems.h"
+#include "nblib/kerneloptions.h"
+#include "nblib/simulationstate.h"
 #include "nblib/topology.h"
+#include "nblib/util/setup.h"
+#include "nblib/vector.h"
+
+#include "testhelpers.h"
+#include "testsystems.h"
 
 namespace nblib
 {
@@ -58,13 +73,6 @@ namespace test
 {
 namespace
 {
-
-// This is defined in src/gromacs/mdtypes/forcerec.h but there is also a
-// legacy C6 macro defined there that conflicts with the nblib C6 type.
-// Todo: Once that C6 has been refactored into a regular function, this
-//       file can just include forcerec.h
-//! Macro to set Van der Waals interactions to atoms
-#define SET_CGINFO_HAS_VDW(cgi) (cgi) = ((cgi) | (1 << 23))
 
 TEST(NBlibTest, SpcMethanolForcesAreCorrect)
 {
@@ -74,19 +82,17 @@ TEST(NBlibTest, SpcMethanolForcesAreCorrect)
 
     SpcMethanolSimulationStateBuilder spcMethanolSystemBuilder;
 
-    auto simState        = spcMethanolSystemBuilder.setupSimulationState();
-    auto forceCalculator = ForceCalculator(simState, options);
+    auto simState = spcMethanolSystemBuilder.setupSimulationState();
+
+    auto forceCalculator = setupGmxForceCalculatorCpu(simState.topology(), options);
+
+    forceCalculator->updatePairlist(simState.coordinates(), simState.box());
 
     gmx::ArrayRef<Vec3> forces(simState.forces());
-    ASSERT_NO_THROW(forceCalculator.compute(simState.coordinates(), forces));
+    ASSERT_NO_THROW(forceCalculator->compute(simState.coordinates(), simState.box(), forces));
 
-    /* Use higher-than-usual tolerance for forces. Some of the particles in the test systems are
-     * very close to each other, and, for example, the distance between the first two particles
-     * is approx. 0.13 and already has relative uncertainty around 1e-6. */
-    gmx::test::FloatingPointTolerance forceTolerance(1.0e-5, 1.0e-9, 1e-4, 1.0e-9, 1000, 1000, true);
-
-    Vector3DTest forcesOutputTest(forceTolerance);
-    forcesOutputTest.testVectors(forces, "SPC-methanol forces");
+    RefDataChecker forcesOutputTest(5e-5);
+    forcesOutputTest.testArrays<Vec3>(forces, "SPC-methanol forces");
 }
 
 TEST(NBlibTest, ExpectedNumberOfForces)
@@ -96,11 +102,14 @@ TEST(NBlibTest, ExpectedNumberOfForces)
 
     SpcMethanolSimulationStateBuilder spcMethanolSystemBuilder;
 
-    auto simState        = spcMethanolSystemBuilder.setupSimulationState();
-    auto forceCalculator = ForceCalculator(simState, options);
+    auto simState = spcMethanolSystemBuilder.setupSimulationState();
+
+    auto forceCalculator = setupGmxForceCalculatorCpu(simState.topology(), options);
+
+    forceCalculator->updatePairlist(simState.coordinates(), simState.box());
 
     gmx::ArrayRef<Vec3> forces(simState.forces());
-    forceCalculator.compute(simState.coordinates(), forces);
+    forceCalculator->compute(simState.coordinates(), simState.box(), forces);
     EXPECT_EQ(simState.topology().numParticles(), forces.size());
 }
 
@@ -112,17 +121,19 @@ TEST(NBlibTest, CanIntegrateSystem)
 
     SpcMethanolSimulationStateBuilder spcMethanolSystemBuilder;
 
-    auto simState        = spcMethanolSystemBuilder.setupSimulationState();
-    auto forceCalculator = ForceCalculator(simState, options);
+    auto simState = spcMethanolSystemBuilder.setupSimulationState();
+
+    auto forceCalculator = setupGmxForceCalculatorCpu(simState.topology(), options);
+
+    forceCalculator->updatePairlist(simState.coordinates(), simState.box());
 
     LeapFrog integrator(simState.topology(), simState.box());
 
     for (int iter = 0; iter < options.numIterations; iter++)
     {
         gmx::ArrayRef<Vec3> forces(simState.forces());
-        forceCalculator.compute(simState.coordinates(), simState.forces());
-        EXPECT_NO_THROW(integrator.integrate(1.0, simState.coordinates(), simState.velocities(),
-                                             simState.forces()));
+        forceCalculator->compute(simState.coordinates(), simState.box(), forces);
+        EXPECT_NO_THROW(integrator.integrate(1.0, simState.coordinates(), simState.velocities(), forces));
     }
 }
 
@@ -147,14 +158,18 @@ TEST(NBlibTest, UpdateChangesForces)
 
     SpcMethanolSimulationStateBuilder spcMethanolSystemBuilder;
 
-    auto simState        = spcMethanolSystemBuilder.setupSimulationState();
-    auto forceCalculator = ForceCalculator(simState, options);
+    auto simState = spcMethanolSystemBuilder.setupSimulationState();
+
+    auto forceCalculator = setupGmxForceCalculatorCpu(simState.topology(), options);
+
+    forceCalculator->updatePairlist(simState.coordinates(), simState.box());
 
     LeapFrog integrator(simState.topology(), simState.box());
 
     // step 1
     gmx::ArrayRef<Vec3> forces(simState.forces());
-    forceCalculator.compute(simState.coordinates(), simState.forces());
+
+    forceCalculator->compute(simState.coordinates(), simState.box(), simState.forces());
 
     // copy computed forces to another array
     std::vector<Vec3> forces_1(forces.size());
@@ -164,7 +179,7 @@ TEST(NBlibTest, UpdateChangesForces)
     zeroCartesianArray(forces);
 
     // check if forces change without update step
-    forceCalculator.compute(simState.coordinates(), forces);
+    forceCalculator->compute(simState.coordinates(), simState.box(), forces);
 
     // check if forces change without update
     for (size_t i = 0; i < forces_1.size(); i++)
@@ -182,7 +197,8 @@ TEST(NBlibTest, UpdateChangesForces)
     zeroCartesianArray(forces);
 
     // step 2
-    forceCalculator.compute(simState.coordinates(), forces);
+    forceCalculator->compute(simState.coordinates(), simState.box(), forces);
+
     std::vector<Vec3> forces_2(forces.size());
     std::copy(forces.begin(), forces.end(), begin(forces_2));
 
@@ -196,22 +212,46 @@ TEST(NBlibTest, UpdateChangesForces)
     }
 }
 
-TEST(NBlibTest, ArgonForcesAreCorrect)
+TEST(NBlibTest, ArgonOplsaForcesAreCorrect)
 {
     auto options        = NBKernelOptions();
     options.nbnxmSimd   = SimdKernels::SimdNo;
     options.coulombType = CoulombType::Cutoff;
 
-    ArgonSimulationStateBuilder argonSystemBuilder;
+    ArgonSimulationStateBuilder argonSystemBuilder(fftypes::OPLSA);
 
-    auto simState        = argonSystemBuilder.setupSimulationState();
-    auto forceCalculator = ForceCalculator(simState, options);
+    auto simState = argonSystemBuilder.setupSimulationState();
+
+    auto forceCalculator = setupGmxForceCalculatorCpu(simState.topology(), options);
+
+    forceCalculator->updatePairlist(simState.coordinates(), simState.box());
 
     gmx::ArrayRef<Vec3> testForces(simState.forces());
-    forceCalculator.compute(simState.coordinates(), simState.forces());
+    forceCalculator->compute(simState.coordinates(), simState.box(), simState.forces());
 
-    Vector3DTest forcesOutputTest;
-    forcesOutputTest.testVectors(testForces, "Argon forces");
+    RefDataChecker forcesOutputTest(1e-7);
+    forcesOutputTest.testArrays<Vec3>(testForces, "Argon forces");
+}
+
+TEST(NBlibTest, ArgonGromos43A1ForcesAreCorrect)
+{
+    auto options        = NBKernelOptions();
+    options.nbnxmSimd   = SimdKernels::SimdNo;
+    options.coulombType = CoulombType::Cutoff;
+
+    ArgonSimulationStateBuilder argonSystemBuilder(fftypes::GROMOS43A1);
+
+    auto simState = argonSystemBuilder.setupSimulationState();
+
+    auto forceCalculator = setupGmxForceCalculatorCpu(simState.topology(), options);
+
+    forceCalculator->updatePairlist(simState.coordinates(), simState.box());
+
+    gmx::ArrayRef<Vec3> testForces(simState.forces());
+    forceCalculator->compute(simState.coordinates(), simState.box(), simState.forces());
+
+    RefDataChecker forcesOutputTest;
+    forcesOutputTest.testArrays<Vec3>(testForces, "Argon forces");
 }
 
 } // namespace

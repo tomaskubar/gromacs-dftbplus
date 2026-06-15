@@ -1,11 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2011,2012,2013,2014,2015 by the GROMACS development team.
- * Copyright (c) 2016,2017,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2011- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -19,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -28,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \internal \file
  * \brief
@@ -44,11 +42,12 @@
 
 #include "testutils/refdata.h"
 
+#include <iterator>
 #include <string>
 #include <vector>
 
-#include <gtest/gtest.h>
 #include <gtest/gtest-spi.h>
+#include <gtest/gtest.h>
 
 #include "gromacs/utility/any.h"
 #include "gromacs/utility/keyvaluetree.h"
@@ -221,6 +220,68 @@ TEST(ReferenceDataTest, HandlesSequenceOfCustomData)
     }
 }
 
+TEST(ReferenceDataTest, CheckSequenceArrayRef)
+{
+    const int seq[5] = { -3, 0, 5, 2, 8 };
+
+    const gmx::ArrayRef<const int> ref = arrayRefFromArray(seq, 5);
+
+    {
+        TestReferenceData    data(ReferenceDataMode::UpdateAll);
+        TestReferenceChecker checker(data.rootChecker());
+        checker.checkSequence(ref, "ref");
+    }
+    {
+        TestReferenceData    data(ReferenceDataMode::Compare);
+        TestReferenceChecker checker(data.rootChecker());
+        checker.checkSequence(ref, "ref");
+    }
+}
+
+TEST(ReferenceDataTest, CheckSequenceArrayRefHandlesIncorrectData)
+{
+    const int seq[5]     = { -1, 3, 5, 2, 4 };
+    const int seq_mod[5] = { -1, 3, 7, 2, 4 };
+
+    const gmx::ArrayRef<const int> ref       = arrayRefFromArray(seq, 5);
+    const gmx::ArrayRef<const int> ref_mod   = arrayRefFromArray(seq_mod, 5);
+    const gmx::ArrayRef<const int> ref_short = arrayRefFromArray(seq, 4);
+
+
+    {
+        TestReferenceData    data(ReferenceDataMode::UpdateAll);
+        TestReferenceChecker checker(data.rootChecker());
+        checker.checkSequence(ref, "ref");
+    }
+    {
+        TestReferenceData    data(ReferenceDataMode::Compare);
+        TestReferenceChecker checker(data.rootChecker());
+        EXPECT_NONFATAL_FAILURE(checker.checkSequence(ref_mod, "ref"), "");
+        EXPECT_NONFATAL_FAILURE(checker.checkSequence(ref_short, "ref"), "");
+    }
+}
+
+TEST(ReferenceDataTest, CheckSequenceArrayRefHandlesSequenceOfCustomData)
+{
+    const dvec seq[] = { { -3, 4, 5 }, { -2.3, 5, 0 } };
+    // Modified sequence which should fail when compared to the original
+    const dvec seq_mod[] = { { -3, 4, 5 }, { +2.3, 5, 0 } };
+
+    const gmx::ArrayRef<const dvec> ref     = arrayRefFromArray(seq, 2);
+    const gmx::ArrayRef<const dvec> ref_mod = arrayRefFromArray(seq_mod, 2);
+
+    {
+        TestReferenceData    data(ReferenceDataMode::UpdateAll);
+        TestReferenceChecker checker(data.rootChecker());
+        checker.checkSequence(ref, "ref", checkCustomVector);
+    }
+    {
+        TestReferenceData    data(ReferenceDataMode::Compare);
+        TestReferenceChecker checker(data.rootChecker());
+        checker.checkSequence(ref, "ref", checkCustomVector);
+        EXPECT_NONFATAL_FAILURE(checker.checkSequence(ref_mod, "ref"), "");
+    }
+}
 
 TEST(ReferenceDataTest, HandlesIncorrectData)
 {

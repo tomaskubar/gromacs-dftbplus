@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2015,2016,2017,2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2015- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 
 #include "gmxpre.h"
@@ -39,17 +38,23 @@
 
 #include <cassert>
 #include <cmath>
+#include <cstddef>
 
 #include "gromacs/applied_forces/awh/awh.h"
+#include "gromacs/applied_forces/awh/biasparams.h"
+#include "gromacs/applied_forces/awh/biasstate.h"
+#include "gromacs/applied_forces/awh/dimparams.h"
+#include "gromacs/applied_forces/awh/histogramsize.h"
+#include "gromacs/fileio/xdr_datatype.h"
 #include "gromacs/mdtypes/awh_params.h"
-#include "gromacs/mdtypes/commrec.h"
 #include "gromacs/trajectory/energyframe.h"
 #include "gromacs/utility/gmxassert.h"
-#include "gromacs/utility/smalloc.h"
+#include "gromacs/utility/real.h"
 
 #include "bias.h"
 #include "biasgrid.h"
 #include "correlationgrid.h"
+#include "correlationtensor.h"
 #include "pointstate.h"
 
 namespace gmx
@@ -73,8 +78,8 @@ const std::map<AwhOutputEntryType, Normalization> outputTypeToNormalization = {
     { AwhOutputEntryType::Visits, Normalization::Distribution },
     { AwhOutputEntryType::Weights, Normalization::Distribution },
     { AwhOutputEntryType::Target, Normalization::Distribution },
-    { AwhOutputEntryType::ForceCorrelationVolume, Normalization::Distribution },
-    { AwhOutputEntryType::FrictionTensor, Normalization::None }
+    { AwhOutputEntryType::SharedForceCorrelationVolume, Normalization::Distribution },
+    { AwhOutputEntryType::SharedFrictionTensor, Normalization::None }
 };
 
 /*! \brief
@@ -112,7 +117,7 @@ float getNormalizationValue(AwhOutputEntryType outputType, const Bias& bias, int
         case AwhOutputEntryType::Target:
             normalizationValue = static_cast<float>(bias.state().points().size());
             break;
-        case AwhOutputEntryType::ForceCorrelationVolume:
+        case AwhOutputEntryType::SharedForceCorrelationVolume:
             normalizationValue = static_cast<double>(bias.state().points().size());
             break;
         default: break;
@@ -124,9 +129,7 @@ float getNormalizationValue(AwhOutputEntryType outputType, const Bias& bias, int
 } // namespace
 
 AwhEnergyBlock::AwhEnergyBlock(int numPoints, Normalization normalizationType, float normalizationValue) :
-    normalizationType(normalizationType),
-    normalizationValue(normalizationValue),
-    data_(numPoints)
+    normalizationType_(normalizationType), normalizationValue_(normalizationValue), data_(numPoints)
 {
 }
 
@@ -148,7 +151,7 @@ BiasWriter::BiasWriter(const Bias& bias)
             {
                 outputTypeNumBlock[outputType] = bias.ndim();
             }
-            else if (outputType == AwhOutputEntryType::FrictionTensor)
+            else if (outputType == AwhOutputEntryType::SharedFrictionTensor)
             {
                 outputTypeNumBlock[outputType] = bias.forceCorrelationGrid().tensorSize();
             }
@@ -199,26 +202,26 @@ static void normalizeBlock(AwhEnergyBlock* block, const Bias& bias)
     float  minValue  = GMX_FLOAT_MAX;
     float  recipNorm = 0;
 
-    switch (block->normalizationType)
+    switch (block->normalizationType_)
     {
         case Normalization::None: break;
         case Normalization::Coordinate:
             /* Normalize coordinate values by a scale factor */
             for (float& point : data)
             {
-                point *= block->normalizationValue;
+                point *= block->normalizationValue_;
             }
             break;
         case Normalization::FreeEnergy:
             /* Normalize free energy values by subtracting the minimum value */
-            for (gmx::index index = 0; index < data.ssize(); index++)
+            for (gmx::Index index = 0; index < data.ssize(); index++)
             {
                 if (bias.state().points()[index].inTargetRegion() && data[index] < minValue)
                 {
                     minValue = data[index];
                 }
             }
-            for (gmx::index index = 0; index < data.ssize(); index++)
+            for (gmx::Index index = 0; index < data.ssize(); index++)
             {
                 if (bias.state().points()[index].inTargetRegion())
                 {
@@ -235,7 +238,7 @@ static void normalizeBlock(AwhEnergyBlock* block, const Bias& bias)
             }
             if (sum > 0)
             {
-                recipNorm = block->normalizationValue / static_cast<float>(sum);
+                recipNorm = block->normalizationValue_ / static_cast<float>(sum);
             }
             for (float& point : data)
             {
@@ -246,7 +249,7 @@ static void normalizeBlock(AwhEnergyBlock* block, const Bias& bias)
     }
 }
 
-void BiasWriter::transferMetaDataToWriter(gmx::index        metaDataIndex,
+void BiasWriter::transferMetaDataToWriter(gmx::Index        metaDataIndex,
                                           AwhOutputMetaData metaDataType,
                                           const Bias&       bias)
 {
@@ -330,16 +333,19 @@ void BiasWriter::transferPointDataToWriter(AwhOutputEntryType         outputType
         case AwhOutputEntryType::Target:
             block_[b].data()[pointIndex] = bias.state().points()[pointIndex].target();
             break;
-        case AwhOutputEntryType::ForceCorrelationVolume:
-            block_[b].data()[pointIndex] =
-                    forceCorrelation.tensors()[pointIndex].getVolumeElement(forceCorrelation.dtSample);
-            break;
-        case AwhOutputEntryType::FrictionTensor:
+        case AwhOutputEntryType::SharedForceCorrelationVolume:
+        {
+            std::vector correlationIntegral = bias.state().getSharedPointCorrelationIntegral(pointIndex);
+            /* The volume element has units of (sqrt(time)*(units of data))^(ndim of data) */
+            block_[b].data()[pointIndex] = getSqrtDeterminant(correlationIntegral);
+        }
+        break;
+        case AwhOutputEntryType::SharedFrictionTensor:
             /* Store force correlation in units of friction, i.e. time/length^2 */
             for (int n = 0; n < numCorrelation; n++)
             {
-                block_[b].data()[pointIndex] = forceCorrelation.tensors()[pointIndex].getTimeIntegral(
-                        n, forceCorrelation.dtSample);
+                block_[b].data()[pointIndex] =
+                        bias.state().getSharedCorrelationTensorTimeIntegral(pointIndex, n);
                 b++;
             }
             break;
@@ -390,7 +396,7 @@ int BiasWriter::writeToEnergySubblocks(const Bias& bias, t_enxsubblock* sub)
 
     for (size_t b = 0; b < block_.size(); b++)
     {
-        sub[b].type = xdr_datatype_float;
+        sub[b].type = XdrDataType::Float;
         sub[b].nr   = block_[b].data().size();
         sub[b].fval = block_[b].data().data();
     }

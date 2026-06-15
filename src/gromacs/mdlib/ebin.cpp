@@ -1,13 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
- * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2012,2014,2015,2017,2018 by the GROMACS development team.
- * Copyright (c) 2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 1991- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -21,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -30,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /* This file is completely threadsafe - keep it that way! */
 #include "gmxpre.h"
@@ -44,18 +40,19 @@
 #include <cstring>
 
 #include <algorithm>
+#include <filesystem>
 
 #include "gromacs/math/units.h"
 #include "gromacs/math/utilities.h"
-#include "gromacs/math/vec.h"
-#include "gromacs/topology/ifunc.h"
 #include "gromacs/trajectory/energyframe.h"
 #include "gromacs/utility/arrayref.h"
 #include "gromacs/utility/basedefinitions.h"
 #include "gromacs/utility/cstringutil.h"
 #include "gromacs/utility/fatalerror.h"
+#include "gromacs/utility/gmxassert.h"
 #include "gromacs/utility/smalloc.h"
 #include "gromacs/utility/stringutil.h"
+#include "gromacs/utility/vec.h"
 
 t_ebin* mk_ebin()
 {
@@ -82,7 +79,7 @@ void done_ebin(t_ebin* eb)
 int get_ebin_space(t_ebin* eb, int nener, const char* const enm[], const char* unit)
 {
     int         index;
-    int         i, f;
+    int         i;
     const char* u;
 
     index = eb->nener;
@@ -112,18 +109,21 @@ int get_ebin_space(t_ebin* eb, int nener, const char* const enm[], const char* u
              * entries would be removed from the ifunc array.
              */
             u = unit_energy;
-            for (f = 0; f < F_NRE; f++)
+            for (const auto f : gmx::EnumerationWrapper<InteractionFunction>{})
             {
-                if (strcmp(eb->enm[i].name, interaction_function[f].longname) == 0)
+                if (std::strcmp(eb->enm[i].name, interaction_function[f].longname) == 0)
                 {
                     /* Only the terms in this list are not energies */
                     switch (f)
                     {
-                        case F_DISRESVIOL: u = unit_length; break;
-                        case F_ORIRESDEV: u = "obs"; break;
-                        case F_TEMP: u = unit_temp_K; break;
-                        case F_PDISPCORR:
-                        case F_PRES: u = unit_pres_bar; break;
+                        case InteractionFunction::DistanceRestraintViolations:
+                            u = unit_length;
+                            break;
+                        case InteractionFunction::OrientationRestraintDeviations: u = "obs"; break;
+                        case InteractionFunction::Temperature: u = unit_temp_K; break;
+                        case InteractionFunction::PressureDispersionCorrection:
+                        case InteractionFunction::Pressure: u = unit_pres_bar; break;
+                        default: break;
                     }
                 }
             }
@@ -134,11 +134,6 @@ int get_ebin_space(t_ebin* eb, int nener, const char* const enm[], const char* u
     return index;
 }
 
-// ICC 19 -O3 -msse2 generates wrong code. Lower optimization levels
-// and other SIMD levels seem fine, however.
-#if defined __ICC
-#    pragma intel optimization_level 2
-#endif
 void add_ebin(t_ebin* eb, int entryIndex, int nener, const real ener[], gmx_bool bSum)
 {
     int       i, m;
@@ -147,8 +142,13 @@ void add_ebin(t_ebin* eb, int entryIndex, int nener, const real ener[], gmx_bool
 
     if ((entryIndex + nener > eb->nener) || (entryIndex < 0))
     {
-        gmx_fatal(FARGS, "%s-%d: Energies out of range: entryIndex=%d nener=%d maxener=%d",
-                  __FILE__, __LINE__, entryIndex, nener, eb->nener);
+        gmx_fatal(FARGS,
+                  "%s-%d: Energies out of range: entryIndex=%d nener=%d maxener=%d",
+                  __FILE__,
+                  __LINE__,
+                  entryIndex,
+                  nener,
+                  eb->nener);
     }
 
     eg = &(eb->e[entryIndex]);
@@ -205,8 +205,10 @@ void add_ebin_indexed(t_ebin*                   eb,
 
     GMX_ASSERT(shouldUse.size() == ener.size(), "View sizes must match");
     GMX_ASSERT(entryIndex + std::count(shouldUse.begin(), shouldUse.end(), true) <= eb->nener,
-               gmx::formatString("Energies out of range: entryIndex=%d nener=%td maxener=%d", entryIndex,
-                                 std::count(shouldUse.begin(), shouldUse.end(), true), eb->nener)
+               gmx::formatString("Energies out of range: entryIndex=%d nener=%td maxener=%d",
+                                 entryIndex,
+                                 std::count(shouldUse.begin(), shouldUse.end(), true),
+                                 eb->nener)
                        .c_str());
     GMX_ASSERT(entryIndex >= 0, "Must have non-negative entry");
 
@@ -292,7 +294,7 @@ void pr_ebin(FILE* fp, t_ebin* eb, int entryIndex, int nener, int nperline, int 
             i0 = i;
             for (j = 0; (j < nperline) && (i < end) && rc >= 0; j++, i++)
             {
-                if (strncmp(eb->enm[i].name, "Pres", 4) == 0)
+                if (std::strncmp(eb->enm[i].name, "Pres", 4) == 0)
                 {
                     /* Print the pressure unit to avoid confusion */
                     sprintf(buf, "%s (%s)", eb->enm[i].name, unit_pres_bar);

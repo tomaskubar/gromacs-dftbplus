@@ -1,13 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
- * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2016,2018 by the GROMACS development team.
- * Copyright (c) 2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 1991- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -21,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -30,15 +26,16 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 
 #ifndef GMX_GMXPREPROCESS_GROMPP_IMPL_H
 #define GMX_GMXPREPROCESS_GROMPP_IMPL_H
 
+#include <set>
 #include <string>
 
 #include "gromacs/gmxpreprocess/notset.h"
@@ -46,6 +43,7 @@
 #include "gromacs/topology/block.h"
 #include "gromacs/topology/idef.h"
 #include "gromacs/utility/basedefinitions.h"
+#include "gromacs/utility/enumerationhelpers.h"
 #include "gromacs/utility/exceptions.h"
 #include "gromacs/utility/listoflists.h"
 #include "gromacs/utility/real.h"
@@ -65,7 +63,8 @@ public:
     //! Constructor that initializes vectors.
     InteractionOfType(gmx::ArrayRef<const int>  atoms,
                       gmx::ArrayRef<const real> params,
-                      const std::string&        name = "");
+                      const std::string&        name    = "",
+                      bool                      special = false);
     /*!@{*/
     //! Access the individual elements set for the parameter.
     const int& ai() const;
@@ -126,6 +125,8 @@ private:
     std::array<real, MAXFORCEPARAM> forceParam_;
     //! Used with forcefields whose .rtp files name the interaction types (e.g. GROMOS), rather than look them up from the atom names.
     std::string interactionTypeName_;
+    //! boolean used to identify if dihedral was defined in the specbond.dat file
+    bool specbond_;
 };
 
 /*! \libinternal \brief
@@ -141,21 +142,43 @@ struct InteractionsOfType
 { // NOLINT (clang-analyzer-optin.performance.Padding)
     //! The different parameters in the system.
     std::vector<InteractionOfType> interactionTypes;
-    //! CMAP grid spacing.
-    int cmakeGridSpacing = -1;
-    //! Number of cmap angles.
-    int cmapAngles = -1;
+    //! CMAP grid spacing, when used.
+    std::optional<int> cmapGridSpacing_;
+    //! Number of CMAP dihedral angle pairs.
+    int numCmaps_ = -1;
     //! CMAP grid data.
     std::vector<real> cmap;
     //! The five atomtypes followed by a number that identifies the type.
     std::vector<int> cmapAtomTypes;
+    //! The five residue types followed by empty string for alignment with \link cmapAtomTypes \endlink.
+    std::vector<std::string> cmapResTypes_;
+    //! \brief Processed dihedral types
+    //!
+    //! When Amber LEaP-like ordering is used, only dihedrals after the first one of the
+    //! same type should be reordered. To enable this behavior, the list of previously
+    //! matched dihedral types is kept during processing.
+    std::set<std::array<std::string, 4>> leapDihedralTypes_;
+    //! \brief Processed dihedrals
+    //!
+    //! When Amber LEaP-like ordering is used, only dihedrals after the first one of the
+    //! same type should be reordered. To enable this behavior, the list of first encountered
+    //! dihedrals of each type (i.e. those not reordered) is kept during processing.
+    std::set<std::array<int, 4>> leapDihedralIndices_;
+    //! \brief Number of dihedrals kept ordered as encountered
+    //!
+    //! Dihedrals encountered already ordered alphabetically by atom type and matching Amber LEaP.
+    size_t numLeapReorderingNotNecessary = 0;
+    //! \brief Number of reordered dihedrals
+    //!
+    //! Dihedrals reordered alphabetically by atom type to match Amber LEaP.
+    size_t numLeapReorderingPerformed = 0;
 
     //! Number of parameters.
     size_t size() const { return interactionTypes.size(); }
     //! Elements in cmap grid data.
-    int ncmap() const { return cmap.size(); }
+    std::size_t ncmap() const { return cmap.size(); }
     //! Number of elements in cmapAtomTypes.
-    int nct() const { return cmapAtomTypes.size(); }
+    std::size_t nct() const { return cmapAtomTypes.size(); }
 };
 
 struct t_excls
@@ -174,18 +197,16 @@ struct MoleculeInformation
     char** name = nullptr;
     //! Number of exclusions per atom.
     int nrexcl = 0;
-    //! Have exclusions been generated?.
-    bool excl_set = false;
     //! Has the mol been processed.
     bool bProcessed = false;
-    //! Atoms in the moelcule.
+    //! Atoms in the molecule.
     t_atoms atoms;
     //! Molecules separated in datastructure.
     t_block mols;
     //! Exclusions in the molecule.
     gmx::ListOfLists<int> excls;
     //! Interactions of a defined type.
-    std::array<InteractionsOfType, F_NRE> interactions;
+    gmx::EnumerationArray<InteractionFunction, InteractionsOfType> interactions;
 
     /*! \brief
      * Initializer.

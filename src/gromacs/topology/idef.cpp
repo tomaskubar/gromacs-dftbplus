@@ -1,13 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
- * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2016,2018 by the GROMACS development team.
- * Copyright (c) 2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 1991- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -21,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -30,73 +26,105 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
+ */
+/*!
+ * \defgroup module_topology Module Topology
+ * \brief A brief description for Module Topology
  */
 #include "gmxpre.h"
 
-#include "idef.h"
+#include "gromacs/topology/idef.h"
 
 #include <cstdio>
 
+#include <array>
+#include <filesystem>
+#include <string>
+#include <vector>
+
 #include "gromacs/topology/forcefieldparameters.h"
 #include "gromacs/topology/ifunc.h"
+#include "gromacs/utility/basedefinitions.h"
 #include "gromacs/utility/fatalerror.h"
+#include "gromacs/utility/real.h"
 #include "gromacs/utility/smalloc.h"
 #include "gromacs/utility/stringstream.h"
 #include "gromacs/utility/textwriter.h"
 #include "gromacs/utility/txtdump.h"
+#include "gromacs/utility/vectypes.h"
 
 static void printHarmonicInteraction(gmx::TextWriter* writer,
                                      const t_iparams& iparams,
                                      const char*      r,
                                      const char*      kr)
 {
-    writer->writeLineFormatted("%sA=%12.5e, %sA=%12.5e, %sB=%12.5e, %sB=%12.5e", r,
-                               iparams.harmonic.rA, kr, iparams.harmonic.krA, r,
-                               iparams.harmonic.rB, kr, iparams.harmonic.krB);
+    writer->writeLineFormatted("%sA=%12.5e, %sA=%12.5e, %sB=%12.5e, %sB=%12.5e",
+                               r,
+                               iparams.harmonic.rA,
+                               kr,
+                               iparams.harmonic.krA,
+                               r,
+                               iparams.harmonic.rB,
+                               kr,
+                               iparams.harmonic.krB);
 }
 
-void pr_iparams(FILE* fp, t_functype ftype, const t_iparams& iparams)
+void pr_iparams(FILE* fp, InteractionFunction ftype, const t_iparams& iparams)
 {
     gmx::StringOutputStream stream;
     {
         gmx::TextWriter writer(&stream);
         printInteractionParameters(&writer, ftype, iparams);
     }
-    fputs(stream.toString().c_str(), fp);
+    std::fputs(stream.toString().c_str(), fp);
 }
 
-void printInteractionParameters(gmx::TextWriter* writer, t_functype ftype, const t_iparams& iparams)
+void printInteractionParameters(gmx::TextWriter* writer, InteractionFunction ftype, const t_iparams& iparams)
 {
     switch (ftype)
     {
-        case F_ANGLES:
-        case F_G96ANGLES: printHarmonicInteraction(writer, iparams, "th", "ct"); break;
-        case F_CROSS_BOND_BONDS:
-            writer->writeLineFormatted("r1e=%15.8e, r2e=%15.8e, krr=%15.8e", iparams.cross_bb.r1e,
-                                       iparams.cross_bb.r2e, iparams.cross_bb.krr);
+        case InteractionFunction::Angles:
+        case InteractionFunction::GROMOS96Angles:
+            printHarmonicInteraction(writer, iparams, "th", "ct");
             break;
-        case F_CROSS_BOND_ANGLES:
+        case InteractionFunction::CrossBondBonds:
+            writer->writeLineFormatted("r1e=%15.8e, r2e=%15.8e, krr=%15.8e",
+                                       iparams.cross_bb.r1e,
+                                       iparams.cross_bb.r2e,
+                                       iparams.cross_bb.krr);
+            break;
+        case InteractionFunction::CrossBondAngles:
             writer->writeLineFormatted("r1e=%15.8e, r1e=%15.8e, r3e=%15.8e, krt=%15.8e",
-                                       iparams.cross_ba.r1e, iparams.cross_ba.r2e,
-                                       iparams.cross_ba.r3e, iparams.cross_ba.krt);
+                                       iparams.cross_ba.r1e,
+                                       iparams.cross_ba.r2e,
+                                       iparams.cross_ba.r3e,
+                                       iparams.cross_ba.krt);
             break;
-        case F_LINEAR_ANGLES:
+        case InteractionFunction::LinearAngles:
             writer->writeLineFormatted("klinA=%15.8e, aA=%15.8e, klinB=%15.8e, aB=%15.8e",
-                                       iparams.linangle.klinA, iparams.linangle.aA,
-                                       iparams.linangle.klinB, iparams.linangle.aB);
+                                       iparams.linangle.klinA,
+                                       iparams.linangle.aA,
+                                       iparams.linangle.klinB,
+                                       iparams.linangle.aB);
             break;
-        case F_UREY_BRADLEY:
+        case InteractionFunction::UreyBradleyPotential:
             writer->writeLineFormatted(
                     "thetaA=%15.8e, kthetaA=%15.8e, r13A=%15.8e, kUBA=%15.8e, thetaB=%15.8e, "
                     "kthetaB=%15.8e, r13B=%15.8e, kUBB=%15.8e",
-                    iparams.u_b.thetaA, iparams.u_b.kthetaA, iparams.u_b.r13A, iparams.u_b.kUBA,
-                    iparams.u_b.thetaB, iparams.u_b.kthetaB, iparams.u_b.r13B, iparams.u_b.kUBB);
+                    iparams.u_b.thetaA,
+                    iparams.u_b.kthetaA,
+                    iparams.u_b.r13A,
+                    iparams.u_b.kUBA,
+                    iparams.u_b.thetaB,
+                    iparams.u_b.kthetaB,
+                    iparams.u_b.r13B,
+                    iparams.u_b.kUBB);
             break;
-        case F_QUARTIC_ANGLES:
+        case InteractionFunction::QuarticAngles:
             writer->writeStringFormatted("theta=%15.8e", iparams.qangle.theta);
             for (int i = 0; i < 5; i++)
             {
@@ -104,136 +132,192 @@ void printInteractionParameters(gmx::TextWriter* writer, t_functype ftype, const
             }
             writer->ensureLineBreak();
             break;
-        case F_BHAM:
-            writer->writeLineFormatted("a=%15.8e, b=%15.8e, c=%15.8e", iparams.bham.a,
-                                       iparams.bham.b, iparams.bham.c);
+        case InteractionFunction::BuckinghamShortRange:
+            writer->writeLineFormatted(
+                    "a=%15.8e, b=%15.8e, c=%15.8e", iparams.bham.a, iparams.bham.b, iparams.bham.c);
             break;
-        case F_BONDS:
-        case F_G96BONDS:
-        case F_HARMONIC: printHarmonicInteraction(writer, iparams, "b0", "cb"); break;
-        case F_IDIHS: printHarmonicInteraction(writer, iparams, "xi", "cx"); break;
-        case F_MORSE:
+        case InteractionFunction::Bonds:
+        case InteractionFunction::GROMOS96Bonds:
+        case InteractionFunction::HarmonicPotential:
+            printHarmonicInteraction(writer, iparams, "b0", "cb");
+            break;
+        case InteractionFunction::ImproperDihedrals:
+            printHarmonicInteraction(writer, iparams, "xi", "cx");
+            break;
+        case InteractionFunction::MorsePotential:
             writer->writeLineFormatted(
                     "b0A=%15.8e, cbA=%15.8e, betaA=%15.8e, b0B=%15.8e, cbB=%15.8e, betaB=%15.8e",
-                    iparams.morse.b0A, iparams.morse.cbA, iparams.morse.betaA, iparams.morse.b0B,
-                    iparams.morse.cbB, iparams.morse.betaB);
+                    iparams.morse.b0A,
+                    iparams.morse.cbA,
+                    iparams.morse.betaA,
+                    iparams.morse.b0B,
+                    iparams.morse.cbB,
+                    iparams.morse.betaB);
             break;
-        case F_CUBICBONDS:
-            writer->writeLineFormatted("b0=%15.8e, kb=%15.8e, kcub=%15.8e", iparams.cubic.b0,
-                                       iparams.cubic.kb, iparams.cubic.kcub);
+        case InteractionFunction::CubicBonds:
+            writer->writeLineFormatted("b0=%15.8e, kb=%15.8e, kcub=%15.8e",
+                                       iparams.cubic.b0,
+                                       iparams.cubic.kb,
+                                       iparams.cubic.kcub);
             break;
-        case F_CONNBONDS: writer->ensureEmptyLine(); break;
-        case F_FENEBONDS:
+        case InteractionFunction::ConnectBonds: writer->ensureEmptyLine(); break;
+        case InteractionFunction::FENEBonds:
             writer->writeLineFormatted("bm=%15.8e, kb=%15.8e", iparams.fene.bm, iparams.fene.kb);
             break;
-        case F_RESTRBONDS:
+        case InteractionFunction::RestraintBonds:
             writer->writeLineFormatted(
                     "lowA=%15.8e, up1A=%15.8e, up2A=%15.8e, kA=%15.8e, lowB=%15.8e, up1B=%15.8e, "
                     "up2B=%15.8e, kB=%15.8e,",
-                    iparams.restraint.lowA, iparams.restraint.up1A, iparams.restraint.up2A,
-                    iparams.restraint.kA, iparams.restraint.lowB, iparams.restraint.up1B,
-                    iparams.restraint.up2B, iparams.restraint.kB);
+                    iparams.restraint.lowA,
+                    iparams.restraint.up1A,
+                    iparams.restraint.up2A,
+                    iparams.restraint.kA,
+                    iparams.restraint.lowB,
+                    iparams.restraint.up1B,
+                    iparams.restraint.up2B,
+                    iparams.restraint.kB);
             break;
-        case F_TABBONDS:
-        case F_TABBONDSNC:
-        case F_TABANGLES:
-        case F_TABDIHS:
-            writer->writeLineFormatted("tab=%d, kA=%15.8e, kB=%15.8e", iparams.tab.table,
-                                       iparams.tab.kA, iparams.tab.kB);
+        case InteractionFunction::TabulatedBonds:
+        case InteractionFunction::TabulatedBondsNoCoupling:
+        case InteractionFunction::TabulatedAngles:
+        case InteractionFunction::TabulatedDihedrals:
+            writer->writeLineFormatted(
+                    "tab=%d, kA=%15.8e, kB=%15.8e", iparams.tab.table, iparams.tab.kA, iparams.tab.kB);
             break;
-        case F_POLARIZATION:
+        case InteractionFunction::Polarization:
             writer->writeLineFormatted("alpha=%15.8e", iparams.polarize.alpha);
             break;
-        case F_ANHARM_POL:
+        case InteractionFunction::AnharmonicPolarization:
             writer->writeLineFormatted("alpha=%15.8e drcut=%15.8e khyp=%15.8e",
-                                       iparams.anharm_polarize.alpha, iparams.anharm_polarize.drcut,
+                                       iparams.anharm_polarize.alpha,
+                                       iparams.anharm_polarize.drcut,
                                        iparams.anharm_polarize.khyp);
             break;
-        case F_THOLE_POL:
-            writer->writeLineFormatted("a=%15.8e, alpha1=%15.8e, alpha2=%15.8e, rfac=%15.8e",
-                                       iparams.thole.a, iparams.thole.alpha1, iparams.thole.alpha2,
-                                       iparams.thole.rfac);
+        case InteractionFunction::TholePolarization:
+            writer->writeLineFormatted("a=%15.8e, alpha1=%15.8e, alpha2=%15.8e",
+                                       iparams.thole.a,
+                                       iparams.thole.alpha1,
+                                       iparams.thole.alpha2);
             break;
-        case F_WATER_POL:
+        case InteractionFunction::WaterPolarization:
             writer->writeLineFormatted(
                     "al_x=%15.8e, al_y=%15.8e, al_z=%15.8e, rOH=%9.6f, rHH=%9.6f, rOD=%9.6f",
-                    iparams.wpol.al_x, iparams.wpol.al_y, iparams.wpol.al_z, iparams.wpol.rOH,
-                    iparams.wpol.rHH, iparams.wpol.rOD);
+                    iparams.wpol.al_x,
+                    iparams.wpol.al_y,
+                    iparams.wpol.al_z,
+                    iparams.wpol.rOH,
+                    iparams.wpol.rHH,
+                    iparams.wpol.rOD);
             break;
-        case F_LJ:
+        case InteractionFunction::LennardJonesShortRange:
             writer->writeLineFormatted("c6=%15.8e, c12=%15.8e", iparams.lj.c6, iparams.lj.c12);
             break;
-        case F_LJ14:
+        case InteractionFunction::LennardJones14:
             writer->writeLineFormatted("c6A=%15.8e, c12A=%15.8e, c6B=%15.8e, c12B=%15.8e",
-                                       iparams.lj14.c6A, iparams.lj14.c12A, iparams.lj14.c6B,
+                                       iparams.lj14.c6A,
+                                       iparams.lj14.c12A,
+                                       iparams.lj14.c6B,
                                        iparams.lj14.c12B);
             break;
-        case F_LJC14_Q:
+        case InteractionFunction::LennardJonesCoulomb14Q:
             writer->writeLineFormatted("fqq=%15.8e, qi=%15.8e, qj=%15.8e, c6=%15.8e, c12=%15.8e",
-                                       iparams.ljc14.fqq, iparams.ljc14.qi, iparams.ljc14.qj,
-                                       iparams.ljc14.c6, iparams.ljc14.c12);
+                                       iparams.ljc14.fqq,
+                                       iparams.ljc14.qi,
+                                       iparams.ljc14.qj,
+                                       iparams.ljc14.c6,
+                                       iparams.ljc14.c12);
             break;
-        case F_LJC_PAIRS_NB:
-            writer->writeLineFormatted("qi=%15.8e, qj=%15.8e, c6=%15.8e, c12=%15.8e", iparams.ljcnb.qi,
-                                       iparams.ljcnb.qj, iparams.ljcnb.c6, iparams.ljcnb.c12);
+        case InteractionFunction::LennardJonesCoulombNonBondedPairs:
+            writer->writeLineFormatted("qi=%15.8e, qj=%15.8e, c6=%15.8e, c12=%15.8e",
+                                       iparams.ljcnb.qi,
+                                       iparams.ljcnb.qj,
+                                       iparams.ljcnb.c6,
+                                       iparams.ljcnb.c12);
             break;
-        case F_PDIHS:
-        case F_PIDIHS:
-        case F_ANGRES:
-        case F_ANGRESZ:
+        case InteractionFunction::ProperDihedrals:
+        case InteractionFunction::PeriodicImproperDihedrals:
+        case InteractionFunction::AngleRestraints:
+        case InteractionFunction::AngleZAxisRestraints:
             writer->writeLineFormatted("phiA=%15.8e, cpA=%15.8e, phiB=%15.8e, cpB=%15.8e, mult=%d",
-                                       iparams.pdihs.phiA, iparams.pdihs.cpA, iparams.pdihs.phiB,
-                                       iparams.pdihs.cpB, iparams.pdihs.mult);
+                                       iparams.pdihs.phiA,
+                                       iparams.pdihs.cpA,
+                                       iparams.pdihs.phiB,
+                                       iparams.pdihs.cpB,
+                                       iparams.pdihs.mult);
             break;
-        case F_DISRES:
+        case InteractionFunction::DistanceRestraints:
             writer->writeLineFormatted(
                     "label=%4d, type=%1d, low=%15.8e, up1=%15.8e, up2=%15.8e, fac=%15.8e)",
-                    iparams.disres.label, iparams.disres.type, iparams.disres.low,
-                    iparams.disres.up1, iparams.disres.up2, iparams.disres.kfac);
+                    iparams.disres.label,
+                    iparams.disres.type,
+                    iparams.disres.low,
+                    iparams.disres.up1,
+                    iparams.disres.up2,
+                    iparams.disres.kfac);
             break;
-        case F_ORIRES:
+        case InteractionFunction::OrientationRestraints:
             writer->writeLineFormatted(
                     "ex=%4d, label=%d, power=%4d, c=%15.8e, obs=%15.8e, kfac=%15.8e)",
-                    iparams.orires.ex, iparams.orires.label, iparams.orires.power, iparams.orires.c,
-                    iparams.orires.obs, iparams.orires.kfac);
+                    iparams.orires.ex,
+                    iparams.orires.label,
+                    iparams.orires.power,
+                    iparams.orires.c,
+                    iparams.orires.obs,
+                    iparams.orires.kfac);
             break;
-        case F_DIHRES:
+        case InteractionFunction::DihedralRestraints:
             writer->writeLineFormatted(
                     "phiA=%15.8e, dphiA=%15.8e, kfacA=%15.8e, phiB=%15.8e, dphiB=%15.8e, "
                     "kfacB=%15.8e",
-                    iparams.dihres.phiA, iparams.dihres.dphiA, iparams.dihres.kfacA,
-                    iparams.dihres.phiB, iparams.dihres.dphiB, iparams.dihres.kfacB);
+                    iparams.dihres.phiA,
+                    iparams.dihres.dphiA,
+                    iparams.dihres.kfacA,
+                    iparams.dihres.phiB,
+                    iparams.dihres.dphiB,
+                    iparams.dihres.kfacB);
             break;
-        case F_POSRES:
+        case InteractionFunction::PositionRestraints:
             writer->writeLineFormatted(
                     "pos0A=(%15.8e,%15.8e,%15.8e), fcA=(%15.8e,%15.8e,%15.8e), "
                     "pos0B=(%15.8e,%15.8e,%15.8e), fcB=(%15.8e,%15.8e,%15.8e)",
-                    iparams.posres.pos0A[XX], iparams.posres.pos0A[YY], iparams.posres.pos0A[ZZ],
-                    iparams.posres.fcA[XX], iparams.posres.fcA[YY], iparams.posres.fcA[ZZ],
-                    iparams.posres.pos0B[XX], iparams.posres.pos0B[YY], iparams.posres.pos0B[ZZ],
-                    iparams.posres.fcB[XX], iparams.posres.fcB[YY], iparams.posres.fcB[ZZ]);
+                    iparams.posres.pos0A[XX],
+                    iparams.posres.pos0A[YY],
+                    iparams.posres.pos0A[ZZ],
+                    iparams.posres.fcA[XX],
+                    iparams.posres.fcA[YY],
+                    iparams.posres.fcA[ZZ],
+                    iparams.posres.pos0B[XX],
+                    iparams.posres.pos0B[YY],
+                    iparams.posres.pos0B[ZZ],
+                    iparams.posres.fcB[XX],
+                    iparams.posres.fcB[YY],
+                    iparams.posres.fcB[ZZ]);
             break;
-        case F_FBPOSRES:
+        case InteractionFunction::FlatBottomedPositionRestraints:
             writer->writeLineFormatted(
                     "pos0=(%15.8e,%15.8e,%15.8e), geometry=%d, r=%15.8e, k=%15.8e",
-                    iparams.fbposres.pos0[XX], iparams.fbposres.pos0[YY], iparams.fbposres.pos0[ZZ],
-                    iparams.fbposres.geom, iparams.fbposres.r, iparams.fbposres.k);
+                    iparams.fbposres.pos0[XX],
+                    iparams.fbposres.pos0[YY],
+                    iparams.fbposres.pos0[ZZ],
+                    iparams.fbposres.geom,
+                    iparams.fbposres.r,
+                    iparams.fbposres.k);
             break;
-        case F_RBDIHS:
+        case InteractionFunction::RyckaertBellemansDihedrals:
             for (int i = 0; i < NR_RBDIHS; i++)
             {
-                writer->writeStringFormatted("%srbcA[%d]=%15.8e", i == 0 ? "" : ", ", i,
-                                             iparams.rbdihs.rbcA[i]);
+                writer->writeStringFormatted(
+                        "%srbcA[%d]=%15.8e", i == 0 ? "" : ", ", i, iparams.rbdihs.rbcA[i]);
             }
             writer->ensureLineBreak();
             for (int i = 0; i < NR_RBDIHS; i++)
             {
-                writer->writeStringFormatted("%srbcB[%d]=%15.8e", i == 0 ? "" : ", ", i,
-                                             iparams.rbdihs.rbcB[i]);
+                writer->writeStringFormatted(
+                        "%srbcB[%d]=%15.8e", i == 0 ? "" : ", ", i, iparams.rbdihs.rbcB[i]);
             }
             writer->ensureLineBreak();
             break;
-        case F_FOURDIHS:
+        case InteractionFunction::FourierDihedrals:
         {
             /* Use the OPLS -> Ryckaert-Bellemans formula backwards to get
              * the OPLS potential constants back.
@@ -265,45 +349,51 @@ void printInteractionParameters(gmx::TextWriter* writer, t_functype ftype, const
             break;
         }
 
-        case F_CONSTR:
-        case F_CONSTRNC:
+        case InteractionFunction::Constraints:
+        case InteractionFunction::ConstraintsNoCoupling:
             writer->writeLineFormatted("dA=%15.8e, dB=%15.8e", iparams.constr.dA, iparams.constr.dB);
             break;
-        case F_SETTLE:
+        case InteractionFunction::SETTLE:
             writer->writeLineFormatted("doh=%15.8e, dhh=%15.8e", iparams.settle.doh, iparams.settle.dhh);
             break;
-        case F_VSITE2: writer->writeLineFormatted("a=%15.8e", iparams.vsite.a); break;
-        case F_VSITE3:
-        case F_VSITE3FD:
-        case F_VSITE3FAD:
+        case InteractionFunction::VirtualSite1: writer->ensureEmptyLine(); break;
+        case InteractionFunction::VirtualSite2:
+        case InteractionFunction::VirtualSite2FlexibleDistance:
+            writer->writeLineFormatted("a=%15.8e", iparams.vsite.a);
+            break;
+        case InteractionFunction::VirtualSite3:
+        case InteractionFunction::VirtualSite3FlexibleDistance:
+        case InteractionFunction::VirtualSite3FlexibleAngleDistance:
             writer->writeLineFormatted("a=%15.8e, b=%15.8e", iparams.vsite.a, iparams.vsite.b);
             break;
-        case F_VSITE3OUT:
-        case F_VSITE4FD:
-        case F_VSITE4FDN:
-            writer->writeLineFormatted("a=%15.8e, b=%15.8e, c=%15.8e", iparams.vsite.a,
-                                       iparams.vsite.b, iparams.vsite.c);
+        case InteractionFunction::VirtualSite3Outside:
+        case InteractionFunction::VirtualSite4FlexibleDistance:
+        case InteractionFunction::VirtualSite4FlexibleDistanceNormalization:
+            writer->writeLineFormatted(
+                    "a=%15.8e, b=%15.8e, c=%15.8e", iparams.vsite.a, iparams.vsite.b, iparams.vsite.c);
             break;
-        case F_VSITEN:
+        case InteractionFunction::VirtualSiteN:
             writer->writeLineFormatted("n=%2d, a=%15.8e", iparams.vsiten.n, iparams.vsiten.a);
             break;
-        case F_GB12_NOLONGERUSED:
-        case F_GB13_NOLONGERUSED:
-        case F_GB14_NOLONGERUSED:
+        case InteractionFunction::GeneralizedBorn12PolarizationUnused:
+        case InteractionFunction::GeneralizedBorn13PolarizationUnused:
+        case InteractionFunction::GeneralizedBorn14PolarizationUnused:
             // These could only be generated by grompp, not written in
             // a .top file. Now that implicit solvent is not
             // supported, they can't be generated, and the values are
             // ignored if read from an old .tpr file. So there is
             // nothing to print.
             break;
-        case F_CMAP:
+        case InteractionFunction::DihedralEnergyCorrectionMap:
             writer->writeLineFormatted("cmapA=%1d, cmapB=%1d", iparams.cmap.cmapA, iparams.cmap.cmapB);
             break;
-        case F_RESTRANGLES: printHarmonicInteraction(writer, iparams, "ktheta", "costheta0"); break;
-        case F_RESTRDIHS:
+        case InteractionFunction::RestrictedBendingPotential:
+            printHarmonicInteraction(writer, iparams, "costheta0", "ktheta");
+            break;
+        case InteractionFunction::RestrictedTorsionPotential:
             writer->writeLineFormatted("phiA=%15.8e, cpA=%15.8e", iparams.pdihs.phiA, iparams.pdihs.cpA);
             break;
-        case F_CBTDIHS:
+        case InteractionFunction::CombinedBendingTorsionPotential:
             writer->writeLineFormatted("kphi=%15.8e", iparams.cbtdihs.cbtcA[0]);
             for (int i = 1; i < NR_CBTDIHS; i++)
             {
@@ -312,23 +402,25 @@ void printInteractionParameters(gmx::TextWriter* writer, t_functype ftype, const
             writer->ensureLineBreak();
             break;
         default:
-            gmx_fatal(FARGS, "unknown function type %d (%s) in %s line %d", ftype,
-                      interaction_function[ftype].name, __FILE__, __LINE__);
+            gmx_fatal(FARGS,
+                      "unknown function type %d (%s) in %s line %d",
+                      static_cast<int>(ftype),
+                      interaction_function[ftype].name,
+                      __FILE__,
+                      __LINE__);
     }
 }
 
 template<typename T>
-static void printIlist(FILE*             fp,
-                       int               indent,
-                       const char*       title,
-                       const t_functype* functype,
-                       const T&          ilist,
-                       gmx_bool          bShowNumbers,
-                       gmx_bool          bShowParameters,
-                       const t_iparams*  iparams)
+static void printIlist(FILE*                      fp,
+                       int                        indent,
+                       const char*                title,
+                       const InteractionFunction* functype,
+                       const T&                   ilist,
+                       gmx_bool                   bShowNumbers,
+                       gmx_bool                   bShowParameters,
+                       const t_iparams*           iparams)
 {
-    int i, j, k, type, ftype;
-
     indent = pr_title(fp, indent, title);
     pr_indent(fp, indent);
     fprintf(fp, "nr: %d\n", ilist.size());
@@ -336,18 +428,19 @@ static void printIlist(FILE*             fp,
     {
         pr_indent(fp, indent);
         fprintf(fp, "iatoms:\n");
-        for (i = j = 0; i < ilist.size();)
+        int j = 0;
+        for (int i = 0; i < ilist.size();)
         {
             pr_indent(fp, indent + INDENT);
-            type  = ilist.iatoms[i];
-            ftype = functype[type];
+            const int                 type  = ilist.iatoms[i];
+            const InteractionFunction ftype = functype[type];
             if (bShowNumbers)
             {
                 fprintf(fp, "%d type=%d ", j, type);
             }
             j++;
             printf("(%s)", interaction_function[ftype].name);
-            for (k = 0; k < interaction_function[ftype].nratoms; k++)
+            for (int k = 0; k < interaction_function[ftype].nratoms; k++)
             {
                 fprintf(fp, " %3d", ilist.iatoms[i + 1 + k]);
             }
@@ -362,22 +455,20 @@ static void printIlist(FILE*             fp,
     }
 }
 
-void pr_ilist(FILE*                  fp,
-              int                    indent,
-              const char*            title,
-              const t_functype*      functype,
-              const InteractionList& ilist,
-              gmx_bool               bShowNumbers,
-              gmx_bool               bShowParameters,
-              const t_iparams*       iparams)
+void pr_ilist(FILE*                      fp,
+              int                        indent,
+              const char*                title,
+              const InteractionFunction* functype,
+              const InteractionList&     ilist,
+              gmx_bool                   bShowNumbers,
+              gmx_bool                   bShowParameters,
+              const t_iparams*           iparams)
 {
     printIlist(fp, indent, title, functype, ilist, bShowNumbers, bShowParameters, iparams);
 }
 
 void pr_idef(FILE* fp, int indent, const char* title, const t_idef* idef, gmx_bool bShowNumbers, gmx_bool bShowParameters)
 {
-    int i, j;
-
     if (available(fp, idef, indent, title))
     {
         indent = pr_title(fp, indent, title);
@@ -385,19 +476,27 @@ void pr_idef(FILE* fp, int indent, const char* title, const t_idef* idef, gmx_bo
         fprintf(fp, "atnr=%d\n", idef->atnr);
         pr_indent(fp, indent);
         fprintf(fp, "ntypes=%d\n", idef->ntypes);
-        for (i = 0; i < idef->ntypes; i++)
+        for (int i = 0; i < idef->ntypes; i++)
         {
             pr_indent(fp, indent + INDENT);
-            fprintf(fp, "functype[%d]=%s, ", bShowNumbers ? i : -1,
+            fprintf(fp,
+                    "functype[%d]=%s, ",
+                    bShowNumbers ? i : -1,
                     interaction_function[idef->functype[i]].name);
             pr_iparams(fp, idef->functype[i], idef->iparams[i]);
         }
         pr_real(fp, indent, "fudgeQQ", idef->fudgeQQ);
 
-        for (j = 0; (j < F_NRE); j++)
+        for (const auto j : gmx::EnumerationWrapper<InteractionFunction>{})
         {
-            printIlist(fp, indent, interaction_function[j].longname, idef->functype, idef->il[j],
-                       bShowNumbers, bShowParameters, idef->iparams);
+            printIlist(fp,
+                       indent,
+                       interaction_function[j].longname,
+                       idef->functype,
+                       idef->il[j],
+                       bShowNumbers,
+                       bShowParameters,
+                       idef->iparams);
         }
     }
 }
@@ -411,7 +510,7 @@ void init_idef(t_idef* idef)
     idef->fudgeQQ          = 0.0;
     idef->iparams_posres   = nullptr;
     idef->iparams_fbposres = nullptr;
-    for (int f = 0; f < F_NRE; ++f)
+    for (const auto f : gmx::EnumerationWrapper<InteractionFunction>{})
     {
         idef->il[f].iatoms = nullptr;
         idef->il[f].nalloc = 0;
@@ -420,9 +519,7 @@ void init_idef(t_idef* idef)
 }
 
 InteractionDefinitions::InteractionDefinitions(const gmx_ffparams_t& ffparams) :
-    iparams(ffparams.iparams),
-    functype(ffparams.functype),
-    cmap_grid(ffparams.cmap_grid)
+    iparams(ffparams.iparams), functype(ffparams.functype), cmap_grid(ffparams.cmap_grid)
 {
 }
 
@@ -443,7 +540,7 @@ void done_idef(t_idef* idef)
     sfree(idef->iparams);
     sfree(idef->iparams_posres);
     sfree(idef->iparams_fbposres);
-    for (int f = 0; f < F_NRE; ++f)
+    for (const auto f : gmx::EnumerationWrapper<InteractionFunction>{})
     {
         sfree(idef->il[f].iatoms);
     }

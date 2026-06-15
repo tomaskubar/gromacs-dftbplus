@@ -1,11 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2013,2014,2015,2016,2017 by the GROMACS development team.
- * Copyright (c) 2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2013- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -19,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -28,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \internal \file
  * \brief
@@ -46,19 +44,20 @@
 
 #include "config.h"
 
+#include <filesystem>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <gtest/gtest.h>
 
-#include "buildinfo.h"
 #include "gromacs/utility/classhelpers.h"
 #include "gromacs/utility/path.h"
 
 #include "testutils/cmdlinetest.h"
 
-using gmx::Path;
+#include "buildinfo.h"
 
 #if GMX_NATIVE_WINDOWS || GMX_CYGWIN
 //! Extension for executable files on the platform.
@@ -81,11 +80,11 @@ public:
     {
     }
 
-    std::string              getWorkingDirectory() const override { return workingDirectory_; }
-    std::vector<std::string> getExecutablePaths() const override { return path_; }
+    std::filesystem::path getWorkingDirectory() const override { return workingDirectory_; }
+    std::vector<std::filesystem::path> getExecutablePaths() const override { return path_; }
 
-    std::string              workingDirectory_;
-    std::vector<std::string> path_;
+    std::filesystem::path              workingDirectory_;
+    std::vector<std::filesystem::path> path_;
 
     GMX_DISALLOW_COPY_AND_ASSIGN(TestExecutableEnvironment);
 };
@@ -98,14 +97,16 @@ class CommandLineProgramContextTest : public ::testing::Test
 public:
     CommandLineProgramContextTest() : env_(new TestExecutableEnvironment())
     {
-        expectedExecutable_ = Path::normalize(
-                Path::join(env_->getWorkingDirectory(), "bin/test-exe" EXECUTABLE_EXTENSION));
+        expectedExecutable_ = std::filesystem::path(env_->getWorkingDirectory())
+                                      .append("bin/test-exe" EXECUTABLE_EXTENSION)
+                                      .make_preferred()
+                                      .string();
     }
 
     void testBinaryPathSearch(const char* argv0)
     {
         ASSERT_TRUE(env_.get() != nullptr);
-        gmx::CommandLineProgramContext info(1, &argv0, move(env_));
+        gmx::CommandLineProgramContext info(1, &argv0, std::move(env_));
         EXPECT_EQ(expectedExecutable_, info.fullBinaryPath());
     }
     void testBinaryPathSearch(const std::string& argv0) { testBinaryPathSearch(argv0.c_str()); }
@@ -116,7 +117,7 @@ public:
 
 TEST_F(CommandLineProgramContextTest, FindsBinaryWithAbsolutePath)
 {
-    testBinaryPathSearch(Path::join(env_->getWorkingDirectory(), "bin/test-exe"));
+    testBinaryPathSearch(std::filesystem::path(env_->getWorkingDirectory()).append("bin/test-exe").string());
 }
 
 TEST_F(CommandLineProgramContextTest, FindsBinaryWithRelativePath)
@@ -126,13 +127,13 @@ TEST_F(CommandLineProgramContextTest, FindsBinaryWithRelativePath)
 
 TEST_F(CommandLineProgramContextTest, FindsBinaryFromPath)
 {
-    env_->path_.push_back(Path::join(env_->getWorkingDirectory(), "bin"));
+    env_->path_.push_back(std::filesystem::path(env_->getWorkingDirectory()).append("bin"));
     testBinaryPathSearch("test-exe");
 }
 
 TEST_F(CommandLineProgramContextTest, FindsBinaryFromCurrentDirectory)
 {
-    env_->workingDirectory_ = Path::join(env_->getWorkingDirectory(), "bin");
+    env_->workingDirectory_ = std::filesystem::path(env_->getWorkingDirectory()).append("bin");
     env_->path_.emplace_back("");
     testBinaryPathSearch("test-exe");
 }

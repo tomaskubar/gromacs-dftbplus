@@ -1,11 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2010-2017, The GROMACS development team.
- * Copyright (c) 2019, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2010- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -19,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -28,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \internal \file
  * \brief
@@ -42,15 +40,18 @@
  */
 #include "gmxpre.h"
 
-#include "analysisdata.h"
+#include "gromacs/analysisdata/analysisdata.h"
 
 #include <memory>
+#include <utility>
+#include <vector>
 
+#include "gromacs/analysisdata/abstractdata.h"
 #include "gromacs/analysisdata/dataframe.h"
 #include "gromacs/analysisdata/datastorage.h"
 #include "gromacs/analysisdata/paralleloptions.h"
-#include "gromacs/utility/exceptions.h"
 #include "gromacs/utility/gmxassert.h"
+#include "gromacs/utility/real.h"
 
 namespace gmx
 {
@@ -119,7 +120,7 @@ AnalysisData::AnalysisData() : impl_(new Impl) {}
 AnalysisData::~AnalysisData() {}
 
 
-void AnalysisData::setDataSetCount(int dataSetCount)
+void AnalysisData::setDataSetCount(size_t dataSetCount)
 {
     GMX_RELEASE_ASSERT(impl_->handles_.empty(),
                        "Cannot change data dimensionality after creating handles");
@@ -127,7 +128,7 @@ void AnalysisData::setDataSetCount(int dataSetCount)
 }
 
 
-void AnalysisData::setColumnCount(int dataSet, int columnCount)
+void AnalysisData::setColumnCount(size_t dataSet, size_t columnCount)
 {
     GMX_RELEASE_ASSERT(impl_->handles_.empty(),
                        "Cannot change data dimensionality after creating handles");
@@ -142,7 +143,7 @@ void AnalysisData::setMultipoint(bool bMultipoint)
 }
 
 
-int AnalysisData::frameCount() const
+size_t AnalysisData::frameCount() const
 {
     return impl_->storage_.frameCount();
 }
@@ -163,7 +164,7 @@ AnalysisDataHandle AnalysisData::startData(const AnalysisDataParallelOptions& op
 }
 
 
-void AnalysisData::finishFrameSerial(int frameIndex)
+void AnalysisData::finishFrameSerial(size_t frameIndex)
 {
     impl_->storage_.finishFrameSerial(frameIndex);
 }
@@ -191,13 +192,13 @@ void AnalysisData::finishData(AnalysisDataHandle handle)
 }
 
 
-AnalysisDataFrameRef AnalysisData::tryGetDataFrameInternal(int index) const
+AnalysisDataFrameRef AnalysisData::tryGetDataFrameInternal(size_t index) const
 {
     return impl_->storage_.tryGetDataFrame(index);
 }
 
 
-bool AnalysisData::requestStorageInternal(int nframes)
+bool AnalysisData::requestStorageInternal(size_t nframes)
 {
     return impl_->storage_.requestStorage(nframes);
 }
@@ -213,7 +214,7 @@ AnalysisDataHandle::AnalysisDataHandle() : impl_(nullptr) {}
 AnalysisDataHandle::AnalysisDataHandle(internal::AnalysisDataHandleImpl* impl) : impl_(impl) {}
 
 
-void AnalysisDataHandle::startFrame(int index, real x, real dx)
+void AnalysisDataHandle::startFrame(size_t index, real x, real dx)
 {
     GMX_RELEASE_ASSERT(impl_ != nullptr, "Invalid data handle used");
     GMX_RELEASE_ASSERT(impl_->currentFrame_ == nullptr,
@@ -222,7 +223,7 @@ void AnalysisDataHandle::startFrame(int index, real x, real dx)
 }
 
 
-void AnalysisDataHandle::selectDataSet(int index)
+void AnalysisDataHandle::selectDataSet(size_t index)
 {
     GMX_RELEASE_ASSERT(impl_ != nullptr, "Invalid data handle used");
     GMX_RELEASE_ASSERT(impl_->currentFrame_ != nullptr,
@@ -231,7 +232,7 @@ void AnalysisDataHandle::selectDataSet(int index)
 }
 
 
-void AnalysisDataHandle::setPoint(int column, real value, bool bPresent)
+void AnalysisDataHandle::setPoint(size_t column, real value, bool bPresent)
 {
     GMX_RELEASE_ASSERT(impl_ != nullptr, "Invalid data handle used");
     GMX_RELEASE_ASSERT(impl_->currentFrame_ != nullptr,
@@ -240,7 +241,7 @@ void AnalysisDataHandle::setPoint(int column, real value, bool bPresent)
 }
 
 
-void AnalysisDataHandle::setPoint(int column, real value, real error, bool bPresent)
+void AnalysisDataHandle::setPoint(size_t column, real value, real error, bool bPresent)
 {
     GMX_RELEASE_ASSERT(impl_ != nullptr, "Invalid data handle used");
     GMX_RELEASE_ASSERT(impl_->currentFrame_ != nullptr,
@@ -249,12 +250,12 @@ void AnalysisDataHandle::setPoint(int column, real value, real error, bool bPres
 }
 
 
-void AnalysisDataHandle::setPoints(int firstColumn, int count, const real* values, bool bPresent)
+void AnalysisDataHandle::setPoints(size_t firstColumn, size_t count, const real* values, bool bPresent)
 {
     GMX_RELEASE_ASSERT(impl_ != nullptr, "Invalid data handle used");
     GMX_RELEASE_ASSERT(impl_->currentFrame_ != nullptr,
                        "setPoints() called without calling startFrame()");
-    for (int i = 0; i < count; ++i)
+    for (size_t i = 0; i < count; ++i)
     {
         impl_->currentFrame_->setValue(firstColumn + i, values[i], bPresent);
     }

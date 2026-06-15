@@ -2,87 +2,143 @@
 Change Management
 =================
 
-This documentation assumes the reader is already familiary with using ``git``
+This documentation assumes the reader is already familiar with using ``git``
 for managing file revisions.
-
-.. contents::
-   :local:
 
 Getting started
 ===============
 
-GROMACS development happens on gitlab at https://gitlab.com/gromacs/gromacs.
+|Gromacs| development happens on gitlab at https://gitlab.com/gromacs/gromacs.
 Create a user account at https://gitlab.com/users/sign_in#register-pane or use
-an exisiting account at gitlab.com. For more information on how to use gitlab have 
+an existing account at gitlab.com. For more information on how to use gitlab have
 a look at their extensive user documentation at https://docs.gitlab.com/ee/user/index.html.
-We follow the workflow described in https://docs.gitlab.com/ee/topics/gitlab_flow.html. 
 
-If you do not already have a GROMACS repository set up, user 
-``git clone git@gitlab.com:gromacs/gromacs.git`` to obtain the current GROMACS
-repository from gitlab. Otherwise use 
-``git remote add gitlab git@gitlab.com:gromacs/gromacs.git``. 
+If you do not already have a |Gromacs| repository set up, use
+``git clone git@gitlab.com:gromacs/gromacs.git`` to obtain the current |Gromacs|
+repository from gitlab. Otherwise use
+``git remote add gitlab git@gitlab.com:gromacs/gromacs.git``.
 
-Using gitlab, new code enters GROMACS by merging git development branches into
-the master branch. 
+Using gitlab, new code enters |Gromacs| by merging git development branches into
+the main branch.
 
 To automatically detect issues in new code, it is tested within continuous
-integration (CI) with a large combination of settings. 
+integration (CI) with a large combination of settings.
+See `gmx-codeformatting` for help meeting and testing the style guidelines.
+
+More information about change management is available on the `gitlab
+wiki <https://gitlab.com/gromacs/gromacs/-/wikis/home>`__.
 
 Setting up login credentials with gitlab
 ----------------------------------------
 
-You will need a public ssh key. If you were using Gerrit, you probably 
-already have one and you can ignore the first line::
+You will need a public ssh key::
 
     ssh-keygen -t rsa -C "your.email@address.com"
     cat ~/.ssh/id_rsa.pub
 
-Copy the output of the last command, got to gitlab.com, find you user in the
-right top corner and select settings.
+Copy the output of the last command, go to gitlab.com, click your user symbol in
+the right top corner of the panel to the left, and select Preferences.
 
-Chose SSH keys in the menu on the left and past your key in the text field.
+Choose SSH keys in the menu on the left and paste your key in the text field.
 
 Creating issues
 ---------------
 
 The meta-level code design and discussions is organised in issues and visible at
-https://gitlab.com/gromacs/gromacs/-/issues. Please check if if your issue or a
-similar issue already exists before creating a new one.
+https://gitlab.com/gromacs/gromacs/-/issues. Please check if your issue, or a
+similar issue, already exists before creating a new one. See :doc:`reportstyle`
+for more information.
 
-Note that all Redmine issues have been transferred to gitlab with the same issue
-numbers as used in gitlab. However, comments and discussion are now represented
-by gitlab user @acmnpv - the original authors are found inline at the bottom of
-the comments. 
+Note that all Redmine issues have been transferred to gitlab retaining the original
+issue number from Redmine. However, comments and discussion are now represented
+by gitlab user `@acmnpv <https://gitlab.com/acmnpv>`__ - the original authors are
+found inline at the bottom of the comments.
 
 Uploading code for review - creating a merge request
 ----------------------------------------------------
 
 Issues are addressed with new code via "merge requests" (MR). Find the current
-MRs at https://gitlab.com/gromacs/gromacs/-/merge_requests. 
+MRs at https://gitlab.com/gromacs/gromacs/-/merge_requests.
 There are two ways of creating a merge request - either via the gitlab graphical
-user interface or via the command line. 
+user interface or via the command line.
 
-To use the GUI, find the relevant issue or open a new one, then find the 
+To use the GUI, find the relevant issue or open a new one, then find the
 "create merge request" button to create a merge request related to that issue in gitlab.
-The default selection is to mark this a work in progress (WIP) merge-request.
-We recommend keeping this setting until you are completely satisfied with the 
+We recommend using the "Mark as draft" option until you are completely satisfied with the
 code yourself and all tests are passed.
 
-Select milestone and assignees to make tracking of the progress easier. 
+Select milestone and assignees to make tracking of the progress easier.
 Keep the requirements for merging as they are set by default.
 
-You can also use ``git push`` on the command line directly and create a merge request 
+You can also use ``git push`` on the command line directly and create a merge request
 following the link that is output on the command line.
 
-Your repository should be in sync with the GROMACS repository. To ensure this,
-use ``git fetch`` to obtain the newest branches, then merge the master branch
-into your branch with ``git merge master`` while on your branch.
+Your repository should be in sync with the |Gromacs| repository. To ensure this,
+use ``git fetch`` to obtain the newest branches, then merge the main branch
+into your branch with ``git merge main`` while on your branch.
+
+You can create MRs without having a ``Developer`` role account, but in order to
+trigger MR test pipelines you must be a project member with (at least) the ``Developer``
+role. Project membership can be requested via the Gitlab web interface. The
+``Developer`` role is granted based on acquaintance and/or knowledge about intentions
+to contribute to the project.
+
+As mentioned in :ref:`code review`, the ``Developer`` role is different to membership
+in the ``GMX Developers`` approval group. Approving and merging changes require higher privileges
+than what is required for counting as a ``Developer``.
 
 Naming branches
 ---------------
 
-Good names: documentation_UpdateDevelopersDocsTOGitLab, nbnxm_MakeNbnxmGPUIntoClass, pme_FEPPMEGPU. 
+Good names: documentation_UpdateDevelopersDocsTOGitLab, nbnxm_MakeNbnxmGPUIntoClass, pme_FEPPMEGPU,
+1234-ml-fix-issue.
+
 Bad names: branch1234, mybranch, test, etc
+
+N.b., prefixing the branch with an issue number (such as 1234-ml-fix-issue above), followed by a
+hyphen, automatically links the branch to the issue. Milestones and labels are copied and the
+issue will be closed when the MR is merged, see `the Gitlab documentation
+<https://docs.gitlab.com/ee/user/project/repository/branches/#prefix-branch-names-with-issue-numbers>`__.
+
+Documentation
+-------------
+
+Contributors and reviewers frequently overlook the effects of changes on the built documentation.
+Contributors and reviewers should note that the build artifacts from the automated test jobs
+are available for download through the GitLab CI web interface (``webpage:build`` job artifacts).
+For earlier review or alternative preferences, consider building and sharing a Docker image
+containing the built documentation. See
+`docs/docs.dockerfile <https://gitlab.com/gromacs/gromacs/-/tree/main/docs/docs.dockerfile>`__
+in the source tree.
+
+Labels
+======
+
+`Labels <https://docs.gitlab.com/ee/user/project/labels.html>`__
+help developers by allowing additional filtering of issues and merge requests.
+
+The |Gromacs| project `defines many labels <https://gitlab.com/gromacs/gromacs/-/labels>`__.
+
+.. Note: labeling guidelines TBD. See https://gitlab.com/gromacs/gromacs/-/issues/3949 and open new issues as appropriate.
+
+To minimize duplicated documentation, refer to the
+`GitLab project Labels <https://gitlab.com/gromacs/gromacs/-/labels>`__ web interface for label descriptions.
+
+When creating a new label, please provide a short description
+so that people can understand what the label is intended to convey,
+and when they should apply it to their own issues or merge requests.
+
+In general:
+
+* Ongoing categorizations to help specify the |Gromacs| component or development area use the ``#7F8C8D`` color.
+* Specific features or subproject areas targeting an upcoming release use the ``#8E44AD`` background color.
+* Status labels use ``#428BCA``. Note that Status labels are also used for Issues,
+  and are used according to
+  :ref:`status label guidelines <status label guidelines>`
+
+.. Best practices and labeling policies can be proposed as changes to this document. See https://gitlab.com/gromacs/gromacs/-/issues/3949
+
+.. _code review:
 
 Code Review
 ===========
@@ -92,12 +148,12 @@ Reviewing someone else's uploaded code
 
 The reviewing workflow is the following:
 
-#. https://gitlab.com/gromacs/gromacs/-/issues shows all open changes
+#. https://gitlab.com/gromacs/gromacs/-/merge_requests shows all open changes
 #. A change needs two approvals to go in, of which one approval has to come from
-   a member of either GMX Core or GMX Developers.
+   a member of either ``GMX Core`` or ``GMX Developers`` approval groups.
 #. Usually a patch goes through several cycles of voting, commenting and
    updating before it becomes merged, with votes from the developers indicating
-   if they think that change hat progressed enough to be included.
+   if they think that the change has progressed enough to be included.
 #. A change is submitted for merging and post-submit testing
    by clicking "Merge".
 
@@ -107,13 +163,16 @@ opinion of the person who applies an approval before a merge. If you have
 uploaded a minor fix to someone else's patch, use your judgement in
 whether to approve yourself.
 
+Membership in the ``GMX Developers`` and ``GMX Core`` approval groups are based on long-term engagement
+in the project and does not correlate directly with a ``Developer`` role account.
+
 Guide for reviewing
 -------------------
 
 -  First and foremost, check correctness to the extent possible;
--  As portability and performance are the next most important things do check 
+-  As portability and performance are the next most important things, do check
    for potential issues;
--  Check adherence to the :ref:`GROMACS coding standards <style-guidelines>`;
+-  Check adherence to the :ref:`coding standards <style-guidelines>`;
 -  We should try to ensure that commits that implement bugfixes (as
    well as important features and tasks) get an `issue tracker`_ entry created
    and linked. The linking is done **automatically** through
@@ -122,77 +181,55 @@ Guide for reviewing
 
    -  if present in the `issue tracker`_, it has to contain a valid reference to the
       issue;
-   -  if it's a **major bug**, there has to be a bug report filed in the
+   -  if it is a **major bug**, there has to be a bug report filed in the
       `issue tracker`_  (with urgent or
       immediate priority) and referenced appropriately.
 
 -  If the commit is a **feature/task** implementation:
 
-   -  if it's present in the `issue tracker`_ it
+   -  if it is present in the `issue tracker`_ it
       has to contain a valid reference to the issue;
    -  If no current issue is currently present and the change
       would benefit of one for future explanation on why it was
       added, a new issue should be created.
 
-Moving code from gerrit to gitlab
-=================================
+.. _status label guidelines:
 
-Create a local repository that is connected to both Gerrit and Gitlab::
+Update the Status label
+"""""""""""""""""""""""
 
-    git clone git@gitlab.com:gromacs/gromacs.git -o gitlab gromacs-migrate
-    cd gromacs-migrate/
-    git remote add gerrit ssh://<gerrit-username>@gerrit.gromacs.org/gromacs.git
-    git fetch --all
- 
-Checkout the current gitlab master::
+-  Please update the Status label :ref:`for the issue <issue workflow>` when a merge request is under review.
+-  Please update the Status label :ref:`for the merge request <merge request status>` when it is closed.
 
-    git checkout gitlab/master
+.. _merge request status:
 
-Go to your commit on https://gerrit.gromacs.org/ , select Download->Cherry-Pick
+Closing Merge Requests
+----------------------
 
-``git fetch "https://gerrit.gromacs.org/gromacs" refs/changes/XX/YYYY/ZZ && git cherry-pick FETCH_HEAD``
+A merge request that has had no updates for six months or more can acquire the status label "Status::Stale"
+If the proposed change still seems important and the next steps are unclear,
+contributors with stale issues *are encouraged...*
 
-Resolve conflicts, if any. If you need to do further changes to your patch, 
-feel free to ammend them at this point. Remove the Gerrit commit-id line from
-the bottom of the commit message, but keep the issue (ex. redmine) references - 
-they match the gitlab issues. 
+- to contact existing reviewers (or potential reviewers),
+- to participate in the `developer discussion forum`_, and
+- to attend the biweekly teleconference to coordinate.
 
-Do not forget to run clang-format script (``admin/clang-format.sh update -f --rev=HEAD^``)
-and copyright script (``admin/copyright.sh update -f --rev=HEAD^``). 
+If the future of the merge request has not become clear within a month
+(especially if it has become stale multiple times),
+developers may close the merge request with a label indicating why it has entered a "closed" state.
+`"Status::MR::..." labels <https://gitlab.com/gromacs/gromacs/-/labels?subscribed=&search=status%3A%3Amr>`__
+do not indicate that the merge request has been reviewed
+unless it is explicitly rejected.
 
-When ready, move the patch to a new branch::
+See :issue:`4126` for background discussion.
 
-    git branch <branch-name>
+- `Status::MR::Inactive <https://gitlab.com/gromacs/gromacs/-/merge_requests?label_name%5B%5D=Status%3A%3AMR%3A%3AInactive>`__: No response from contributor or no reviewers available for over six months.
+- `Status::MR::Superseded <https://gitlab.com/gromacs/gromacs/-/merge_requests?label_name%5B%5D=Status%3A%3AMR%3A%3ASuperseded>`__: This merge request is no longer necessary.
+- `Status::MR::Rejected <https://gitlab.com/gromacs/gromacs/-/merge_requests?label_name%5B%5D=Status%3A%3AMR%3A%3ARejected>`__: The solution (or its associated issue) will not be accepted.
+- `Status::MR::Needs discussion <https://gitlab.com/gromacs/gromacs/-/merge_requests?label_name%5B%5D=Status%3A%3AMR%3A%3ANeeds+discussion>`__: More discussion must take place at the tracked issue before a MR is opened.
+- `Status::Stale <https://gitlab.com/gromacs/gromacs/-/labels?subscribed=&search=status%3A%3AStale>`__: No activity for over six months.
 
-Make sure to select a unique branch name that it is easy for you to connect to
-a specific patch. You will need it later to make changes to your merge request. 
-Keep in mind that your branch name is going to be exposed to everyone while 
-your patch is under review. Push the branch to GitLab::
-
-    git push gitlab <branch-name>
-
-Go to https://gitlab.com/gromacs/gromacs and create a merge request.
-Copy-paste your commit message from Gerrit into the merge request description 
-text box, use the first line as a title. If your branch has only one commit,
-this will be done automatically. Add "From: https://gerrit.gromacs.org/#/c/gromacs/+/XXXXX/"
-to the end of your commit message.
-Select "Delete source branch when merge request is accepted." check-box.
-Select "Squash commits when merge request is accepted" check-box.
-Check and that squash commit message is correct. If necessary, update it.
-
-If your change in Gerrit depends on another Gerrit change:
-
-Make sure that you transfer the parent change to GitLab first.
-When transferring the child change, specify the parent in the "Merge request dependencies" text field.
-In GitLab menu, go to Repository -> Compare. Select the branch that correspond 
-to the child change as a Source in the drop-down menu, choose parent change as
-the Target. Click Compare button and copy the link from the browser address bar.
-Add "Compare to the parent: https://gitlab.com/gromacs/gromacs/-/compare/PARENT_BRANCH...CHILD_BRANCH"
-to the description of the merge request. You will have to keep this dependency
-up to date for the link to work properly. For example, if you update the parent,
-you will need to merge its branch to the child branch right away.
-Otherwise your recent updates will show up in comparison.
-
+.. seealso:: :ref:`issue workflow` for use of Status labels in Issue management.
 
 More git tips
 =============
@@ -214,24 +251,24 @@ renames that Git considers. The
 default value is not sufficient,
 for example, if you need to do a
 merge or a cherry-pick from
-a release branch to master.
+a release branch to main.
 
 .. rubric:: Q: How do I use git rebase (also ``git pull --rebase``)?
 
 A: Assume you have a local
 feature branch checked out, that
-it is based on master, and master
+it is based on main, and main
 has gotten new commits. You can
 then do
 
 ::
 
-    git rebase master
+    git rebase main
 
 to move your commits on top of
-the newest commit in master. This
+the newest commit in main. This
 will save each commit you did,
-and replay them on top of master.
+and replay them on top of main.
 If any commit results in
 conflicts, you need to resolve
 them as usual (including marking
@@ -265,7 +302,7 @@ in messy conflicts), you can use
 
 to get back into the state you
 started from (before the
-original git rebase master
+original git rebase main
 invocation). If the rebase is
 already finished, and you realize
 you made a mistake, you can get
@@ -466,8 +503,8 @@ then do
 A: Assume that you have a local
 feature branch checked out, this
 branch has three commits, and
-that it is based on master.
-Further, assume that master has
+that it is based on main.
+Further, assume that main has
 gotten a few more commits after
 you branched off. If you want to
 use ``git rebase -i`` to edit your
@@ -482,12 +519,12 @@ followed by a separate
 
 ::
 
-    git rebase master
+    git rebase main
 
 The first command allows you to
 edit your local branch without
 getting conflicts from changes in
-master. The latter allows you to
+main. The latter allows you to
 resolve those conflicts in a
 separate rebase run. If you feel
 brave enough, you can also do
@@ -495,4 +532,4 @@ both at the same time using
 
 ::
 
-    git rebase -i master
+    git rebase -i main

@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2018- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \libinternal \file
  * \brief
@@ -53,7 +52,6 @@
 #include <utility>
 #include <vector>
 
-#include "gromacs/compat/utility.h"
 #include "gromacs/utility/basedefinitions.h"
 #include "gromacs/utility/exceptions.h"
 
@@ -117,12 +115,19 @@ public:
     /*! \brief Constructor
      *
      * \param[in] numElementsEstimate  An estimate of the number of elements that will be stored, used for optimizing initial performance
+     * \param[in] numOpenmpThreadsForClearing  The number of OpenMP threads to use for clearing the map, default is 1
      *
      * Note that the estimate of the number of elements is only relevant
      * for the performance up until the first call to clear(), after which
      * table size is optimized based on the actual number of elements.
      */
-    HashedMap(int numElementsEstimate) { resize(numElementsEstimate); }
+    HashedMap(int numElementsEstimate, int numOpenmpThreadsForClearing = 1) :
+        numOpenmpThreadsForClearing_(numOpenmpThreadsForClearing)
+    {
+        GMX_RELEASE_ASSERT(numOpenmpThreadsForClearing_ >= 1, "Need at least one thread");
+
+        resize(numElementsEstimate);
+    }
 
     /*! \brief Returns the number of elements */
     int size() const { return numElements_; }
@@ -138,7 +143,6 @@ private:
      * \param[in] value        The value for the entry
      * \throws InvalidInputError from a debug build when attempting to insert a duplicate key with \p allowAssign=true
      */
-    // cppcheck-suppress unusedPrivateFunction
     template<bool allowAssign>
     void insert_assign(int key, const T& value)
     {
@@ -258,12 +262,10 @@ public:
 
     /*! \brief Returns a pointer to the value for the given key or nullptr when not present
      *
-     * \todo Use std::as_const when CUDA 11 is a requirement.
-     *
      * \param[in] key  The key
      * \return a pointer to value for the given key or nullptr when not present
      */
-    T* find(int key) { return const_cast<T*>(gmx::compat::as_const(*this).find(key)); }
+    T* find(int key) { return const_cast<T*>(std::as_const(*this).find(key)); }
 
     /*! \brief Returns a pointer to the value for the given key or nullptr when not present
      *
@@ -285,22 +287,41 @@ public:
         return nullptr;
     }
 
-    /*! \brief Clear all the entries in the list
+    //! Clear all the entries in the list
+    void clear()
+    {
+        if (numOpenmpThreadsForClearing_ == 1)
+        {
+            for (hashEntry& entry : table_)
+            {
+                entry.key  = -1;
+                entry.next = -1;
+            }
+        }
+        else
+        {
+#pragma omp parallel for num_threads(numOpenmpThreadsForClearing_) schedule(static)
+            for (Index i = 0; i < gmx::ssize(table_); i++)
+            {
+                table_[i].key  = -1;
+                table_[i].next = -1;
+            }
+        }
+
+        startIndexForSpaceForListEntry_ = bucket_count();
+        numElements_                    = 0;
+    }
+
+    /*! \brief Clear all the entries in the list and resizes the hash table
      *
-     * Also optimizes the size of the table based on the current
+     * Optimizes the size of the hash table based on the current
      * number of elements stored.
      */
-    void clear()
+    void clearAndResizeHashTable()
     {
         const int oldNumElements = numElements_;
 
-        for (hashEntry& entry : table_)
-        {
-            entry.key  = -1;
-            entry.next = -1;
-        }
-        startIndexForSpaceForListEntry_ = bucket_count();
-        numElements_                    = 0;
+        clear();
 
         /* Resize the hash table when the occupation is far from optimal.
          * Do not resize with 0 elements to avoid minimal size when clear()
@@ -315,14 +336,16 @@ public:
     }
 
 private:
-    /*! \brief The hash table list */
+    //! The hash table list
     std::vector<hashEntry> table_;
-    /*! \brief The bit mask for computing the hash of a key */
+    //! The bit mask for computing the hash of a key
     int bitMask_ = 0;
-    /*! \brief Index in table_ at which to start looking for empty space for a new linked list entry */
+    //! Index in table_ at which to start looking for empty space for a new linked list entry
     int startIndexForSpaceForListEntry_ = 0;
-    /*! \brief The number of elements currently stored in the table */
+    //! The number of elements currently stored in the table
     int numElements_ = 0;
+    //! The number of threads to use for clearing the table
+    int numOpenmpThreadsForClearing_;
 };
 
 } // namespace gmx

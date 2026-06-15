@@ -32,7 +32,7 @@ simulation from a VMD client. In addition, the user can interact with
 the simulation by pulling on atoms, residues or fragments with a mouse
 or a force-feedback device. Additional information about the |Gromacs|
 implementation and an exemplary |Gromacs| IMD system can be found `on this
-homepage <http://www.mpibpc.mpg.de/grubmueller/interactivemd>`__.
+homepage <http://www.mpinat.mpg.de/grubmueller/interactivemd>`__.
 
 Simulation input preparation
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -96,4 +96,4 @@ The timestep transfer rate allows adjusting the communication frequency
 between simulation and IMD client. Setting the keep rate loads every
 :math:`N^\mathrm{th}` frame into VMD instead of discarding them when a
 new one is received. The displayed energies are in SI units in contrast
-to energies displayed from NAMD simulations.s
+to energies displayed from NAMD simulations.

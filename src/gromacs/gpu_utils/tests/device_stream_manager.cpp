@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2017,2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2017- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \internal \file
  * \brief Tests GPU stream manager
@@ -47,15 +46,19 @@
 #include "config.h"
 
 #include <initializer_list>
+#include <memory>
+#include <string>
 #include <vector>
 
 #include <gtest/gtest.h>
 
-#include "gromacs/hardware/device_management.h"
 #include "gromacs/mdtypes/simulation_workload.h"
 #include "gromacs/utility/enumerationhelpers.h"
 
+#include "testutils/test_device.h"
 #include "testutils/test_hardware_environment.h"
+
+struct DeviceInformation;
 
 namespace gmx
 {
@@ -114,123 +117,140 @@ TEST_F(DeviceStreamManagerTest, CorrectStreamsAreReturnedOnNonbondedDevice)
     for (const auto& testDevice : testDeviceList)
     {
         const DeviceInformation& deviceInfo = testDevice->deviceInfo();
-        setActiveDevice(deviceInfo);
 
         {
             SCOPED_TRACE("No DD, no PME rank, no GPU update");
             SimulationWorkload simulationWork;
-            simulationWork.useGpuPme                      = false;
-            simulationWork.useGpuPmePpCommunication       = false;
-            simulationWork.useGpuUpdate                   = false;
-            bool                havePpDomainDecomposition = false;
-            DeviceStreamManager manager(deviceInfo, havePpDomainDecomposition, simulationWork, useTiming);
+            simulationWork.useGpuPme                 = false;
+            simulationWork.useGpuPmePpCommunication  = false;
+            simulationWork.useGpuUpdate              = false;
+            simulationWork.havePpDomainDecomposition = false;
+            DeviceStreamManager manager(deviceInfo, simulationWork, useTiming);
 
             expectValidStreams(&manager, { DeviceStreamType::NonBondedLocal });
-            expectInvalidStreams(&manager, { DeviceStreamType::NonBondedNonLocal,
-                                             DeviceStreamType::Pme, DeviceStreamType::PmePpTransfer,
-                                             DeviceStreamType::UpdateAndConstraints });
+            expectInvalidStreams(&manager,
+                                 { DeviceStreamType::NonBondedNonLocal,
+                                   DeviceStreamType::Pme,
+                                   DeviceStreamType::PmePpTransfer,
+                                   DeviceStreamType::UpdateAndConstraints });
         }
 
         {
             SCOPED_TRACE("With DD, no PME rank, no GPU update");
             SimulationWorkload simulationWork;
-            simulationWork.useGpuPme                      = false;
-            simulationWork.useGpuPmePpCommunication       = false;
-            simulationWork.useGpuUpdate                   = false;
-            bool                havePpDomainDecomposition = true;
-            DeviceStreamManager manager(deviceInfo, havePpDomainDecomposition, simulationWork, useTiming);
+            simulationWork.useGpuPme                 = false;
+            simulationWork.useGpuPmePpCommunication  = false;
+            simulationWork.useGpuUpdate              = false;
+            simulationWork.havePpDomainDecomposition = true;
+            DeviceStreamManager manager(deviceInfo, simulationWork, useTiming);
 
-            expectValidStreams(&manager, { DeviceStreamType::NonBondedLocal,
-                                           DeviceStreamType::NonBondedNonLocal });
-            expectInvalidStreams(&manager, { DeviceStreamType::Pme, DeviceStreamType::PmePpTransfer,
-                                             DeviceStreamType::UpdateAndConstraints });
+            expectValidStreams(
+                    &manager, { DeviceStreamType::NonBondedLocal, DeviceStreamType::NonBondedNonLocal });
+            expectInvalidStreams(&manager,
+                                 { DeviceStreamType::Pme,
+                                   DeviceStreamType::PmePpTransfer,
+                                   DeviceStreamType::UpdateAndConstraints });
         }
 
         {
             SCOPED_TRACE("No DD, with PME rank, no GPU update");
             SimulationWorkload simulationWork;
-            simulationWork.useGpuPme                      = true;
-            simulationWork.useGpuPmePpCommunication       = true;
-            simulationWork.useGpuUpdate                   = false;
-            bool                havePpDomainDecomposition = false;
-            DeviceStreamManager manager(deviceInfo, havePpDomainDecomposition, simulationWork, useTiming);
+            simulationWork.useGpuPme                 = true;
+            simulationWork.useGpuPmePpCommunication  = true;
+            simulationWork.useGpuUpdate              = false;
+            simulationWork.havePpDomainDecomposition = false;
+            DeviceStreamManager manager(deviceInfo, simulationWork, useTiming);
 
-            expectValidStreams(&manager, { DeviceStreamType::Pme, DeviceStreamType::NonBondedLocal,
-                                           DeviceStreamType::PmePpTransfer,
-                                           DeviceStreamType::UpdateAndConstraints });
+            expectValidStreams(&manager,
+                               { DeviceStreamType::Pme,
+                                 DeviceStreamType::NonBondedLocal,
+                                 DeviceStreamType::PmePpTransfer,
+                                 DeviceStreamType::UpdateAndConstraints });
             expectInvalidStreams(&manager, { DeviceStreamType::NonBondedNonLocal });
         }
 
         {
             SCOPED_TRACE("With DD, with PME rank, no GPU update");
             SimulationWorkload simulationWork;
-            simulationWork.useGpuPme                      = true;
-            simulationWork.useGpuPmePpCommunication       = true;
-            simulationWork.useGpuUpdate                   = false;
-            bool                havePpDomainDecomposition = true;
-            DeviceStreamManager manager(deviceInfo, havePpDomainDecomposition, simulationWork, useTiming);
+            simulationWork.useGpuPme                 = true;
+            simulationWork.useGpuPmePpCommunication  = true;
+            simulationWork.useGpuUpdate              = false;
+            simulationWork.havePpDomainDecomposition = true;
+            DeviceStreamManager manager(deviceInfo, simulationWork, useTiming);
 
-            expectValidStreams(&manager, { DeviceStreamType::Pme, DeviceStreamType::NonBondedLocal,
-                                           DeviceStreamType::NonBondedNonLocal, DeviceStreamType::PmePpTransfer,
-                                           DeviceStreamType::UpdateAndConstraints });
+            expectValidStreams(&manager,
+                               { DeviceStreamType::Pme,
+                                 DeviceStreamType::NonBondedLocal,
+                                 DeviceStreamType::NonBondedNonLocal,
+                                 DeviceStreamType::PmePpTransfer,
+                                 DeviceStreamType::UpdateAndConstraints });
         }
 
         {
             SCOPED_TRACE("No DD, no PME rank, with GPU update");
             SimulationWorkload simulationWork;
-            simulationWork.useGpuPme                      = false;
-            simulationWork.useGpuPmePpCommunication       = false;
-            simulationWork.useGpuUpdate                   = true;
-            bool                havePpDomainDecomposition = false;
-            DeviceStreamManager manager(deviceInfo, havePpDomainDecomposition, simulationWork, useTiming);
+            simulationWork.useGpuPme                 = false;
+            simulationWork.useGpuPmePpCommunication  = false;
+            simulationWork.useGpuUpdate              = true;
+            simulationWork.havePpDomainDecomposition = false;
+            DeviceStreamManager manager(deviceInfo, simulationWork, useTiming);
 
-            expectValidStreams(&manager, { DeviceStreamType::NonBondedLocal,
-                                           DeviceStreamType::UpdateAndConstraints });
-            expectInvalidStreams(&manager, { DeviceStreamType::NonBondedNonLocal,
-                                             DeviceStreamType::Pme, DeviceStreamType::PmePpTransfer });
+            expectValidStreams(
+                    &manager, { DeviceStreamType::NonBondedLocal, DeviceStreamType::UpdateAndConstraints });
+            expectInvalidStreams(&manager,
+                                 { DeviceStreamType::NonBondedNonLocal,
+                                   DeviceStreamType::Pme,
+                                   DeviceStreamType::PmePpTransfer });
         }
 
         {
             SCOPED_TRACE("With DD, no PME rank, with GPU update");
             SimulationWorkload simulationWork;
-            simulationWork.useGpuPme                      = false;
-            simulationWork.useGpuPmePpCommunication       = false;
-            simulationWork.useGpuUpdate                   = true;
-            bool                havePpDomainDecomposition = true;
-            DeviceStreamManager manager(deviceInfo, havePpDomainDecomposition, simulationWork, useTiming);
+            simulationWork.useGpuPme                 = false;
+            simulationWork.useGpuPmePpCommunication  = false;
+            simulationWork.useGpuUpdate              = true;
+            simulationWork.havePpDomainDecomposition = true;
+            DeviceStreamManager manager(deviceInfo, simulationWork, useTiming);
 
-            expectValidStreams(&manager, { DeviceStreamType::NonBondedLocal, DeviceStreamType::NonBondedNonLocal,
-                                           DeviceStreamType::UpdateAndConstraints });
+            expectValidStreams(&manager,
+                               { DeviceStreamType::NonBondedLocal,
+                                 DeviceStreamType::NonBondedNonLocal,
+                                 DeviceStreamType::UpdateAndConstraints });
             expectInvalidStreams(&manager, { DeviceStreamType::Pme, DeviceStreamType::PmePpTransfer });
         }
 
         {
             SCOPED_TRACE("No DD, with PME rank, with GPU update");
             SimulationWorkload simulationWork;
-            simulationWork.useGpuPme                      = true;
-            simulationWork.useGpuPmePpCommunication       = true;
-            simulationWork.useGpuUpdate                   = true;
-            bool                havePpDomainDecomposition = false;
-            DeviceStreamManager manager(deviceInfo, havePpDomainDecomposition, simulationWork, useTiming);
+            simulationWork.useGpuPme                 = true;
+            simulationWork.useGpuPmePpCommunication  = true;
+            simulationWork.useGpuUpdate              = true;
+            simulationWork.havePpDomainDecomposition = false;
+            DeviceStreamManager manager(deviceInfo, simulationWork, useTiming);
 
-            expectValidStreams(&manager, { DeviceStreamType::Pme, DeviceStreamType::NonBondedLocal,
-                                           DeviceStreamType::PmePpTransfer,
-                                           DeviceStreamType::UpdateAndConstraints });
+            expectValidStreams(&manager,
+                               { DeviceStreamType::Pme,
+                                 DeviceStreamType::NonBondedLocal,
+                                 DeviceStreamType::PmePpTransfer,
+                                 DeviceStreamType::UpdateAndConstraints });
             expectInvalidStreams(&manager, { DeviceStreamType::NonBondedNonLocal });
         }
 
         {
             SCOPED_TRACE("With DD, with PME rank, with GPU update");
             SimulationWorkload simulationWork;
-            simulationWork.useGpuPme                      = true;
-            simulationWork.useGpuPmePpCommunication       = true;
-            simulationWork.useGpuUpdate                   = true;
-            bool                havePpDomainDecomposition = true;
-            DeviceStreamManager manager(deviceInfo, havePpDomainDecomposition, simulationWork, useTiming);
+            simulationWork.useGpuPme                 = true;
+            simulationWork.useGpuPmePpCommunication  = true;
+            simulationWork.useGpuUpdate              = true;
+            simulationWork.havePpDomainDecomposition = true;
+            DeviceStreamManager manager(deviceInfo, simulationWork, useTiming);
 
-            expectValidStreams(&manager, { DeviceStreamType::Pme, DeviceStreamType::NonBondedLocal,
-                                           DeviceStreamType::NonBondedNonLocal, DeviceStreamType::PmePpTransfer,
-                                           DeviceStreamType::UpdateAndConstraints });
+            expectValidStreams(&manager,
+                               { DeviceStreamType::Pme,
+                                 DeviceStreamType::NonBondedLocal,
+                                 DeviceStreamType::NonBondedNonLocal,
+                                 DeviceStreamType::PmePpTransfer,
+                                 DeviceStreamType::UpdateAndConstraints });
         }
     }
 }

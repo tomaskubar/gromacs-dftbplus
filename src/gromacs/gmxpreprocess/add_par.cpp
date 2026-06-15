@@ -1,13 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
- * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2011,2014,2015,2017,2018 by the GROMACS development team.
- * Copyright (c) 2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 1991- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -21,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -30,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /* This file is completely threadsafe - keep it that way! */
 #include "gmxpre.h"
@@ -43,10 +39,14 @@
 #include <cstring>
 
 #include <algorithm>
+#include <filesystem>
+#include <string>
+#include <vector>
 
 #include "gromacs/gmxpreprocess/grompp_impl.h"
 #include "gromacs/gmxpreprocess/notset.h"
 #include "gromacs/gmxpreprocess/toputil.h"
+#include "gromacs/utility/arrayref.h"
 #include "gromacs/utility/cstringutil.h"
 #include "gromacs/utility/fatalerror.h"
 #include "gromacs/utility/smalloc.h"
@@ -62,33 +62,41 @@ void add_param(InteractionsOfType* ps, int ai, int aj, gmx::ArrayRef<const real>
     std::vector<int>  atoms = { ai, aj };
     std::vector<real> forceParm(c.begin(), c.end());
 
-    ps->interactionTypes.emplace_back(InteractionOfType(atoms, forceParm, s ? s : ""));
+    ps->interactionTypes.emplace_back(atoms, forceParm, s ? s : "");
 }
 
-void add_cmap_param(InteractionsOfType* ps, int ai, int aj, int ak, int al, int am, const char* s)
+void add_cmap_param(InteractionsOfType*       ps,
+                    int                       ai,
+                    int                       aj,
+                    int                       ak,
+                    int                       al,
+                    int                       am,
+                    gmx::ArrayRef<const real> c,
+                    const char*               s)
 {
-    std::vector<int> atoms = { ai, aj, ak, al, am };
-    ps->interactionTypes.emplace_back(InteractionOfType(atoms, {}, s ? s : ""));
+    std::vector<int>  atoms = { ai, aj, ak, al, am };
+    std::vector<real> forceParm(c.begin(), c.end());
+    ps->interactionTypes.emplace_back(atoms, forceParm, s ? s : "");
 }
 
 void add_vsite2_param(InteractionsOfType* ps, int ai, int aj, int ak, real c0)
 {
     std::vector<int>  atoms     = { ai, aj, ak };
     std::vector<real> forceParm = { c0 };
-    ps->interactionTypes.emplace_back(InteractionOfType(atoms, forceParm));
+    ps->interactionTypes.emplace_back(atoms, forceParm);
 }
 
 void add_vsite3_param(InteractionsOfType* ps, int ai, int aj, int ak, int al, real c0, real c1)
 {
     std::vector<int>  atoms     = { ai, aj, ak, al };
     std::vector<real> forceParm = { c0, c1 };
-    ps->interactionTypes.emplace_back(InteractionOfType(atoms, forceParm));
+    ps->interactionTypes.emplace_back(atoms, forceParm);
 }
 
 void add_vsite3_atoms(InteractionsOfType* ps, int ai, int aj, int ak, int al, bool bSwapParity)
 {
     std::vector<int> atoms = { ai, aj, ak, al };
-    ps->interactionTypes.emplace_back(InteractionOfType(atoms, {}));
+    ps->interactionTypes.emplace_back(atoms, gmx::ArrayRef<const real>{});
 
     if (bSwapParity)
     {
@@ -99,7 +107,7 @@ void add_vsite3_atoms(InteractionsOfType* ps, int ai, int aj, int ak, int al, bo
 void add_vsite4_atoms(InteractionsOfType* ps, int ai, int aj, int ak, int al, int am)
 {
     std::vector<int> atoms = { ai, aj, ak, al, am };
-    ps->interactionTypes.emplace_back(InteractionOfType(atoms, {}));
+    ps->interactionTypes.emplace_back(atoms, gmx::ArrayRef<const real>{});
 }
 
 int search_jtype(const PreprocessResidue& localPpResidue, const char* name, bool bNterm)
@@ -108,11 +116,11 @@ int search_jtype(const PreprocessResidue& localPpResidue, const char* name, bool
     size_t k, kmax, minstrlen;
     char * rtpname, searchname[12];
 
-    strcpy(searchname, name);
+    std::strcpy(searchname, name);
 
     /* Do a best match comparison */
     /* for protein N-terminus, allow renaming of H1, H2 and H3 to H */
-    if (bNterm && (strlen(searchname) == 2) && (searchname[0] == 'H')
+    if (bNterm && (std::strlen(searchname) == 2) && (searchname[0] == 'H')
         && ((searchname[1] == '1') || (searchname[1] == '2') || (searchname[1] == '3')))
     {
         niter = 2;
@@ -136,12 +144,12 @@ int search_jtype(const PreprocessResidue& localPpResidue, const char* name, bool
             if (gmx_strcasecmp(searchname, rtpname) == 0)
             {
                 jmax = j;
-                kmax = strlen(searchname);
+                kmax = std::strlen(searchname);
                 break;
             }
             if (iter == niter - 1)
             {
-                minstrlen = std::min(strlen(searchname), strlen(rtpname));
+                minstrlen = std::min(std::strlen(searchname), std::strlen(rtpname));
                 for (k = 0; k < minstrlen; k++)
                 {
                     if (searchname[k] != rtpname[k])
@@ -159,15 +167,19 @@ int search_jtype(const PreprocessResidue& localPpResidue, const char* name, bool
     }
     if (jmax == -1)
     {
-        gmx_fatal(FARGS, "Atom %s not found in rtp database in residue %s", searchname,
+        gmx_fatal(FARGS,
+                  "Atom %s not found in rtp database in residue %s",
+                  searchname,
                   localPpResidue.resname.c_str());
     }
-    if (kmax != strlen(searchname))
+    if (kmax != std::strlen(searchname))
     {
         gmx_fatal(FARGS,
                   "Atom %s not found in rtp database in residue %s, "
                   "it looks a bit like %s",
-                  searchname, localPpResidue.resname.c_str(), *(localPpResidue.atomname[jmax]));
+                  searchname,
+                  localPpResidue.resname.c_str(),
+                  *(localPpResidue.atomname[jmax]));
     }
     return jmax;
 }

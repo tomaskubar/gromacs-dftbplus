@@ -1,13 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
- * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2016,2017 by the GROMACS development team.
- * Copyright (c) 2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 1991- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -21,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -30,37 +26,51 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 #include "gmxpre.h"
 
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 
+#include <filesystem>
+#include <string>
+#include <vector>
+
+#include "gromacs/commandline/filenm.h"
 #include "gromacs/commandline/pargs.h"
 #include "gromacs/commandline/viewit.h"
 #include "gromacs/fileio/confio.h"
+#include "gromacs/fileio/filetypes.h"
 #include "gromacs/fileio/matio.h"
+#include "gromacs/fileio/rgb.h"
 #include "gromacs/fileio/trxio.h"
 #include "gromacs/fileio/xvgr.h"
 #include "gromacs/gmxana/gmx_ana.h"
-#include "gromacs/gmxana/gstat.h"
+#include "gromacs/math/boxmatrix.h"
 #include "gromacs/math/functions.h"
-#include "gromacs/math/invertmatrix.h"
-#include "gromacs/math/utilities.h"
-#include "gromacs/math/vec.h"
+#include "gromacs/mdtypes/md_enums.h"
 #include "gromacs/pbcutil/pbc.h"
 #include "gromacs/topology/index.h"
 #include "gromacs/topology/topology.h"
+#include "gromacs/utility/arrayref.h"
 #include "gromacs/utility/arraysize.h"
+#include "gromacs/utility/basedefinitions.h"
 #include "gromacs/utility/cstringutil.h"
 #include "gromacs/utility/futil.h"
 #include "gromacs/utility/gmxassert.h"
+#include "gromacs/utility/real.h"
 #include "gromacs/utility/smalloc.h"
+#include "gromacs/utility/stringutil.h"
+#include "gromacs/utility/vec.h"
+#include "gromacs/utility/vectypes.h"
+
+struct gmx_output_env_t;
 
 
 int gmx_vanhove(int argc, char* argv[])
@@ -100,27 +110,27 @@ int gmx_vanhove(int argc, char* argv[])
     static real sbin = 0, rmax = 2, rbin = 0.01, mmax = 0, rint = 0;
     t_pargs     pa[] = {
         { "-sqrt",
-          FALSE,
-          etREAL,
-          { &sbin },
-          "Use [SQRT]t[sqrt] on the matrix axis which binspacing # in [SQRT]ps[sqrt]" },
+              FALSE,
+              etREAL,
+              { &sbin },
+              "Use [SQRT]t[sqrt] on the matrix axis which binspacing # in [SQRT]ps[sqrt]" },
         { "-fm", FALSE, etINT, { &fmmax }, "Number of frames in the matrix, 0 is plot all" },
         { "-rmax", FALSE, etREAL, { &rmax }, "Maximum r in the matrix (nm)" },
         { "-rbin", FALSE, etREAL, { &rbin }, "Binwidth in the matrix and for [TT]-or[tt] (nm)" },
         { "-mmax",
-          FALSE,
-          etREAL,
-          { &mmax },
-          "Maximum density in the matrix, 0 is calculate (1/nm)" },
+              FALSE,
+              etREAL,
+              { &mmax },
+              "Maximum density in the matrix, 0 is calculate (1/nm)" },
         { "-nlevels", FALSE, etINT, { &nlev }, "Number of levels in the matrix" },
         { "-nr", FALSE, etINT, { &nr }, "Number of curves for the [TT]-or[tt] output" },
         { "-fr", FALSE, etINT, { &fshift }, "Frame spacing for the [TT]-or[tt] output" },
         { "-rt", FALSE, etREAL, { &rint }, "Integration limit for the [TT]-ot[tt] output (nm)" },
         { "-ft",
-          FALSE,
-          etINT,
-          { &ftmax },
-          "Number of frames in the [TT]-ot[tt] output, 0 is plot all" }
+              FALSE,
+              etINT,
+              { &ftmax },
+              "Number of frames in the [TT]-ot[tt] output, 0 is plot all" }
     };
 #define NPA asize(pa)
 
@@ -131,27 +141,27 @@ int gmx_vanhove(int argc, char* argv[])
     };
 #define NFILE asize(fnm)
 
-    gmx_output_env_t* oenv;
-    const char *      matfile, *otfile, *orfile;
-    t_topology        top;
-    PbcType           pbcType;
-    matrix            boxtop, box, *sbox, avbox, corr;
-    rvec *            xtop, *x, **sx;
-    int               isize, nalloc, nallocn;
-    t_trxstatus*      status;
-    int*              index;
-    char*             grpname;
-    int               nfr, f, ff, i, m, mat_nx = 0, nbin = 0, bin, mbin, fbin;
-    real *            time, t, invbin = 0, rmax2 = 0, rint2 = 0, d2;
-    real              invsbin = 0, matmax, normfac, dt, *tickx, *ticky;
-    char              buf[STRLEN], **legend;
-    real**            mat = nullptr;
+    gmx_output_env_t*        oenv;
+    const char *             matfile, *otfile, *orfile;
+    t_topology               top;
+    PbcType                  pbcType;
+    matrix                   boxtop, box, *sbox, avbox, corr;
+    rvec *                   xtop, *x, **sx;
+    int                      isize, nalloc, nallocn;
+    t_trxstatus*             status;
+    int*                     index;
+    char*                    grpname;
+    int                      nfr, f, ff, i, m, mat_nx = 0, nbin = 0, bin, mbin, fbin;
+    real *                   time, t, invbin = 0, rmax2 = 0, rint2 = 0, d2;
+    real                     invsbin = 0, matmax, normfac, dt, *tickx, *ticky;
+    std::vector<std::string> legend;
+    real**                   mat = nullptr;
     int * pt = nullptr, **pr = nullptr, *mcount = nullptr, *tcount = nullptr, *rcount = nullptr;
     FILE* fp;
     t_rgb rlo = { 1, 1, 1 }, rhi = { 0, 0, 0 };
 
-    if (!parse_common_args(&argc, argv, PCA_CAN_VIEW | PCA_CAN_TIME, NFILE, fnm, asize(pa), pa,
-                           asize(desc), desc, 0, nullptr, &oenv))
+    if (!parse_common_args(
+                &argc, argv, PCA_CAN_VIEW | PCA_CAN_TIME, NFILE, fnm, asize(pa), pa, asize(desc), desc, 0, nullptr, &oenv))
     {
         return 0;
     }
@@ -177,7 +187,7 @@ int gmx_vanhove(int argc, char* argv[])
     if (!matfile && !otfile && !orfile)
     {
         fprintf(stderr, "For output set one (or more) of the output file options\n");
-        exit(0);
+        std::exit(0);
     }
 
     read_tps_conf(ftp2fn(efTPS, NFILE, fnm), &top, &pbcType, &xtop, nullptr, boxtop, FALSE);
@@ -293,7 +303,7 @@ int gmx_vanhove(int argc, char* argv[])
         if (f % 100 == 0)
         {
             fprintf(stderr, "\rProcessing frame %d", f);
-            fflush(stderr);
+            std::fflush(stderr);
         }
         if (pbcType != PbcType::No)
         {
@@ -430,9 +440,22 @@ int gmx_vanhove(int argc, char* argv[])
             ticky[i] = i * rbin;
         }
         fp = gmx_ffopen(matfile, "w");
-        write_xpm(fp, MAT_SPATIAL_Y, "Van Hove function", "G (1/nm)",
-                  sbin == 0 ? "time (ps)" : "sqrt(time) (ps^1/2)", "r (nm)", mat_nx, nbin, tickx,
-                  ticky, mat, 0, matmax, rlo, rhi, &nlev);
+        write_xpm(fp,
+                  MAT_SPATIAL_Y,
+                  "Van Hove function",
+                  "G (1/nm)",
+                  sbin == 0 ? "time (ps)" : "sqrt(time) (ps^1/2)",
+                  "r (nm)",
+                  mat_nx,
+                  nbin,
+                  tickx,
+                  ticky,
+                  mat,
+                  0,
+                  matmax,
+                  rlo,
+                  rhi,
+                  &nlev);
         gmx_ffclose(fp);
     }
 
@@ -443,19 +466,18 @@ int gmx_vanhove(int argc, char* argv[])
         {
             fprintf(fp, "@ subtitle \"for particles in group %s\"\n", grpname);
         }
-        snew(legend, nr);
         for (fbin = 0; fbin < nr; fbin++)
         {
-            sprintf(buf, "%g ps", (fbin + 1) * fshift * dt);
-            legend[fbin] = gmx_strdup(buf);
+            legend.emplace_back(gmx::formatString("%g ps", (fbin + 1) * fshift * dt));
         }
-        xvgr_legend(fp, nr, legend, oenv);
+        xvgrLegend(fp, legend, oenv);
         for (i = 0; i < nalloc; i++)
         {
             fprintf(fp, "%g", i * rbin);
             for (fbin = 0; fbin < nr; fbin++)
             {
-                fprintf(fp, " %g",
+                fprintf(fp,
+                        " %g",
                         static_cast<real>(pr[fbin][i]
                                           / (rcount[fbin] * isize * rbin * (i == 0 ? 0.5 : 1.0))));
             }
@@ -466,8 +488,8 @@ int gmx_vanhove(int argc, char* argv[])
 
     if (otfile)
     {
-        sprintf(buf, "Probability of moving less than %g nm", rint);
-        fp = xvgropen(otfile, buf, "t (ps)", "", oenv);
+        auto buf = gmx::formatString("Probability of moving less than %g nm", rint);
+        fp       = xvgropen(otfile, buf.c_str(), "t (ps)", "", oenv);
         if (output_env_get_print_xvgr_codes(oenv))
         {
             fprintf(fp, "@ subtitle \"for particles in group %s\"\n", grpname);

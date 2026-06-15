@@ -1,13 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
- * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2016,2017 by the GROMACS development team.
- * Copyright (c) 2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 1991- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -21,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -30,26 +26,32 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 #include "gmxpre.h"
 
 #include <cassert>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 
 #include <algorithm>
+#include <filesystem>
 #include <string>
 
+#include "gromacs/commandline/filenm.h"
 #include "gromacs/commandline/pargs.h"
 #include "gromacs/commandline/viewit.h"
 #include "gromacs/fileio/confio.h"
+#include "gromacs/fileio/filetypes.h"
 #include "gromacs/fileio/matio.h"
+#include "gromacs/fileio/oenv.h"
 #include "gromacs/fileio/pdbio.h"
+#include "gromacs/fileio/rgb.h"
 #include "gromacs/fileio/tpxio.h"
 #include "gromacs/fileio/trxio.h"
 #include "gromacs/fileio/xvgr.h"
@@ -57,20 +59,28 @@
 #include "gromacs/gmxana/gmx_ana.h"
 #include "gromacs/math/do_fit.h"
 #include "gromacs/math/functions.h"
-#include "gromacs/math/vec.h"
+#include "gromacs/mdtypes/md_enums.h"
 #include "gromacs/pbcutil/rmpbc.h"
+#include "gromacs/topology/atoms.h"
 #include "gromacs/topology/index.h"
 #include "gromacs/topology/topology.h"
+#include "gromacs/topology/topology_enums.h"
+#include "gromacs/utility/arrayref.h"
 #include "gromacs/utility/arraysize.h"
+#include "gromacs/utility/basedefinitions.h"
 #include "gromacs/utility/cstringutil.h"
 #include "gromacs/utility/fatalerror.h"
 #include "gromacs/utility/futil.h"
 #include "gromacs/utility/gmxassert.h"
+#include "gromacs/utility/path.h"
+#include "gromacs/utility/real.h"
 #include "gromacs/utility/smalloc.h"
+#include "gromacs/utility/vec.h"
+#include "gromacs/utility/vectypes.h"
 
 #include "thermochemistry.h"
 
-static const char* proj_unit;
+struct gmx_output_env_t;
 
 static real tick_spacing(real range, int minticks)
 {
@@ -280,8 +290,10 @@ compare(int natoms, int n1, rvec** eigvec1, int n2, rvec** eigvec2, real* eigval
     fprintf(stdout, "Trace of the two matrices: %g and %g\n", sum1, sum2);
     if (neig1 != n || neig2 != n)
     {
-        fprintf(stdout, "this is %d%% and %d%% of the total trace\n",
-                gmx::roundToInt(100 * sum1 / trace1), gmx::roundToInt(100 * sum2 / trace2));
+        fprintf(stdout,
+                "this is %d%% and %d%% of the total trace\n",
+                gmx::roundToInt(100 * sum1 / trace1),
+                gmx::roundToInt(100 * sum2 / trace2));
     }
     fprintf(stdout, "Square root of the traces: %g and %g\n", std::sqrt(sum1), std::sqrt(sum2));
 
@@ -414,8 +426,7 @@ static void inprod_matrix(const char* matfile,
     rhi.b   = 0;
     nlevels = 41;
     out     = gmx_ffopen(matfile, "w");
-    write_xpm(out, 0, "Eigenvector inner-products", "in.prod.", "run 1", "run 2", nx, ny, t_x, t_y,
-              mat, 0.0, maxval, rlo, rhi, &nlevels);
+    write_xpm(out, 0, "Eigenvector inner-products", "in.prod.", "run 1", "run 2", nx, ny, t_x, t_y, mat, 0.0, maxval, rlo, rhi, &nlevels);
     gmx_ffclose(out);
 }
 
@@ -472,6 +483,7 @@ static void project(const char*             trajfile,
                     const char*             twodplotfile,
                     const char*             threedplotfile,
                     const char*             filterfile,
+                    const char*             projUnit,
                     int                     skip,
                     const char*             extremefile,
                     gmx_bool                bExtrAll,
@@ -504,7 +516,7 @@ static void project(const char*             trajfile,
     matrix       box;
     rvec *       xread, *x;
     real         t, inp, **inprod = nullptr;
-    char         str[STRLEN], str2[STRLEN], *c;
+    char         str[STRLEN], str2[STRLEN];
     const char** ylabel;
     real         fact;
     gmx_rmpbc_t  gpbc = nullptr;
@@ -544,7 +556,8 @@ static void project(const char*             trajfile,
             gmx_fatal(FARGS,
                       "the number of atoms in your trajectory (%d) is larger than the number of "
                       "atoms in your structure file (%d)",
-                      nat, atoms->nr);
+                      nat,
+                      atoms->nr);
         }
         snew(all_at, nat);
 
@@ -563,7 +576,7 @@ static void project(const char*             trajfile,
             {
                 if (top)
                 {
-                    gmx_rmpbc(gpbc, nat, box, xread);
+                    gmx_rmpbc_apply(gpbc, nat, box, xread);
                 }
                 if (nframes >= snew_size)
                 {
@@ -647,16 +660,28 @@ static void project(const char*             trajfile,
             sprintf(str, "vec %d", eignr[outvec[v]] + 1);
             ylabel[v] = gmx_strdup(str);
         }
-        sprintf(str, "projection on eigenvectors (%s)", proj_unit);
-        write_xvgr_graphs(projfile, noutvec, 1, str, nullptr, output_env_get_xvgr_tlabel(oenv),
-                          ylabel, nframes, inprod[noutvec], inprod, nullptr,
-                          output_env_get_time_factor(oenv), FALSE, bSplit, oenv);
+        sprintf(str, "projection on eigenvectors (%s)", projUnit);
+        write_xvgr_graphs(projfile,
+                          noutvec,
+                          1,
+                          str,
+                          nullptr,
+                          output_env_get_xvgr_tlabel(oenv),
+                          ylabel,
+                          nframes,
+                          inprod[noutvec],
+                          inprod,
+                          nullptr,
+                          output_env_get_time_factor(oenv),
+                          FALSE,
+                          bSplit,
+                          oenv);
     }
 
     if (twodplotfile)
     {
-        sprintf(str, "projection on eigenvector %d (%s)", eignr[outvec[0]] + 1, proj_unit);
-        sprintf(str2, "projection on eigenvector %d (%s)", eignr[outvec[noutvec - 1]] + 1, proj_unit);
+        sprintf(str, "projection on eigenvector %d (%s)", eignr[outvec[0]] + 1, projUnit);
+        sprintf(str2, "projection on eigenvector %d (%s)", eignr[outvec[noutvec - 1]] + 1, projUnit);
         xvgrout = xvgropen(twodplotfile, "2D projection of trajectory", str, str2, oenv);
         for (i = 0; i < nframes; i++)
         {
@@ -671,13 +696,13 @@ static void project(const char*             trajfile,
 
     if (threedplotfile)
     {
-        t_atoms  atoms;
-        rvec*    x;
+        t_atoms  atoms3D;
+        rvec*    x3D;
         real*    b = nullptr;
-        matrix   box;
+        matrix   box3D;
         char *   resnm, *atnm;
         gmx_bool bPDB, b4D;
-        FILE*    out;
+        FILE*    out3D;
 
         if (noutvec < 3)
         {
@@ -686,8 +711,8 @@ static void project(const char*             trajfile,
 
         /* initialize */
         bPDB = fn2ftp(threedplotfile) == efPDB;
-        clear_mat(box);
-        box[XX][XX] = box[YY][YY] = box[ZZ][ZZ] = 1;
+        clear_mat(box3D);
+        box3D[XX][XX] = box3D[YY][YY] = box3D[ZZ][ZZ] = 1;
 
         b4D = bPDB && (noutvec >= 4);
         if (b4D)
@@ -696,16 +721,23 @@ static void project(const char*             trajfile,
                     "You have selected four or more eigenvectors:\n"
                     "fourth eigenvector will be plotted "
                     "in bfactor field of pdb file\n");
-            sprintf(str, "4D proj. of traj. on eigenv. %d, %d, %d and %d", eignr[outvec[0]] + 1,
-                    eignr[outvec[1]] + 1, eignr[outvec[2]] + 1, eignr[outvec[3]] + 1);
+            sprintf(str,
+                    "4D proj. of traj. on eigenv. %d, %d, %d and %d",
+                    eignr[outvec[0]] + 1,
+                    eignr[outvec[1]] + 1,
+                    eignr[outvec[2]] + 1,
+                    eignr[outvec[3]] + 1);
         }
         else
         {
-            sprintf(str, "3D proj. of traj. on eigenv. %d, %d and %d", eignr[outvec[0]] + 1,
-                    eignr[outvec[1]] + 1, eignr[outvec[2]] + 1);
+            sprintf(str,
+                    "3D proj. of traj. on eigenv. %d, %d and %d",
+                    eignr[outvec[0]] + 1,
+                    eignr[outvec[1]] + 1,
+                    eignr[outvec[2]] + 1);
         }
-        init_t_atoms(&atoms, nframes, FALSE);
-        snew(x, nframes);
+        init_t_atoms(&atoms3D, nframes, FALSE);
+        snew(x3D, nframes);
         snew(b, nframes);
         atnm  = gmx_strdup("C");
         resnm = gmx_strdup("PRJ");
@@ -721,14 +753,14 @@ static void project(const char*             trajfile,
 
         for (i = 0; i < nframes; i++)
         {
-            atoms.atomname[i]     = &atnm;
-            atoms.atom[i].resind  = i;
-            atoms.resinfo[i].name = &resnm;
-            atoms.resinfo[i].nr   = static_cast<int>(std::ceil(i * fact));
-            atoms.resinfo[i].ic   = ' ';
-            x[i][XX]              = inprod[0][i];
-            x[i][YY]              = inprod[1][i];
-            x[i][ZZ]              = inprod[2][i];
+            atoms3D.atomname[i]     = &atnm;
+            atoms3D.atom[i].resind  = i;
+            atoms3D.resinfo[i].name = &resnm;
+            atoms3D.resinfo[i].nr   = static_cast<int>(std::ceil(i * fact));
+            atoms3D.resinfo[i].ic   = ' ';
+            x3D[i][XX]              = inprod[0][i];
+            x3D[i][YY]              = inprod[1][i];
+            x3D[i][ZZ]              = inprod[2][i];
             if (b4D)
             {
                 b[i] = inprod[3][i];
@@ -739,37 +771,49 @@ static void project(const char*             trajfile,
             GMX_RELEASE_ASSERT(inprod != nullptr,
                                "inprod must be non-NULL with 4D or split PDB output options");
 
-            out = gmx_ffopen(threedplotfile, "w");
-            fprintf(out, "HEADER    %s\n", str);
+            out3D = gmx_ffopen(threedplotfile, "w");
+            fprintf(out3D, "HEADER    %s\n", str);
             if (b4D)
             {
-                fprintf(out, "REMARK    %s\n", "fourth dimension plotted as B-factor");
+                fprintf(out3D, "REMARK    %s\n", "fourth dimension plotted as B-factor");
             }
             j = 0;
-            for (i = 0; i < atoms.nr; i++)
+            for (i = 0; i < atoms3D.nr; i++)
             {
                 if (j > 0 && bSplit && std::abs(inprod[noutvec][i]) < 1e-5)
                 {
-                    fprintf(out, "TER\n");
+                    fprintf(out3D, "TER\n");
                     j = 0;
                 }
-                gmx_fprintf_pdb_atomline(out, epdbATOM, i + 1, "C", ' ', "PRJ", ' ', j + 1, ' ',
-                                         10 * x[i][XX], 10 * x[i][YY], 10 * x[i][ZZ], 1.0,
-                                         10 * b[i], "");
+                gmx_fprintf_pdb_atomline(out3D,
+                                         PdbRecordType::Atom,
+                                         i + 1,
+                                         "C",
+                                         ' ',
+                                         "PRJ",
+                                         ' ',
+                                         j + 1,
+                                         ' ',
+                                         10 * x3D[i][XX],
+                                         10 * x3D[i][YY],
+                                         10 * x3D[i][ZZ],
+                                         1.0,
+                                         10 * b[i],
+                                         "");
                 if (j > 0)
                 {
-                    fprintf(out, "CONECT%5d%5d\n", i, i + 1);
+                    fprintf(out3D, "CONECT%5d%5d\n", i, i + 1);
                 }
                 j++;
             }
-            fprintf(out, "TER\n");
-            gmx_ffclose(out);
+            fprintf(out3D, "TER\n");
+            gmx_ffclose(out3D);
         }
         else
         {
-            write_sto_conf(threedplotfile, str, &atoms, x, nullptr, pbcType, box);
+            write_sto_conf(threedplotfile, str, &atoms3D, x3D, nullptr, pbcType, box3D);
         }
-        done_atom(&atoms);
+        done_atom(&atoms3D);
     }
 
     if (extremefile)
@@ -798,8 +842,7 @@ static void project(const char*             trajfile,
                 }
                 pmin[v] = inprod[v][imin];
                 pmax[v] = inprod[v][imax];
-                fprintf(stderr, "%7d     %10.6f %10d %10.6f %10d\n", eignr[outvec[v]] + 1, pmin[v],
-                        imin, pmax[v], imax);
+                fprintf(stderr, "%7d     %10.6f %10d %10.6f %10d\n", eignr[outvec[v]] + 1, pmin[v], imin, pmax[v], imax);
             }
         }
         else
@@ -807,24 +850,21 @@ static void project(const char*             trajfile,
             pmin[0] = -extreme;
             pmax[0] = extreme;
         }
-        /* build format string for filename: */
-        std::strcpy(str, extremefile); /* copy filename */
-        c = std::strrchr(str, '.');    /* find where extention begins */
-        std::strcpy(str2, c);          /* get extention */
-        sprintf(c, "%%d%s", str2);     /* append '%s' and extention to filename */
+        std::filesystem::path extremeFileToUse = extremefile;
         for (v = 0; v < noutvec_extr; v++)
         {
             /* make filename using format string */
-            if (noutvec_extr == 1)
+            if (noutvec_extr != 1)
             {
-                std::strcpy(str2, extremefile);
+                extremeFileToUse = gmx::concatenateBeforeExtension(
+                        extremefile, std::to_string(eignr[outvec[v]] + 1));
             }
-            else
-            {
-                sprintf(str2, str, eignr[outvec[v]] + 1);
-            }
-            fprintf(stderr, "Writing %d frames along eigenvector %d to %s\n", nextr, outvec[v] + 1, str2);
-            out = open_trx(str2, "w");
+            fprintf(stderr,
+                    "Writing %d frames along eigenvector %d to %s\n",
+                    nextr,
+                    outvec[v] + 1,
+                    extremeFileToUse.string().c_str());
+            out = open_trx(extremeFileToUse, "w");
             for (frame = 0; frame < nextr; frame++)
             {
                 if ((extreme == 0) && (nextr <= 3))
@@ -895,9 +935,21 @@ static void components(const char*             outfile,
             }
         }
     }
-    write_xvgr_graphs(outfile, noutvec, 4, "Eigenvector components",
-                      "black: total, red: x, green: y, blue: z", "Atom number", ylabel, natoms, x,
-                      nullptr, y, 1, FALSE, FALSE, oenv);
+    write_xvgr_graphs(outfile,
+                      noutvec,
+                      4,
+                      "Eigenvector components",
+                      "black: total, red: x, green: y, blue: z",
+                      "Atom number",
+                      ylabel,
+                      natoms,
+                      x,
+                      nullptr,
+                      y,
+                      1,
+                      FALSE,
+                      FALSE,
+                      oenv);
     fprintf(stderr, "\n");
 }
 
@@ -939,8 +991,10 @@ static void rmsf(const char*             outfile,
         v = outvec[g];
         if (eignr[v] >= neig)
         {
-            gmx_fatal(FARGS, "Selected vector %d is larger than the number of eigenvalues (%d)",
-                      eignr[v] + 1, neig);
+            gmx_fatal(FARGS,
+                      "Selected vector %d is larger than the number of eigenvalues (%d)",
+                      eignr[v] + 1,
+                      neig);
         }
         sprintf(str, "vec %d", eignr[v] + 1);
         ylabel[g] = gmx_strdup(str);
@@ -950,8 +1004,8 @@ static void rmsf(const char*             outfile,
             y[g][i] = std::sqrt(eigval[eignr[v]] * norm2(eigvec[v][i])) / sqrtm[i];
         }
     }
-    write_xvgr_graphs(outfile, noutvec, 1, "RMS fluctuation (nm) ", nullptr, "Atom number", ylabel,
-                      natoms, x, y, nullptr, 1, TRUE, FALSE, oenv);
+    write_xvgr_graphs(
+            outfile, noutvec, 1, "RMS fluctuation (nm) ", nullptr, "Atom number", ylabel, natoms, x, y, nullptr, 1, TRUE, FALSE, oenv);
     fprintf(stderr, "\n");
 }
 
@@ -1044,27 +1098,27 @@ int gmx_anaeig(int argc, char* argv[])
         { "-last", FALSE, etINT, { &last }, "Last eigenvector for analysis (-1 is till the last)" },
         { "-skip", FALSE, etINT, { &skip }, "Only analyse every nr-th frame" },
         { "-max",
-          FALSE,
-          etREAL,
-          { &max },
-          "Maximum for projection of the eigenvector on the average structure, "
-          "max=0 gives the extremes" },
+                  FALSE,
+                  etREAL,
+                  { &max },
+                  "Maximum for projection of the eigenvector on the average structure, "
+                          "max=0 gives the extremes" },
         { "-nframes", FALSE, etINT, { &nextr }, "Number of frames for the extremes output" },
         { "-split", FALSE, etBOOL, { &bSplit }, "Split eigenvector projections where time is zero" },
         { "-entropy",
-          FALSE,
-          etBOOL,
-          { &bEntropy },
-          "Compute entropy according to the Quasiharmonic formula or Schlitter's method." },
+                  FALSE,
+                  etBOOL,
+                  { &bEntropy },
+                  "Compute entropy according to the Quasiharmonic formula or Schlitter's method." },
         { "-temp", FALSE, etREAL, { &temp }, "Temperature for entropy calculations" },
         { "-nevskip",
-          FALSE,
-          etINT,
-          { &nskip },
-          "Number of eigenvalues to skip when computing the entropy due to the quasi harmonic "
-          "approximation. When you do a rotational and/or translational fit prior to the "
-          "covariance analysis, you get 3 or 6 eigenvalues that are very close to zero, and which "
-          "should not be taken into account when computing the entropy." }
+                  FALSE,
+                  etINT,
+                  { &nskip },
+                  "Number of eigenvalues to skip when computing the entropy due to the quasi harmonic "
+                          "approximation. When you do a rotational and/or translational fit prior to the "
+                          "covariance analysis, you get 3 or 6 eigenvalues that are very close to zero, and which "
+                          "should not be taken into account when computing the entropy." }
     };
 #define NPA asize(pa)
 
@@ -1109,8 +1163,8 @@ int gmx_anaeig(int argc, char* argv[])
     };
 #define NFILE asize(fnm)
 
-    if (!parse_common_args(&argc, argv, PCA_CAN_TIME | PCA_TIME_UNIT | PCA_CAN_VIEW, NFILE, fnm,
-                           NPA, pa, asize(desc), desc, 0, nullptr, &oenv))
+    if (!parse_common_args(
+                &argc, argv, PCA_CAN_TIME | PCA_TIME_UNIT | PCA_CAN_VIEW, NFILE, fnm, NPA, pa, asize(desc), desc, 0, nullptr, &oenv))
     {
         return 0;
     }
@@ -1149,15 +1203,18 @@ int gmx_anaeig(int argc, char* argv[])
     bCompare = (Vec2File != nullptr) || (Eig2File != nullptr);
     bPDB3D   = fn2ftp(ThreeDPlotFile) == efPDB;
 
-    read_eigenvectors(VecFile, &natoms, &bFit1, &xref1, &bDMR1, &xav1, &bDMA1, &nvec1, &eignr1,
-                      &eigvec1, &eigval1);
+    read_eigenvectors(
+            VecFile, &natoms, &bFit1, &xref1, &bDMR1, &xav1, &bDMA1, &nvec1, &eignr1, &eigvec1, &eigval1);
     neig1 = std::min(nvec1, DIM * natoms);
     if (nvec1 != DIM * natoms)
     {
         fprintf(stderr,
                 "Warning: number of eigenvectors %d does not match three times\n"
                 "the number of atoms %d in %s. Using %d eigenvectors.\n\n",
-                nvec1, natoms, VecFile, neig1);
+                nvec1,
+                natoms,
+                VecFile,
+                neig1);
     }
 
     /* Overwrite eigenvalues from separate files if the user provides them */
@@ -1168,7 +1225,8 @@ int gmx_anaeig(int argc, char* argv[])
         {
             fprintf(stderr,
                     "Warning: number of eigenvalues in xvg file (%d) does not mtch trr file (%d)\n",
-                    neig1, natoms);
+                    neig1,
+                    natoms);
         }
         neig1 = neig_tmp;
         srenew(eigval1, neig1);
@@ -1178,8 +1236,7 @@ int gmx_anaeig(int argc, char* argv[])
             eigval1[j] = xvgdata[1][j];
             if (debug && (eigval1[j] != tmp))
             {
-                fprintf(debug, "Replacing eigenvalue %d. From trr: %10g, from xvg: %10g\n", j, tmp,
-                        eigval1[j]);
+                fprintf(debug, "Replacing eigenvalue %d. From trr: %10g, from xvg: %10g\n", j, tmp, eigval1[j]);
             }
         }
         for (j = 0; j < i; j++)
@@ -1192,6 +1249,23 @@ int gmx_anaeig(int argc, char* argv[])
 
     if (bEntropy)
     {
+        std::vector<real> invEigenvalue1(neig1);
+        for (i = 0; i < neig1; i++)
+        {
+            /* Converting eigenvalues from the trajectory covariance values into the expected units.
+             * GROMACS units expected for eigenvalues of the Hessian are kJ/(mol*nm*nm*amu).
+             * Refer to gmx_nmeig.cpp where Hessian is diagonalized.
+             *
+             * In gmx_anaeig.cpp, the input eigenvalues are from the covariance matrix of
+             * trajectories, such that they need to be unit-coverted for consistency.
+             *
+             * This requires establishment of an energy scale (kT), a scaling to the standard
+             * GROMACS energy units (kJ/mol), and inversion of the given eigenvalue.
+             * */
+            invEigenvalue1[i] = (gmx::c_boltz * temp) / eigval1[i];
+        }
+
+
         if (bDMA1)
         {
             gmx_fatal(FARGS,
@@ -1201,23 +1275,45 @@ int gmx_anaeig(int argc, char* argv[])
         printf("The Entropy due to the Schlitter formula is %g J/mol K\n",
                calcSchlitterEntropy(gmx::arrayRefFromArray(eigval1, neig1), temp, FALSE));
         printf("The Entropy due to the Quasiharmonic analysis is %g J/mol K\n",
-               calcQuasiHarmonicEntropy(gmx::arrayRefFromArray(eigval1, neig1), temp, FALSE, 1.0));
+               calcQuasiHarmonicEntropy(invEigenvalue1, temp, FALSE, 1.0));
     }
 
     if (bVec2)
     {
-        if (!Vec2File)
+        int natoms2;
+        if (Vec2File)
+        {
+            read_eigenvectors(
+                    Vec2File, &natoms2, &bFit2, &xref2, &bDMR2, &xav2, &bDMA2, &nvec2, &eignr2, &eigvec2, &eigval2);
+        }
+        else
         {
             gmx_fatal(FARGS, "Need a second eigenvector file to do this analysis.");
         }
-        int natoms2;
-        read_eigenvectors(Vec2File, &natoms2, &bFit2, &xref2, &bDMR2, &xav2, &bDMA2, &nvec2,
-                          &eignr2, &eigvec2, &eigval2);
 
         neig2 = std::min(nvec2, DIM * natoms2);
-        if (neig2 != neig1)
+
+        if (OverlapFile != nullptr)
         {
-            gmx_fatal(FARGS, "Dimensions in the eigenvector files don't match");
+            // If the user specified -over on the command line, then calculate the subspace overlap
+            // of the eigenvectors in file -v2 with eigenvectors -first to -last in file -v.
+            // In this case, the number of eigenvectors in the two files may be different,
+            // but the number of atoms in both files needs to be the same.
+            if (natoms2 != natoms)
+            {
+                gmx_fatal(FARGS,
+                          "Number of atoms in the two eigenvector files don't match. "
+                          "File 1 has %d atoms, while File 2 has %d atoms.",
+                          natoms,
+                          natoms2);
+            }
+        }
+        else
+        {
+            if (neig2 != neig1)
+            {
+                gmx_fatal(FARGS, "Dimensions in the eigenvector files don't match");
+            }
         }
     }
     else
@@ -1266,17 +1362,18 @@ int gmx_anaeig(int argc, char* argv[])
         bTop = read_tps_conf(ftp2fn(efTPS, NFILE, fnm), &top, &pbcType, &xtop, nullptr, topbox, bM);
         atoms = &top.atoms;
         gpbc  = gmx_rmpbc_init(&top.idef, pbcType, atoms->nr);
-        gmx_rmpbc(gpbc, atoms->nr, topbox, xtop);
+        gmx_rmpbc_apply(gpbc, atoms->nr, topbox, xtop);
         /* Fitting is only required for the projection */
         if (bProj && bFit1)
         {
             if (xref1 == nullptr)
             {
                 printf("\nNote: the structure in %s should be the same\n"
-                       "      as the one used for the fit in g_covar\n",
+                       "      as the one used for the fit in gmx covar\n",
                        topfile);
             }
-            printf("\nSelect the index group that was used for the least squares fit in g_covar\n");
+            printf("\nSelect the index group that was used for the least squares fit in gmx "
+                   "covar\n");
             get_index(atoms, indexfile, 1, &nfit, &ifit, &grpname);
 
             snew(w_rls, atoms->nr);
@@ -1301,7 +1398,8 @@ int gmx_anaeig(int argc, char* argv[])
                     gmx_fatal(FARGS,
                               "you selected a group with %d elements instead of %d, your selection "
                               "does not fit the reference structure in the eigenvector file.",
-                              nfit, natoms);
+                              nfit,
+                              natoms);
                 }
                 for (i = 0; (i < nfit); i++)
                 {
@@ -1333,9 +1431,10 @@ int gmx_anaeig(int argc, char* argv[])
     }
 
     snew(sqrtm, natoms);
+    std::string projUnit;
     if (bM && bDMA1)
     {
-        proj_unit = "u\\S1/2\\Nnm";
+        projUnit = "u\\S1/2\\Nnm";
         for (i = 0; (i < natoms); i++)
         {
             sqrtm[i] = std::sqrt(atoms->atom[index[i]].m);
@@ -1343,7 +1442,7 @@ int gmx_anaeig(int argc, char* argv[])
     }
     else
     {
-        proj_unit = "nm";
+        projUnit = "nm";
         for (i = 0; (i < natoms); i++)
         {
             sqrtm[i] = 1.0;
@@ -1465,10 +1564,36 @@ int gmx_anaeig(int argc, char* argv[])
 
     if (bProj)
     {
-        project(bTraj ? opt2fn("-f", NFILE, fnm) : nullptr, bTop ? &top : nullptr, pbcType, topbox,
-                ProjOnVecFile, TwoDPlotFile, ThreeDPlotFile, FilterFile, skip, ExtremeFile,
-                bFirstLastSet, max, nextr, atoms, natoms, index, bFit1, xrefp, nfit, ifit, w_rls,
-                sqrtm, xav1, eignr1, eigvec1, noutvec, outvec, bSplit, oenv);
+        project(bTraj ? opt2fn("-f", NFILE, fnm) : nullptr,
+                bTop ? &top : nullptr,
+                pbcType,
+                topbox,
+                ProjOnVecFile,
+                TwoDPlotFile,
+                ThreeDPlotFile,
+                FilterFile,
+                projUnit.c_str(),
+                skip,
+                ExtremeFile,
+                bFirstLastSet,
+                max,
+                nextr,
+                atoms,
+                natoms,
+                index,
+                bFit1,
+                xrefp,
+                nfit,
+                ifit,
+                w_rls,
+                sqrtm,
+                xav1,
+                eignr1,
+                eigvec1,
+                noutvec,
+                outvec,
+                bSplit,
+                oenv);
     }
 
     if (OverlapFile)
@@ -1478,8 +1603,8 @@ int gmx_anaeig(int argc, char* argv[])
 
     if (InpMatFile)
     {
-        inprod_matrix(InpMatFile, natoms, nvec1, eignr1, eigvec1, nvec2, eignr2, eigvec2,
-                      bFirstLastSet, noutvec, outvec);
+        inprod_matrix(
+                InpMatFile, natoms, nvec1, eignr1, eigvec1, nvec2, eignr2, eigvec2, bFirstLastSet, noutvec, outvec);
     }
 
     if (bCompare)

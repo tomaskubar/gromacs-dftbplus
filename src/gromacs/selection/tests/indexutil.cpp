@@ -1,11 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2013,2014,2015,2016,2017 by the GROMACS development team.
- * Copyright (c) 2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2013- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -19,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -28,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \internal \file
  * \brief
@@ -47,10 +45,15 @@
 
 #include "gromacs/selection/indexutil.h"
 
+#include <memory>
+#include <string>
+#include <vector>
+
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
 #include "gromacs/topology/block.h"
+#include "gromacs/topology/index.h"
 #include "gromacs/utility/arrayref.h"
 #include "gromacs/utility/smalloc.h"
 
@@ -59,6 +62,12 @@
 
 #include "toputils.h"
 
+struct gmx_mtop_t;
+
+namespace gmx
+{
+namespace test
+{
 namespace
 {
 
@@ -143,8 +152,8 @@ void IndexBlockTest::checkBlocka(const char* id)
     for (int i = 0; i < blocka_.nr; ++i)
     {
         gmx::test::TestReferenceChecker blockCompound(compound.checkCompound("Block", nullptr));
-        blockCompound.checkSequence(&blocka_.a[blocka_.index[i]], &blocka_.a[blocka_.index[i + 1]],
-                                    "Atoms");
+        blockCompound.checkSequence(
+                &blocka_.a[blocka_.index[i]], &blocka_.a[blocka_.index[i + 1]], "Atoms");
     }
 }
 
@@ -545,8 +554,8 @@ void IndexMapTest::checkMapping(int atomCount, const int atoms[], const char* na
     for (int i = 0; i < map_.mapb.nr; ++i)
     {
         gmx::test::TestReferenceChecker blockCompound(compound.checkCompound("Block", nullptr));
-        blockCompound.checkSequence(&atoms[map_.mapb.index[i]], &atoms[map_.mapb.index[i + 1]],
-                                    "Atoms");
+        blockCompound.checkSequence(
+                &atoms[map_.mapb.index[i]], &atoms[map_.mapb.index[i + 1]], "Atoms");
         blockCompound.checkInteger(map_.refid[i], "RefId");
         blockCompound.checkInteger(map_.mapid[i], "MapId");
         int originalIdIndex = (map_.refid[i] != -1 ? map_.refid[i] : i);
@@ -667,41 +676,22 @@ class IndexGroupsAndNamesTest : public ::testing::Test
 public:
     IndexGroupsAndNamesTest()
     {
-        init_blocka(&blockA_);
-        addGroupToBlocka_(indicesGroupA_);
-        addGroupToBlocka_(indicesGroupB_);
-        addGroupToBlocka_(indicesGroupSecondA_);
-        addGroupToBlocka_(indicesGroupC_);
+        std::vector<IndexGroup> indexGroups;
+        indexGroups.push_back({ groupNames[0], indicesGroupA_ });
+        indexGroups.push_back({ groupNames[1], indicesGroupB_ });
+        indexGroups.push_back({ groupNames[2], indicesGroupSecondA_ });
+        indexGroups.push_back({ groupNames[3], indicesGroupC_ });
 
-        const char* const namesAsConstCharArray[4] = { groupNames[0].c_str(), groupNames[1].c_str(),
-                                                       groupNames[2].c_str(), groupNames[3].c_str() };
-        indexGroupAndNames_ = std::make_unique<gmx::IndexGroupsAndNames>(blockA_, namesAsConstCharArray);
+        indexGroupAndNames_ = std::make_unique<gmx::IndexGroupsAndNames>(indexGroups);
     }
-    ~IndexGroupsAndNamesTest() override { done_blocka(&blockA_); }
 
 protected:
     std::unique_ptr<gmx::IndexGroupsAndNames> indexGroupAndNames_;
     const std::vector<std::string>            groupNames           = { "A", "B - Name", "A", "C" };
-    const std::vector<gmx::index>             indicesGroupA_       = {};
-    const std::vector<gmx::index>             indicesGroupB_       = { 1, 2 };
-    const std::vector<gmx::index>             indicesGroupSecondA_ = { 5 };
-    const std::vector<gmx::index>             indicesGroupC_       = { 10 };
-
-private:
-    //! Add a new group to t_blocka
-    void addGroupToBlocka_(gmx::ArrayRef<const gmx::index> index)
-    {
-        srenew(blockA_.index, blockA_.nr + 2);
-        srenew(blockA_.a, blockA_.nra + index.size());
-        for (int i = 0; (i < index.ssize()); i++)
-        {
-            blockA_.a[blockA_.nra++] = index[i];
-        }
-        blockA_.nr++;
-        blockA_.index[blockA_.nr] = blockA_.nra;
-    }
-
-    t_blocka blockA_;
+    const std::vector<int>                    indicesGroupA_       = {};
+    const std::vector<int>                    indicesGroupB_       = { 1, 2 };
+    const std::vector<int>                    indicesGroupSecondA_ = { 5 };
+    const std::vector<int>                    indicesGroupC_       = { 10 };
 };
 
 TEST_F(IndexGroupsAndNamesTest, containsNames)
@@ -731,3 +721,5 @@ TEST_F(IndexGroupsAndNamesTest, groupIndicesCorrect)
 
 
 } // namespace
+} // namespace test
+} // namespace gmx

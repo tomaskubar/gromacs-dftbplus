@@ -1,13 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
- * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2016,2017 by the GROMACS development team.
- * Copyright (c) 2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 1991- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -21,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -30,30 +26,42 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 #include "gmxpre.h"
 
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 
+#include <filesystem>
+#include <string>
+
+#include "gromacs/commandline/filenm.h"
 #include "gromacs/commandline/pargs.h"
 #include "gromacs/commandline/viewit.h"
+#include "gromacs/fileio/filetypes.h"
 #include "gromacs/fileio/trxio.h"
 #include "gromacs/fileio/xvgr.h"
 #include "gromacs/gmxana/gmx_ana.h"
 #include "gromacs/gmxana/princ.h"
-#include "gromacs/math/vec.h"
 #include "gromacs/pbcutil/rmpbc.h"
 #include "gromacs/topology/index.h"
 #include "gromacs/topology/topology.h"
 #include "gromacs/utility/arraysize.h"
+#include "gromacs/utility/basedefinitions.h"
 #include "gromacs/utility/fatalerror.h"
 #include "gromacs/utility/futil.h"
+#include "gromacs/utility/real.h"
 #include "gromacs/utility/smalloc.h"
+#include "gromacs/utility/vec.h"
+#include "gromacs/utility/vectypes.h"
+
+enum class PbcType : int;
+struct gmx_output_env_t;
 
 /****************************************************************************/
 /* This program calculates the ordering of water molecules across a box, as */
@@ -85,12 +93,12 @@ static void calc_h2order(const char*             fn,
     rvec*        dip;    /* sum of dipoles, unnormalized */
     matrix       box;    /* box (3x3) */
     t_trxstatus* status;
-    real         t,                      /* time from trajectory */
-            *sum,                        /* sum of all cosines of dipoles, per slice */
-            *frame;                      /* order over one frame */
-    int natoms,                          /* nr. atoms in trj */
-            i, j, teller = 0, slice = 0, /* current slice number */
-            *count;                      /* nr. of atoms in one slice */
+    real         t,          /* time from trajectory */
+            *sum,            /* sum of all cosines of dipoles, per slice */
+            *frame;          /* order over one frame */
+    int natoms,              /* nr. atoms in trj */
+            i, j, slice = 0, /* current slice number */
+            *count;          /* nr. of atoms in one slice */
     gmx_rmpbc_t gpbc = nullptr;
 
     if ((natoms = read_first_x(oenv, &status, fn, &t, &x0, box)) == 0)
@@ -131,16 +139,13 @@ static void calc_h2order(const char*             fn,
     *slWidth = box[axis][axis] / (*nslices);
     fprintf(stderr, "Box divided in %d slices. Initial width of slice: %f\n", *nslices, *slWidth);
 
-    teller = 0;
-
     gpbc = gmx_rmpbc_init(&top->idef, pbcType, natoms);
     /*********** Start processing trajectory ***********/
     do
     {
         *slWidth = box[axis][axis] / (*nslices);
-        teller++;
 
-        gmx_rmpbc(gpbc, natoms, box, x0);
+        gmx_rmpbc_apply(gpbc, natoms, box, x0);
 
         if (bMicel)
         {
@@ -252,8 +257,13 @@ static void h2order_plot(rvec dipole[], real order[], const char* afile, int nsl
 
     for (slice = 0; slice < nslices; slice++)
     {
-        fprintf(ord, "%8.3f %8.3f %8.3f %8.3f %e\n", slWidth * slice, factor * dipole[slice][XX],
-                factor * dipole[slice][YY], factor * dipole[slice][ZZ], order[slice]);
+        fprintf(ord,
+                "%8.3f %8.3f %8.3f %8.3f %e\n",
+                slWidth * slice,
+                factor * dipole[slice][XX],
+                factor * dipole[slice][YY],
+                factor * dipole[slice][ZZ],
+                order[slice]);
     }
 
     xvgrclose(ord);
@@ -284,16 +294,16 @@ int gmx_h2order(int argc, char* argv[])
     static int         nslices                = 0; /* nr of slices defined       */
     // The struct that will hold the parsed user input
     t_pargs     pa[]   = { { "-d",
-                       FALSE,
-                       etENUM,
-                       { axisOption },
-                       "Take the normal on the membrane in direction X, Y or Z." },
-                     { "-sl",
-                       FALSE,
-                       etINT,
-                       { &nslices },
-                       "Calculate order parameter as function of boxlength, dividing the box"
-                       " in this number of slices." } };
+                             FALSE,
+                             etENUM,
+                             { axisOption },
+                             "Take the normal on the membrane in direction X, Y or Z." },
+                           { "-sl",
+                             FALSE,
+                             etINT,
+                             { &nslices },
+                             "Calculate order parameter as function of boxlength, dividing the box"
+                                   " in this number of slices." } };
     const char* bugs[] = {
         "The program assigns whole water molecules to a slice, based on the first "
         "atom of three in the index file group. It assumes an order O,H,H. "
@@ -315,7 +325,7 @@ int gmx_h2order(int argc, char* argv[])
             *micelle = nullptr;
     gmx_bool bMicel  = FALSE; /* think we're a micel        */
     t_filenm fnm[]   = {
-        /* files for g_order      */
+        /* files for gmx order      */
         { efTRX, "-f", nullptr, ffREAD },    /* trajectory file            */
         { efNDX, nullptr, nullptr, ffREAD }, /* index file         */
         { efNDX, "-nm", nullptr, ffOPTRD },  /* index with micelle atoms   */
@@ -326,8 +336,8 @@ int gmx_h2order(int argc, char* argv[])
 #define NFILE asize(fnm)
 
     // Parse the user input in argv into pa
-    if (!parse_common_args(&argc, argv, PCA_CAN_VIEW | PCA_CAN_TIME, NFILE, fnm, asize(pa), pa,
-                           asize(desc), desc, asize(bugs), bugs, &oenv))
+    if (!parse_common_args(
+                &argc, argv, PCA_CAN_VIEW | PCA_CAN_TIME, NFILE, fnm, asize(pa), pa, asize(desc), desc, asize(bugs), bugs, &oenv))
     {
         return 0;
     }
@@ -355,8 +365,20 @@ int gmx_h2order(int argc, char* argv[])
         rd_index(opt2fn("-nm", NFILE, fnm), 1, &nmic, &micelle, &micname);
     }
 
-    calc_h2order(ftp2fn(efTRX, NFILE, fnm), index, ngx, &slDipole, &slOrder, &slWidth, &nslices,
-                 top, pbcType, axis, bMicel, micelle, nmic, oenv);
+    calc_h2order(ftp2fn(efTRX, NFILE, fnm),
+                 index,
+                 ngx,
+                 &slDipole,
+                 &slOrder,
+                 &slWidth,
+                 &nslices,
+                 top,
+                 pbcType,
+                 axis,
+                 bMicel,
+                 micelle,
+                 nmic,
+                 oenv);
 
     h2order_plot(slDipole, slOrder, opt2fn("-o", NFILE, fnm), nslices, slWidth, oenv);
 

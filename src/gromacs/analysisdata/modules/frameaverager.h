@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2013,2014,2015,2019, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2013- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \internal \file
  * \brief
@@ -44,6 +43,7 @@
 
 #include <vector>
 
+#include "gromacs/utility/basedefinitions.h"
 #include "gromacs/utility/gmxassert.h"
 #include "gromacs/utility/real.h"
 
@@ -80,7 +80,7 @@ public:
     /*! \brief
      * Returns the number of columns in this averager.
      */
-    int columnCount() const { return values_.size(); }
+    size_t columnCount() const { return values_.size(); }
 
     /*! \brief
      * Sets the number of columns in the input data.
@@ -92,14 +92,14 @@ public:
      * Must be called exactly once, before setting calling any other method
      * in the class.
      */
-    void setColumnCount(int columnCount);
+    void setColumnCount(size_t columnCount);
     /*! \brief
      * Adds a single value to the average for a given column.
      *
      * \param[in] index  Index of the column to add the value to.
      * \param[in] value  Value to add to the sample.
      */
-    void addValue(int index, real value);
+    void addValue(size_t index, real value);
     /*! \brief
      * Accumulates data from a given point set into the average.
      *
@@ -126,9 +126,9 @@ public:
      *
      * If called before finish(), the results are undefined.
      */
-    real average(int index) const
+    real average(size_t index) const
     {
-        GMX_ASSERT(index >= 0 && index < columnCount(), "Invalid column index");
+        GMX_ASSERT(index < columnCount(), "Invalid column index");
         GMX_ASSERT(bFinished_, "Values available only after finished() has been called");
         return values_[index].average;
     }
@@ -137,9 +137,9 @@ public:
      *
      * If called before finish(), the results are undefined.
      */
-    real variance(int index) const
+    real variance(size_t index) const
     {
-        GMX_ASSERT(index >= 0 && index < columnCount(), "Invalid column index");
+        GMX_ASSERT(index < columnCount(), "Invalid column index");
         GMX_ASSERT(bFinished_, "Values available only after finished() has been called");
         const AverageItem& item = values_[index];
         return item.samples > 1 ? item.squaredSum / (item.samples - 1) : 0.0;
@@ -149,9 +149,9 @@ public:
      *
      * If called before finish(), the results are undefined.
      */
-    int sampleCount(int index) const
+    size_t sampleCount(size_t index) const
     {
-        GMX_ASSERT(index >= 0 && index <= ssize(values_), "Invalid column index");
+        GMX_ASSERT(index <= values_.size(), "Invalid column index");
         GMX_ASSERT(bFinished_, "Values available only after finished() has been called");
         return values_[index].samples;
     }
@@ -166,7 +166,7 @@ private:
         //! Sum of squared deviations from the average for values so far.
         double squaredSum;
         //! Number of values so far.
-        int samples;
+        size_t samples;
     };
 
     std::vector<AverageItem> values_;

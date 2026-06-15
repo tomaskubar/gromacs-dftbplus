@@ -9,9 +9,9 @@ term to Newton’s equations of motion, as
    :label: eqnSDeq
 
 where :math:`\gamma_i` is the friction constant :math:`[1/\mbox{ps}]`
-and :math:`{\stackrel{\circ}{\mathbf{r}}}_i\!\!(t)` is a
+and :math:`{\stackrel{\circ}{\mathbf{r}}}_i(t)` is a
 noise process with
-:math:`\langle {\stackrel{\circ}{r}}_i\!\!(t) {\stackrel{\circ}{r}}_j\!\!(t+s) \rangle = 2 m_i \gamma_i k_B T \delta(s) \delta_{ij}`. When :math:`1/\gamma_i`
+:math:`\langle {\stackrel{\circ}{r}}_i(t) {\stackrel{\circ}{r}}_j(t+s) \rangle = 2 m_i \gamma_i k_B T \delta(s) \delta_{ij}`. When :math:`1/\gamma_i`
 is large compared to the time scales present in the system, one could
 see stochastic dynamics as molecular dynamics with stochastic
 temperature-coupling. But any processes that take longer than
@@ -32,7 +32,7 @@ impulse fashion \ :ref:`51 <refGoga2012>`. It can be described as:
 
 .. math::  \begin{aligned}
    \mathbf{v}'  &~=~&   \mathbf{v}(t-{{\frac{1}{2}}{{\Delta t}}}) + \frac{1}{m}\mathbf{F}(t){{\Delta t}}\\
-   \Delta\mathbf{v}     &~=~&   -\alpha \, \mathbf{v}'(t+{{\frac{1}{2}}{{\Delta t}}}) + \sqrt{\frac{k_B T}{m}(1 - \alpha^2)} \, {\mathbf{r}^G}_i \\
+   \Delta\mathbf{v}     &~=~&   -\alpha \, \mathbf{v}'(t+{{\frac{1}{2}}{{\Delta t}}}) + \sqrt{\frac{k_B T}{m} \alpha (2 - \alpha)} \, {\mathbf{r}^G}_i \\
    \mathbf{r}(t+{{\Delta t}})   &~=~&   \mathbf{r}(t)+\left(\mathbf{v}' +\frac{1}{2}\Delta \mathbf{v}\right){{\Delta t}}
   \end{aligned}
   :label: eqnsd1int
@@ -51,11 +51,13 @@ leap-frog. The friction and noise are then applied as an impulse at step
 velocity-dependent terms act at the full time step, which makes the
 correct integration of forces that depend on both coordinates and
 velocities, such as constraints and dissipative particle dynamics (DPD,
-not implented yet), straightforward. With constraints, the coordinate
+not implemented yet), straightforward. With constraints, the coordinate
 update :eq:`eqn. %s <eqnsd1xupd>` is split into a normal leap-frog update
 and a :math:`\Delta \mathbf{v}`. After both of these
 updates the constraints are applied to coordinates and velocities.
 
+SD can be chosen as an integrator by :mdp-value:`integrator=sd`. The simulations
+are performed using the :ref:`mdrun <gmx mdrun>` program.
 When using SD as a thermostat, an appropriate value for :math:`\gamma`
 is e.g. 0.5 ps\ :math:`^{-1}`, since this results in a friction that is
 lower than the internal friction of water, while it still provides

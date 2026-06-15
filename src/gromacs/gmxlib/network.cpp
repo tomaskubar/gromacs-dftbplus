@@ -1,13 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
- * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2016,2017 by the GROMACS development team.
- * Copyright (c) 2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 1991- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -21,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -30,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 #include "gmxpre.h"
 
@@ -45,6 +41,10 @@
 #include <cstdarg>
 #include <cstdlib>
 #include <cstring>
+
+#include <algorithm>
+#include <filesystem>
+#include <limits>
 
 #include "gromacs/commandline/filenm.h"
 #include "gromacs/mdtypes/commrec.h"
@@ -60,165 +60,12 @@
 /* The source code in this file should be thread-safe.
       Please keep it that way. */
 
-CommrecHandle init_commrec(MPI_Comm communicator)
-{
-    CommrecHandle handle;
-    t_commrec*    cr;
-
-    snew(cr, 1);
-    handle.reset(cr);
-
-    int rankInCommunicator, sizeOfCommunicator;
-#if GMX_MPI
-#    if GMX_LIB_MPI
-    GMX_RELEASE_ASSERT(gmx_mpi_initialized(), "Must have initialized MPI before building commrec");
-#    endif
-    MPI_Comm_rank(communicator, &rankInCommunicator);
-    MPI_Comm_size(communicator, &sizeOfCommunicator);
-#else
-    GMX_UNUSED_VALUE(communicator);
-    rankInCommunicator = 0;
-    sizeOfCommunicator = 1;
-#endif
-
-    cr->mpiDefaultCommunicator    = communicator;
-    cr->sizeOfDefaultCommunicator = sizeOfCommunicator;
-    cr->rankInDefaultCommunicator = rankInCommunicator;
-
-    // For now, we want things to go horribly wrong if this is used too early...
-    // TODO: Remove when communicators are removed from commrec (#2395)
-    cr->nnodes           = -1;
-    cr->nodeid           = -1;
-    cr->sim_nodeid       = -1;
-    cr->mpi_comm_mysim   = MPI_COMM_NULL;
-    cr->mpi_comm_mygroup = MPI_COMM_NULL;
-
-    // TODO cr->duty should not be initialized here
-    cr->duty = (DUTY_PP | DUTY_PME);
-
-    return handle;
-}
-
-void done_commrec(t_commrec* cr)
-{
-    if (MASTER(cr))
-    {
-        if (nullptr != cr->dd)
-        {
-            // TODO: implement
-            // done_domdec(cr->dd);
-        }
-    }
-#if GMX_MPI
-    // TODO We need to be able to free communicators, but the
-    // structure of the commrec and domdec initialization code makes
-    // it hard to avoid both leaks and double frees.
-    bool mySimIsMyGroup = (cr->mpi_comm_mysim == cr->mpi_comm_mygroup);
-    if (cr->mpi_comm_mysim != MPI_COMM_NULL && cr->mpi_comm_mysim != MPI_COMM_WORLD)
-    {
-        // TODO see above
-        // MPI_Comm_free(&cr->mpi_comm_mysim);
-    }
-    if (!mySimIsMyGroup && cr->mpi_comm_mygroup != MPI_COMM_NULL && cr->mpi_comm_mygroup != MPI_COMM_WORLD)
-    {
-        // TODO see above
-        // MPI_Comm_free(&cr->mpi_comm_mygroup);
-    }
-#endif
-    sfree(cr);
-}
-
-void gmx_setup_nodecomm(FILE gmx_unused* fplog, t_commrec* cr)
-{
-    gmx_nodecomm_t* nc;
-
-    /* Many MPI implementations do not optimize MPI_Allreduce
-     * (and probably also other global communication calls)
-     * for multi-core nodes connected by a network.
-     * We can optimize such communication by using one MPI call
-     * within each node and one between the nodes.
-     * For MVAPICH2 and Intel MPI this reduces the time for
-     * the global_stat communication by 25%
-     * for 2x2-core 3 GHz Woodcrest connected by mixed DDR/SDR Infiniband.
-     * B. Hess, November 2007
-     */
-
-    nc = &cr->nc;
-
-    nc->bUse = FALSE;
-#if !GMX_THREAD_MPI
-#    if GMX_MPI
-    int n, rank;
-
-    // TODO PhysicalNodeCommunicator could be extended/used to handle
-    // the need for per-node per-group communicators.
-    MPI_Comm_size(cr->mpi_comm_mygroup, &n);
-    MPI_Comm_rank(cr->mpi_comm_mygroup, &rank);
-
-    int nodehash = gmx_physicalnode_id_hash();
-
-    if (debug)
-    {
-        fprintf(debug, "In gmx_setup_nodecomm: splitting communicator of size %d\n", n);
-    }
-
-
-    /* The intra-node communicator, split on node number */
-    MPI_Comm_split(cr->mpi_comm_mygroup, nodehash, rank, &nc->comm_intra);
-    MPI_Comm_rank(nc->comm_intra, &nc->rank_intra);
-    if (debug)
-    {
-        fprintf(debug, "In gmx_setup_nodecomm: node ID %d rank within node %d\n", rank, nc->rank_intra);
-    }
-    /* The inter-node communicator, split on rank_intra.
-     * We actually only need the one for rank=0,
-     * but it is easier to create them all.
-     */
-    MPI_Comm_split(cr->mpi_comm_mygroup, nc->rank_intra, rank, &nc->comm_inter);
-    /* Check if this really created two step communication */
-    int ng, ni;
-
-    MPI_Comm_size(nc->comm_inter, &ng);
-    MPI_Comm_size(nc->comm_intra, &ni);
-    if (debug)
-    {
-        fprintf(debug, "In gmx_setup_nodecomm: groups %d, my group size %d\n", ng, ni);
-    }
-
-    if (getenv("GMX_NO_NODECOMM") == nullptr && ((ng > 1 && ng < n) || (ni > 1 && ni < n)))
-    {
-        nc->bUse = TRUE;
-        if (fplog)
-        {
-            fprintf(fplog, "Using two step summing over %d groups of on average %.1f ranks\n\n", ng,
-                    (real)n / (real)ng);
-        }
-        if (nc->rank_intra > 0)
-        {
-            MPI_Comm_free(&nc->comm_inter);
-        }
-    }
-    else
-    {
-        /* One group or all processes in a separate group, use normal summing */
-        MPI_Comm_free(&nc->comm_inter);
-        MPI_Comm_free(&nc->comm_intra);
-        if (debug)
-        {
-            fprintf(debug,
-                    "In gmx_setup_nodecomm: not unsing separate inter- and intra-node "
-                    "communicators.\n");
-        }
-    }
-#    endif
-#else
-    /* tMPI runs only on a single node so just use the nodeid */
-    nc->rank_intra = cr->nodeid;
-#endif
-}
-
 void gmx_barrier(MPI_Comm gmx_unused communicator)
 {
+    if (communicator == MPI_COMM_NULL)
+    {
+        return;
+    }
 #if !GMX_MPI
     GMX_RELEASE_ASSERT(false, "Invalid call to gmx_barrier");
 #else
@@ -226,262 +73,37 @@ void gmx_barrier(MPI_Comm gmx_unused communicator)
 #endif
 }
 
-void gmx_bcast(int gmx_unused nbytes, void gmx_unused* b, MPI_Comm gmx_unused communicator)
+void gmx_bcast(std::size_t gmx_unused nbytes, void gmx_unused* b, MPI_Comm gmx_unused communicator)
 {
-#if !GMX_MPI
-    GMX_RELEASE_ASSERT(false, "Invalid call to gmx_bcast");
-#else
-    MPI_Bcast(b, nbytes, MPI_BYTE, 0, communicator);
+    // Without MPI we have a single rank, so bcast is a no-op
+#if GMX_MPI
+    constexpr std::size_t maxSignedInt = std::numeric_limits<int>::max();
+    char*                 bytePtr      = reinterpret_cast<char*>(b);
+    for (std::size_t written = 0, remain = nbytes; remain > 0;)
+    {
+        std::size_t chunk = std::min(remain, maxSignedInt);
+        MPI_Bcast(bytePtr + written, chunk, MPI_BYTE, 0, communicator);
+        written += chunk;
+        remain -= chunk;
+    }
 #endif
 }
 
-void gmx_sumd(int gmx_unused nr, double gmx_unused r[], const t_commrec gmx_unused* cr)
+const char* opt2fn_main(const char* opt, int nfile, const t_filenm fnm[], t_commrec* cr)
 {
-#if !GMX_MPI
-    GMX_RELEASE_ASSERT(false, "Invalid call to gmx_sumd");
-#else
-#    if MPI_IN_PLACE_EXISTS
-    if (cr->nc.bUse)
-    {
-        if (cr->nc.rank_intra == 0)
-        {
-            /* Use two step summing. */
-            MPI_Reduce(MPI_IN_PLACE, r, nr, MPI_DOUBLE, MPI_SUM, 0, cr->nc.comm_intra);
-            /* Sum the roots of the internal (intra) buffers. */
-            MPI_Allreduce(MPI_IN_PLACE, r, nr, MPI_DOUBLE, MPI_SUM, cr->nc.comm_inter);
-        }
-        else
-        {
-            /* This is here because of the silly MPI specification
-                that MPI_IN_PLACE should be put in sendbuf instead of recvbuf */
-            MPI_Reduce(r, nullptr, nr, MPI_DOUBLE, MPI_SUM, 0, cr->nc.comm_intra);
-        }
-        MPI_Bcast(r, nr, MPI_DOUBLE, 0, cr->nc.comm_intra);
-    }
-    else
-    {
-        MPI_Allreduce(MPI_IN_PLACE, r, nr, MPI_DOUBLE, MPI_SUM, cr->mpi_comm_mygroup);
-    }
-#    else
-    int i;
-
-    if (nr > cr->mpb->dbuf_alloc)
-    {
-        cr->mpb->dbuf_alloc = nr;
-        srenew(cr->mpb->dbuf, cr->mpb->dbuf_alloc);
-    }
-    if (cr->nc.bUse)
-    {
-        /* Use two step summing */
-        MPI_Allreduce(r, cr->mpb->dbuf, nr, MPI_DOUBLE, MPI_SUM, cr->nc.comm_intra);
-        if (cr->nc.rank_intra == 0)
-        {
-            /* Sum with the buffers reversed */
-            MPI_Allreduce(cr->mpb->dbuf, r, nr, MPI_DOUBLE, MPI_SUM, cr->nc.comm_inter);
-        }
-        MPI_Bcast(r, nr, MPI_DOUBLE, 0, cr->nc.comm_intra);
-    }
-    else
-    {
-        MPI_Allreduce(r, cr->mpb->dbuf, nr, MPI_DOUBLE, MPI_SUM, cr->mpi_comm_mygroup);
-        for (i = 0; i < nr; i++)
-        {
-            r[i] = cr->mpb->dbuf[i];
-        }
-    }
-#    endif
-#endif
-}
-
-void gmx_sumf(int gmx_unused nr, float gmx_unused r[], const t_commrec gmx_unused* cr)
-{
-#if !GMX_MPI
-    GMX_RELEASE_ASSERT(false, "Invalid call to gmx_sumf");
-#else
-#    if MPI_IN_PLACE_EXISTS
-    if (cr->nc.bUse)
-    {
-        /* Use two step summing.  */
-        if (cr->nc.rank_intra == 0)
-        {
-            MPI_Reduce(MPI_IN_PLACE, r, nr, MPI_FLOAT, MPI_SUM, 0, cr->nc.comm_intra);
-            /* Sum the roots of the internal (intra) buffers */
-            MPI_Allreduce(MPI_IN_PLACE, r, nr, MPI_FLOAT, MPI_SUM, cr->nc.comm_inter);
-        }
-        else
-        {
-            /* This is here because of the silly MPI specification
-                that MPI_IN_PLACE should be put in sendbuf instead of recvbuf */
-            MPI_Reduce(r, nullptr, nr, MPI_FLOAT, MPI_SUM, 0, cr->nc.comm_intra);
-        }
-        MPI_Bcast(r, nr, MPI_FLOAT, 0, cr->nc.comm_intra);
-    }
-    else
-    {
-        MPI_Allreduce(MPI_IN_PLACE, r, nr, MPI_FLOAT, MPI_SUM, cr->mpi_comm_mygroup);
-    }
-#    else
-    int i;
-
-    if (nr > cr->mpb->fbuf_alloc)
-    {
-        cr->mpb->fbuf_alloc = nr;
-        srenew(cr->mpb->fbuf, cr->mpb->fbuf_alloc);
-    }
-    if (cr->nc.bUse)
-    {
-        /* Use two step summing */
-        MPI_Allreduce(r, cr->mpb->fbuf, nr, MPI_FLOAT, MPI_SUM, cr->nc.comm_intra);
-        if (cr->nc.rank_intra == 0)
-        {
-            /* Sum with the buffers reversed */
-            MPI_Allreduce(cr->mpb->fbuf, r, nr, MPI_FLOAT, MPI_SUM, cr->nc.comm_inter);
-        }
-        MPI_Bcast(r, nr, MPI_FLOAT, 0, cr->nc.comm_intra);
-    }
-    else
-    {
-        MPI_Allreduce(r, cr->mpb->fbuf, nr, MPI_FLOAT, MPI_SUM, cr->mpi_comm_mygroup);
-        for (i = 0; i < nr; i++)
-        {
-            r[i] = cr->mpb->fbuf[i];
-        }
-    }
-#    endif
-#endif
-}
-
-void gmx_sumi(int gmx_unused nr, int gmx_unused r[], const t_commrec gmx_unused* cr)
-{
-#if !GMX_MPI
-    GMX_RELEASE_ASSERT(false, "Invalid call to gmx_sumi");
-#else
-#    if MPI_IN_PLACE_EXISTS
-    if (cr->nc.bUse)
-    {
-        /* Use two step summing */
-        if (cr->nc.rank_intra == 0)
-        {
-            MPI_Reduce(MPI_IN_PLACE, r, nr, MPI_INT, MPI_SUM, 0, cr->nc.comm_intra);
-            /* Sum with the buffers reversed */
-            MPI_Allreduce(MPI_IN_PLACE, r, nr, MPI_INT, MPI_SUM, cr->nc.comm_inter);
-        }
-        else
-        {
-            /* This is here because of the silly MPI specification
-                that MPI_IN_PLACE should be put in sendbuf instead of recvbuf */
-            MPI_Reduce(r, nullptr, nr, MPI_INT, MPI_SUM, 0, cr->nc.comm_intra);
-        }
-        MPI_Bcast(r, nr, MPI_INT, 0, cr->nc.comm_intra);
-    }
-    else
-    {
-        MPI_Allreduce(MPI_IN_PLACE, r, nr, MPI_INT, MPI_SUM, cr->mpi_comm_mygroup);
-    }
-#    else
-    int i;
-
-    if (nr > cr->mpb->ibuf_alloc)
-    {
-        cr->mpb->ibuf_alloc = nr;
-        srenew(cr->mpb->ibuf, cr->mpb->ibuf_alloc);
-    }
-    if (cr->nc.bUse)
-    {
-        /* Use two step summing */
-        MPI_Allreduce(r, cr->mpb->ibuf, nr, MPI_INT, MPI_SUM, cr->nc.comm_intra);
-        if (cr->nc.rank_intra == 0)
-        {
-            /* Sum with the buffers reversed */
-            MPI_Allreduce(cr->mpb->ibuf, r, nr, MPI_INT, MPI_SUM, cr->nc.comm_inter);
-        }
-        MPI_Bcast(r, nr, MPI_INT, 0, cr->nc.comm_intra);
-    }
-    else
-    {
-        MPI_Allreduce(r, cr->mpb->ibuf, nr, MPI_INT, MPI_SUM, cr->mpi_comm_mygroup);
-        for (i = 0; i < nr; i++)
-        {
-            r[i] = cr->mpb->ibuf[i];
-        }
-    }
-#    endif
-#endif
-}
-
-void gmx_sumli(int gmx_unused nr, int64_t gmx_unused r[], const t_commrec gmx_unused* cr)
-{
-#if !GMX_MPI
-    GMX_RELEASE_ASSERT(false, "Invalid call to gmx_sumli");
-#else
-#    if MPI_IN_PLACE_EXISTS
-    if (cr->nc.bUse)
-    {
-        /* Use two step summing */
-        if (cr->nc.rank_intra == 0)
-        {
-            MPI_Reduce(MPI_IN_PLACE, r, nr, MPI_INT64_T, MPI_SUM, 0, cr->nc.comm_intra);
-            /* Sum with the buffers reversed */
-            MPI_Allreduce(MPI_IN_PLACE, r, nr, MPI_INT64_T, MPI_SUM, cr->nc.comm_inter);
-        }
-        else
-        {
-            /* This is here because of the silly MPI specification
-                that MPI_IN_PLACE should be put in sendbuf instead of recvbuf */
-            MPI_Reduce(r, nullptr, nr, MPI_INT64_T, MPI_SUM, 0, cr->nc.comm_intra);
-        }
-        MPI_Bcast(r, nr, MPI_INT64_T, 0, cr->nc.comm_intra);
-    }
-    else
-    {
-        MPI_Allreduce(MPI_IN_PLACE, r, nr, MPI_INT64_T, MPI_SUM, cr->mpi_comm_mygroup);
-    }
-#    else
-    int i;
-
-    if (nr > cr->mpb->libuf_alloc)
-    {
-        cr->mpb->libuf_alloc = nr;
-        srenew(cr->mpb->libuf, cr->mpb->libuf_alloc);
-    }
-    if (cr->nc.bUse)
-    {
-        /* Use two step summing */
-        MPI_Allreduce(r, cr->mpb->libuf, nr, MPI_INT64_T, MPI_SUM, cr->nc.comm_intra);
-        if (cr->nc.rank_intra == 0)
-        {
-            /* Sum with the buffers reversed */
-            MPI_Allreduce(cr->mpb->libuf, r, nr, MPI_INT64_T, MPI_SUM, cr->nc.comm_inter);
-        }
-        MPI_Bcast(r, nr, MPI_INT64_T, 0, cr->nc.comm_intra);
-    }
-    else
-    {
-        MPI_Allreduce(r, cr->mpb->libuf, nr, MPI_INT64_T, MPI_SUM, cr->mpi_comm_mygroup);
-        for (i = 0; i < nr; i++)
-        {
-            r[i] = cr->mpb->libuf[i];
-        }
-    }
-#    endif
-#endif
-}
-
-const char* opt2fn_master(const char* opt, int nfile, const t_filenm fnm[], t_commrec* cr)
-{
-    return SIMMASTER(cr) ? opt2fn(opt, nfile, fnm) : nullptr;
+    return cr->isSimulationMainRank() ? opt2fn(opt, nfile, fnm) : nullptr;
 }
 
 void gmx_fatal_collective(int                    f_errno,
                           const char*            file,
                           int                    line,
                           MPI_Comm               comm,
-                          gmx_bool               bMaster,
+                          gmx_bool               bMain,
                           gmx_fmtstr const char* fmt,
                           ...)
 {
-    va_list  ap;
-    gmx_bool bFinalize;
+    std::va_list ap;
+    gmx_bool     bFinalize;
 #if GMX_MPI
     int result;
     /* Check if we are calling on all processes in MPI_COMM_WORLD */
@@ -494,6 +116,6 @@ void gmx_fatal_collective(int                    f_errno,
 #endif
 
     va_start(ap, fmt);
-    gmx_fatal_mpi_va(f_errno, file, line, bMaster, bFinalize, fmt, ap);
+    gmx_fatal_mpi_va(f_errno, file, line, bMain, bFinalize, fmt, ap);
     va_end(ap);
 }

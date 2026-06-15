@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2020- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 #ifndef GMX_GPU_UTILS_DEVICE_STREAM_H
 #define GMX_GPU_UTILS_DEVICE_STREAM_H
@@ -48,14 +47,18 @@
 
 #include "config.h"
 
+#include <memory>
+
 #if GMX_GPU_CUDA
 #    include <cuda_runtime.h>
-
+#elif GMX_GPU_HIP
+#    include <hip/hip_runtime.h>
 #elif GMX_GPU_OPENCL
 #    include "gromacs/gpu_utils/gmxopencl.h"
 #elif GMX_GPU_SYCL
 #    include "gromacs/gpu_utils/gmxsycl.h"
 #endif
+
 #include "gromacs/utility/classhelpers.h"
 
 struct DeviceInformation;
@@ -68,6 +71,8 @@ enum class DeviceStreamPriority : int
     High,
     //! Normal-priority stream
     Normal,
+    //! Low-priority stream
+    Low,
     //! Conventional termination of the enumeration
     Count
 };
@@ -77,7 +82,7 @@ enum class DeviceStreamPriority : int
  * The command stream (or command queue) is a sequence of operations that are executed
  * in they order they were issued. Several streams may co-exist to represent concurrency.
  * This class declares the interfaces, that are exposed to platform-agnostic code and
- * it should be implemented for each compute architecture (e.g. CUDA and OpenCL).
+ * it should be implemented for each compute architecture.
  *
  * Destruction of the \p DeviceStream calls the destructor of the underlying low-level
  * stream/queue, hence should only be called when the stream is no longer needed. To
@@ -91,13 +96,14 @@ class DeviceStream
 public:
     /*! \brief Construct and init.
      *
-     * \param[in] deviceContext  Device context (only used in OpenCL and SYCL).
-     * \param[in] priority       Stream priority: high or normal (only used in CUDA).
-     * \param[in] useTiming      If the timing should be enabled (only used in OpenCL and SYCL).
+     * \param[in] deviceContext  Device context.
+     * \param[in] priority       Stream priority: high or normal (ignored in OpenCL).
+     * \param[in] useTiming      If the timing should be enabled (ignored in CUDA).
      */
     DeviceStream(const DeviceContext& deviceContext, DeviceStreamPriority priority, bool useTiming);
 
     //! Destructor
+    // NOLINTNEXTLINE(performance-trivially-destructible)
     ~DeviceStream();
 
     /*! \brief Check if the underlying stream is valid.
@@ -116,27 +122,34 @@ public:
 
 private:
     cudaStream_t stream_ = nullptr;
+#elif GMX_GPU_HIP
+
+    //! Getter
+    hipStream_t stream() const;
+
+private:
+    hipStream_t stream_ = nullptr;
 #elif GMX_GPU_SYCL
 
     /*! \brief
-     * Getter for the underlying \c cl::sycl:queue object.
+     * Getter for the underlying \c sycl:queue object.
      *
      * Returns a copy instead of const-reference, because it's impossible to submit to or wait
-     * on a \c const cl::sycl::queue. SYCL standard guarantees that operating on copy is
+     * on a \c const sycl::queue. SYCL standard guarantees that operating on copy is
      * equivalent to operating on the original queue.
      *
      * \throws std::bad_optional_access if the stream is not valid.
      *
-     * \returns A copy of the internal \c cl::sycl:queue.
+     * \returns A copy of the internal \c sycl:queue.
      */
-    cl::sycl::queue stream() const { return cl::sycl::queue(stream_); }
+    sycl::queue stream() const { return sycl::queue(stream_); }
     //! Getter. Can throw std::bad_optional_access if the stream is not valid.
-    cl::sycl::queue& stream() { return stream_; }
+    sycl::queue& stream() { return stream_; }
     //! Synchronize the stream. Non-const version of \c ::synchronize() for SYCL that does not do unnecessary copying.
     void synchronize();
 
 private:
-    cl::sycl::queue stream_;
+    sycl::queue stream_;
 #elif GMX_GPU_OPENCL || defined DOXYGEN
 
     //! Getter
@@ -149,5 +162,13 @@ private:
 
     GMX_DISALLOW_COPY_MOVE_AND_ASSIGN(DeviceStream);
 };
+
+/*! \brief Helper function to flush the commands in OpenCL. No-op in other backends.
+ *
+ * Based on the section 5.13 of the OpenCL 1.2 spec (section 5.15 in OpenCL 3.0 spec), a flush is
+ * needed in the stream after marking an event in it in order to be able to sync with
+ * the event from another stream.
+ */
+void issueClFlushInStream(const DeviceStream& deviceStream);
 
 #endif // GMX_GPU_UTILS_DEVICE_STREAM_H

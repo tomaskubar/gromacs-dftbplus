@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2015,2016,2017,2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2015- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 
 /*! \internal \file
@@ -47,10 +46,15 @@
 #include "correlationtensor.h"
 
 #include <cassert>
+#include <climits>
+#include <cmath>
 
 #include "gromacs/math/functions.h"
 #include "gromacs/math/utilities.h"
+#include "gromacs/utility/fixedcapacityvector.h"
 #include "gromacs/utility/gmxassert.h"
+
+#include "dimparams.h"
 
 namespace gmx
 {
@@ -76,6 +80,50 @@ int getBlockIndex(double blockLength, double currentAccumulatedLength)
 
 } // namespace
 
+double getSqrtDeterminant(gmx::ArrayRef<const double> correlationIntegral)
+{
+    double det;
+
+    switch (correlationIntegral.size())
+    {
+        case 1:
+            /* 1-dimensional tensor: [a] */
+            det = correlationIntegral[0];
+            break;
+        case 3:
+        {
+            /* 2-dimensional tensor: [a b; b c] */
+            double a = correlationIntegral[0];
+            double b = correlationIntegral[1];
+            double c = correlationIntegral[2];
+
+            det = a * c - b * b;
+        }
+        break;
+        case 6:
+        {
+            /* 3-dimensional tensor: [a b d; b c e; d e f] */
+            double a = correlationIntegral[0];
+            double b = correlationIntegral[1];
+            double c = correlationIntegral[2];
+            double d = correlationIntegral[3];
+            double e = correlationIntegral[4];
+            double f = correlationIntegral[5];
+
+            det = a * c * f + 2 * b * d * e - d * c * d - b * b * f - a * e * e;
+        }
+        break;
+        default:
+            det = 0;
+            /* meh */
+            break;
+    }
+    /* Returns 0 if no data, not supported number of dims
+       or not enough data to give a positive determinant (as it should be) */
+    return det > 0 ? std::sqrt(det) : 0;
+}
+
+
 double CorrelationTensor::getTimeIntegral(int tensorIndex, double dtSample) const
 {
     const CorrelationBlockData& blockData           = blockDataList_[0];
@@ -89,48 +137,15 @@ double CorrelationTensor::getTimeIntegral(int tensorIndex, double dtSample) cons
     return 0.5 * correlationIntegral * dtSample;
 }
 
-double CorrelationTensor::getVolumeElement(double dtSample) const
+double CorrelationTensor::getVolumeElement(const double dtSample) const
 {
-    double det;
-
-    switch (blockDataList_[0].correlationIntegral().size())
+    gmx::FixedCapacityVector<double, (c_biasMaxNumDim * (c_biasMaxNumDim - 1)) / 2> correlationIntegral;
+    const size_t correlationIntegralSize = blockDataList_[0].correlationIntegral().size();
+    for (size_t i = 0; i < correlationIntegralSize; i++)
     {
-        case 1:
-            /* 1-dimensional tensor: [a] */
-            det = getTimeIntegral(0, dtSample);
-            break;
-        case 3:
-        {
-            /* 2-dimensional tensor: [a b; b c] */
-            double a = getTimeIntegral(0, dtSample);
-            double b = getTimeIntegral(1, dtSample);
-            double c = getTimeIntegral(2, dtSample);
-
-            det = a * c - b * b;
-        }
-        break;
-        case 6:
-        {
-            /* 3-dimensional tensor: [a b d; b c e; d e f] */
-            double a = getTimeIntegral(0, dtSample);
-            double b = getTimeIntegral(1, dtSample);
-            double c = getTimeIntegral(2, dtSample);
-            double d = getTimeIntegral(3, dtSample);
-            double e = getTimeIntegral(4, dtSample);
-            double f = getTimeIntegral(5, dtSample);
-
-            det = a * c * f + 2 * b * d * e - d * c * d - b * b * f - a * e * e;
-        }
-        break;
-        default:
-            det = 0;
-            /* meh */
-            break;
+        correlationIntegral.push_back(getTimeIntegral(i, dtSample));
     }
-
-    /* Returns 0 if no data, not supported number of dims
-       or not enough data to give a positive determinant (as it should be) */
-    return det > 0 ? std::sqrt(det) : 0;
+    return getSqrtDeterminant(correlationIntegral);
 }
 
 void CorrelationTensor::doubleBlockLengths()
@@ -276,7 +291,7 @@ CorrelationTensor::CorrelationTensor(int numDim, int numBlockData, double blockL
 {
     unsigned int scaling = 1;
 
-    GMX_RELEASE_ASSERT(numBlockData < static_cast<int>(sizeof(scaling) * 8),
+    GMX_RELEASE_ASSERT(numBlockData < static_cast<int>(sizeof(scaling) * CHAR_BIT),
                        "numBlockData should we smaller than the number of bits in scaling");
 
     for (int n = 0; n < numBlockData; n++)

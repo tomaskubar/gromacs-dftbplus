@@ -1,11 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2011,2012,2013,2014,2015 by the GROMACS development team.
- * Copyright (c) 2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2011- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -19,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -28,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \internal \file
  * \brief
@@ -50,20 +48,26 @@
 
 #include "gromacs/analysisdata/analysisdata.h"
 
-#include <gmock/gmock.h>
+#include <string>
+
 #include <gtest/gtest.h>
 
+#include "gromacs/analysisdata/datamodule.h"
 #include "gromacs/analysisdata/paralleloptions.h"
-#include "gromacs/utility/exceptions.h"
-
 #include "gromacs/analysisdata/tests/datatest.h"
 #include "gromacs/analysisdata/tests/mock_datamodule.h"
+#include "gromacs/utility/exceptions.h"
+
 #include "testutils/testasserts.h"
 
 using gmx::test::AnalysisDataTestInput;
 using gmx::test::MockAnalysisDataModule;
 using gmx::test::MockAnalysisDataModulePointer;
 
+namespace gmx
+{
+namespace test
+{
 namespace
 {
 
@@ -155,13 +159,8 @@ class SimpleInputData
 public:
     static const AnalysisDataTestInput& get()
     {
-#    ifndef STATIC_ANON_NAMESPACE_BUG
         static SimpleInputData singleton;
         return singleton.data_;
-#    else
-        static SimpleInputData singleton_analysisdata;
-        return singleton_analysisdata.data_;
-#    endif
     }
 
     SimpleInputData() : data_(1, false)
@@ -182,13 +181,8 @@ class DataSetsInputData
 public:
     static const AnalysisDataTestInput& get()
     {
-#    ifndef STATIC_ANON_NAMESPACE_BUG
         static DataSetsInputData singleton;
         return singleton.data_;
-#    else
-        static DataSetsInputData singleton_analysisdata;
-        return singleton_analysisdata.data_;
-#    endif
     }
 
     DataSetsInputData() : data_(2, false)
@@ -217,13 +211,8 @@ class MultipointInputData
 public:
     static const AnalysisDataTestInput& get()
     {
-#    ifndef STATIC_ANON_NAMESPACE_BUG
         static MultipointInputData singleton;
         return singleton.data_;
-#    else
-        static MultipointInputData singleton_analysisdata;
-        return singleton_analysisdata.data_;
-#    endif
     }
 
     MultipointInputData() : data_(1, true)
@@ -254,13 +243,8 @@ class MultipointDataSetsInputData
 public:
     static const AnalysisDataTestInput& get()
     {
-#    ifndef STATIC_ANON_NAMESPACE_BUG
         static MultipointDataSetsInputData singleton;
         return singleton.data_;
-#    else
-        static MultipointDataSetsInputData singleton_analysisdata;
-        return singleton_analysisdata.data_;
-#    endif
     }
 
     MultipointDataSetsInputData() : data_(2, true)
@@ -334,7 +318,7 @@ typedef AnalysisDataCommonTest<SimpleInputData> AnalysisDataSimpleTest;
 typedef AnalysisDataCommonTest<MultipointInputData> AnalysisDataMultipointTest;
 //! List of input data types for tests applicable to all types of data.
 typedef ::testing::Types<SimpleInputData, DataSetsInputData, MultipointInputData, MultipointDataSetsInputData> AllInputDataTypes;
-TYPED_TEST_CASE(AnalysisDataCommonTest, AllInputDataTypes);
+TYPED_TEST_SUITE(AnalysisDataCommonTest, AllInputDataTypes);
 
 /*
  * Tests that data is forwarded correctly to modules using two independent
@@ -452,3 +436,5 @@ TEST(DISABLED_AnalysisDataCommonTest, GenericTests)
 #endif
 
 } // namespace
+} // namespace test
+} // namespace gmx

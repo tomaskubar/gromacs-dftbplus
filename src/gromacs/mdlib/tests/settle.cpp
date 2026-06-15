@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2014,2015,2016,2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2014- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \internal \file
  * \brief Tests for SETTLE constraints
@@ -75,24 +74,31 @@
 #include "config.h"
 
 #include <algorithm>
+#include <memory>
+#include <string>
 #include <unordered_map>
 #include <vector>
 
 #include <gtest/gtest.h>
 
+#include "gromacs/gpu_utils/capabilities.h"
 #include "gromacs/hardware/device_management.h"
-#include "gromacs/math/vec.h"
-#include "gromacs/math/vectypes.h"
+#include "gromacs/math/paddedvector.h"
+#include "gromacs/mdlib/tests/watersystem.h"
+#include "gromacs/mdtypes/md_enums.h"
 #include "gromacs/mdtypes/mdatom.h"
 #include "gromacs/pbcutil/pbc.h"
 #include "gromacs/topology/idef.h"
 #include "gromacs/topology/ifunc.h"
 #include "gromacs/topology/topology.h"
+#include "gromacs/utility/real.h"
 #include "gromacs/utility/stringutil.h"
 #include "gromacs/utility/unique_cptr.h"
+#include "gromacs/utility/vec.h"
+#include "gromacs/utility/vectypes.h"
 
-#include "gromacs/mdlib/tests/watersystem.h"
 #include "testutils/refdata.h"
+#include "testutils/test_device.h"
 #include "testutils/test_hardware_environment.h"
 #include "testutils/testasserts.h"
 
@@ -153,7 +159,7 @@ public:
     /*! \brief Test setup function.
      *
      * Setting up the PBCs and algorithms. Note, that corresponding string keywords
-     * have to be explicitly specified when parameters are initialied.
+     * have to be explicitly specified when parameters are initialized.
      *
      */
     SettleTest() : checker_(refData_.rootChecker())
@@ -312,8 +318,8 @@ TEST_P(SettleTest, SatisfiesConstraints)
     std::vector<std::unique_ptr<ISettleTestRunner>> runners;
     // Add runners for CPU version
     runners.emplace_back(std::make_unique<SettleHostTestRunner>());
-    // If using CUDA, add runners for the GPU version for each available GPU
-    if (GMX_GPU_CUDA)
+    // If supported, add runners for the GPU version for each available GPU
+    if (GpuConfigurationCapabilities::Update)
     {
         for (const auto& testDevice : getTestHardwareEnvironment()->getTestDeviceList())
         {
@@ -335,8 +341,11 @@ TEST_P(SettleTest, SatisfiesConstraints)
         // being tested, to help make failing tests comprehensible.
         std::string testDescription = formatString(
                 "Testing %s with %d SETTLEs, %s, %svelocities and %scalculating the virial.",
-                runner->hardwareDescription().c_str(), numSettles, pbcName.c_str(),
-                updateVelocities ? "with " : "without ", calcVirial ? "" : "not ");
+                runner->hardwareDescription().c_str(),
+                numSettles,
+                pbcName.c_str(),
+                updateVelocities ? "with " : "without ",
+                calcVirial ? "" : "not ");
 
         SCOPED_TRACE(testDescription);
 
@@ -355,7 +364,7 @@ TEST_P(SettleTest, SatisfiesConstraints)
         // SETTLE produces constrained coordinates consistent with
         // sensible sampling needs to be tested at a much higher level.
         // TODO: Re-evaluate the tolerances.
-        real                   dOH       = testData->dOH_;
+        real dOH = testData->dOH_;
         FloatingPointTolerance tolerance = relativeToleranceAsPrecisionDependentUlp(dOH * dOH, 80, 380);
         FloatingPointTolerance toleranceVirial = absoluteTolerance(0.000001);
 
@@ -385,7 +394,7 @@ TEST_P(SettleTest, SatisfiesConstraints)
 // Run test on pre-determined set of combinations for test parameters, which include the numbers of SETTLEs (water
 // molecules), whether or not velocities are updated and virial contribution is computed, was the PBC enabled.
 // The test will cycle through all available runners, including CPU and, if applicable, GPU implementations of SETTLE.
-INSTANTIATE_TEST_CASE_P(WithParameters, SettleTest, ::testing::ValuesIn(parametersSets));
+INSTANTIATE_TEST_SUITE_P(WithParameters, SettleTest, ::testing::ValuesIn(parametersSets));
 
 } // namespace
 } // namespace test

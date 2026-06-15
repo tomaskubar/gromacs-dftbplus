@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2020- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \internal \file
  * \brief
@@ -44,13 +43,24 @@
 #include "gromacs/mdtypes/forcebuffers.h"
 
 #include <array>
+#include <string>
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
+#include "gromacs/gpu_utils/hostallocator.h"
+#include "gromacs/math/arrayrefwithpadding.h"
+#include "gromacs/utility/arrayref.h"
+#include "gromacs/utility/basedefinitions.h"
+#include "gromacs/utility/vectypes.h"
+
 #include "testutils/testasserts.h"
 
 namespace gmx
+{
+namespace test
+{
+namespace
 {
 
 const std::array<RVec, 2> c_forces = { { { 0.5, 0.1, 1.2 }, { -2.1, 0.2, 0.3 } } };
@@ -101,18 +111,18 @@ TEST(ForceBuffers, CopyWorks)
 
     forceBuffers.resize(2);
     auto  force = forceBuffers.view().force();
-    index i     = 0;
+    Index idx   = 0;
     for (RVec& v : force)
     {
-        v = c_forces[i];
-        i++;
+        v = c_forces[idx];
+        idx++;
     }
 
     ForceBuffers forceBuffersCopy;
     forceBuffersCopy = forceBuffers;
     auto forceCopy   = forceBuffersCopy.view().force();
     EXPECT_EQ(forceBuffersCopy.view().force().size(), 2);
-    for (index i = 0; i < ssize(forceCopy); i++)
+    for (Index i = 0; i < ssize(forceCopy); i++)
     {
         for (int d = 0; d < DIM; d++)
         {
@@ -130,4 +140,6 @@ TEST(ForceBuffers, CopyDoesNotPin)
     EXPECT_EQ(forceBuffersCopy.pinningPolicy(), PinningPolicy::CannotBePinned);
 }
 
+} // namespace
+} // namespace test
 } // namespace gmx

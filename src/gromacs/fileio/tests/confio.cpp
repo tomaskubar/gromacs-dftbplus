@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2015,2016,2017,2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2015- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \internal \file
  * \brief
@@ -43,6 +42,7 @@
 
 #include "gromacs/fileio/confio.h"
 
+#include <filesystem>
 #include <iostream>
 #include <string>
 #include <vector>
@@ -50,14 +50,16 @@
 #include <gtest/gtest.h>
 
 #include "gromacs/fileio/filetypes.h"
-#include "gromacs/math/vec.h"
-#include "gromacs/math/vectypes.h"
+#include "gromacs/mdtypes/md_enums.h"
 #include "gromacs/pbcutil/pbc.h"
 #include "gromacs/topology/atoms.h"
 #include "gromacs/topology/symtab.h"
 #include "gromacs/topology/topology.h"
+#include "gromacs/utility/basedefinitions.h"
 #include "gromacs/utility/cstringutil.h"
 #include "gromacs/utility/smalloc.h"
+#include "gromacs/utility/vec.h"
+#include "gromacs/utility/vectypes.h"
 
 #include "testutils/stringtest.h"
 #include "testutils/testfilemanager.h"
@@ -86,8 +88,8 @@ public:
         testTop_ = nullptr;
         testX_   = nullptr;
         clear_mat(testBox_);
-        referenceFilename_ = fileManager_.getTemporaryFilePath(getFileSuffix("ref"));
-        testFilename_      = fileManager_.getTemporaryFilePath(getFileSuffix("test"));
+        referenceFilename_ = fileManager_.getTemporaryFilePath(getFileSuffix("ref")).string();
+        testFilename_      = fileManager_.getTemporaryFilePath(getFileSuffix("test")).string();
     }
     ~StructureIORoundtripTest() override
     {
@@ -103,8 +105,13 @@ public:
 
     void writeReferenceFile()
     {
-        write_sto_conf(referenceFilename_.c_str(), *refTop_->name, &refTop_->atoms,
-                       as_rvec_array(refX_.data()), nullptr, PbcType::Unset, refBox_);
+        write_sto_conf(referenceFilename_.c_str(),
+                       *refTop_->name,
+                       &refTop_->atoms,
+                       as_rvec_array(refX_.data()),
+                       nullptr,
+                       PbcType::Unset,
+                       refBox_);
     }
 
     void readReferenceFileTps()
@@ -121,13 +128,13 @@ public:
 
     void writeTestFileAndTest()
     {
-        write_sto_conf(testFilename_.c_str(), *testTop_->name, &testTop_->atoms, testX_, nullptr,
-                       PbcType::Unset, testBox_);
+        write_sto_conf(
+                testFilename_.c_str(), *testTop_->name, &testTop_->atoms, testX_, nullptr, PbcType::Unset, testBox_);
         testFilesEqual(referenceFilename_, testFilename_);
     }
 
 private:
-    std::string getFileSuffix(const char* type)
+    static std::string getFileSuffix(const char* type)
     {
         return std::string(type) + "." + ftp2ext(GetParam());
     }
@@ -201,8 +208,29 @@ TEST_P(StructureIORoundtripTest, ReadWriteTpsConf)
     writeTestFileAndTest();
 }
 
-INSTANTIATE_TEST_CASE_P(WithDifferentFormats,
-                        StructureIORoundtripTest,
-                        ::testing::Values(efGRO, efG96, efPDB, efESP));
+INSTANTIATE_TEST_SUITE_P(WithDifferentFormats,
+                         StructureIORoundtripTest,
+                         ::testing::Values(efGRO, efG96, efPDB, efESP));
+
+
+TEST(StructureIOTest, ReadTpsConfRetainsChainids)
+{
+    std::filesystem::path simDB = gmx::test::TestFileManager::getTestSimulationDatabaseDirectory();
+
+    t_topology* top;
+    matrix      box;
+
+    snew(top, 1);
+    read_tps_conf(simDB.append("lysozyme.pdb"), top, nullptr, nullptr, nullptr, box, false);
+
+    const t_atoms& atoms = top->atoms;
+
+    ASSERT_FALSE(atoms.resinfo == nullptr);
+
+    EXPECT_EQ(atoms.resinfo[0].chainid, 'B');
+
+    done_top(top);
+    sfree(top);
+}
 
 } // namespace

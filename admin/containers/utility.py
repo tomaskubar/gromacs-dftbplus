@@ -1,10 +1,9 @@
 #
 # This file is part of the GROMACS molecular simulation package.
 #
-# Copyright (c) 2020, by the GROMACS development team, led by
-# Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
-# and including many others, as listed in the AUTHORS file in the
-# top-level source directory and at http://www.gromacs.org.
+# Copyright 2020- The GROMACS Authors
+# and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+# Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
 #
 # GROMACS is free software; you can redistribute it and/or
 # modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
 #
 # You should have received a copy of the GNU Lesser General Public
 # License along with GROMACS; if not, see
-# http://www.gnu.org/licenses, or write to the Free Software Foundation,
+# https://www.gnu.org/licenses, or write to the Free Software Foundation,
 # Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
 #
 # If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
 # consider code for inclusion in the official distribution, but
 # derived work must not be called official GROMACS. Details are found
 # in the README & COPYING files - if they are missing, get the
-# official version at http://www.gromacs.org.
+# official version at https://www.gromacs.org.
 #
 # To help us fund GROMACS development, we humbly ask that you cite
-# the research papers on the package. Check out http://www.gromacs.org.
+# the research papers on the package. Check out https://www.gromacs.org.
 
 """A utility module to help manage the matrix of configurations for CI testing and build containers.
 
@@ -41,7 +40,7 @@ CI pipeline jobs.
 Example::
 
     $ python3 -m utility --llvm --doxygen
-    gromacs/ci-ubuntu-18.04-llvm-7-docs
+    gromacs/ci-ubuntu-24.04-llvm-14-docs
 
 See Also:
     :file:`buildall.sh`
@@ -69,13 +68,16 @@ Authors:
     * Eric Irrgang <ericirrgang@gmail.com>
     * Joe Jordan <e.jjordan12@gmail.com>
     * Mark Abraham <mark.j.abraham@gmail.com>
+    * Gaurav Garg <gaugarg@nvidia.com>
 
 """
 
 import argparse
 
 
-parser = argparse.ArgumentParser(description='GROMACS CI image slug options.', add_help=False)
+parser = argparse.ArgumentParser(
+    description="GROMACS CI image slug options.", add_help=False
+)
 """A parent parser for tools referencing image parameters.
 
 This argparse parser is defined for convenience and may be used to partially initialize
@@ -86,54 +88,219 @@ parsers for tools.
     Instead, inherit from it with the *parents* argument to :py:class:`argparse.ArgumentParser`
 """
 
-parser.add_argument('--cmake', nargs='*', type=str, default=['3.13.0', '3.15.7', '3.17.2'],
-                    help='Selection of CMake version to provide to base image')
+parser.add_argument(
+    "--cmake",
+    nargs="*",
+    type=str,
+    default=["3.28.0", "3.30.3", "4.0.5"],
+    help="Selection of CMake version to provide to base image. (default: %(default)s)",
+)
 
 compiler_group = parser.add_mutually_exclusive_group()
-compiler_group.add_argument('--gcc', type=int, nargs='?', const=7, default=7,
-                            help='Select GNU compiler tool chain. (Default) '
-                                 'Some checking is implemented to avoid incompatible combinations')
-compiler_group.add_argument('--llvm', type=str, nargs='?', const='7', default=None,
-                            help='Select LLVM compiler tool chain. '
-                                 'Some checking is implemented to avoid incompatible combinations')
-compiler_group.add_argument('--icc', type=int, nargs='?', const=19, default=None,
-                            help='Select Intel compiler tool chain. '
-                                 'Some checking is implemented to avoid incompatible combinations')
-# TODO currently the installation merely gets the latest beta version of oneAPI,
-# not a specific version. GROMACS probably doesn't need to address that until
-# oneAPI makes an official release. Also, the resulting container is a mix
-# of packages with different betaXY version numbers, which hopefully works and
-# is what Intel intends...
-compiler_group.add_argument('--oneapi', type=str, nargs='?', const="2021.1-beta09", default=None,
-                            help='Select Intel oneAPI package version.')
+compiler_group.add_argument(
+    "--gcc",
+    type=int,
+    default=11,
+    help="Select GNU compiler tool chain. (default: %(default)s) "
+    "Some checking is implemented to avoid incompatible combinations",
+)
+compiler_group.add_argument(
+    "--llvm",
+    type=str,
+    nargs="?",
+    const="14",
+    default=None,
+    help="Select LLVM compiler tool chain. "
+    "Some checking is implemented to avoid incompatible combinations",
+)
+# Note that oneAPI packages don't bump their version numbers every
+# version of the umbrella release, so we may need to specify such
+# package versions from time to time.
+compiler_group.add_argument(
+    "--oneapi",
+    type=str,
+    nargs="?",
+    const="2024.0.0",
+    default=None,
+    help="Select Intel oneAPI package version.",
+)
+compiler_group.add_argument(
+    "--intel-llvm",
+    type=str,
+    nargs="?",
+    const="2022-06",
+    default=None,
+    help="Select Intel LLVM release (GitHub tag).",
+)
 
 linux_group = parser.add_mutually_exclusive_group()
-# Ubuntu 20+ is not yet tested. See issue #3680
-linux_group.add_argument('--ubuntu', type=str, nargs='?', const='18.04', default='18.04',
-                         help='Select Ubuntu Linux base image. (default: ubuntu 18.04)')
-linux_group.add_argument('--centos', type=str, nargs='?', const='7', default=None,
-                         help='Select Centos Linux base image.')
+linux_group.add_argument(
+    "--ubuntu",
+    type=str,
+    nargs="?",
+    const="24.04",
+    default="24.04",
+    help="Select Ubuntu Linux base image. (default: %(default)s)",
+)
+linux_group.add_argument(
+    "--centos",
+    type=str,
+    nargs="?",
+    const="7",
+    default=None,
+    help="Select Centos Linux base image.",
+)
 
-parser.add_argument('--cuda', type=str, nargs='?', const='10.2', default=None,
-                    help='Select a CUDA version for a base Linux image from NVIDIA.')
+parser.add_argument(
+    "--cuda",
+    type=str,
+    nargs="?",
+    const="12.1",
+    default=None,
+    help="Select a CUDA version for a base Linux image from NVIDIA.",
+)
 
-parser.add_argument('--mpi', type=str, nargs='?', const='openmpi', default=None,
-                    help='Enable MPI (default disabled) and optionally select distribution (default: openmpi)')
+parser.add_argument(
+    "--mpi",
+    type=str,
+    nargs="?",
+    const="openmpi",
+    default=None,
+    help="Enable MPI (default disabled) and optionally select distribution (default: openmpi)",
+)
 
-parser.add_argument('--tsan', type=str, nargs='?', const='llvm', default=None,
-                    help='Build special compiler versions with TSAN OpenMP support')
+parser.add_argument(
+    "--tsan",
+    type=str,
+    nargs="?",
+    const="llvm",
+    default=None,
+    help="Build special compiler versions with TSAN OpenMP support",
+)
 
-parser.add_argument('--clfft', type=str, nargs='?', const='master', default=None,
-                    help='Add external clFFT libraries to the build image')
+parser.add_argument(
+    "--adaptivecpp",
+    type=str,
+    nargs="?",
+    default=None,
+    help="Select AdaptiveCpp repository tag/commit/branch.",
+)
 
-parser.add_argument('--doxygen', type=str, nargs='?', const='1.8.5', default=None,
-                    help='Add doxygen environment for documentation builds. Also adds other requirements needed for final docs images.')
+parser.add_argument(
+    "--rocm",
+    type=str,
+    nargs="?",
+    const="3.5.1",
+    default=None,
+    help="Select AMD compute engine version.",
+)
+
+parser.add_argument(
+    "--intel-compute-runtime",
+    action="store_true",
+    default=False,
+    help="Include Intel Compute Runtime.",
+)
+
+parser.add_argument(
+    "--oneapi-plugin-nvidia",
+    action="store_true",
+    default=False,
+    help="Install Codeplay oneAPI NVIDIA plugin.",
+)
+
+parser.add_argument(
+    "--oneapi-plugin-amd",
+    action="store_true",
+    default=False,
+    help="Install Codeplay oneAPI AMD plugin.",
+)
+
+parser.add_argument(
+    "--clfft",
+    type=str,
+    nargs="?",
+    const="master",
+    default=None,
+    help="Add external clFFT libraries to the build image",
+)
+
+parser.add_argument(
+    "--heffte",
+    type=str,
+    nargs="?",
+    default=None,
+    help="Select heffte repository tag/commit/branch.",
+)
+
+parser.add_argument(
+    "--nvhpcsdk",
+    type=str,
+    nargs="?",
+    default=None,
+    help="Select NVIDIA HPC SDK version.",
+)
+
+parser.add_argument(
+    "--doxygen",
+    type=str,
+    nargs="?",
+    const="1.8.5",
+    default=None,
+    help="Add doxygen environment for documentation builds. Also adds other requirements needed for final docs images.",
+)
+
+parser.add_argument(
+    "--cp2k",
+    type=str,
+    nargs="?",
+    const="9.1",
+    default=None,
+    help="Add build environment for CP2K QM/MM support",
+)
+
+parser.add_argument(
+    "--hdf5",
+    action="store_true",
+    default=False,
+    help="Install an HDF5 library.",
+)
+
+parser.add_argument(
+    "--plumed",
+    action="store_true",
+    default=False,
+    help="Install PLUMED library.",
+)
+
+parser.add_argument(
+    "--cross",
+    type=str,
+    nargs="?",
+    const="aarch64",
+    default=None,
+    choices=["aarch64", "riscv64"],
+    help="Add cross-compilation support for the specified architecture with QEMU emulation",
+)
+
+parser.add_argument(
+    "--libtorch",
+    type=str,
+    nargs="?",
+    const="2.9.0",
+    default=None,
+    help="Add build environment for LibTorch support",
+)
 
 # Supported Python versions for maintained branches.
-_python_versions = ['3.6.10', '3.7.7', '3.8.2']
-parser.add_argument('--venvs', nargs='*', type=str, default=_python_versions,
-                    help='List of Python versions ("major.minor.patch") for which to install venvs. '
-                         'Default: {}'.format(' '.join(_python_versions)))
+_python_versions = ["3.9.13", "3.12.5"]
+parser.add_argument(
+    "--venvs",
+    nargs="*",
+    type=str,
+    default=_python_versions,
+    help='List of Python versions ("major.minor.patch") for which to install venvs. (default: %(default)s)',
+)
 
 
 def image_name(configuration: argparse.Namespace) -> str:
@@ -150,37 +317,47 @@ def image_name(configuration: argparse.Namespace) -> str:
 
     """
     elements = []
-    for distro in ('centos', 'ubuntu'):
+    for distro in ("centos", "ubuntu"):
         version = getattr(configuration, distro, None)
         if version is not None:
-            elements.append(distro + '-' + version)
+            elements.append(distro + "-" + version)
             break
-    for compiler in ('icc', 'llvm', 'gcc'):
+    for compiler in ("llvm", "intel_llvm", "oneapi", "gcc"):
         version = getattr(configuration, compiler, None)
         if version is not None:
-            elements.append(compiler + '-' + str(version).split('.')[0])
+            version = (
+                str(version).split(".")[0] if compiler != "oneapi" else str(version)
+            )
+            elements.append(compiler + "-" + version)
             break
-    for gpusdk in ('cuda',):
+    for gpusdk in ("cuda", "adaptivecpp"):
         version = getattr(configuration, gpusdk, None)
         if version is not None:
-            elements.append(gpusdk + '-' + version)
-    if configuration.oneapi is not None:
-        elements.append('oneapi-' + configuration.oneapi)
+            elements.append(gpusdk + "-" + version)
+    if configuration.intel_compute_runtime:
+        elements.append("intel-compute-runtime")
+    if configuration.rocm is not None:
+        elements.append("rocm-" + configuration.rocm)
+    if configuration.cp2k is not None:
+        elements.append("cp2k-" + configuration.cp2k)
 
     # Check for special cases
     # The following attribute keys indicate the image is built for the named
     # special use case.
-    cases = {'doxygen': 'docs',
-             'tsan': 'tsan'}
+    cases = {"doxygen": "docs", "tsan": "tsan"}
     for attr in cases:
         value = getattr(configuration, attr, None)
         if value is not None:
             elements.append(cases[attr])
-    slug = '-'.join(elements)
+
+    # Add cross-compilation target if specified
+    if configuration.cross is not None:
+        elements.append(f"cross-{configuration.cross}")
+    slug = "-".join(elements)
     # we are using the GitLab container registry to store the images
     # to get around issues with pulling them repeatedly from DockerHub
     # and running into the image pull limitation there.
-    return 'registry.gitlab.com/gromacs/gromacs/ci-' + slug
+    return "registry.gitlab.com/gromacs/gromacs/ci-" + slug
 
 
 if __name__ == "__main__":

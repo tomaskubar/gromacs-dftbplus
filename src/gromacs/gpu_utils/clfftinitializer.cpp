@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2018- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \internal \file
  * \brief
@@ -45,12 +44,13 @@
 
 #include "config.h"
 
+#include <mutex>
+
 #include "gromacs/utility/basedefinitions.h"
 #include "gromacs/utility/exceptions.h"
-#include "gromacs/utility/mutex.h"
 #include "gromacs/utility/stringutil.h"
 
-#if GMX_GPU_OPENCL
+#if GMX_GPU_OPENCL && GMX_GPU_FFT_CLFFT
 #    include <clFFT.h>
 #endif
 
@@ -60,7 +60,7 @@ namespace gmx
 namespace
 {
 
-#if GMX_GPU_OPENCL
+#if GMX_GPU_OPENCL && GMX_GPU_FFT_CLFFT
 /*! \brief The clFFT library may only be initialized once per process,
  * and this is orchestrated by this shared value and mutex.
  *
@@ -68,7 +68,7 @@ namespace
  * initialize it more than once. */
 //! @{
 bool       g_clfftInitialized = false;
-gmx::Mutex g_clfftMutex;
+std::mutex g_clfftMutex;
 //! @}
 #endif
 
@@ -76,8 +76,8 @@ gmx::Mutex g_clfftMutex;
 
 ClfftInitializer::ClfftInitializer()
 {
-#if GMX_GPU_OPENCL
-    gmx::lock_guard<gmx::Mutex> guard(g_clfftMutex);
+#if GMX_GPU_OPENCL && GMX_GPU_FFT_CLFFT
+    std::lock_guard<std::mutex> guard(g_clfftMutex);
     clfftSetupData              fftSetup;
     int                         initErrorCode = clfftInitSetupData(&fftSetup);
     if (initErrorCode != 0)
@@ -97,8 +97,8 @@ ClfftInitializer::ClfftInitializer()
 
 ClfftInitializer::~ClfftInitializer()
 {
-#if GMX_GPU_OPENCL
-    gmx::lock_guard<gmx::Mutex> guard(g_clfftMutex);
+#if GMX_GPU_OPENCL && GMX_GPU_FFT_CLFFT
+    std::lock_guard<std::mutex> guard(g_clfftMutex);
     if (g_clfftInitialized)
     {
         clfftTeardown();

@@ -1,13 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
- * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2012,2014,2015,2016,2018 by the GROMACS development team.
- * Copyright (c) 2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 1991- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -21,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -30,18 +26,22 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 
 #ifndef GMX_GMXPREPROCESS_TOPIO_H
 #define GMX_GMXPREPROCESS_TOPIO_H
 
+#include <filesystem>
 #include <memory>
+#include <optional>
 #include <vector>
 
+#include "gromacs/topology/ifunc.h"
+#include "gromacs/utility/enumerationhelpers.h"
 #include "gromacs/utility/real.h"
 
 struct gmx_molblock_t;
@@ -52,9 +52,12 @@ struct t_inputrec;
 struct MoleculeInformation;
 struct InteractionsOfType;
 struct t_symtab;
-struct warninp;
-enum struct GmxQmmmMode;
-typedef warninp* warninp_t;
+// TODO: Check if warninp is completely replaced by WarningHandler below
+// struct warninp;
+// typedef warninp* warninp_t;
+class WarningHandler;
+enum class QmmmModeType : int;
+enum class CombinationRule : int;
 
 namespace gmx
 {
@@ -63,29 +66,40 @@ class ArrayRef;
 class MDLogger;
 } // namespace gmx
 
-double check_mol(const gmx_mtop_t* mtop, warninp_t wi);
+double check_mol(const gmx_mtop_t* mtop, WarningHandler* wi);
 /* Check mass and charge */
 
-char** do_top(bool                                  bVerbose,
-              const char*                           topfile,
-              const char*                           topppfile,
-              t_gromppopts*                         opts,
-              bool                                  bZero,
-              t_symtab*                             symtab,
-              gmx::ArrayRef<InteractionsOfType>     plist,
-              int*                                  combination_rule,
-              double*                               repulsion_power,
-              real*                                 fudgeQQ,
-              PreprocessingAtomTypes*               atype,
-              std::vector<MoleculeInformation>*     molinfo,
+/*! \brief Check that RB/Fourier style dihedral sums to zero in free-energy computation
+ *
+ * Searches for, and emits a warning when dihedral of function type 3 (Ryckaert-Bellemans or
+ * Fourier) have a sum of coefficient different from zero, when performing a free-energy
+ * computation, in stateA and stateB, as this is likely a parameter mistake that can
+ * produce erroneous dHdl values.
+ *
+ */
+void checkRBDihedralSum(const gmx_mtop_t& mtop, const t_inputrec& ir, WarningHandler* wi);
+
+
+char** do_top(bool                                                            bVerbose,
+              const char*                                                     topfile,
+              const std::optional<std::filesystem::path>&                     topppfile,
+              t_gromppopts*                                                   opts,
+              bool                                                            bZero,
+              t_symtab*                                                       symtab,
+              gmx::EnumerationArray<InteractionFunction, InteractionsOfType>& plist,
+              CombinationRule*                                                combination_rule,
+              double*                                                         repulsion_power,
+              real*                                                           fudgeQQ,
+              PreprocessingAtomTypes*                                         atype,
+              std::vector<MoleculeInformation>*                               molinfo,
               std::unique_ptr<MoleculeInformation>* intermolecular_interactions,
               const t_inputrec*                     ir,
               std::vector<gmx_molblock_t>*          molblock,
               bool*                                 ffParametrizedWithHBondConstraints,
-              warninp_t                             wi,
+              WarningHandler*                       wi,
               const gmx::MDLogger&                  logger);
 
-/* This routine expects sys->molt[m].ilist to be of size F_NRE and ordered. */
-void generate_qmexcl(gmx_mtop_t* sys, t_inputrec* ir, warninp_t wi, GmxQmmmMode qmmmMode, const gmx::MDLogger& logger);
+/* This routine expects sys->molt[m].ilist to be of size InteractionFunction::Count and ordered. */
+void generate_qmexcl(gmx_mtop_t* sys, t_inputrec* ir, warninp_t wi, QmmmModeType qmmmMode, const gmx::MDLogger& logger);
 
 #endif

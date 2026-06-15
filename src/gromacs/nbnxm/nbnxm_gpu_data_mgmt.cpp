@@ -1,11 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2012,2013,2014,2015,2016 by the GROMACS development team.
- * Copyright (c) 2017,2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2012- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -19,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -28,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \internal \file
  *  \brief Define common implementation of nbnxm_gpu_data_mgmt.h
@@ -48,6 +46,9 @@
 
 #include "config.h"
 
+#include <memory>
+#include <type_traits>
+
 #if GMX_GPU_CUDA
 #    include "cuda/nbnxm_cuda_types.h"
 #endif
@@ -56,71 +57,119 @@
 #    include "opencl/nbnxm_ocl_types.h"
 #endif
 
-#include "nbnxm_gpu_data_mgmt.h"
+#if GMX_GPU_HIP
+#    include "hip/nbnxm_hip_kernel_utils.h"
+#    include "hip/nbnxm_hip_types.h"
+#endif
 
+#if GMX_GPU_SYCL
+#    include "sycl/nbnxm_sycl_types.h"
+#endif
+
+#include "gromacs/gpu_utils/device_stream_manager.h"
+#include "gromacs/gpu_utils/devicebuffer.h"
+#include "gromacs/gpu_utils/gputraits.h"
+#include "gromacs/gpu_utils/hostallocator.h"
+#include "gromacs/hardware/device_information.h"
 #include "gromacs/mdtypes/interaction_const.h"
+#include "gromacs/mdtypes/simulation_workload.h"
+#include "gromacs/nbnxm/atompairlist.h"
+#include "gromacs/nbnxm/gpu_common_utils.h"
 #include "gromacs/nbnxm/gpu_data_mgmt.h"
+#include "gromacs/nbnxm/gpu_types_common.h"
+#include "gromacs/nbnxm/gridset.h"
+#include "gromacs/nbnxm/nbnxm_enums.h"
+#include "gromacs/pbcutil/ishift.h"
 #include "gromacs/timing/gpu_timing.h"
 #include "gromacs/utility/cstringutil.h"
+#include "gromacs/utility/enumerationhelpers.h"
+#include "gromacs/utility/exceptions.h"
+#include "gromacs/utility/fatalerror.h"
 
+#include "atompairlist.h"
 #include "nbnxm_gpu.h"
+#include "nbnxm_gpu_data_mgmt.h"
 #include "pairlistsets.h"
 
-namespace Nbnxm
+namespace gmx
 {
 
-void init_ewald_coulomb_force_table(const EwaldCorrectionTables& tables,
-                                    NBParamGpu*                  nbp,
-                                    const DeviceContext&         deviceContext)
+static inline void init_ewald_coulomb_force_table(const EwaldCorrectionTables& tables,
+                                                  NBParamGpu*                  nbp,
+                                                  const DeviceContext&         deviceContext,
+                                                  const DeviceStream&          deviceStream)
 {
     if (nbp->coulomb_tab)
     {
-        destroyParamLookupTable(&nbp->coulomb_tab, nbp->coulomb_tab_texobj);
+        destroyParamLookupTable(&nbp->coulomb_tab, &nbp->coulomb_tab_texobj);
     }
 
     nbp->coulomb_tab_scale = tables.scale;
-    initParamLookupTable(&nbp->coulomb_tab, &nbp->coulomb_tab_texobj, tables.tableF.data(),
-                         tables.tableF.size(), deviceContext);
+    initParamLookupTable(&nbp->coulomb_tab,
+                         &nbp->coulomb_tab_texobj,
+                         tables.tableF.data(),
+                         tables.tableF.size(),
+                         deviceContext,
+                         deviceStream);
 }
 
-void inline printEnvironmentVariableDeprecationMessage(bool               isEnvironmentVariableSet,
-                                                       const std::string& environmentVariableSuffix)
+static bool useTabulatedEwaldByDefault(InteractionModifiers vdwModifier, const DeviceInformation& deviceInfo)
 {
-    if (isEnvironmentVariableSet)
+    /* By default, use analytical Ewald except:
+     *  - NVIDIA CC 7.0 and 8.0,
+     *  - AMD GPUs except MI3xx with SYCL (tested for gfx906, 908, 90a, 942 only).
+     *    - For MI3xx, prefer tabulated for ForceSwitch kernels.
+     *  - AMD GPUs except MI3xx with HIP
+     *
+     * Note 1: this function does not handle OpenCL.
+     * Note 2: for SYCL, the heuristics are taken from CUDA/HIP ports, and were only partially
+     *         verified on with oneAPI/ACPP (mainly on AMD CDNA).
+     */
+#if GMX_GPU_CUDA
+    GMX_UNUSED_VALUE(vdwModifier);
+    return (deviceInfo.prop.major == 7 && deviceInfo.prop.minor == 0)
+           || (deviceInfo.prop.major == 8 && deviceInfo.prop.minor == 0);
+#elif GMX_GPU_HIP
+    GMX_UNUSED_VALUE(vdwModifier);
+    const int  major   = deviceInfo.prop.major;
+    const int  minor   = deviceInfo.prop.minor;
+    const bool isMi300 = (major == 9 && minor == 4);
+    const bool isMi350 = (major == 9 && minor == 5);
+    return !isMi300 && !isMi350;
+#elif GMX_GPU_SYCL
+    const int major = deviceInfo.hardwareVersionMajor.value_or(-1);
+    const int minor = deviceInfo.hardwareVersionMinor.value_or(-1);
+    switch (deviceInfo.deviceVendor)
     {
-        fprintf(stderr,
-                "Environment variables GMX_CUDA_%s and GMX_OCL_%s are deprecated and will be\n"
-                "removed in release 2022, please use GMX_GPU_%s instead.",
-                environmentVariableSuffix.c_str(), environmentVariableSuffix.c_str(),
-                environmentVariableSuffix.c_str());
+        case DeviceVendor::Amd:
+        {
+            const bool isForceSwitch = vdwModifier == InteractionModifiers::ForceSwitch;
+            const bool isMi300       = (major == 9 && minor == 4);
+            return isMi300 ? isForceSwitch : true;
+        }
+        case DeviceVendor::Nvidia:
+        {
+            return ((major == 7 && minor == 0) || (major == 8 && minor == 0));
+        }
+        default: return false;
     }
+#else
+    GMX_UNUSED_VALUE(deviceInfo);
+    GMX_UNUSED_VALUE(vdwModifier);
+    return false;
+#endif
 }
 
-enum ElecType nbnxn_gpu_pick_ewald_kernel_type(const interaction_const_t& ic)
+static inline ElecType nbnxn_gpu_pick_ewald_kernel_type(const interaction_const_t& ic,
+                                                        const DeviceInformation&   deviceInfo)
 {
-    bool bTwinCut = (ic.rcoulomb != ic.rvdw);
+    bool bTwinCut = (ic.coulomb.cutoff != ic.vdw.cutoff);
 
     /* Benchmarking/development environment variables to force the use of
        analytical or tabulated Ewald kernel. */
-
-    // Remove these when old environment variables are deprecated
-    const bool forceAnalyticalEwaldLegacy = (getenv("GMX_CUDA_NB_ANA_EWALD") != nullptr)
-                                            || (getenv("GMX_OCL_NB_ANA_EWALD") != nullptr);
-    const bool forceTabulatedEwaldLegacy = (getenv("GMX_CUDA_NB_TAB_EWALD") != nullptr)
-                                           || (getenv("GMX_OCL_NB_TAB_EWALD") != nullptr);
-    const bool forceTwinCutoffEwaldLegacy = (getenv("GMX_CUDA_NB_EWALD_TWINCUT") != nullptr)
-                                            || (getenv("GMX_OCL_NB_EWALD_TWINCUT") != nullptr);
-
-    printEnvironmentVariableDeprecationMessage(forceAnalyticalEwaldLegacy, "NB_ANA_EWALD");
-    printEnvironmentVariableDeprecationMessage(forceTabulatedEwaldLegacy, "NB_TAB_EWALD");
-    printEnvironmentVariableDeprecationMessage(forceTwinCutoffEwaldLegacy, "NB_EWALD_TWINCUT");
-
-    const bool forceAnalyticalEwald =
-            (getenv("GMX_GPU_NB_ANA_EWALD") != nullptr) || forceAnalyticalEwaldLegacy;
-    const bool forceTabulatedEwald =
-            (getenv("GMX_GPU_NB_TAB_EWALD") != nullptr) || forceTabulatedEwaldLegacy;
-    const bool forceTwinCutoffEwald =
-            (getenv("GMX_GPU_NB_EWALD_TWINCUT") != nullptr) || forceTwinCutoffEwaldLegacy;
+    const bool forceAnalyticalEwald = (std::getenv("GMX_GPU_NB_ANA_EWALD") != nullptr);
+    const bool forceTabulatedEwald  = (std::getenv("GMX_GPU_NB_TAB_EWALD") != nullptr);
+    const bool forceTwinCutoffEwald = (std::getenv("GMX_GPU_NB_EWALD_TWINCUT") != nullptr);
 
     if (forceAnalyticalEwald && forceTabulatedEwald)
     {
@@ -129,13 +178,11 @@ enum ElecType nbnxn_gpu_pick_ewald_kernel_type(const interaction_const_t& ic)
                 "requested through environment variables.");
     }
 
-    /* By default, use analytical Ewald
-     * TODO: tabulated does not work in OpenCL, it needs fixing, see init_nbparam() in nbnxn_ocl_data_mgmt.cpp
-     *
-     */
-    bool bUseAnalyticalEwald = true;
+    const bool c_useTabulatedEwaldDefault = useTabulatedEwaldByDefault(ic.vdw.modifier, deviceInfo);
+    bool       bUseAnalyticalEwald        = !c_useTabulatedEwaldDefault;
     if (forceAnalyticalEwald)
     {
+        bUseAnalyticalEwald = true;
         if (debug)
         {
             fprintf(debug, "Using analytical Ewald GPU kernels\n");
@@ -163,79 +210,98 @@ enum ElecType nbnxn_gpu_pick_ewald_kernel_type(const interaction_const_t& ic)
     }
 }
 
-void set_cutoff_parameters(NBParamGpu* nbp, const interaction_const_t* ic, const PairlistParams& listParams)
+static inline void set_cutoff_parameters(NBParamGpu*                nbp,
+                                         const interaction_const_t& ic,
+                                         const PairlistParams&      listParams)
 {
-    nbp->ewald_beta        = ic->ewaldcoeff_q;
-    nbp->sh_ewald          = ic->sh_ewald;
-    nbp->epsfac            = ic->epsfac;
-    nbp->two_k_rf          = 2.0 * ic->k_rf;
-    nbp->c_rf              = ic->c_rf;
-    nbp->rvdw_sq           = ic->rvdw * ic->rvdw;
-    nbp->rcoulomb_sq       = ic->rcoulomb * ic->rcoulomb;
+    nbp->ewald_beta        = ic.coulomb.ewaldCoeff;
+    nbp->sh_ewald          = ic.coulomb.ewaldShift;
+    nbp->epsfac            = ic.coulomb.epsfac;
+    nbp->two_k_rf          = 2.0 * ic.coulomb.reactionFieldCoefficient;
+    nbp->c_rf              = ic.coulomb.reactionFieldShift;
+    nbp->rvdw_sq           = square(ic.vdw.cutoff);
+    nbp->rcoulomb_sq       = square(ic.coulomb.cutoff);
     nbp->rlistOuter_sq     = listParams.rlistOuter * listParams.rlistOuter;
     nbp->rlistInner_sq     = listParams.rlistInner * listParams.rlistInner;
     nbp->useDynamicPruning = listParams.useDynamicPruning;
 
-    nbp->sh_lj_ewald   = ic->sh_lj_ewald;
-    nbp->ewaldcoeff_lj = ic->ewaldcoeff_lj;
+    nbp->sh_lj_ewald   = ic.vdw.ewaldShift;
+    nbp->ewaldcoeff_lj = ic.vdw.ewaldCoeff;
 
-    nbp->rvdw_switch      = ic->rvdw_switch;
-    nbp->dispersion_shift = ic->dispersion_shift;
-    nbp->repulsion_shift  = ic->repulsion_shift;
-    nbp->vdw_switch       = ic->vdw_switch;
+    nbp->rvdw_switch      = ic.vdw.switchDistance;
+    nbp->dispersion_shift = ic.vdw.dispersionShift;
+    nbp->repulsion_shift  = ic.vdw.repulsionShift;
+    nbp->vdw_switch       = ic.vdw.switchConstants;
 }
 
-void gpu_pme_loadbal_update_param(const nonbonded_verlet_t* nbv, const interaction_const_t* ic)
+GpuPairlistSorting::GpuPairlistSorting() {}
+
+GpuPairlistSorting::~GpuPairlistSorting()
 {
-    if (!nbv || !nbv->useGpu())
+    try
     {
-        return;
+        if (nbnxmSortListsOnGpu())
+        {
+            freeDeviceBuffer(&scanTemporary);
+            freeDeviceBuffer(&sciHistogram);
+            freeDeviceBuffer(&sciOffset);
+            freeDeviceBuffer(&sciCount);
+            freeDeviceBuffer(&sciSorted);
+        }
     }
-    NbnxmGpu*   nb  = nbv->gpu_nbv;
-    NBParamGpu* nbp = nb->nbparam;
-
-    set_cutoff_parameters(nbp, ic, nbv->pairlistSets().params());
-
-    nbp->elecType = nbnxn_gpu_pick_ewald_kernel_type(*ic);
-
-    GMX_RELEASE_ASSERT(ic->coulombEwaldTables, "Need valid Coulomb Ewald correction tables");
-    init_ewald_coulomb_force_table(*ic->coulombEwaldTables, nbp, *nb->deviceContext_);
+    catch (gmx::InternalError& e)
+    {
+        fprintf(stderr, "Internal error in destructor of GpuPairlistSorting: %s\n", e.what());
+    }
 }
 
-void init_plist(gpu_plist* pl)
-{
-    /* initialize to nullptr pointers to data that is not allocated here and will
-       need reallocation in nbnxn_gpu_init_pairlist */
-    pl->sci   = nullptr;
-    pl->cj4   = nullptr;
-    pl->imask = nullptr;
-    pl->excl  = nullptr;
 
-    /* size -1 indicates that the respective array hasn't been initialized yet */
-    pl->na_c          = -1;
-    pl->nsci          = -1;
-    pl->sci_nalloc    = -1;
-    pl->ncj4          = -1;
-    pl->cj4_nalloc    = -1;
-    pl->nimask        = -1;
-    pl->imask_nalloc  = -1;
-    pl->nexcl         = -1;
-    pl->excl_nalloc   = -1;
-    pl->haveFreshList = false;
+GpuPairlist::GpuPairlist() {}
+
+GpuPairlist::~GpuPairlist()
+{
+    try
+    {
+        freeDeviceBuffer(&sci);
+        freeDeviceBuffer(&cjPacked);
+        freeDeviceBuffer(&imask);
+        freeDeviceBuffer(&excl);
+        freeDeviceBuffer(&d_rollingPruningPart);
+    }
+    catch (gmx::InternalError& e)
+    {
+        fprintf(stderr, "Internal error in destructor of GpuPairlist: %s\n", e.what());
+    }
 }
 
-void init_timings(gmx_wallclock_gpu_nbnxn_t* t)
-{
-    int i, j;
+GpuFeplist::GpuFeplist() {}
 
+GpuFeplist::~GpuFeplist()
+{
+    try
+    {
+        freeDeviceBuffer(&iinr);
+        freeDeviceBuffer(&shift);
+        freeDeviceBuffer(&jIndex);
+        freeDeviceBuffer(&jjnr);
+        freeDeviceBuffer(&exclFep);
+    }
+    catch (gmx::InternalError& e)
+    {
+        fprintf(stderr, "Internal error in destructor of GpuFeplist: %s\n", e.what());
+    }
+}
+
+static inline void init_timings(gmx_wallclock_gpu_nbnxn_t* t)
+{
     t->nb_h2d_t = 0.0;
     t->nb_d2h_t = 0.0;
     t->nb_c     = 0;
     t->pl_h2d_t = 0.0;
     t->pl_h2d_c = 0;
-    for (i = 0; i < 2; i++)
+    for (int i = 0; i < 2; i++)
     {
-        for (j = 0; j < 2; j++)
+        for (int j = 0; j < 2; j++)
         {
             t->ktime[i][j].t = 0.0;
             t->ktime[i][j].c = 0;
@@ -247,6 +313,417 @@ void init_timings(gmx_wallclock_gpu_nbnxn_t* t)
     t->dynamicPruneTime.t = 0.0;
 }
 
+/*! \brief Initialize \p atomdata first time; it only gets filled at pair-search. */
+static inline void initAtomdataFirst(NBAtomDataGpu*           atomdata,
+                                     int                      numTypes,
+                                     const DeviceContext&     deviceContext,
+                                     const DeviceStream&      localStream,
+                                     const std::optional<int> nLambda)
+{
+    atomdata->numTypes = numTypes;
+    allocateDeviceBuffer(&atomdata->shiftVec, c_numShiftVectors, deviceContext);
+    atomdata->shiftVecUploaded = false;
+
+    allocateDeviceBuffer(&atomdata->fShift, c_numShiftVectors, deviceContext);
+    allocateDeviceBuffer(&atomdata->eLJ, 1, deviceContext);
+    allocateDeviceBuffer(&atomdata->eElec, 1, deviceContext);
+    allocateDeviceBuffer(&atomdata->dvdlLJ, 1, deviceContext);
+    allocateDeviceBuffer(&atomdata->dvdlElec, 1, deviceContext);
+
+    clearDeviceBufferAsync(&atomdata->fShift, 0, c_numShiftVectors, localStream);
+    clearDeviceBufferAsync(&atomdata->eElec, 0, 1, localStream);
+    clearDeviceBufferAsync(&atomdata->eLJ, 0, 1, localStream);
+    clearDeviceBufferAsync(&atomdata->dvdlElec, 0, 1, localStream);
+    clearDeviceBufferAsync(&atomdata->dvdlLJ, 0, 1, localStream);
+
+    if (nLambda.has_value())
+    {
+        const int nLambdaValue = nLambda.value();
+        allocateDeviceBuffer(&atomdata->eLJForeign, nLambdaValue + 1, deviceContext);
+        allocateDeviceBuffer(&atomdata->eElecForeign, nLambdaValue + 1, deviceContext);
+        allocateDeviceBuffer(&atomdata->dvdlLJForeign, nLambdaValue + 1, deviceContext);
+        allocateDeviceBuffer(&atomdata->dvdlElecForeign, nLambdaValue + 1, deviceContext);
+
+        clearDeviceBufferAsync(&atomdata->eElecForeign, 0, nLambdaValue + 1, localStream);
+        clearDeviceBufferAsync(&atomdata->eLJForeign, 0, nLambdaValue + 1, localStream);
+        clearDeviceBufferAsync(&atomdata->dvdlElecForeign, 0, nLambdaValue + 1, localStream);
+        clearDeviceBufferAsync(&atomdata->dvdlLJForeign, 0, nLambdaValue + 1, localStream);
+    }
+
+    /* initialize to nullptr pointers to data that is not allocated here and will
+       need reallocation in later */
+    atomdata->xq = nullptr;
+    atomdata->f  = nullptr;
+
+    /* size -1 indicates that the respective array hasn't been initialized yet */
+    atomdata->numAtoms      = -1;
+    atomdata->numAtomsAlloc = -1;
+}
+
+static inline VdwType nbnxmGpuPickVdwKernelType(const interaction_const_t& ic,
+                                                LJCombinationRule          ljCombinationRule)
+{
+    if (ic.vdw.type == VanDerWaalsType::Cut)
+    {
+        switch (ic.vdw.modifier)
+        {
+            case InteractionModifiers::None:
+            case InteractionModifiers::PotShift:
+                switch (ljCombinationRule)
+                {
+                    case LJCombinationRule::None: return VdwType::Cut;
+                    case LJCombinationRule::Geometric: return VdwType::CutCombGeom;
+                    case LJCombinationRule::LorentzBerthelot: return VdwType::CutCombLB;
+                    default:
+                        GMX_THROW(InconsistentInputError(formatString(
+                                "The requested LJ combination rule %s is not implemented in "
+                                "the GPU accelerated kernels!",
+                                enumValueToString(ljCombinationRule))));
+                }
+            case InteractionModifiers::ForceSwitch: return VdwType::FSwitch;
+            case InteractionModifiers::PotSwitch: return VdwType::PSwitch;
+            default:
+                GMX_THROW(InconsistentInputError(
+                        formatString("The requested VdW interaction modifier %s is not "
+                                     "implemented in the GPU accelerated kernels!",
+                                     enumValueToString(ic.vdw.modifier))));
+        }
+    }
+    else if (ic.vdw.type == VanDerWaalsType::Pme)
+    {
+        if (ic.vdw.pmeCombinationRule == LongRangeVdW::Geom)
+        {
+            GMX_RELEASE_ASSERT(
+                    ljCombinationRule == LJCombinationRule::Geometric,
+                    "Combination rules for long- and short-range interactions should match.");
+            return VdwType::EwaldGeom;
+        }
+        else
+        {
+            GMX_RELEASE_ASSERT(
+                    ljCombinationRule == LJCombinationRule::LorentzBerthelot,
+                    "Combination rules for long- and short-range interactions should match.");
+            return VdwType::EwaldLB;
+        }
+    }
+    else
+    {
+        GMX_THROW(InconsistentInputError(formatString(
+                "The requested VdW type %s is not implemented in the GPU accelerated kernels!",
+                enumValueToString(ic.vdw.type))));
+    }
+}
+
+static inline ElecType nbnxmGpuPickElectrostaticsKernelType(const interaction_const_t& ic,
+                                                            const DeviceInformation&   deviceInfo)
+{
+    if (ic.coulomb.type == CoulombInteractionType::Fmm)
+    {
+        if (ic.nbnxmIsDirectCoulombProvider)
+        {
+            GMX_RELEASE_ASSERT(
+                    false,
+                    "FMM is not yet supported in GROMACS for short-range coulomb interactions");
+            return ElecType::Fmm;
+        }
+        else
+        {
+            return ElecType::None;
+        }
+    }
+    else if (ic.coulomb.type == CoulombInteractionType::Cut)
+    {
+        return ElecType::Cut;
+    }
+    else if (usingRF(ic.coulomb.type))
+    {
+        return ElecType::RF;
+    }
+    else if ((usingPme(ic.coulomb.type) || ic.coulomb.type == CoulombInteractionType::Ewald))
+    {
+        return nbnxn_gpu_pick_ewald_kernel_type(ic, deviceInfo);
+    }
+    else
+    {
+        /* Shouldn't happen, as this is checked when choosing Verlet-scheme */
+        GMX_THROW(InconsistentInputError(
+                formatString("The requested electrostatics type %s is not implemented in "
+                             "the GPU accelerated kernels!",
+                             enumValueToString(ic.coulomb.type))));
+    }
+}
+
+/*! \brief Initialize the nonbonded parameter data structure. */
+static inline void initNbparam(NBParamGpu*                     nbp,
+                               const interaction_const_t&      ic,
+                               const PairlistParams&           listParams,
+                               const nbnxn_atomdata_t::Params& nbatParams,
+                               const DeviceContext&            deviceContext,
+                               const DeviceStream&             localStream,
+                               const std::optional<int>        nLambda)
+{
+    const int numTypes = nbatParams.numTypes;
+
+    set_cutoff_parameters(nbp, ic, listParams);
+
+    nbp->vdwType  = nbnxmGpuPickVdwKernelType(ic, nbatParams.ljCombinationRule);
+    nbp->elecType = nbnxmGpuPickElectrostaticsKernelType(ic, deviceContext.deviceInfo());
+
+    if (ic.vdw.type == VanDerWaalsType::Pme)
+    {
+        GMX_ASSERT((ic.vdw.pmeCombinationRule == LongRangeVdW::Geom
+                    && nbatParams.ljCombinationRule == LJCombinationRule::Geometric)
+                           || (ic.vdw.pmeCombinationRule == LongRangeVdW::LB
+                               && nbatParams.ljCombinationRule == LJCombinationRule::LorentzBerthelot),
+                   "Combination rule mismatch!");
+    }
+
+    /* generate table for PME */
+    if (nbp->elecType == ElecType::EwaldTab || nbp->elecType == ElecType::EwaldTabTwin)
+    {
+        GMX_RELEASE_ASSERT(ic.coulombEwaldTables, "Need valid Coulomb Ewald correction tables");
+        init_ewald_coulomb_force_table(*ic.coulombEwaldTables, nbp, deviceContext, localStream);
+    }
+
+    /* set up LJ parameter lookup table */
+    if (!useLjCombRule(nbp->vdwType))
+    {
+        static_assert(sizeof(decltype(nbp->nbfp)) == 2 * sizeof(decltype(*nbatParams.nbfp.data())),
+                      "Mismatch in the size of host / device data types");
+        initParamLookupTable(&nbp->nbfp,
+                             &nbp->nbfp_texobj,
+                             reinterpret_cast<const Float2*>(nbatParams.nbfp.data()),
+                             numTypes * numTypes,
+                             deviceContext,
+                             localStream);
+    }
+
+    /* set up LJ-PME parameter lookup table */
+    if (ic.vdw.type == VanDerWaalsType::Pme)
+    {
+        static_assert(sizeof(decltype(nbp->nbfp_comb))
+                              == 2 * sizeof(decltype(*nbatParams.nbfp_comb.data())),
+                      "Mismatch in the size of host / device data types");
+        initParamLookupTable(&nbp->nbfp_comb,
+                             &nbp->nbfp_comb_texobj,
+                             reinterpret_cast<const Float2*>(nbatParams.nbfp_comb.data()),
+                             numTypes,
+                             deviceContext,
+                             localStream);
+    }
+
+    // Initialize allLambda coul and vdw buffers for foreign lambda calculations
+
+    if (nLambda.has_value())
+    {
+        const int nLambdaValue = nLambda.value();
+        allocateDeviceBuffer(&nbp->allLambdaCoul, nLambdaValue, deviceContext);
+        allocateDeviceBuffer(&nbp->allLambdaVdw, nLambdaValue, deviceContext);
+
+        clearDeviceBufferAsync(&nbp->allLambdaCoul, 0, nLambdaValue, localStream);
+        clearDeviceBufferAsync(&nbp->allLambdaVdw, 0, nLambdaValue, localStream);
+    }
+}
+
+using GpuPairlistByLocality = EnumerationArray<InteractionLocality, std::unique_ptr<GpuPairlist>>;
+
+static GpuPairlistByLocality initializeGpuLists(bool localAndNonLocal)
+{
+    GpuPairlistByLocality list;
+    list[InteractionLocality::Local] = std::make_unique<GpuPairlist>();
+    if (localAndNonLocal)
+    {
+        list[InteractionLocality::NonLocal] = std::make_unique<GpuPairlist>();
+    }
+    return list;
+}
+
+using GpuFeplistByLocality = EnumerationArray<InteractionLocality, std::unique_ptr<GpuFeplist>>;
+
+gmx_unused static GpuFeplistByLocality initializeGpuFepLists(bool localAndNonLocal)
+{
+    GpuFeplistByLocality fep_list;
+    fep_list[InteractionLocality::Local] = std::make_unique<GpuFeplist>();
+    if (localAndNonLocal)
+    {
+        fep_list[InteractionLocality::NonLocal] = std::make_unique<GpuFeplist>();
+    }
+    return fep_list;
+}
+
+void copy_gpu_fepparams(NbnxmGpu*   nb,
+                        const bool  bFepGpuNonBonded,
+                        const float alphaCoul,
+                        const float alphaVdw,
+                        const int   lambdaPower,
+                        const float sigma6WithInvalidSigma,
+                        const float sigma6Minimum,
+                        const float lambdaCoul,
+                        const float lambdaVdw,
+                        const int   nLambda,
+                        const EnumerationArray<FreeEnergyPerturbationCouplingType, std::vector<double>>& all_lambda)
+{
+    nb->nbparam->bFepGpuNonBonded       = bFepGpuNonBonded;
+    nb->nbparam->alphaCoul              = alphaCoul;
+    nb->nbparam->alphaVdw               = alphaVdw;
+    nb->nbparam->lambdaPower            = lambdaPower;
+    nb->nbparam->sigma6WithInvalidSigma = sigma6WithInvalidSigma;
+    nb->nbparam->sigma6Minimum          = sigma6Minimum;
+    nb->nbparam->lambdaCoul             = lambdaCoul;
+    nb->nbparam->lambdaVdw              = lambdaVdw;
+    if (nLambda > 0)
+    {
+        for (int i = 0; i < nLambda; i++)
+        {
+            nb->fephostdata->allLambdaCoul[i] = static_cast<float>(
+                    all_lambda[static_cast<int>(FreeEnergyPerturbationCouplingType::Coul)][i]);
+            nb->fephostdata->allLambdaVdw[i] = static_cast<float>(
+                    all_lambda[static_cast<int>(FreeEnergyPerturbationCouplingType::Vdw)][i]);
+        }
+
+        const DeviceStream& localStream = *nb->deviceStreams[InteractionLocality::Local];
+        copyToDeviceBuffer(&nb->nbparam->allLambdaCoul,
+                           nb->fephostdata->allLambdaCoul.data(),
+                           0,
+                           nLambda,
+                           localStream,
+                           GpuApiCallBehavior::Async,
+                           nullptr);
+
+        copyToDeviceBuffer(&nb->nbparam->allLambdaVdw,
+                           nb->fephostdata->allLambdaVdw.data(),
+                           0,
+                           nLambda,
+                           localStream,
+                           GpuApiCallBehavior::Async,
+                           nullptr);
+    }
+}
+
+NbnxmGpu* gpu_init(const DeviceStreamManager& deviceStreamManager,
+                   const interaction_const_t* ic,
+                   const PairlistParams&      listParams,
+                   const nbnxn_atomdata_t*    nbat,
+                   const bool                 bLocalAndNonlocal,
+                   const gmx_unused std::optional<int> nLambda)
+{
+    auto* nb           = new NbnxmGpu();
+    nb->deviceContext_ = &deviceStreamManager.context();
+    nb->atdat          = new NBAtomDataGpu;
+    nb->nbparam        = new NBParamGpu;
+    nb->fephostdata    = new GpuFepHostData;
+
+    nb->plist = initializeGpuLists(bLocalAndNonlocal);
+
+    nb->bUseTwoStreams = bLocalAndNonlocal;
+
+    nb->timers = new GpuTimers();
+
+    nb->bDoTime = decideGpuTimingsUsage();
+
+    if (nb->bDoTime)
+    {
+        nb->timings = std::make_unique<gmx_wallclock_gpu_nbnxn_t>();
+        init_timings(nb->timings.get());
+    }
+
+    /* init nbst */
+    changePinningPolicy(&nb->nbst.eLJ, PinningPolicy::PinnedIfSupported);
+    changePinningPolicy(&nb->nbst.eElec, PinningPolicy::PinnedIfSupported);
+    changePinningPolicy(&nb->nbst.fShift, PinningPolicy::PinnedIfSupported);
+    changePinningPolicy(&nb->nbst.dvdlLJ, PinningPolicy::PinnedIfSupported);
+    changePinningPolicy(&nb->nbst.dvdlElec, PinningPolicy::PinnedIfSupported);
+
+    nb->nbst.eLJ.resize(1);
+    nb->nbst.eElec.resize(1);
+    nb->nbst.fShift.resize(c_numShiftVectors);
+    nb->nbst.dvdlLJ.resize(1);
+    nb->nbst.dvdlElec.resize(1);
+
+    if (nLambda.has_value())
+    {
+        nb->feplist            = initializeGpuFepLists(bLocalAndNonlocal);
+        const int nLambdaValue = nLambda.value();
+        changePinningPolicy(&nb->nbst.eLJForeign, PinningPolicy::PinnedIfSupported);
+        changePinningPolicy(&nb->nbst.eElecForeign, PinningPolicy::PinnedIfSupported);
+        changePinningPolicy(&nb->nbst.dvdlLJForeign, PinningPolicy::PinnedIfSupported);
+        changePinningPolicy(&nb->nbst.dvdlElecForeign, PinningPolicy::PinnedIfSupported);
+        nb->nbst.eLJForeign.resize(nLambdaValue + 1);
+        nb->nbst.eElecForeign.resize(nLambdaValue + 1);
+        nb->nbst.dvdlLJForeign.resize(nLambdaValue + 1);
+        nb->nbst.dvdlElecForeign.resize(nLambdaValue + 1);
+        /* init all lambdas on host*/
+        nb->fephostdata->allLambdaCoul.resize(nLambdaValue);
+        nb->fephostdata->allLambdaVdw.resize(nLambdaValue);
+    }
+
+    /* local/non-local GPU streams */
+    GMX_RELEASE_ASSERT(deviceStreamManager.streamIsValid(DeviceStreamType::NonBondedLocal),
+                       "Local non-bonded stream should be initialized to use GPU for non-bonded.");
+    const DeviceStream& localStream = deviceStreamManager.stream(DeviceStreamType::NonBondedLocal);
+    nb->deviceStreams[InteractionLocality::Local] = &localStream;
+    if (nb->bUseTwoStreams)
+    {
+        GMX_RELEASE_ASSERT(deviceStreamManager.streamIsValid(DeviceStreamType::NonBondedNonLocal),
+                           "Non-local non-bonded stream should be initialized to use GPU for "
+                           "non-bonded with domain decomposition.");
+        nb->deviceStreams[InteractionLocality::NonLocal] =
+                &deviceStreamManager.stream(DeviceStreamType::NonBondedNonLocal);
+    }
+
+    const nbnxn_atomdata_t::Params& nbatParams    = nbat->params();
+    const DeviceContext&            deviceContext = *nb->deviceContext_;
+
+    initNbparam(nb->nbparam, *ic, listParams, nbatParams, deviceContext, localStream, nLambda);
+    initAtomdataFirst(nb->atdat, nbatParams.numTypes, deviceContext, localStream, nLambda);
+
+    gpu_init_platform_specific(nb);
+
+    if (debug)
+    {
+        fprintf(debug, "Initialized NBNXM GPU data structures.\n");
+    }
+
+    return nb;
+}
+
+void gpu_pme_loadbal_update_param(nonbonded_verlet_t* nbv, const interaction_const_t& ic)
+{
+    if (!nbv || !nbv->useGpu())
+    {
+        return;
+    }
+    NbnxmGpu*   nb  = nbv->gpuNbv();
+    NBParamGpu* nbp = nb->nbparam;
+
+    set_cutoff_parameters(nbp, ic, nbv->pairlistSets().params());
+
+    nbp->elecType = nbnxn_gpu_pick_ewald_kernel_type(ic, nb->deviceContext_->deviceInfo());
+
+    GMX_RELEASE_ASSERT(ic.coulombEwaldTables, "Need valid Coulomb Ewald correction tables");
+    init_ewald_coulomb_force_table(
+            *ic.coulombEwaldTables, nbp, *nb->deviceContext_, *nb->deviceStreams[InteractionLocality::Local]);
+}
+
+void gpu_upload_shiftvec(NbnxmGpu* nb, const nbnxn_atomdata_t* nbatom)
+{
+    NBAtomDataGpu*      adat        = nb->atdat;
+    const DeviceStream& localStream = *nb->deviceStreams[InteractionLocality::Local];
+
+    /* only if we have a dynamic box */
+    if (nbatom->bDynamicBox || !adat->shiftVecUploaded)
+    {
+        copyToDeviceBuffer(&adat->shiftVec,
+                           asGenericFloat3Pointer(nbatom->shift_vec),
+                           0,
+                           c_numShiftVectors,
+                           localStream,
+                           GpuApiCallBehavior::Async,
+                           nullptr);
+        adat->shiftVecUploaded = true;
+    }
+}
+
 //! This function is documented in the header file
 void gpu_init_pairlist(NbnxmGpu* nb, const NbnxnPairlistGpu* h_plist, const InteractionLocality iloc)
 {
@@ -256,23 +733,25 @@ void gpu_init_pairlist(NbnxmGpu* nb, const NbnxnPairlistGpu* h_plist, const Inte
     // which leads to the counter not being reset.
     bool                bDoTime      = (nb->bDoTime && !h_plist->sci.empty());
     const DeviceStream& deviceStream = *nb->deviceStreams[iloc];
-    gpu_plist*          d_plist      = nb->plist[iloc];
+    auto*               d_plist      = nb->plist[iloc].get();
 
-    if (d_plist->na_c < 0)
+    if (d_plist->numAtomsPerCluster < 0)
     {
-        d_plist->na_c = h_plist->na_ci;
+        d_plist->numAtomsPerCluster = h_plist->na_ci;
     }
     else
     {
-        if (d_plist->na_c != h_plist->na_ci)
+        if (d_plist->numAtomsPerCluster != h_plist->na_ci)
         {
-            sprintf(sbuf, "In init_plist: the #atoms per cell has changed (from %d to %d)",
-                    d_plist->na_c, h_plist->na_ci);
+            sprintf(sbuf,
+                    "In init_plist: the #atoms per cell has changed (from %d to %d)",
+                    d_plist->numAtomsPerCluster,
+                    h_plist->na_ci);
             gmx_incons(sbuf);
         }
     }
 
-    gpu_timers_t::Interaction& iTimers = nb->timers->interaction[iloc];
+    GpuTimers::Interaction& iTimers = nb->timers->interaction[iloc];
 
     if (bDoTime)
     {
@@ -283,23 +762,100 @@ void gpu_init_pairlist(NbnxmGpu* nb, const NbnxnPairlistGpu* h_plist, const Inte
     // TODO most of this function is same in CUDA and OpenCL, move into the header
     const DeviceContext& deviceContext = *nb->deviceContext_;
 
-    reallocateDeviceBuffer(&d_plist->sci, h_plist->sci.size(), &d_plist->nsci, &d_plist->sci_nalloc,
+    reallocateDeviceBuffer(
+            &d_plist->sci, h_plist->sci.size(), &d_plist->numSci, &d_plist->sciAllocationSize, deviceContext);
+    copyToDeviceBuffer(&d_plist->sci,
+                       h_plist->sci.data(),
+                       0,
+                       h_plist->sci.size(),
+                       deviceStream,
+                       GpuApiCallBehavior::Async,
+                       bDoTime ? iTimers.pl_h2d.fetchNextEvent() : nullptr);
+
+    /* gpu sorting is only implemented for cuda */
+    if (nbnxmSortListsOnGpu())
+    {
+        reallocateDeviceBuffer(&d_plist->sorting.sciSorted,
+                               h_plist->sci.size(),
+                               &d_plist->sorting.nsciSorted,
+                               &d_plist->sorting.sciSortedNalloc,
+                               deviceContext);
+        copyToDeviceBuffer(&d_plist->sorting.sciSorted,
+                           h_plist->sci.data(),
+                           0,
+                           h_plist->sci.size(),
+                           deviceStream,
+                           GpuApiCallBehavior::Async,
+                           bDoTime ? iTimers.pl_h2d.fetchNextEvent() : nullptr);
+        reallocateDeviceBuffer(&d_plist->sorting.sciCount,
+                               h_plist->sci.size(),
+                               &d_plist->sorting.nsciCounted,
+                               &d_plist->sorting.sciCountedNalloc,
+                               deviceContext);
+
+        if (d_plist->sorting.nscanTemporary == -1)
+        {
+            reallocateDeviceBuffer(&d_plist->sorting.sciHistogram,
+                                   c_sciHistogramSize + 1,
+                                   &d_plist->sorting.nsciHistogram,
+                                   &d_plist->sorting.sciHistogramNalloc,
+                                   deviceContext);
+
+            reallocateDeviceBuffer(&d_plist->sorting.sciOffset,
+                                   c_sciHistogramSize,
+                                   &d_plist->sorting.nsciOffset,
+                                   &d_plist->sorting.sciOffsetNalloc,
+                                   deviceContext);
+
+            size_t scanTemporarySize = getExclusiveScanWorkingArraySize(d_plist, deviceStream);
+
+            reallocateDeviceBuffer(&d_plist->sorting.scanTemporary,
+                                   scanTemporarySize,
+                                   &d_plist->sorting.nscanTemporary,
+                                   &d_plist->sorting.scanTemporaryNalloc,
+                                   deviceContext);
+        }
+
+        clearDeviceBufferAsync(&d_plist->sorting.sciHistogram, 0, c_sciHistogramSize, deviceStream);
+    }
+
+    reallocateDeviceBuffer(&d_plist->cjPacked,
+                           h_plist->cjPacked.size(),
+                           &d_plist->numPackedJClusters,
+                           &d_plist->packedJClustersAllocationSize,
                            deviceContext);
-    copyToDeviceBuffer(&d_plist->sci, h_plist->sci.data(), 0, h_plist->sci.size(), deviceStream,
-                       GpuApiCallBehavior::Async, bDoTime ? iTimers.pl_h2d.fetchNextEvent() : nullptr);
+    copyToDeviceBuffer(&d_plist->cjPacked,
+                       h_plist->cjPacked.list_.data(),
+                       0,
+                       h_plist->cjPacked.size(),
+                       deviceStream,
+                       GpuApiCallBehavior::Async,
+                       bDoTime ? iTimers.pl_h2d.fetchNextEvent() : nullptr);
 
-    reallocateDeviceBuffer(&d_plist->cj4, h_plist->cj4.size(), &d_plist->ncj4, &d_plist->cj4_nalloc,
+    reallocateDeviceBuffer(&d_plist->imask,
+                           h_plist->cjPacked.size() * sc_gpuClusterPairSplit(sc_layoutType),
+                           &d_plist->numIMask,
+                           &d_plist->iMaskAllocationSize,
                            deviceContext);
-    copyToDeviceBuffer(&d_plist->cj4, h_plist->cj4.data(), 0, h_plist->cj4.size(), deviceStream,
-                       GpuApiCallBehavior::Async, bDoTime ? iTimers.pl_h2d.fetchNextEvent() : nullptr);
 
-    reallocateDeviceBuffer(&d_plist->imask, h_plist->cj4.size() * c_nbnxnGpuClusterpairSplit,
-                           &d_plist->nimask, &d_plist->imask_nalloc, deviceContext);
+    reallocateDeviceBuffer(
+            &d_plist->excl, h_plist->excl.size(), &d_plist->numExcl, &d_plist->exclAllocationSize, deviceContext);
+    copyToDeviceBuffer(&d_plist->excl,
+                       h_plist->excl.data(),
+                       0,
+                       h_plist->excl.size(),
+                       deviceStream,
+                       GpuApiCallBehavior::Async,
+                       bDoTime ? iTimers.pl_h2d.fetchNextEvent() : nullptr);
 
-    reallocateDeviceBuffer(&d_plist->excl, h_plist->excl.size(), &d_plist->nexcl,
-                           &d_plist->excl_nalloc, deviceContext);
-    copyToDeviceBuffer(&d_plist->excl, h_plist->excl.data(), 0, h_plist->excl.size(), deviceStream,
-                       GpuApiCallBehavior::Async, bDoTime ? iTimers.pl_h2d.fetchNextEvent() : nullptr);
+    // Part index is managed on device, through a buffer containing a separate copy of the index
+    // per block, to allow asynchronous incrementation on the GPU without CPU involvement.
+    reallocateDeviceBuffer(&d_plist->d_rollingPruningPart,
+                           d_plist->numSci,
+                           &d_plist->d_rollingPruningPartSize,
+                           &d_plist->d_rollingPruningPartAllocationSize,
+                           *nb->deviceContext_);
+    clearDeviceBufferAsync(&d_plist->d_rollingPruningPart, 0, d_plist->numSci, deviceStream);
 
     if (bDoTime)
     {
@@ -310,18 +866,361 @@ void gpu_init_pairlist(NbnxmGpu* nb, const NbnxnPairlistGpu* h_plist, const Inte
     d_plist->haveFreshList = true;
 }
 
+void gpu_init_feppairlist(NbnxmGpu*                 nb,
+                          const AtomPairlist&       h_feplist,
+                          const InteractionLocality iloc,
+                          const GridSet&            gridSet)
+{
+    GpuFeplist*     d_feplist       = nb->feplist[iloc].get();
+    GpuFepHostData* h_fepdata       = nb->fephostdata;
+    const int*      atomIndices     = gridSet.atomIndices().data();
+    const int       atomIndicesSize = gridSet.atomIndices().size();
+
+    h_fepdata->atomIndicesInv.resize(atomIndicesSize);
+    for (int i = 0; i < atomIndicesSize; i++)
+    {
+        if (atomIndices[i] < atomIndicesSize && atomIndices[i] >= 0)
+        {
+            h_fepdata->atomIndicesInv[atomIndices[i]] = i;
+        }
+    }
+
+    // Extract pair list data
+    ArrayRef<const AtomPairlist::IEntry> iList     = h_feplist.iList();
+    ArrayRef<const AtomPairlist::JEntry> jList     = h_feplist.flatJList();
+    const int                            numiAtoms = iList.ssize();
+    const int                            numjAtoms = jList.ssize();
+
+    h_fepdata->iinrHost.resize(numiAtoms);
+    for (int i = 0; i < numiAtoms; i++)
+    {
+        h_fepdata->iinrHost[i] = h_fepdata->atomIndicesInv[iList[i].atom];
+    }
+
+    h_fepdata->jjnrHost.resize(numjAtoms);
+    for (int j = 0; j < numjAtoms; j++)
+    {
+        h_fepdata->jjnrHost[j] = h_fepdata->atomIndicesInv[jList[j].atom];
+    }
+
+    h_fepdata->jIndexHost.resize(numiAtoms + 1);
+    int count = 0;
+    for (int i = 0; i < numiAtoms; i++)
+    {
+        int incr = h_feplist.jList(i).size();
+        count += incr;
+        h_fepdata->jIndexHost[i + 1] = count;
+    }
+
+    h_fepdata->shiftHost.resize(numiAtoms);
+    for (int i = 0; i < numiAtoms; i++)
+    {
+        h_fepdata->shiftHost[i] = iList[i].shiftIndex;
+    }
+
+    h_fepdata->exclFepHost.resize(numjAtoms);
+    for (int j = 0; j < numjAtoms; j++)
+    {
+        h_fepdata->exclFepHost[j] = jList[j].interacts;
+    }
+
+    bool                bDoTime      = (nb->bDoTime && numiAtoms != 0);
+    const DeviceStream& deviceStream = *nb->deviceStreams[iloc];
+
+    GpuTimers::Interaction& iTimers = nb->timers->interaction[iloc];
+
+    if (bDoTime)
+    {
+        iTimers.pl_h2d.openTimingRegion(deviceStream);
+        iTimers.didPairlistH2D = true;
+    }
+
+    const DeviceContext& deviceContext = *nb->deviceContext_;
+    reallocateDeviceBuffer(
+            &d_feplist->iinr, numiAtoms, &d_feplist->numiAtoms, &d_feplist->maxNumiAtoms, deviceContext);
+    copyToDeviceBuffer(&d_feplist->iinr,
+                       h_fepdata->iinrHost.data(),
+                       0,
+                       numiAtoms,
+                       deviceStream,
+                       GpuApiCallBehavior::Async,
+                       bDoTime ? iTimers.pl_h2d.fetchNextEvent() : nullptr);
+
+    reallocateDeviceBuffer(
+            &d_feplist->shift, numiAtoms, &d_feplist->numShift, &d_feplist->maxNumShift, deviceContext);
+    copyToDeviceBuffer(&d_feplist->shift,
+                       h_fepdata->shiftHost.data(),
+                       0,
+                       numiAtoms,
+                       deviceStream,
+                       GpuApiCallBehavior::Async,
+                       bDoTime ? iTimers.pl_h2d.fetchNextEvent() : nullptr);
+
+    reallocateDeviceBuffer(
+            &d_feplist->jIndex, numiAtoms + 1, &d_feplist->numjIndex, &d_feplist->maxNumjIndex, deviceContext);
+    copyToDeviceBuffer(&d_feplist->jIndex,
+                       h_fepdata->jIndexHost.data(),
+                       0,
+                       numiAtoms + 1,
+                       deviceStream,
+                       GpuApiCallBehavior::Async,
+                       bDoTime ? iTimers.pl_h2d.fetchNextEvent() : nullptr);
+
+    reallocateDeviceBuffer(
+            &d_feplist->jjnr, numjAtoms, &d_feplist->numjAtoms, &d_feplist->maxNumjAtoms, deviceContext);
+    copyToDeviceBuffer(&d_feplist->jjnr,
+                       h_fepdata->jjnrHost.data(),
+                       0,
+                       numjAtoms,
+                       deviceStream,
+                       GpuApiCallBehavior::Async,
+                       bDoTime ? iTimers.pl_h2d.fetchNextEvent() : nullptr);
+
+    reallocateDeviceBuffer(
+            &d_feplist->exclFep, numjAtoms, &d_feplist->numExcl, &d_feplist->maxNumExcl, deviceContext);
+    copyToDeviceBuffer(&d_feplist->exclFep,
+                       h_fepdata->exclFepHost.data(),
+                       0,
+                       numjAtoms,
+                       deviceStream,
+                       GpuApiCallBehavior::Async,
+                       bDoTime ? iTimers.pl_h2d.fetchNextEvent() : nullptr);
+
+    if (bDoTime)
+    {
+        iTimers.pl_h2d.closeTimingRegion(deviceStream);
+    }
+}
+
+void gpu_init_atomdata(NbnxmGpu* nb, const nbnxn_atomdata_t* nbat)
+{
+    bool                 bDoTime          = nb->bDoTime;
+    bool                 bFepGpuNonBonded = nb->nbparam->bFepGpuNonBonded;
+    GpuTimers*           timers           = bDoTime ? nb->timers : nullptr;
+    NBAtomDataGpu*       atdat            = nb->atdat;
+    const DeviceContext& deviceContext    = *nb->deviceContext_;
+    const DeviceStream&  localStream      = *nb->deviceStreams[InteractionLocality::Local];
+
+    int  numAtoms  = nbat->numAtoms();
+    bool realloced = false;
+
+    if (bDoTime)
+    {
+        /* time async copy */
+        timers->atdat.openTimingRegion(localStream);
+    }
+
+    /* need to reallocate if we have to copy more atoms than the amount of space
+       available and only allocate if we haven't initialized yet, i.e atdat->natoms == -1 */
+    if (numAtoms > atdat->numAtomsAlloc)
+    {
+        int numAlloc = over_alloc_small(numAtoms);
+
+        /* free up first if the arrays have already been initialized */
+        if (atdat->numAtomsAlloc != -1)
+        {
+            // Wait for the force-buffer clearing from the previous step
+            localStream.synchronize();
+
+            freeDeviceBuffer(&atdat->f);
+            freeDeviceBuffer(&atdat->xq);
+            if (useLjCombRule(nb->nbparam->vdwType))
+            {
+                freeDeviceBuffer(&atdat->ljComb);
+            }
+            else
+            {
+                freeDeviceBuffer(&atdat->atomTypes);
+            }
+            if (bFepGpuNonBonded)
+            {
+                freeDeviceBuffer(&atdat->q4);
+                if (useLjCombRule(nb->nbparam->vdwType))
+                {
+                    freeDeviceBuffer(&atdat->ljComb4);
+                }
+                else
+                {
+                    freeDeviceBuffer(&atdat->atomTypes4);
+                }
+            }
+        }
+
+
+        allocateDeviceBuffer(&atdat->f, numAlloc, deviceContext);
+        allocateDeviceBuffer(&atdat->xq, numAlloc, deviceContext);
+
+        if (useLjCombRule(nb->nbparam->vdwType))
+        {
+            // Two Lennard-Jones parameters per atom
+            allocateDeviceBuffer(&atdat->ljComb, numAlloc, deviceContext);
+        }
+        else
+        {
+            allocateDeviceBuffer(&atdat->atomTypes, numAlloc, deviceContext);
+        }
+
+        if (bFepGpuNonBonded)
+        {
+            allocateDeviceBuffer(&atdat->q4, numAlloc, deviceContext);
+            if (useLjCombRule(nb->nbparam->vdwType))
+            {
+                allocateDeviceBuffer(&atdat->ljComb4, numAlloc, deviceContext);
+            }
+            else
+            {
+                allocateDeviceBuffer(&atdat->atomTypes4, numAlloc, deviceContext);
+            }
+        }
+
+        atdat->numAtomsAlloc = numAlloc;
+        realloced            = true;
+    }
+
+    atdat->numAtoms      = numAtoms;
+    atdat->numAtomsLocal = nbat->numLocalAtoms();
+
+    /* need to clear GPU f output if realloc happened */
+    if (realloced)
+    {
+        clearDeviceBufferAsync(&atdat->f, 0, atdat->numAtomsAlloc, localStream);
+    }
+
+    if (useLjCombRule(nb->nbparam->vdwType))
+    {
+        static_assert(
+                sizeof(Float2) == 2 * sizeof(*nbat->params().lj_comb.data()),
+                "Size of a pair of LJ parameters elements should be equal to the size of Float2.");
+        copyToDeviceBuffer(&atdat->ljComb,
+                           reinterpret_cast<const Float2*>(nbat->params().lj_comb.data()),
+                           0,
+                           numAtoms,
+                           localStream,
+                           GpuApiCallBehavior::Async,
+                           bDoTime ? timers->atdat.fetchNextEvent() : nullptr);
+    }
+    else
+    {
+        static_assert(sizeof(int) == sizeof(*nbat->params().type.data()),
+                      "Sizes of host- and device-side atom types should be the same.");
+        copyToDeviceBuffer(&atdat->atomTypes,
+                           nbat->params().type.data(),
+                           0,
+                           numAtoms,
+                           localStream,
+                           GpuApiCallBehavior::Async,
+                           bDoTime ? timers->atdat.fetchNextEvent() : nullptr);
+    }
+
+#if GMX_GPU_CUDA
+    if (bFepGpuNonBonded)
+    {
+        nb->fephostdata->q4Host.resize(numAtoms * 4);
+        for (int k = 0; k < numAtoms; k++)
+        {
+            nb->fephostdata->q4Host[4 * k]     = (float)nbat->params().qA[k];
+            nb->fephostdata->q4Host[4 * k + 1] = (float)nbat->params().qB[k];
+        }
+        static_assert(sizeof(atdat->q4[0]) == sizeof(Float4),
+                      "Size of the q4 parameters element should be equal to the size of float4.");
+        copyToDeviceBuffer(&atdat->q4,
+                           reinterpret_cast<Float4*>(nb->fephostdata->q4Host.data()),
+                           0,
+                           numAtoms,
+                           localStream,
+                           GpuApiCallBehavior::Async,
+                           bDoTime ? timers->atdat.fetchNextEvent() : nullptr);
+
+        if (useLjCombRule(nb->nbparam->vdwType))
+        {
+            nb->fephostdata->ljComb4Host.resize(numAtoms * 4);
+            for (int k = 0; k < numAtoms; k++)
+            {
+                nb->fephostdata->ljComb4Host[4 * k]     = (float)nbat->params().ljCombA[2 * k];
+                nb->fephostdata->ljComb4Host[4 * k + 1] = (float)nbat->params().ljCombA[2 * k + 1];
+                nb->fephostdata->ljComb4Host[4 * k + 2] = (float)nbat->params().ljCombB[2 * k];
+                nb->fephostdata->ljComb4Host[4 * k + 3] = (float)nbat->params().ljCombB[2 * k + 1];
+            }
+            static_assert(
+                    sizeof(atdat->ljComb4[0]) == sizeof(Float4),
+                    "Size of the LJ4 parameters element should be equal to the size of float4.");
+            copyToDeviceBuffer(&atdat->ljComb4,
+                               reinterpret_cast<Float4*>(nb->fephostdata->ljComb4Host.data()),
+                               0,
+                               numAtoms,
+                               localStream,
+                               GpuApiCallBehavior::Async,
+                               bDoTime ? timers->atdat.fetchNextEvent() : nullptr);
+        }
+        else
+        {
+            nb->fephostdata->atomTypes4Host.resize(numAtoms * 4);
+            for (int k = 0; k < numAtoms; k++)
+            {
+                nb->fephostdata->atomTypes4Host[4 * k]     = nbat->params().typeA[k];
+                nb->fephostdata->atomTypes4Host[4 * k + 1] = nbat->params().typeB[k];
+            }
+            static_assert(sizeof(atdat->atomTypes4[0]) == sizeof(Int4),
+                          "Size of the atomTypes4 parameters element should be equal to the size "
+                          "of Int4.");
+            copyToDeviceBuffer(&atdat->atomTypes4,
+                               reinterpret_cast<Int4*>(nb->fephostdata->atomTypes4Host.data()),
+                               0,
+                               numAtoms,
+                               localStream,
+                               GpuApiCallBehavior::Async,
+                               bDoTime ? timers->atdat.fetchNextEvent() : nullptr);
+        }
+    }
+#endif
+
+    if (bDoTime)
+    {
+        timers->atdat.closeTimingRegion(localStream);
+    }
+
+    /* kick off the tasks enqueued above to ensure concurrency with the search */
+    issueClFlushInStream(localStream);
+}
+
+void gpu_clear_outputs(NbnxmGpu* nb, bool computeVirial)
+{
+    NBAtomDataGpu*      adat        = nb->atdat;
+    const DeviceStream& localStream = *nb->deviceStreams[InteractionLocality::Local];
+    // Clear forces
+    clearDeviceBufferAsync(&adat->f, 0, nb->atdat->numAtoms, localStream);
+    // Clear shift force array and energies if the outputs were used in the current step
+    if (computeVirial)
+    {
+        clearDeviceBufferAsync(&adat->fShift, 0, c_numShiftVectors, localStream);
+        clearDeviceBufferAsync(&adat->eLJ, 0, 1, localStream);
+        clearDeviceBufferAsync(&adat->eElec, 0, 1, localStream);
+        clearDeviceBufferAsync(&adat->dvdlLJ, 0, 1, localStream);
+        clearDeviceBufferAsync(&adat->dvdlElec, 0, 1, localStream);
+    }
+    const int nLambda = nb->fephostdata->allLambdaCoul.size();
+    if (nLambda > 0 && (nb->nbparam->alphaCoul != 0 || nb->nbparam->alphaVdw != 0))
+    {
+        clearDeviceBufferAsync(&adat->eElecForeign, 0, nLambda + 1, localStream);
+        clearDeviceBufferAsync(&adat->eLJForeign, 0, nLambda + 1, localStream);
+        clearDeviceBufferAsync(&adat->dvdlElecForeign, 0, nLambda + 1, localStream);
+        clearDeviceBufferAsync(&adat->dvdlLJForeign, 0, nLambda + 1, localStream);
+    }
+    issueClFlushInStream(localStream);
+}
+
 //! This function is documented in the header file
 gmx_wallclock_gpu_nbnxn_t* gpu_get_timings(NbnxmGpu* nb)
 {
-    return (nb != nullptr && nb->bDoTime) ? nb->timings : nullptr;
+    return (nb != nullptr && nb->bDoTime) ? nb->timings.get() : nullptr;
 }
 
 //! This function is documented in the header file
 void gpu_reset_timings(nonbonded_verlet_t* nbv)
 {
-    if (nbv->gpu_nbv && nbv->gpu_nbv->bDoTime)
+    if (nbv->gpuNbv() && nbv->gpuNbv()->bDoTime)
     {
-        init_timings(nbv->gpu_nbv->timings);
+        init_timings(nbv->gpuNbv()->timings.get());
     }
 }
 
@@ -331,78 +1230,538 @@ bool gpu_is_kernel_ewald_analytical(const NbnxmGpu* nb)
             || (nb->nbparam->elecType == ElecType::EwaldAnaTwin));
 }
 
-enum ElecType nbnxmGpuPickElectrostaticsKernelType(const interaction_const_t* ic)
+void setupGpuShortRangeWorkLow(NbnxmGpu*                 nb,
+                               const ListedForcesGpu*    listedForcesGpu,
+                               const InteractionLocality iLocality)
 {
-    if (ic->eeltype == eelCUT)
+    GMX_ASSERT(nb, "Need a valid nbnxn_gpu object");
+
+    // There is short-range work if the pair list for the provided
+    // interaction locality contains entries or if there is any
+    // bonded work (as this is not split into local/nonlocal).
+    nb->haveWork[iLocality] = ((nb->plist[iLocality]->numSci != 0)
+                               || (listedForcesGpu != nullptr && listedForcesGpu->haveInteractions()));
+}
+
+bool haveGpuShortRangeWork(const NbnxmGpu* nb, const InteractionLocality interactionLocality)
+{
+    GMX_ASSERT(nb, "Need a valid nbnxn_gpu object");
+
+    return nb->haveWork[interactionLocality];
+}
+
+/*! \brief
+ * Launch asynchronously the download of nonbonded forces from the GPU
+ * (and energies/shift forces if required).
+ */
+void gpu_launch_cpyback(NbnxmGpu*                nb,
+                        struct nbnxn_atomdata_t* nbatom,
+                        const StepWorkload&      stepWork,
+                        const AtomLocality       atomLocality)
+{
+    GMX_ASSERT(nb, "Need a valid nbnxn_gpu object");
+
+    /* determine interaction locality from atom locality */
+    const InteractionLocality iloc = atomToInteractionLocality(atomLocality);
+    GMX_ASSERT(iloc == InteractionLocality::Local
+                       || (iloc == InteractionLocality::NonLocal && nb->bNonLocalStreamDoneMarked == false),
+               "Non-local stream is indicating that the copy back event is enqueued at the "
+               "beginning of the copy back function.");
+
+    /* extract the data */
+    NBAtomDataGpu*      adat         = nb->atdat;
+    GpuTimers*          timers       = nb->timers;
+    bool                bDoTime      = nb->bDoTime;
+    const DeviceStream& deviceStream = *nb->deviceStreams[iloc];
+
+    /* don't launch non-local copy-back if there was no non-local work to do */
+    if ((iloc == InteractionLocality::NonLocal) && !haveGpuShortRangeWork(nb, iloc))
     {
-        return ElecType::Cut;
+        /* TODO An alternative way to signal that non-local work is
+           complete is to use a clEnqueueMarker+clEnqueueBarrier
+           pair. However, the use of bNonLocalStreamDoneMarked has the
+           advantage of being local to the host, so probably minimizes
+           overhead. Curiously, for NVIDIA OpenCL with an empty-domain
+           test case, overall simulation performance was higher with
+           the API calls, but this has not been tested on AMD OpenCL,
+           so could be worth considering in future. */
+        nb->bNonLocalStreamDoneMarked = false;
+        return;
     }
-    else if (EEL_RF(ic->eeltype))
+
+    /* local/nonlocal offset and length used for xq and f */
+    auto atomsRange = getGpuAtomRange(adat, atomLocality);
+
+    /* beginning of timed D2H section */
+    if (bDoTime)
     {
-        return ElecType::RF;
+        timers->xf[atomLocality].nb_d2h.openTimingRegion(deviceStream);
     }
-    else if ((EEL_PME(ic->eeltype) || ic->eeltype == eelEWALD))
+
+    /* With DD the local D2H transfer can only start after the non-local
+       has been launched. */
+    if (iloc == InteractionLocality::Local && nb->bNonLocalStreamDoneMarked)
     {
-        return nbnxn_gpu_pick_ewald_kernel_type(*ic);
+        nb->nonlocal_done.enqueueWaitEvent(deviceStream);
+        nb->bNonLocalStreamDoneMarked = false;
     }
-    else
+
+    /* DtoH f */
+    if (!stepWork.useGpuFBufferOps)
     {
-        /* Shouldn't happen, as this is checked when choosing Verlet-scheme */
-        GMX_THROW(gmx::InconsistentInputError(
-                gmx::formatString("The requested electrostatics type %s (%d) is not implemented in "
-                                  "the GPU accelerated kernels!",
-                                  EELTYPE(ic->eeltype), ic->eeltype)));
+        static_assert(
+                sizeof(*nbatom->outputBuffer(0).f.data()) == sizeof(float),
+                "The host force buffer should be in single precision to match device data size.");
+        copyFromDeviceBuffer(
+                reinterpret_cast<Float3*>(nbatom->outputBuffer(0).f.data()) + atomsRange.begin(),
+                &adat->f,
+                atomsRange.begin(),
+                atomsRange.size(),
+                deviceStream,
+                GpuApiCallBehavior::Async,
+                bDoTime ? timers->xf[atomLocality].nb_d2h.fetchNextEvent() : nullptr);
+
+        issueClFlushInStream(deviceStream);
+    }
+
+    /* After the non-local D2H is launched the nonlocal_done event can be
+       recorded which signals that the local D2H can proceed. This event is not
+       placed after the non-local kernel because we first need the non-local
+       data back first. */
+    if (iloc == InteractionLocality::NonLocal)
+    {
+        nb->nonlocal_done.markEvent(deviceStream);
+        nb->bNonLocalStreamDoneMarked = true;
+    }
+
+    /* only transfer energies in the local stream */
+    if (iloc == InteractionLocality::Local)
+    {
+        /* DtoH fshift when virial is needed */
+        if (stepWork.computeVirial)
+        {
+            static_assert(
+                    sizeof(*nb->nbst.fShift.data()) == sizeof(Float3),
+                    "Sizes of host- and device-side shift vector elements should be the same.");
+            copyFromDeviceBuffer(nb->nbst.fShift.data(),
+                                 &adat->fShift,
+                                 0,
+                                 c_numShiftVectors,
+                                 deviceStream,
+                                 GpuApiCallBehavior::Async,
+                                 bDoTime ? timers->xf[atomLocality].nb_d2h.fetchNextEvent() : nullptr);
+        }
+
+        /* DtoH energies */
+        if (stepWork.computeEnergy)
+        {
+            static_assert(sizeof(*nb->nbst.eLJ.data()) == sizeof(float),
+                          "Sizes of host- and device-side LJ energy terms should be the same.");
+            copyFromDeviceBuffer(nb->nbst.eLJ.data(),
+                                 &adat->eLJ,
+                                 0,
+                                 1,
+                                 deviceStream,
+                                 GpuApiCallBehavior::Async,
+                                 bDoTime ? timers->xf[atomLocality].nb_d2h.fetchNextEvent() : nullptr);
+            static_assert(sizeof(*nb->nbst.eElec.data()) == sizeof(float),
+                          "Sizes of host- and device-side electrostatic energy terms should be the "
+                          "same.");
+            copyFromDeviceBuffer(nb->nbst.eElec.data(),
+                                 &adat->eElec,
+                                 0,
+                                 1,
+                                 deviceStream,
+                                 GpuApiCallBehavior::Async,
+                                 bDoTime ? timers->xf[atomLocality].nb_d2h.fetchNextEvent() : nullptr);
+            static_assert(sizeof(*nb->nbst.dvdlLJ.data()) == sizeof(float),
+                          "Sizes of host- and device-side DVDL LJ terms should be the same.");
+            copyFromDeviceBuffer(nb->nbst.dvdlLJ.data(),
+                                 &adat->dvdlLJ,
+                                 0,
+                                 1,
+                                 deviceStream,
+                                 GpuApiCallBehavior::Async,
+                                 bDoTime ? timers->xf[atomLocality].nb_d2h.fetchNextEvent() : nullptr);
+            static_assert(sizeof(*nb->nbst.dvdlElec.data()) == sizeof(float),
+                          "Sizes of host- and device-side electrostatic DVDL terms should be the "
+                          "same.");
+            copyFromDeviceBuffer(nb->nbst.dvdlElec.data(),
+                                 &adat->dvdlElec,
+                                 0,
+                                 1,
+                                 deviceStream,
+                                 GpuApiCallBehavior::Async,
+                                 bDoTime ? timers->xf[atomLocality].nb_d2h.fetchNextEvent() : nullptr);
+        }
+        // Copy back foreign lambda results
+        const int nLambda = nb->fephostdata->allLambdaCoul.size();
+        if (nLambda > 0 && stepWork.computeDhdl
+            && (nb->nbparam->alphaCoul != 0 || nb->nbparam->alphaVdw != 0))
+        {
+            static_assert(
+                    sizeof(*nb->nbst.eLJForeign.data()) == sizeof(float),
+                    "Sizes of host- and device-side LJ foreign energy terms should be the same.");
+            copyFromDeviceBuffer(nb->nbst.eLJForeign.data(),
+                                 &adat->eLJForeign,
+                                 0,
+                                 nLambda + 1,
+                                 deviceStream,
+                                 GpuApiCallBehavior::Async,
+                                 bDoTime ? timers->xf[atomLocality].nb_d2h.fetchNextEvent() : nullptr);
+            static_assert(sizeof(*nb->nbst.eElecForeign.data()) == sizeof(float),
+                          "Sizes of host- and device-side electrostatic foreign energy terms "
+                          "should be the "
+                          "same.");
+            copyFromDeviceBuffer(nb->nbst.eElecForeign.data(),
+                                 &adat->eElecForeign,
+                                 0,
+                                 nLambda + 1,
+                                 deviceStream,
+                                 GpuApiCallBehavior::Async,
+                                 bDoTime ? timers->xf[atomLocality].nb_d2h.fetchNextEvent() : nullptr);
+            static_assert(
+                    sizeof(*nb->nbst.dvdlLJForeign.data()) == sizeof(float),
+                    "Sizes of host- and device-side foreign DVDL LJ terms should be the same.");
+            copyFromDeviceBuffer(nb->nbst.dvdlLJForeign.data(),
+                                 &adat->dvdlLJForeign,
+                                 0,
+                                 nLambda + 1,
+                                 deviceStream,
+                                 GpuApiCallBehavior::Async,
+                                 bDoTime ? timers->xf[atomLocality].nb_d2h.fetchNextEvent() : nullptr);
+            static_assert(
+                    sizeof(*nb->nbst.dvdlElecForeign.data()) == sizeof(float),
+                    "Sizes of host- and device-side foreign electrostatic DVDL terms should be the "
+                    "same.");
+            copyFromDeviceBuffer(nb->nbst.dvdlElecForeign.data(),
+                                 &adat->dvdlElecForeign,
+                                 0,
+                                 nLambda + 1,
+                                 deviceStream,
+                                 GpuApiCallBehavior::Async,
+                                 bDoTime ? timers->xf[atomLocality].nb_d2h.fetchNextEvent() : nullptr);
+        }
+    }
+
+    if (bDoTime)
+    {
+        timers->xf[atomLocality].nb_d2h.closeTimingRegion(deviceStream);
     }
 }
 
-
-enum VdwType nbnxmGpuPickVdwKernelType(const interaction_const_t* ic, int combRule)
+void nbnxnInsertNonlocalGpuDependency(NbnxmGpu* nb, const InteractionLocality interactionLocality)
 {
-    if (ic->vdwtype == evdwCUT)
+    const DeviceStream& deviceStream = *nb->deviceStreams[interactionLocality];
+
+    /* When we get here all misc operations issued in the local stream as well as
+       the local xq H2D are done,
+       so we record that in the local stream and wait for it in the nonlocal one.
+       This wait needs to precede any PP tasks, bonded or nonbonded, that may
+       compute on interactions between local and nonlocal atoms.
+     */
+    if (nb->bUseTwoStreams)
     {
-        switch (ic->vdw_modifier)
+        if (interactionLocality == InteractionLocality::Local)
         {
-            case eintmodNONE:
-            case eintmodPOTSHIFT:
-                switch (combRule)
-                {
-                    case ljcrNONE: return VdwType::Cut;
-                    case ljcrGEOM: return VdwType::CutCombGeom;
-                    case ljcrLB: return VdwType::CutCombLB;
-                    default:
-                        GMX_THROW(gmx::InconsistentInputError(gmx::formatString(
-                                "The requested LJ combination rule %s (%d) is not implemented in "
-                                "the GPU accelerated kernels!",
-                                enum_name(combRule, ljcrNR, c_ljcrNames), combRule)));
-                }
-            case eintmodFORCESWITCH: return VdwType::FSwitch;
-            case eintmodPOTSWITCH: return VdwType::PSwitch;
-            default:
-                GMX_THROW(gmx::InconsistentInputError(
-                        gmx::formatString("The requested VdW interaction modifier %s (%d) is not "
-                                          "implemented in the GPU accelerated kernels!",
-                                          INTMODIFIER(ic->vdw_modifier), ic->vdw_modifier)));
-        }
-    }
-    else if (ic->vdwtype == evdwPME)
-    {
-        if (ic->ljpme_comb_rule == ljcrGEOM)
-        {
-            assert(combRule == ljcrGEOM);
-            return VdwType::EwaldGeom;
+            nb->misc_ops_and_local_H2D_done.markEvent(deviceStream);
+            issueClFlushInStream(deviceStream);
         }
         else
         {
-            assert(combRule == ljcrLB);
-            return VdwType::EwaldLB;
+            nb->misc_ops_and_local_H2D_done.enqueueWaitEvent(deviceStream);
+        }
+    }
+}
+
+/*! \brief Launch asynchronously the xq buffer host to device copy. */
+void gpu_copy_xq_to_gpu(NbnxmGpu* nb, const nbnxn_atomdata_t* nbatom, const AtomLocality atomLocality)
+{
+    GMX_ASSERT(nb, "Need a valid nbnxn_gpu object");
+
+    const InteractionLocality iloc = atomToInteractionLocality(atomLocality);
+
+    NBAtomDataGpu*      adat         = nb->atdat;
+    auto*               plist        = nb->plist[iloc].get();
+    GpuTimers*          timers       = nb->timers;
+    const DeviceStream& deviceStream = *nb->deviceStreams[iloc];
+
+    const bool bDoTime = nb->bDoTime;
+
+    /* Don't launch the non-local H2D copy if there is no dependent
+       work to do: neither non-local nor other (e.g. bonded) work
+       to do that has as input the nbnxn coordaintes.
+       Doing the same for the local kernel is more complicated, since the
+       local part of the force array also depends on the non-local kernel.
+       So to avoid complicating the code and to reduce the risk of bugs,
+       we always call the local local x+q copy (and the rest of the local
+       work in nbnxn_gpu_launch_kernel().
+     */
+    if ((iloc == InteractionLocality::NonLocal) && !haveGpuShortRangeWork(nb, iloc))
+    {
+        plist->haveFreshList = false;
+
+        // The event is marked for Local interactions unconditionally,
+        // so it has to be released here because of the early return
+        // for NonLocal interactions.
+        nb->misc_ops_and_local_H2D_done.reset();
+
+        return;
+    }
+
+    /* local/nonlocal offset and length used for xq and f */
+    const auto atomsRange = getGpuAtomRange(adat, atomLocality);
+
+    /* beginning of timed HtoD section */
+    if (bDoTime)
+    {
+        timers->xf[atomLocality].nb_h2d.openTimingRegion(deviceStream);
+    }
+
+    /* HtoD x, q */
+    GMX_ASSERT(nbatom->XFormat == nbatXYZQ,
+               "The coordinates should be in xyzq format to copy to the Float4 device buffer.");
+    copyToDeviceBuffer(&adat->xq,
+                       reinterpret_cast<const Float4*>(nbatom->x().data()) + atomsRange.begin(),
+                       atomsRange.begin(),
+                       atomsRange.size(),
+                       deviceStream,
+                       GpuApiCallBehavior::Async,
+                       nullptr);
+
+    if (bDoTime)
+    {
+        timers->xf[atomLocality].nb_h2d.closeTimingRegion(deviceStream);
+    }
+
+    /* When we get here all misc operations issued in the local stream as well as
+       the local xq H2D are done,
+       so we record that in the local stream and wait for it in the nonlocal one.
+       This wait needs to precede any PP tasks, bonded or nonbonded, that may
+       compute on interactions between local and nonlocal atoms.
+     */
+    nbnxnInsertNonlocalGpuDependency(nb, iloc);
+}
+
+
+/* Initialization for X buffer operations on GPU. */
+void nbnxn_gpu_init_x_to_nbat_x(const GridSet& gridSet, NbnxmGpu* gpu_nbv)
+{
+    const DeviceStream& localStream   = *gpu_nbv->deviceStreams[InteractionLocality::Local];
+    const bool          bDoTime       = gpu_nbv->bDoTime;
+    const int           maxNumColumns = gridSet.numColumnsMax();
+
+    reallocateDeviceBuffer(&gpu_nbv->cxy_na,
+                           maxNumColumns * gridSet.grids().size(),
+                           &gpu_nbv->ncxy_na,
+                           &gpu_nbv->ncxy_na_alloc,
+                           *gpu_nbv->deviceContext_);
+    reallocateDeviceBuffer(&gpu_nbv->cxy_ind,
+                           maxNumColumns * gridSet.grids().size(),
+                           &gpu_nbv->ncxy_ind,
+                           &gpu_nbv->ncxy_ind_alloc,
+                           *gpu_nbv->deviceContext_);
+
+    for (unsigned int g = 0; g < gridSet.grids().size(); g++)
+    {
+        const Grid& grid = gridSet.grid(g);
+
+        const int  numColumns      = grid.numColumns();
+        const int* atomIndices     = gridSet.atomIndices().data();
+        const int  atomIndicesSize = gridSet.atomIndices().size();
+        const int* cxy_na          = grid.cxy_na().data();
+        const int* cxy_ind         = grid.cxy_ind().data();
+
+        auto* timerH2D = bDoTime ? &gpu_nbv->timers->xf[AtomLocality::Local].nb_h2d : nullptr;
+
+        reallocateDeviceBuffer(&gpu_nbv->atomIndices,
+                               atomIndicesSize,
+                               &gpu_nbv->atomIndicesSize,
+                               &gpu_nbv->atomIndicesSize_alloc,
+                               *gpu_nbv->deviceContext_);
+
+        if (atomIndicesSize > 0)
+        {
+            if (bDoTime)
+            {
+                timerH2D->openTimingRegion(localStream);
+            }
+
+            copyToDeviceBuffer(&gpu_nbv->atomIndices,
+                               atomIndices,
+                               0,
+                               atomIndicesSize,
+                               localStream,
+                               GpuApiCallBehavior::Async,
+                               bDoTime ? timerH2D->fetchNextEvent() : nullptr);
+
+            if (bDoTime)
+            {
+                timerH2D->closeTimingRegion(localStream);
+            }
+        }
+
+        if (numColumns > 0)
+        {
+            if (bDoTime)
+            {
+                timerH2D->openTimingRegion(localStream);
+            }
+
+            copyToDeviceBuffer(&gpu_nbv->cxy_na,
+                               cxy_na,
+                               maxNumColumns * g,
+                               numColumns,
+                               localStream,
+                               GpuApiCallBehavior::Async,
+                               bDoTime ? timerH2D->fetchNextEvent() : nullptr);
+
+            if (bDoTime)
+            {
+                timerH2D->closeTimingRegion(localStream);
+            }
+
+            if (bDoTime)
+            {
+                timerH2D->openTimingRegion(localStream);
+            }
+
+            copyToDeviceBuffer(&gpu_nbv->cxy_ind,
+                               cxy_ind,
+                               maxNumColumns * g,
+                               numColumns,
+                               localStream,
+                               GpuApiCallBehavior::Async,
+                               bDoTime ? timerH2D->fetchNextEvent() : nullptr);
+
+            if (bDoTime)
+            {
+                timerH2D->closeTimingRegion(localStream);
+            }
+        }
+    }
+
+    // The above data is transferred on the local stream but is a
+    // dependency of the nonlocal stream (specifically the nonlocal X
+    // buf ops kernel).  We therefore set a dependency to ensure
+    // that the nonlocal stream waits on the local stream here.
+    // This call records an event in the local stream:
+    nbnxnInsertNonlocalGpuDependency(gpu_nbv, InteractionLocality::Local);
+    // ...and this call instructs the nonlocal stream to wait on that event:
+    nbnxnInsertNonlocalGpuDependency(gpu_nbv, InteractionLocality::NonLocal);
+}
+
+//! This function is documented in the header file
+void gpu_free(NbnxmGpu* nb)
+{
+    if (nb == nullptr)
+    {
+        return;
+    }
+
+    /* Synchronize to make sure there are no leftover operations in the streams.
+     * Ideally, there should not be any, but just in case we synchronize there
+     * to avoid freeing buffers that can be still used. See #4519.
+     *
+     * In practice, that's not needed for CUDA since cudaFree synchronizes internally.
+     * But explicitly waiting for tasks to complete before freeing the memory they use is logically
+     * sound and should not have any performance impact.
+     */
+    nb->deviceStreams[InteractionLocality::Local]->synchronize();
+    if (nb->deviceStreams[InteractionLocality::NonLocal])
+    {
+        nb->deviceStreams[InteractionLocality::NonLocal]->synchronize();
+    }
+
+    gpu_free_platform_specific(nb);
+
+    delete nb->timers;
+
+    NBAtomDataGpu* atdat   = nb->atdat;
+    NBParamGpu*    nbparam = nb->nbparam;
+
+    /* Free atdat */
+    freeDeviceBuffer(&(nb->atdat->xq));
+    freeDeviceBuffer(&(nb->atdat->f));
+    freeDeviceBuffer(&(nb->atdat->eLJ));
+    freeDeviceBuffer(&(nb->atdat->eElec));
+    freeDeviceBuffer(&(nb->atdat->dvdlLJ));
+    freeDeviceBuffer(&(nb->atdat->dvdlElec));
+    freeDeviceBuffer(&(nb->atdat->fShift));
+    freeDeviceBuffer(&(nb->atdat->shiftVec));
+
+    if (nbparam->bFepGpuNonBonded)
+    {
+        freeDeviceBuffer(&(nb->atdat->q4));
+        if (nb->fephostdata->allLambdaCoul.size() > 0)
+        {
+            freeDeviceBuffer(&(nb->atdat->eLJForeign));
+            freeDeviceBuffer(&(nb->atdat->eElecForeign));
+            freeDeviceBuffer(&(nb->atdat->dvdlLJForeign));
+            freeDeviceBuffer(&(nb->atdat->dvdlElecForeign));
+            freeDeviceBuffer(&(nb->nbparam->allLambdaCoul));
+            freeDeviceBuffer(&(nb->nbparam->allLambdaVdw));
+        }
+    }
+
+    if (useLjCombRule(nb->nbparam->vdwType))
+    {
+        freeDeviceBuffer(&atdat->ljComb);
+        if (nbparam->bFepGpuNonBonded)
+        {
+            freeDeviceBuffer(&atdat->ljComb4);
         }
     }
     else
     {
-        GMX_THROW(gmx::InconsistentInputError(gmx::formatString(
-                "The requested VdW type %s (%d) is not implemented in the GPU accelerated kernels!",
-                EVDWTYPE(ic->vdwtype), ic->vdwtype)));
+        freeDeviceBuffer(&atdat->atomTypes);
+        if (nbparam->bFepGpuNonBonded)
+        {
+            freeDeviceBuffer(&atdat->atomTypes4);
+        }
+    }
+
+    /* Free nbparam */
+    if (nbparam->elecType == ElecType::EwaldTab || nbparam->elecType == ElecType::EwaldTabTwin)
+    {
+        destroyParamLookupTable(&nbparam->coulomb_tab, &nbparam->coulomb_tab_texobj);
+    }
+
+    if (!useLjCombRule(nb->nbparam->vdwType))
+    {
+        destroyParamLookupTable(&nbparam->nbfp, &nbparam->nbfp_texobj);
+    }
+
+    if (nbparam->vdwType == VdwType::EwaldGeom || nbparam->vdwType == VdwType::EwaldLB)
+    {
+        destroyParamLookupTable(&nbparam->nbfp_comb, &nbparam->nbfp_comb_texobj);
+    }
+
+    freeDeviceBuffer(&nb->cxy_na);
+    freeDeviceBuffer(&nb->cxy_ind);
+    freeDeviceBuffer(&nb->atomIndices);
+
+    delete atdat;
+    delete nbparam;
+    delete nb;
+
+    if (debug)
+    {
+        fprintf(debug, "Cleaned up NBNXM GPU data structures.\n");
     }
 }
 
-} // namespace Nbnxm
+NBAtomDataGpu* gpuGetNBAtomData(NbnxmGpu* nb)
+{
+    GMX_ASSERT(nb != nullptr, "nb pointer must be valid");
+    return nb->atdat;
+}
+
+DeviceBuffer<RVec> gpu_get_f(NbnxmGpu* nb)
+{
+    GMX_ASSERT(nb != nullptr, "nb pointer must be valid");
+
+    return nb->atdat->f;
+}
+
+} // namespace gmx

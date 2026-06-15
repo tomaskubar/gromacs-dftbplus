@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2020- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \internal \file
  * \brief
@@ -42,9 +41,12 @@
  * \author Sebastian Keller <keller@cscs.ch>
  */
 #include "nblib/listed_forces/bondtypes.h"
-#include "nblib/util/internal.h"
+
+#include <gtest/gtest.h>
 
 #include "testutils/testasserts.h"
+
+#include "nblib/util/util.hpp"
 
 namespace nblib
 {
@@ -53,9 +55,8 @@ namespace test_detail
 {
 
 template<class B>
-void testTwoParameterBondEquality(const B& deduceType)
+void testTwoParameterBondEquality([[maybe_unused]] const B& deduceType)
 {
-    ignore_unused(deduceType);
     B a(1, 2);
     B b(1, 2);
     EXPECT_TRUE(a == b);
@@ -65,9 +66,8 @@ void testTwoParameterBondEquality(const B& deduceType)
 }
 
 template<class B>
-void testThreeParameterBondEquality(const B& deduceType)
+void testThreeParameterBondEquality([[maybe_unused]] const B& deduceType)
 {
-    ignore_unused(deduceType);
     B a(1, 2, 3);
     B b(1, 2, 3);
     EXPECT_TRUE(a == b);
@@ -77,9 +77,8 @@ void testThreeParameterBondEquality(const B& deduceType)
 }
 
 template<class B>
-void testTwoParameterBondLessThan(const B& deduceType)
+void testTwoParameterBondLessThan([[maybe_unused]] const B& deduceType)
 {
-    ignore_unused(deduceType);
     B a(1, 2);
     B b(1, 3);
     EXPECT_TRUE(a < b);
@@ -96,9 +95,8 @@ void testTwoParameterBondLessThan(const B& deduceType)
 }
 
 template<class B>
-void testThreeParameterBondLessThan(const B& deduceType)
+void testThreeParameterBondLessThan([[maybe_unused]] const B& deduceType)
 {
-    ignore_unused(deduceType);
     B a(1, 2, 1);
     B b(1, 3, 1);
     EXPECT_TRUE(a < b);
@@ -118,8 +116,8 @@ void testThreeParameterBondLessThan(const B& deduceType)
 
 TEST(NBlibTest, BondTypesOperatorEqualWorks)
 {
-    auto bondList3 = std::make_tuple(HarmonicBondType(), G96BondType(), FENEBondType(),
-                                     HalfAttractiveQuarticBondType());
+    auto bondList3 = std::make_tuple(
+            HarmonicBondType(), G96BondType(), FENEBondType(), HalfAttractiveQuarticBondType());
     for_each_tuple([](const auto& b) { test_detail::testTwoParameterBondEquality(b); }, bondList3);
 
     auto bondList4 = std::make_tuple(CubicBondType(), MorseBondType());
@@ -128,8 +126,8 @@ TEST(NBlibTest, BondTypesOperatorEqualWorks)
 
 TEST(NBlibTest, BondTypesLessThanWorks)
 {
-    auto bondList3 = std::make_tuple(HarmonicBondType(), G96BondType(), FENEBondType(),
-                                     HalfAttractiveQuarticBondType());
+    auto bondList3 = std::make_tuple(
+            HarmonicBondType(), G96BondType(), FENEBondType(), HalfAttractiveQuarticBondType());
     for_each_tuple([](const auto& b) { test_detail::testTwoParameterBondLessThan(b); }, bondList3);
 
     auto bondList4 = std::make_tuple(CubicBondType(), MorseBondType());

@@ -1,13 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
- * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2016,2017 by the GROMACS development team.
- * Copyright (c) 2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 1991- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -21,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -30,29 +26,35 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 #include "gmxpre.h"
 
-#include "rmpbc.h"
+#include "gromacs/pbcutil/rmpbc.h"
 
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 
 #include <algorithm>
+#include <filesystem>
 
-#include "gromacs/math/vec.h"
+#include "gromacs/mdtypes/md_enums.h"
 #include "gromacs/pbcutil/mshift.h"
 #include "gromacs/pbcutil/pbc.h"
 #include "gromacs/topology/atoms.h"
 #include "gromacs/topology/idef.h"
 #include "gromacs/trajectory/trajectoryframe.h"
+#include "gromacs/utility/basedefinitions.h"
 #include "gromacs/utility/fatalerror.h"
 #include "gromacs/utility/futil.h"
+#include "gromacs/utility/real.h"
 #include "gromacs/utility/smalloc.h"
+#include "gromacs/utility/vec.h"
+#include "gromacs/utility/vectypes.h"
 
 typedef struct
 {
@@ -66,7 +68,6 @@ struct gmx_rmpbc
     const t_idef*                 idef;
     int                           natoms_init;
     PbcType                       pbcType;
-    int                           ePBC;
     int                           ngraph;
     rmpbc_graph_t*                graph;
 };
@@ -76,7 +77,8 @@ static t_graph* gmx_rmpbc_get_graph(gmx_rmpbc_t gpbc, PbcType pbcType, int natom
     int            i;
     rmpbc_graph_t* gr;
 
-    if (pbcType == PbcType::No || nullptr == gpbc || nullptr == gpbc->idef || gpbc->idef->ntypes <= 0)
+    if (pbcType == PbcType::No || nullptr == gpbc
+        || (nullptr == gpbc->interactionDefinitions && (nullptr == gpbc->idef || gpbc->idef->ntypes <= 0)))
     {
         return nullptr;
     }
@@ -100,7 +102,8 @@ static t_graph* gmx_rmpbc_get_graph(gmx_rmpbc_t gpbc, PbcType pbcType, int natom
         {
             gmx_fatal(FARGS,
                       "Structure or trajectory file has more atoms (%d) than the topology (%d)",
-                      natoms, gpbc->natoms_init);
+                      natoms,
+                      gpbc->natoms_init);
         }
         gpbc->ngraph++;
         srenew(gpbc->graph, gpbc->ngraph);
@@ -194,7 +197,7 @@ static PbcType gmx_rmpbc_ePBC(gmx_rmpbc_t gpbc, const matrix box)
     }
 }
 
-void gmx_rmpbc(gmx_rmpbc_t gpbc, int natoms, const matrix box, rvec x[])
+void gmx_rmpbc_apply(gmx_rmpbc_t gpbc, int natoms, const matrix box, rvec x[])
 {
     PbcType  pbcType;
     t_graph* gr;

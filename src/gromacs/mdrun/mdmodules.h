@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2016,2017,2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2016- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \libinternal \file
  * \brief
@@ -43,9 +42,10 @@
 #ifndef GMX_MDRUN_MDMODULES_H
 #define GMX_MDRUN_MDMODULES_H
 
-#include "gromacs/utility/classhelpers.h"
+#include <memory>
+#include <string_view>
 
-
+struct gmx_wallcycle;
 struct t_inputrec;
 
 namespace gmx
@@ -58,7 +58,7 @@ class IKeyValueTreeErrorHandler;
 class IKeyValueTreeTransformRules;
 class IMDModule;
 class IMDOutputProvider;
-struct MdModulesNotifier;
+struct MDModulesNotifiers;
 
 /*! \libinternal \brief
  * Manages the collection of all modules used for mdrun.
@@ -70,7 +70,7 @@ struct MdModulesNotifier;
  * few modules and use them.
  *
  * The general idea is that each module takes care of its own data rather than
- * mdrun having to know about all the details of each type of force calculation.
+ * (for example) mdrun having to know about all the details of each type of force calculation.
  * Initially this is applied for simple things like electric field calculations
  * but later more complex forces will be supported too.
  *
@@ -141,27 +141,39 @@ public:
     IMDOutputProvider* outputProvider();
     /*! \brief
      * Returns an object for computing forces from the modules.
-     */
-    ForceProviders* initForceProviders();
-
-    /*! \brief Subscribe MdModules to simulation setup notifications.
      *
-     * Allows MdModules to subscribe to notifications that are called back
-     * during the set up of an MD simulation, after the options were
-     * assigned to the modules.
+     * \param[in] wallCycle  Pointer to a wall cycle object, can be nullptr, in which case
+     *                       no cycle counting will be performed for force providers.
+     * \returns an object for computing forces from the modules.
      */
-    void subscribeToSimulationSetupNotifications();
+    ForceProviders* initForceProviders(gmx_wallcycle* wallCycle);
 
-    /*! \brief Subscribe MdModules to notifications during pre-processing.
+    /*! \brief Subscribe MDModules to notifications during pre-processing.
      *
-     * Allows MdModules to subscribe to notifications that are called back
+     * Allows MDModules to subscribe to notifications that are called back
      * during pre processing an MD simulation, after the options were
      * assigned to the modules.
      */
     void subscribeToPreProcessingNotifications();
 
+    /*! \brief Subscribe MDModules to simulation setup notifications.
+     *
+     * Allows MDModules to subscribe to notifications that are called back
+     * during the set up of an MD simulation, after the options were
+     * assigned to the modules.
+     */
+    void subscribeToSimulationSetupNotifications();
+
+    /*! \brief Subscribe MDModules to simulation run notifications.
+     *
+     * Allows MDModules to subscribe to notifications that are called back
+     * during an MD simulation, after the options were assigned to the modules
+     * and setup notifications have been emitted.
+     */
+    void subscribeToSimulationRunNotifications();
+
     /*!
-     * \brief Add a module to the container.
+     * \brief Add a module to the container associated with the given name.
      *
      * An object may be added by a client to the bound MD Modules at run time.
      * Both the client and the MDModules object may need to extend the life
@@ -170,28 +182,27 @@ public:
      * may attempt to use its the interfaces accessible through IMDModule
      * methods.
      *
-     * \param module implements some sort of modular functionality for MD.
-     *
-     * \note: There is not yet a way to add a IMDModule object between
-     * creation of the MDModules container and the execution of the various
-     * initialization protocols it supports.
+     * \param name   Unique name for this module in the collection
+     * \param module Implements some sort of modular functionality for MD.
      *
      * \internal
      * Adding a module at an arbitrary point in the MDModules life breaks
      * some assumptions in the protocol of the other member functions. If
      * MDModules should not change after some point, we should move this
      * to a builder class.
+     *
+     * \throws APIError When a module with the given name is already added
      */
-    void add(std::shared_ptr<IMDModule> module);
+    void add(std::string_view name, std::shared_ptr<IMDModule> module);
 
-    /*! \brief Return a handle to the callbacks.
+    /*! \brief Return a handle to the notifiers used for callbacks between modules.
      */
-    const MdModulesNotifier& notifier();
+    const MDModulesNotifiers& notifiers();
 
 private:
     class Impl;
 
-    PrivateImplPointer<Impl> impl_;
+    std::unique_ptr<Impl> impl_;
 };
 
 } // namespace gmx

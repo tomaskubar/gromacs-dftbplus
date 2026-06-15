@@ -8,7 +8,7 @@ The \Gromacs library (`libgromacs`) provides a few different alternatives for
 using it.  These are listed here from the highest level of abstraction to the
 low-level functions.
  - If you are writing a trajectory analysis tool, please see
-   \ref page_analysisframework.  \ref page_analysistemplate should contain
+   \ref page_trajectoryanalysisframework.  \ref page_analysistemplate should contain
    all the ingredients to get started.
    If you have an existing tool written using the analysis template from 4.5 or
    4.6 (using the selection engine added in 4.5), you need to do some
@@ -47,8 +47,8 @@ yourself.  In particular, it is currently relatively difficult to extend the
 functionality of `mdrun` without modifying the source code directly.
 If you think that some particular API would be necessary for your work, and
 think that it would be easy to expose, please drop a line on the
-`gmx-developers` mailing list, or contribute the necessary changes on
-http://gerrit.gromacs.org/.
+[developer discussion forum](https://gromacs.bioexcel.eu/c/gromacs-developers/10), 
+or contribute the necessary changes on https://gitlab.com/gromacs/gromacs.
 
 Linking against `libgromacs`
 ============================

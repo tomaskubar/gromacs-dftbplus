@@ -1,13 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
- * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2016,2017 by the GROMACS development team.
- * Copyright (c) 2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 1991- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -21,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -30,36 +26,44 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 #include "gmxpre.h"
 
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 
+#include <filesystem>
+#include <string>
+
+#include "gromacs/commandline/filenm.h"
 #include "gromacs/commandline/pargs.h"
 #include "gromacs/fileio/enxio.h"
+#include "gromacs/fileio/filetypes.h"
 #include "gromacs/fileio/matio.h"
+#include "gromacs/fileio/oenv.h"
+#include "gromacs/fileio/rgb.h"
 #include "gromacs/fileio/trxio.h"
 #include "gromacs/fileio/xvgr.h"
 #include "gromacs/gmxana/gmx_ana.h"
-#include "gromacs/gmxana/gstat.h"
 #include "gromacs/math/functions.h"
 #include "gromacs/math/units.h"
-#include "gromacs/math/vec.h"
-#include "gromacs/mdlib/energyoutput.h"
-#include "gromacs/mdtypes/enerdata.h"
-#include "gromacs/mdtypes/md_enums.h"
 #include "gromacs/trajectory/energyframe.h"
+#include "gromacs/utility/arrayref.h"
 #include "gromacs/utility/arraysize.h"
+#include "gromacs/utility/basedefinitions.h"
 #include "gromacs/utility/cstringutil.h"
 #include "gromacs/utility/fatalerror.h"
 #include "gromacs/utility/futil.h"
+#include "gromacs/utility/real.h"
 #include "gromacs/utility/smalloc.h"
 #include "gromacs/utility/strdb.h"
+
+struct gmx_output_env_t;
 
 
 static int search_str2(int nstr, char** str, char* key)
@@ -82,6 +86,22 @@ static int search_str2(int nstr, char** str, char* key)
 
     return -1;
 }
+
+// The non-bonded energy terms accumulated for energy group pairs. These were superseded elsewhere
+// by NonBondedEnergyTerms but not updated here due to the need for refactoring here first.
+enum
+{
+    egCOULSR,
+    egLJSR,
+    egBHAMSR,
+    egCOUL14,
+    egLJ14,
+    egNR
+};
+
+// NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)
+static const char* egrp_nm[egNR + 1] = { "Coul-SR", "LJ-SR", "Buck-SR", "Coul-14", "LJ-14", nullptr };
+
 
 int gmx_enemat(int argc, char* argv[])
 {
@@ -128,17 +148,17 @@ int gmx_enemat(int argc, char* argv[])
     static gmx_bool bLJSR = TRUE, bLJ14 = FALSE, bBhamSR = FALSE, bFree = TRUE;
     t_pargs         pa[] = {
         { "-sum",
-          FALSE,
-          etBOOL,
-          { &bSum },
-          "Sum the energy terms selected rather than display them all" },
+                  FALSE,
+                  etBOOL,
+                  { &bSum },
+                  "Sum the energy terms selected rather than display them all" },
         { "-skip", FALSE, etINT, { &skip }, "Skip number of frames between data points" },
         { "-mean",
-          FALSE,
-          etBOOL,
-          { &bMeanEmtx },
-          "with [TT]-groups[tt] extracts matrix of mean energies instead of "
-          "matrix for each timestep" },
+                  FALSE,
+                  etBOOL,
+                  { &bMeanEmtx },
+                  "with [TT]-groups[tt] extracts matrix of mean energies instead of "
+                          "matrix for each timestep" },
         { "-nlevels", FALSE, etINT, { &nlevels }, "number of levels for matrix colors" },
         { "-max", FALSE, etREAL, { &cutmax }, "max value for energies" },
         { "-min", FALSE, etREAL, { &cutmin }, "min value for energies" },
@@ -149,10 +169,10 @@ int gmx_enemat(int argc, char* argv[])
         { "-bhamsr", FALSE, etBOOL, { &bBhamSR }, "extract Buckingham SR energies" },
         { "-free", FALSE, etBOOL, { &bFree }, "calculate free energy" },
         { "-temp",
-          FALSE,
-          etREAL,
-          { &reftemp },
-          "reference temperature for free energy calculation" }
+                  FALSE,
+                  etREAL,
+                  { &reftemp },
+                  "reference temperature for free energy calculation" }
     };
     /* We will define egSP more energy-groups:
        egTotal (total energy) */
@@ -190,8 +210,8 @@ int gmx_enemat(int argc, char* argv[])
                        { efXVG, "-etot", "energy", ffWRITE } };
 #define NFILE asize(fnm)
 
-    if (!parse_common_args(&argc, argv, PCA_CAN_VIEW | PCA_CAN_TIME, NFILE, fnm, asize(pa), pa,
-                           asize(desc), desc, 0, nullptr, &oenv))
+    if (!parse_common_args(
+                &argc, argv, PCA_CAN_VIEW | PCA_CAN_TIME, NFILE, fnm, asize(pa), pa, asize(desc), desc, 0, nullptr, &oenv))
     {
         return 0;
     }
@@ -254,7 +274,9 @@ int gmx_enemat(int argc, char* argv[])
                         fprintf(stderr,
                                 "WARNING! could not find group %s (%d,%d) "
                                 "in energy file\n",
-                                groupname, i, j);
+                                groupname,
+                                i,
+                                j);
                     }
                     else
                     {
@@ -293,12 +315,10 @@ int gmx_enemat(int argc, char* argv[])
 
         if (timecheck == 0)
         {
-#define DONTSKIP(cnt) (skip) ? (((cnt) % skip) == 0) : TRUE
-
             if (bCont)
             {
                 fprintf(stderr, "\rRead frame: %d, Time: %.3f", teller, fr->t);
-                fflush(stderr);
+                std::fflush(stderr);
 
                 if ((nenergy % 1000) == 0)
                 {
@@ -330,7 +350,9 @@ int gmx_enemat(int argc, char* argv[])
     fprintf(stderr,
             "Will build energy half-matrix of %d groups, %d elements, "
             "over %d frames\n",
-            ngroups, nset, nenergy);
+            ngroups,
+            nset,
+            nenergy);
 
     snew(emat, egNR + egSP);
     for (j = 0; (j < egNR + egSP); j++)
@@ -415,7 +437,7 @@ int gmx_enemat(int argc, char* argv[])
                 }
                 eaver[i] /= nenergy;
             }
-            beta = 1.0 / (BOLTZ * reftemp);
+            beta = 1.0 / (gmx::c_boltz * reftemp);
             snew(efree, ngroups);
             snew(edif, ngroups);
             for (i = 0; (i < ngroups); i++)
@@ -476,7 +498,8 @@ int gmx_enemat(int argc, char* argv[])
                     fprintf(stderr,
                             "Matrix of %s energy is uniform at %f "
                             "(will not produce output).\n",
-                            egrp_nm[m], emax);
+                            egrp_nm[m],
+                            emax);
                 }
                 else
                 {
@@ -499,21 +522,62 @@ int gmx_enemat(int argc, char* argv[])
                     out = gmx_ffopen(fn, "w");
                     if (emin >= emid)
                     {
-                        write_xpm(out, 0, label, "Energy (kJ/mol)", "Residue Index",
-                                  "Residue Index", ngroups, ngroups, groupnr, groupnr, emat[m],
-                                  emid, emax, rmid, rhi, &nlevels);
+                        write_xpm(out,
+                                  0,
+                                  label,
+                                  "Energy (kJ/mol)",
+                                  "Residue Index",
+                                  "Residue Index",
+                                  ngroups,
+                                  ngroups,
+                                  groupnr,
+                                  groupnr,
+                                  emat[m],
+                                  emid,
+                                  emax,
+                                  rmid,
+                                  rhi,
+                                  &nlevels);
                     }
                     else if (emax <= emid)
                     {
-                        write_xpm(out, 0, label, "Energy (kJ/mol)", "Residue Index",
-                                  "Residue Index", ngroups, ngroups, groupnr, groupnr, emat[m],
-                                  emin, emid, rlo, rmid, &nlevels);
+                        write_xpm(out,
+                                  0,
+                                  label,
+                                  "Energy (kJ/mol)",
+                                  "Residue Index",
+                                  "Residue Index",
+                                  ngroups,
+                                  ngroups,
+                                  groupnr,
+                                  groupnr,
+                                  emat[m],
+                                  emin,
+                                  emid,
+                                  rlo,
+                                  rmid,
+                                  &nlevels);
                     }
                     else
                     {
-                        write_xpm3(out, 0, label, "Energy (kJ/mol)", "Residue Index",
-                                   "Residue Index", ngroups, ngroups, groupnr, groupnr, emat[m],
-                                   emin, emid, emax, rlo, rmid, rhi, &nlevels);
+                        write_xpm3(out,
+                                   0,
+                                   label,
+                                   "Energy (kJ/mol)",
+                                   "Residue Index",
+                                   "Residue Index",
+                                   ngroups,
+                                   ngroups,
+                                   groupnr,
+                                   groupnr,
+                                   emat[m],
+                                   emin,
+                                   emid,
+                                   emax,
+                                   rlo,
+                                   rmid,
+                                   rhi,
+                                   &nlevels);
                     }
                     gmx_ffclose(out);
                 }
@@ -533,7 +597,7 @@ int gmx_enemat(int argc, char* argv[])
         }
 
         out = xvgropen(ftp2fn(efXVG, NFILE, fnm), "Mean Energy", "Residue", "kJ/mol", oenv);
-        xvgr_legend(out, 0, nullptr, oenv);
+        xvgrLegend(out, {}, oenv);
         j = 0;
         if (output_env_get_print_xvgr_codes(oenv))
         {
@@ -559,10 +623,10 @@ int gmx_enemat(int argc, char* argv[])
             if (bFree)
             {
                 fprintf(out, "%s%d%s \"%s\"\n", str1, j++, str2, "Free");
-            }
-            if (bFree)
-            {
-                fprintf(out, "%s%d%s \"%s\"\n", str1, j++, str2, "Diff");
+                if (bRef)
+                {
+                    fprintf(out, "%s%d%s \"%s\"\n", str1, j++, str2, "Diff");
+                }
             }
             fprintf(out, "@TYPE xy\n");
             fprintf(out, "#%3s", "grp");
@@ -577,10 +641,10 @@ int gmx_enemat(int argc, char* argv[])
             if (bFree)
             {
                 fprintf(out, " %9s", "Free");
-            }
-            if (bFree)
-            {
-                fprintf(out, " %9s", "Diff");
+                if (bRef)
+                {
+                    fprintf(out, " %9s", "Diff");
+                }
             }
             fprintf(out, "\n");
         }
@@ -597,10 +661,10 @@ int gmx_enemat(int argc, char* argv[])
             if (bFree)
             {
                 fprintf(out, " %9.5g", efree[i]);
-            }
-            if (bRef)
-            {
-                fprintf(out, " %9.5g", edif[i]);
+                if (bRef)
+                {
+                    fprintf(out, " %9.5g", edif[i]);
+                }
             }
             fprintf(out, "\n");
         }

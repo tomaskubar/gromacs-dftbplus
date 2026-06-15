@@ -1,0 +1,75 @@
+# Test goal: Clang AddressSanitizer build
+# Test intents (should change rarely and conservatively):
+#   OS: Ubuntu oldest supported
+#   Compiler: Clang
+#   Build type: ASAN
+#   GPU: no
+#   Scope: configure, build, unit tests, regression tests
+# Test implementation choices (free to change as needed):
+#   OS: Ubuntu 24.04
+#   Compiler: Clang 18
+#   MPI: thread_MPI
+#   SIMD: AVX2_256
+#   FFT: FFTW3
+#   Parallelism nt/ntomp: 4/2
+
+gromacs:clang-ASAN:configure:
+  extends:
+    - .gromacs:base:configure
+    - .use-clang:base
+  rules:
+    - !reference [.rules:merge-requests, rules]
+  image: ${CI_REGISTRY}/gromacs/gromacs/ci-ubuntu-24.04-llvm-18-tsan
+  variables:
+    CMAKE: /usr/local/cmake-3.28.0/bin/cmake
+    COMPILER_MAJOR_VERSION: 18
+    CMAKE_BUILD_TYPE_OPTIONS: "-DCMAKE_BUILD_TYPE=ASAN"
+
+gromacs:clang-ASAN:build:
+  extends:
+    - .gromacs:base:build
+    - .use-clang:base
+    - .use-ccache
+  rules:
+    - !reference [.rules:merge-requests, rules]
+  image: ${CI_REGISTRY}/gromacs/gromacs/ci-ubuntu-24.04-llvm-18-tsan
+  variables:
+    CMAKE: /usr/local/cmake-3.28.0/bin/cmake
+  needs:
+    - job: gromacs:clang-ASAN:configure
+
+gromacs:clang-ASAN:test:
+  extends:
+    - .gromacs:base:test
+    - .use-clang:base
+  rules:
+    - !reference [.rules:merge-requests, rules]
+  allow_failure: true # Temporary workaround for #5633
+  image: ${CI_REGISTRY}/gromacs/gromacs/ci-ubuntu-24.04-llvm-18-tsan
+  variables:
+    # ASAN tests are more demanding of CPU
+    KUBERNETES_CPU_LIMIT: 8
+    CMAKE: /usr/local/cmake-3.28.0/bin/cmake
+    CTEST_RUN_MODE: "ExperimentalMemCheck"
+  needs:
+    - job: gromacs:clang-ASAN:build
+  after_script:
+    - for file in $(compgen -G "build/Testing/Temporary/MemoryChecker*log") ; do
+      echo Error log file for ASAN via ctest $file ;
+      cat $file ;
+      done
+
+gromacs:clang-ASAN:regressiontest:
+  extends:
+    - .gromacs:base:regressiontest
+    - .use-clang:base
+  rules:
+    - !reference [.rules:merge-requests, rules]
+  allow_failure: true # Temporary workaround for #5633
+  image: ${CI_REGISTRY}/gromacs/gromacs/ci-ubuntu-24.04-llvm-18-tsan
+  variables:
+    CMAKE: /usr/local/cmake-3.28.0/bin/cmake
+  needs:
+    - job: gromacs:clang-ASAN:build
+    - job: regressiontests:prepare
+

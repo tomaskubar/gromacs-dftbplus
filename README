@@ -1,19 +1,24 @@
-
                Welcome to the official version of GROMACS!
 
 If you are familiar with Unix, it should be fairly trivial to compile and
-install GROMACS. GROMACS uses only the CMake build sytem, and our
+install GROMACS. GROMACS uses only the CMake build system, and our
 installation guide can be found at
 http://manual.gromacs.org/documentation/current/install-guide/index.html
 
+Visit http://forums.gromacs.org/ for discussions and advice.
+Report bugs at https://gitlab.com/gromacs/gromacs/-/issues
 Of course we will do our utmost to help you with any problems, but PLEASE 
 READ THE INSTALLATION INSTRUCTIONS BEFORE CONTACTING US!
 
 There are also several other online resources available from the homepage, 
 and special information for developers.
 
+If you use GROMACS for research (or other purposes) make sure to reference
+the correct version of the code. The CITATION.cff file next to this README
+contains all metadata useful for citation.
+
 If you are a developer, or change the source for any other reason, check
-out http://www.gromacs.org/Developer_Zone.
+out http://www.gromacs.org/development.
 
                                * * * * *
 
@@ -39,7 +44,7 @@ according to the requirements of the LGPL v2.1 license under which you
 received this copy of GROMACS. We request that it must clearly be labeled as
 derived work. It should not use the name "official GROMACS", and make
 sure support questions are directed to you instead of the GROMACS developers.
-Sorry for the hard wording, but it is meant to protect YOUR reseach results!
+Sorry for the hard wording, but it is meant to protect YOUR research results!
 
                                * * * * *
 

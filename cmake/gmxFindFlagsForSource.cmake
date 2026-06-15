@@ -1,10 +1,9 @@
 #
 # This file is part of the GROMACS molecular simulation package.
 #
-# Copyright (c) 2013,2014,2016,2017, by the GROMACS development team, led by
-# Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
-# and including many others, as listed in the AUTHORS file in the
-# top-level source directory and at http://www.gromacs.org.
+# Copyright 2013- The GROMACS Authors
+# and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+# Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
 #
 # GROMACS is free software; you can redistribute it and/or
 # modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
 #
 # You should have received a copy of the GNU Lesser General Public
 # License along with GROMACS; if not, see
-# http://www.gnu.org/licenses, or write to the Free Software Foundation,
+# https://www.gnu.org/licenses, or write to the Free Software Foundation,
 # Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
 #
 # If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
 # consider code for inclusion in the official distribution, but
 # derived work must not be called official GROMACS. Details are found
 # in the README & COPYING files - if they are missing, get the
-# official version at http://www.gromacs.org.
+# official version at https://www.gromacs.org.
 #
 # To help us fund GROMACS development, we humbly ask that you cite
-# the research papers on the package. Check out http://www.gromacs.org.
+# the research papers on the package. Check out https://www.gromacs.org.
 
 # Helper function to call the correct language version of the CMake
 # check_*_compiler_flag function.
@@ -45,7 +44,9 @@ function(gmx_check_compiler_flag FLAGS LANGUAGE RESULT_VARIABLE)
 endfunction()
 
 # Helper function to call the correct language version of the CMake
-# check_*_source_compiles function.
+# check_*_source_compiles function. The use of a function creates a
+# scope that prevents the leaking of the flags via
+# CMAKE_REQUIRED_FLAGS.
 function(gmx_check_source_compiles_with_flags SOURCE FLAGS LANGUAGE RESULT_VARIABLE)
    set(CMAKE_REQUIRED_FLAGS "${FLAGS}")
    if (LANGUAGE STREQUAL "C")
@@ -57,7 +58,15 @@ function(gmx_check_source_compiles_with_flags SOURCE FLAGS LANGUAGE RESULT_VARIA
    endif()
 endfunction()
 
-# Helper routine to find flag (from a list) to compile a specific source (in C or C++).
+# Helper routine to find flag (from a list) to compile a specific
+# source (in C or C++).  It loops over flags in the list, first
+# checking that the compiler recognizes the flag, and then that it can
+# compile the given sources with that flag. When it finds a flag, it
+# leaves the loop, otherwise it proceeds to the next flag in the list.
+#
+# If you want to end up passing multiple flags, call this or similar
+# methods once for each flag.
+#
 # RESULT_VARIABLE           Name of variable to set in the parent scope to true if
 #                           we have found a flag that works (which could be "")
 # SOURCE                    Source code to test
@@ -71,7 +80,7 @@ endfunction()
 # gmx_check_source_compiles_with_flags() fails to build source code that needs,
 # the flag, this function sets SUGGEST_BINUTILS_UPDATE in the parent scope to
 # suggest that the calling code tell the user about this issue if needed.
-FUNCTION(GMX_FIND_FLAG_FOR_SOURCE RESULT_VARIABLE SOURCE LANGUAGE TOOLCHAIN_FLAGS_VARIABLE NEW_FLAGS_VARIABLE)
+function(GMX_FIND_FLAG_FOR_SOURCE RESULT_VARIABLE SOURCE LANGUAGE TOOLCHAIN_FLAGS_VARIABLE NEW_FLAGS_VARIABLE)
     # Insert a blank element last in the list (ie. try without any flags too)
     # This must come last, since some compilers (Intel) might try to emulate
     # emulate AVX instructions with SSE4.1 otherwise.
@@ -91,7 +100,7 @@ FUNCTION(GMX_FIND_FLAG_FOR_SOURCE RESULT_VARIABLE SOURCE LANGUAGE TOOLCHAIN_FLAG
         endif()
 
         if(${FLAG_ACCEPTED_VARIABLE})
-            IF(DEFINED ${COMPILE_WORKS_VARIABLE})
+            if(DEFINED ${COMPILE_WORKS_VARIABLE})
                 # This is a subsequent call to CMake, don't spam the status line
                 set(RUN_QUIETLY TRUE)
             endif()
@@ -118,7 +127,7 @@ FUNCTION(GMX_FIND_FLAG_FOR_SOURCE RESULT_VARIABLE SOURCE LANGUAGE TOOLCHAIN_FLAG
     endforeach()
     # If no flag has been found, then leaving ${RESULT_VARIABLE} unset
     # will be interpreted by CMake as false.
-ENDFUNCTION()
+endfunction()
 
 # Helper routine to find a flag (from a list) that will compile a specific source (in both C and C++).
 # C_RESULT_VARIABLE             Names a variable that will be set true if a way

@@ -1,13 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
- * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2016,2017 by the GROMACS development team.
- * Copyright (c) 2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 1991- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -21,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -30,22 +26,24 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /* This file is completely threadsafe - keep it that way! */
 #include "gmxpre.h"
 
-#include "cstringutil.h"
+#include "gromacs/utility/cstringutil.h"
 
 #include <cassert>
 #include <cctype>
+#include <cinttypes>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 
+#include <filesystem>
 #include <string>
 #include <vector>
 
@@ -59,11 +57,10 @@
 
 int continuing(char* s)
 {
-    int sl;
     assert(s);
 
     rtrim(s);
-    sl = strlen(s);
+    int sl = std::strlen(s);
     if ((sl > 0) && (s[sl - 1] == CONTINUE))
     {
         s[sl - 1] = 0;
@@ -78,12 +75,12 @@ int continuing(char* s)
 
 char* fgets2(char* line, int n, FILE* stream)
 {
-    char* c;
-    if (fgets(line, n, stream) == nullptr)
+    char* c = nullptr;
+    if (std::fgets(line, n, stream) == nullptr)
     {
         return nullptr;
     }
-    if ((c = strchr(line, '\n')) != nullptr)
+    if ((c = std::strchr(line, '\n')) != nullptr)
     {
         *c = '\0';
     }
@@ -93,15 +90,17 @@ char* fgets2(char* line, int n, FILE* stream)
          * or because of n being too small.
          * Since both cases occur very infrequently, we can check for EOF.
          */
-        if (!feof(stream))
+        if (!std::feof(stream))
         {
             gmx_fatal(FARGS,
                       "An input file contains a line longer than %d characters, while the buffer "
                       "passed to fgets2 has size %d. The line starts with: '%20.20s'",
-                      n, n, line);
+                      n,
+                      n,
+                      line);
         }
     }
-    if ((c = strchr(line, '\r')) != nullptr)
+    if ((c = std::strchr(line, '\r')) != nullptr)
     {
         *c = '\0';
     }
@@ -111,7 +110,7 @@ char* fgets2(char* line, int n, FILE* stream)
 
 void strip_comment(char* line)
 {
-    char* c;
+    char* c = nullptr;
 
     if (!line)
     {
@@ -119,7 +118,7 @@ void strip_comment(char* line)
     }
 
     /* search for a comment mark and replace it by a zero */
-    if ((c = strchr(line, COMMENTSIGN)) != nullptr)
+    if ((c = std::strchr(line, COMMENTSIGN)) != nullptr)
     {
         (*c) = 0;
     }
@@ -127,31 +126,32 @@ void strip_comment(char* line)
 
 void upstring(char* str)
 {
-    int i;
-
-    for (i = 0; (i < static_cast<int>(strlen(str))); i++)
+    if (nullptr == str)
     {
-        str[i] = toupper(str[i]);
+        return;
+    }
+    for (size_t i = 0; i < std::strlen(str); i++)
+    {
+        str[i] = std::toupper(str[i]);
     }
 }
 
 void ltrim(char* str)
 {
-    int i, c;
-
     if (nullptr == str)
     {
         return;
     }
 
-    c = 0;
-    while (('\0' != str[c]) && isspace(str[c]))
+    int c = 0;
+    while (('\0' != str[c]) && std::isspace(str[c]))
     {
         c++;
     }
     if (c > 0)
     {
-        for (i = c; ('\0' != str[i]); i++)
+        int i = c;
+        for (; ('\0' != str[i]); i++)
         {
             str[i - c] = str[i];
         }
@@ -161,15 +161,13 @@ void ltrim(char* str)
 
 void rtrim(char* str)
 {
-    int nul;
-
     if (nullptr == str)
     {
         return;
     }
 
-    nul = strlen(str) - 1;
-    while ((nul > 0) && ((str[nul] == ' ') || (str[nul] == '\t')))
+    int nul = std::strlen(str) - 1;
+    while ((nul >= 0) && ((str[nul] == ' ') || (str[nul] == '\t')))
     {
         str[nul] = '\0';
         nul--;
@@ -184,17 +182,17 @@ void trim(char* str)
 
 int gmx_strcasecmp_min(const char* str1, const char* str2)
 {
-    char ch1, ch2;
+    char ch1 = 0, ch2 = 0;
 
     do
     {
         do
         {
-            ch1 = toupper(*(str1++));
+            ch1 = std::toupper(*(str1++));
         } while ((ch1 == '-') || (ch1 == '_'));
         do
         {
-            ch2 = toupper(*(str2++));
+            ch2 = std::toupper(*(str2++));
         } while ((ch2 == '-') || (ch2 == '_'));
 
         if (ch1 != ch2)
@@ -207,20 +205,19 @@ int gmx_strcasecmp_min(const char* str1, const char* str2)
 
 int gmx_strncasecmp_min(const char* str1, const char* str2, int n)
 {
-    char  ch1, ch2;
-    char *stri1, *stri2;
+    char ch1 = 0, ch2 = 0;
 
-    stri1 = const_cast<char*>(str1);
-    stri2 = const_cast<char*>(str2);
+    const char* stri1 = str1;
+    const char* stri2 = str2;
     do
     {
         do
         {
-            ch1 = toupper(*(str1++));
+            ch1 = std::toupper(*(str1++));
         } while ((ch1 == '-') || (ch1 == '_'));
         do
         {
-            ch2 = toupper(*(str2++));
+            ch2 = std::toupper(*(str2++));
         } while ((ch2 == '-') || (ch2 == '_'));
 
         if (ch1 != ch2)
@@ -233,12 +230,12 @@ int gmx_strncasecmp_min(const char* str1, const char* str2, int n)
 
 int gmx_strcasecmp(const char* str1, const char* str2)
 {
-    char ch1, ch2;
+    char ch1 = 0, ch2 = 0;
 
     do
     {
-        ch1 = toupper(*(str1++));
-        ch2 = toupper(*(str2++));
+        ch1 = std::toupper(*(str1++));
+        ch2 = std::toupper(*(str2++));
         if (ch1 != ch2)
         {
             return (ch1 - ch2);
@@ -249,7 +246,7 @@ int gmx_strcasecmp(const char* str1, const char* str2)
 
 int gmx_strncasecmp(const char* str1, const char* str2, int n)
 {
-    char ch1, ch2;
+    char ch1 = 0, ch2 = 0;
 
     if (n == 0)
     {
@@ -258,8 +255,8 @@ int gmx_strncasecmp(const char* str1, const char* str2, int n)
 
     do
     {
-        ch1 = toupper(*(str1++));
-        ch2 = toupper(*(str2++));
+        ch1 = std::toupper(*(str1++));
+        ch2 = std::toupper(*(str2++));
         if (ch1 != ch2)
         {
             return (ch1 - ch2);
@@ -271,9 +268,9 @@ int gmx_strncasecmp(const char* str1, const char* str2, int n)
 
 char* gmx_strdup(const char* src)
 {
-    char* dest;
+    char* dest = nullptr;
 
-    auto length = strlen(src) + 1;
+    auto length = std::strlen(src) + 1;
     snew(dest, length);
     std::strncpy(dest, src, length);
 
@@ -282,16 +279,15 @@ char* gmx_strdup(const char* src)
 
 char* gmx_strndup(const char* src, int n)
 {
-    int   len;
-    char* dest;
+    char* dest = nullptr;
 
-    len = strlen(src);
+    int len = std::strlen(src);
     if (len > n)
     {
         len = n;
     }
     snew(dest, len + 1);
-    strncpy(dest, src, len);
+    std::strncpy(dest, src, len);
     dest[len] = 0;
     return dest;
 }
@@ -304,7 +300,7 @@ const unsigned int gmx_string_hash_init = 5381;
 
 unsigned int gmx_string_fullhash_func(const char* s, unsigned int hash_init)
 {
-    int c;
+    char c = 0;
 
     while ((c = (*s++)) != '\0')
     {
@@ -315,11 +311,11 @@ unsigned int gmx_string_fullhash_func(const char* s, unsigned int hash_init)
 
 unsigned int gmx_string_hash_func(const char* s, unsigned int hash_init)
 {
-    int c;
+    int c = 0;
 
-    while ((c = toupper(*s++)) != '\0')
+    while ((c = std::toupper(*s++)) != '\0')
     {
-        if (isalnum(c))
+        if (std::isalnum(c))
         {
             hash_init = ((hash_init << 5) + hash_init) ^ c; /* (hash * 33) xor c */
         }
@@ -364,9 +360,8 @@ int gmx_wcmatch(const char* pattern, const char* str)
                  * since we have processed them above. */
                 if (*pattern == *str)
                 {
-                    int rc;
                     /* Match the suffix, and return if a match or an error */
-                    rc = gmx_wcmatch(pattern, str);
+                    int rc = gmx_wcmatch(pattern, str);
                     if (rc != GMX_NO_WCMATCH)
                     {
                         return rc;
@@ -393,9 +388,7 @@ int gmx_wcmatch(const char* pattern, const char* str)
 
 char* wrap_lines(const char* buf, int line_width, int indent, gmx_bool bIndentFirst)
 {
-    char*    b2;
-    int      i, i0, i2, j, b2len, lspace = 0, l2space = 0;
-    gmx_bool bFirst, bFitsOnLine;
+    int i = 0;
 
     /* characters are copied from buf to b2 with possible spaces changed
      * into newlines and extra space added for indentation.
@@ -409,10 +402,11 @@ char* wrap_lines(const char* buf, int line_width, int indent, gmx_bool bIndentFi
      * the current line (where it also won't fit, but looks better)
      */
 
-    b2    = nullptr;
-    b2len = strlen(buf) + 1 + indent;
+    char* b2    = nullptr;
+    int   b2len = std::strlen(buf) + 1 + indent;
     snew(b2, b2len);
-    i0 = i2 = 0;
+    int i0 = 0;
+    int i2 = 0;
     if (bIndentFirst)
     {
         for (i2 = 0; (i2 < indent); i2++)
@@ -420,10 +414,11 @@ char* wrap_lines(const char* buf, int line_width, int indent, gmx_bool bIndentFi
             b2[i2] = ' ';
         }
     }
-    bFirst = TRUE;
+    bool bFirst = true;
     do
     {
-        l2space = -1;
+        int lspace  = 0;
+        int l2space = -1;
         /* find the last space before end of line */
         for (i = i0; ((i - i0 < line_width) || (l2space == -1)) && (buf[i]); i++)
         {
@@ -441,7 +436,7 @@ char* wrap_lines(const char* buf, int line_width, int indent, gmx_bool bIndentFi
                 b2len += indent;
                 srenew(b2, b2len);
                 /* add indentation after the newline */
-                for (j = 0; (j < indent); j++)
+                for (int j = 0; (j < indent); j++)
                 {
                     b2[i2++] = ' ';
                 }
@@ -456,7 +451,7 @@ char* wrap_lines(const char* buf, int line_width, int indent, gmx_bool bIndentFi
         if (buf[i])
         {
             /* check if one word does not fit on the line */
-            bFitsOnLine = (i - i0 <= line_width);
+            bool bFitsOnLine = (i - i0 <= line_width);
             /* reset line counters to just after the space */
             i0 = lspace + 1;
             i2 = l2space + 1;
@@ -475,7 +470,7 @@ char* wrap_lines(const char* buf, int line_width, int indent, gmx_bool bIndentFi
                     }
                     b2len += indent;
                     srenew(b2, b2len);
-                    for (j = 0; (j < indent); j++)
+                    for (int j = 0; (j < indent); j++)
                     {
                         b2[i2++] = ' ';
                     }
@@ -496,11 +491,21 @@ char* wrap_lines(const char* buf, int line_width, int indent, gmx_bool bIndentFi
 int64_t str_to_int64_t(const char* str, char** endptr)
 {
 #ifndef _MSC_VER
-    return strtoll(str, endptr, 10);
+    return std::strtoll(str, endptr, 10);
 #else
     return _strtoi64(str, endptr, 10);
 #endif
 }
+
+uint64_t str_to_uint64_t(const char* str, char** endptr)
+{
+#ifndef _MSC_VER
+    return std::strtoull(str, endptr, 10);
+#else
+    return _strtoui64(str, endptr, 10);
+#endif
+}
+
 
 char* gmx_step_str(int64_t i, char* buf)
 {

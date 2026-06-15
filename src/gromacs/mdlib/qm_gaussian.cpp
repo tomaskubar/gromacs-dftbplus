@@ -185,7 +185,7 @@ static void write_gaussian_input(int step, const QMMM_QMrec& qm, const QMMM_MMre
     FILE* out = fopen("input.com", "w");
 
     // write the route
-    if (qm.QMmethod_get() >= eQMmethodRHF)
+    if (static_cast<int>(qm.QMmethod_get()) >= static_cast<int>(QMmethodType::RHF))
     {
         fprintf(out, "%s", "%chk=input\n");
     }
@@ -209,29 +209,29 @@ static void write_gaussian_input(int step, const QMMM_QMrec& qm, const QMMM_MMre
     {
         fprintf(out, "%s", "#P ");
     }
-    if (qm.QMmethod_get() == eQMmethodB3LYPLAN)
+    if (qm.QMmethod_get() == QMmethodType::B3LYPLAN)
     {
         fprintf(out, " %s", "B3LYP/GEN Pseudo=Read");
     }
     else
     {
-        fprintf(out, " %s", eQMmethod_names[qm.QMmethod_get()]);
+        fprintf(out, " %s", enumValueToString(qm.QMmethod_get()));
 
-        if (qm.QMmethod_get() >= eQMmethodRHF)
+        if (static_cast<int>(qm.QMmethod_get()) >= static_cast<int>(QMmethodType::RHF))
         {
-            if (qm.QMmethod_get() == eQMmethodCASSCF)
+            if (qm.QMmethod_get() == QMmethodType::CASSCF)
             {
                 // in case of cas, how many electrons and orbitals do we need?
                 fprintf(out, "(%d,%d)", qm.CASelectrons_get(), qm.CASorbitals_get());
             }
-            fprintf(out, "/%s", eQMbasis_names[qm.QMbasis_get()]);
+            fprintf(out, "/%s", enumValueToString(qm.QMbasis_get()));
         }
     }
     if (mm.nrMMatoms)
     {
         fprintf(out, " %s", "Charge ");
     }
-    if (step || qm.QMmethod_get() == eQMmethodCASSCF)
+    if (step || qm.QMmethod_get() == QMmethodType::CASSCF)
     {
         // fetch guess from checkpoint file, always for CASSCF
         fprintf(out, "%s", " guess=read");
@@ -249,7 +249,7 @@ static void write_gaussian_input(int step, const QMMM_QMrec& qm, const QMMM_MMre
     }
 
     // Pseudo Potential and ECP are included here if selected (MEthod suffix LAN)
-    if (qm.QMmethod_get() == eQMmethodB3LYPLAN)
+    if (qm.QMmethod_get() == QMmethodType::B3LYPLAN)
     {
         fprintf(out, "\n");
         for (int i = 0; i < qm.nrQMatoms_get(); i++)
@@ -259,7 +259,7 @@ static void write_gaussian_input(int step, const QMMM_QMrec& qm, const QMMM_MMre
                 fprintf(out, "%d ", i + 1);
             }
         }
-        fprintf(out, "\n%s\n****\n", eQMbasis_names[qm.QMbasis_get()]);
+        fprintf(out, "\n%s\n****\n", enumValueToString(qm.QMbasis_get()));
 
         for (int i = 0; i < qm.nrQMatoms_get(); i++)
         {
@@ -333,7 +333,7 @@ static real read_gaussian_output(rvec QMgrad[], rvec MMgrad[], const QMMM_QMrec&
 #endif
     }
     // the next lines are the gradients of the MM atoms
-    if (qm.QMmethod_get() >= eQMmethodRHF)
+    if (static_cast<int>(qm.QMmethod_get()) >= static_cast<int>(QMmethodType::RHF))
     {
         for (int i = 0; i < mm.nrMMatoms; i++)
         {

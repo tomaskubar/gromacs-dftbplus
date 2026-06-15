@@ -1,13 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
- * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2017,2018 by the GROMACS development team.
- * Copyright (c) 2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 1991- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -21,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -30,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 #include "gmxpre.h"
 
@@ -42,20 +38,25 @@
 #include <cstdlib>
 #include <cstring>
 
+#include <filesystem>
+#include <string>
+
+#include "gromacs/commandline/filenm.h"
 #include "gromacs/commandline/pargs.h"
 #include "gromacs/commandline/viewit.h"
 #include "gromacs/fileio/enxio.h"
+#include "gromacs/fileio/filetypes.h"
 #include "gromacs/fileio/trxio.h"
 #include "gromacs/fileio/xvgr.h"
 #include "gromacs/gmxana/gmx_ana.h"
-#include "gromacs/gmxana/gstat.h"
 #include "gromacs/math/functions.h"
-#include "gromacs/math/vec.h"
-#include "gromacs/topology/ifunc.h"
 #include "gromacs/trajectory/energyframe.h"
 #include "gromacs/utility/arraysize.h"
-#include "gromacs/utility/futil.h"
+#include "gromacs/utility/basedefinitions.h"
+#include "gromacs/utility/real.h"
 #include "gromacs/utility/smalloc.h"
+
+struct gmx_output_env_t;
 
 typedef struct
 {
@@ -66,23 +67,13 @@ typedef struct
 
 static t_liedata* analyze_names(int nre, gmx_enxnm_t* names, const char* ligand)
 {
-    int        i;
     t_liedata* ld;
     char       self[256];
-
-    /* Skip until we come to pressure */
-    for (i = 0; (i < nre); i++)
-    {
-        if (std::strcmp(names[i].name, interaction_function[F_PRES].longname) == 0)
-        {
-            break;
-        }
-    }
 
     /* Now real analysis: find components of energies */
     sprintf(self, "%s-%s", ligand, ligand);
     snew(ld, 1);
-    for (; (i < nre); i++)
+    for (int i = 0; (i < nre); i++)
     {
         if ((std::strstr(names[i].name, ligand) != nullptr) && (std::strstr(names[i].name, self) == nullptr))
         {
@@ -102,12 +93,12 @@ static t_liedata* analyze_names(int nre, gmx_enxnm_t* names, const char* ligand)
     }
     printf("Using the following energy terms:\n");
     printf("LJ:  ");
-    for (i = 0; (i < ld->nlj); i++)
+    for (int i = 0; (i < ld->nlj); i++)
     {
         printf("  %12s", names[ld->lj[i]].name);
     }
     printf("\nCoul:");
-    for (i = 0; (i < ld->nqq); i++)
+    for (int i = 0; (i < ld->nqq); i++)
     {
         printf("  %12s", names[ld->qq[i]].name);
     }
@@ -152,21 +143,21 @@ int gmx_lie(int argc, char* argv[])
     static const char* ligand = "none";
     t_pargs            pa[]   = {
         { "-Elj",
-          FALSE,
-          etREAL,
-          { &lie_lj },
-          "Lennard-Jones interaction between ligand and solvent" },
+                       FALSE,
+                       etREAL,
+                       { &lie_lj },
+                       "Lennard-Jones interaction between ligand and solvent" },
         { "-Eqq", FALSE, etREAL, { &lie_qq }, "Coulomb interaction between ligand and solvent" },
         { "-Clj",
-          FALSE,
-          etREAL,
-          { &fac_lj },
-          "Factor in the LIE equation for Lennard-Jones component of energy" },
+                       FALSE,
+                       etREAL,
+                       { &fac_lj },
+                       "Factor in the LIE equation for Lennard-Jones component of energy" },
         { "-Cqq",
-          FALSE,
-          etREAL,
-          { &fac_qq },
-          "Factor in the LIE equation for Coulomb component of energy" },
+                       FALSE,
+                       etREAL,
+                       { &fac_qq },
+                       "Factor in the LIE equation for Coulomb component of energy" },
         { "-ligand", FALSE, etSTR, { &ligand }, "Name of the ligand in the energy file" }
     };
 #define NPA asize(pa)
@@ -184,8 +175,8 @@ int gmx_lie(int argc, char* argv[])
     t_filenm fnm[] = { { efEDR, "-f", "ener", ffREAD }, { efXVG, "-o", "lie", ffWRITE } };
 #define NFILE asize(fnm)
 
-    if (!parse_common_args(&argc, argv, PCA_CAN_VIEW | PCA_CAN_TIME, NFILE, fnm, NPA, pa,
-                           asize(desc), desc, 0, nullptr, &oenv))
+    if (!parse_common_args(
+                &argc, argv, PCA_CAN_VIEW | PCA_CAN_TIME, NFILE, fnm, NPA, pa, asize(desc), desc, 0, nullptr, &oenv))
     {
         return 0;
     }
@@ -196,8 +187,8 @@ int gmx_lie(int argc, char* argv[])
     ld = analyze_names(nre, enm, ligand);
     snew(fr, 1);
 
-    out = xvgropen(ftp2fn(efXVG, NFILE, fnm), "LIE free energy estimate", "Time (ps)",
-                   "DGbind (kJ/mol)", oenv);
+    out = xvgropen(
+            ftp2fn(efXVG, NFILE, fnm), "LIE free energy estimate", "Time (ps)", "DGbind (kJ/mol)", oenv);
     while (do_enx(fp, fr))
     {
         ct = check_times(fr->t);
@@ -216,7 +207,8 @@ int gmx_lie(int argc, char* argv[])
 
     if (nframes > 0)
     {
-        printf("DGbind = %.3f (%.3f)\n", lieaver / nframes,
+        printf("DGbind = %.3f (%.3f)\n",
+               lieaver / nframes,
                std::sqrt(lieav2 / nframes - gmx::square(lieaver / nframes)));
     }
 

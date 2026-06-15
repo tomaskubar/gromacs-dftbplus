@@ -22,21 +22,18 @@ Some programs that are useful for visualizing either a trajectory file and/or a 
 * `Molscript`_ - This is a script-driven program form high-quality display of molecular 3D structures
   in both schematic and detailed representations. You can get an academic license for free from Avatar.
 
-Also if appropriate libraries were found at configure-time, :ref:`gmx view` can useful.
- 
 Topology bonds vs Rendered bonds
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-Remember that each of these visualization tools is only looking at the coordinate file you gave it
-(except when you give :ref:`gmx view` a :ref:`tpr` file). Thus it's not using your topology which is
-described in either your :ref:`top` file or your :ref:`tpr` file. Each of these programs makes their
-own guesses about where the chemical bonds are for rendering purposes, so do not be surprised if the
-heuristics do not always match your topology.
+Remember that each of these visualization tools is only looking at the coordinate file you gave it.
+Thus it's not using your topology which is described in either your :ref:`top` file or your 
+:ref:`tpr` file. Each of these programs makes their own guesses about where the chemical bonds 
+are for rendering purposes, so do not be surprised if the heuristics do not always match your topology.
 
 .. _Rasmol: http://www.umass.edu/microbio/rasmol/index2.htm
 .. _Protein Explorer: http://www.umass.edu/microbio/rasmol/
 .. _Chimera: http://www.rbvi.ucsf.edu/chimera/
-.. _Molscript: http://www.avatar.se/molscript/
+.. _Molscript: https://github.com/pekrau/MolScript
 
 
 Extracting Trajectory Information
@@ -60,7 +57,7 @@ that are known to be able to analyse |Gromacs| trajectory data.
 
 * `LOOS <http://loos.sourceforge.net/>`__
 * `MDAnalysis <https://www.mdanalysis.org/>`__
-* `MDTraj <http://mdtraj.org/latest/index.html>`__
+* `MDTraj <http://mdtraj.org/>`__
 * `Pteros <https://github.com/yesint/pteros/>`__
 
 
@@ -93,6 +90,17 @@ Some software packages that can be used to graph data in a :ref:`xvg` file:
     plot "file.xvg" using 1:2 with lines
 
   is a hack that will achieve the right result.
+* Matplotlib - a popular Python library for visualization. A simple script that will plot the data
+  in ``file.xvg`` and show the result on the screen
+
+  .. code-block:: python
+
+      import numpy as np
+      import matplotlib.pyplot as plt
+      x, y = np.loadtxt("file.xvg", comments=["@", "#", "&"], unpack=True)
+      plt.plot(x, y)
+      plt.show()
+
 * MS Excel - change the file extension to .csv and open the file (when prompted, choose to ignore the
   first 20 or so rows and select fixed-width columns, if you are using German MS Excel version, you
   have to change decimal delimiter from "," to ".", or use your favourite \*nix tool.

@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2017,2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2017- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \file
  * \brief Declares gmx::HostAllocationPolicy, gmx::HostAllocator,
@@ -51,9 +50,12 @@
 #include <cstddef>
 
 #include <memory>
+#include <type_traits>
+#include <vector>
 
 #include "gromacs/math/paddedvector.h"
 #include "gromacs/utility/alignedallocator.h"
+#include "gromacs/utility/allocator.h"
 #include "gromacs/utility/exceptions.h"
 
 namespace gmx
@@ -138,8 +140,15 @@ using PaddedHostVector = PaddedVector<T, HostAllocator<T>>;
 class HostAllocationPolicy
 {
 public:
-    //! Constructor
-    HostAllocationPolicy(PinningPolicy policy = PinningPolicy::CannotBePinned);
+    /*! \brief Constructor
+     *
+     * \param[in] policy
+     *                Whether to pin the allocation
+     * \param[in] propagateDuringContainerCopyConstruction
+     *                Default is chosen to be consistent with copy assignment
+     */
+    HostAllocationPolicy(PinningPolicy policy = PinningPolicy::CannotBePinned,
+                         bool          propagateDuringContainerCopyConstruction = false);
     /*! \brief Return the alignment size currently used by the active pinning policy. */
     std::size_t alignment() const noexcept;
     /*! \brief Allocate and perhaps pin page-aligned memory suitable for
@@ -179,30 +188,48 @@ public:
      * Does not throw.
      */
     PinningPolicy pinningPolicy() const { return pinningPolicy_; }
-    //! Don't propagate for copy
+    /*! \brief Do not propagate the allocator for copy assignment
+     *
+     * We choose that the allocator is a property of the container,
+     * and should be changed explicitly as required with e.g. \c
+     * changePinningPolicy if the usage dictates that the copy adopts
+     * the policy of the original container or a specific policy.
+     */
     using propagate_on_container_copy_assignment = std::false_type;
-    //! Propagate for move
+    //! Propagate the allocator for move assignment
     using propagate_on_container_move_assignment = std::true_type;
-    //! Propagate for move
+    //! Propagate the allocator during swap
     using propagate_on_container_swap = std::true_type;
-    //! Use default allocator for copy (same as construct+copy)
+    //! \brief Return the policy the container should use for copy construction
     // NOLINTNEXTLINE readability-convert-member-functions-to-static
-    HostAllocationPolicy select_on_container_copy_construction() const { return {}; }
+    HostAllocationPolicy select_on_container_copy_construction() const
+    {
+        if (propagateDuringContainerCopyConstruction_)
+        {
+            return *this;
+        }
+        else
+        {
+            return {};
+        }
+    }
+    //! This allocation policy has state and might not compare equal
+    using is_always_equal = std::false_type;
+    /*! \brief Return true if two HostAllocationPolicies compare equal
+     *
+     * This is a member function of the left-hand-side policy in
+     * an equality comparison. */
+    bool operator==(const HostAllocationPolicy& b) const
+    {
+        return this->pinningPolicy() == b.pinningPolicy();
+    }
 
 private:
     //! Pinning policy
     PinningPolicy pinningPolicy_;
+    //! Whether to propagate the allocator during copy construction by a container.
+    bool propagateDuringContainerCopyConstruction_;
 };
-
-/*! \brief Return true if two allocators are identical
- *
- * True if pinning policy is the same.
- */
-template<class T1, class T2>
-bool operator==(const Allocator<T1, HostAllocationPolicy>& a, const Allocator<T2, HostAllocationPolicy>& b)
-{
-    return a.pinningPolicy() == b.pinningPolicy();
-}
 
 /*! \brief Helper function for changing the pinning policy of a pinnable vector.
  *
@@ -220,6 +247,10 @@ void changePinningPolicy(PinnableVector* v, PinningPolicy pinningPolicy)
     // policy is the same.
     *v = PinnableVector(std::move(*v), { pinningPolicy });
 }
+
+//! Convenience type for vector with aligned memory
+template<typename T>
+using AlignedVector = std::vector<T, AlignedAllocator<T>>;
 
 } // namespace gmx
 

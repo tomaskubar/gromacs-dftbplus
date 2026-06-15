@@ -1,13 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
- * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2016,2017 by the GROMACS development team.
- * Copyright (c) 2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 1991- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -21,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -30,16 +26,20 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 #include "gmxpre.h"
 
 #include "insert_molecules.h"
 
+#include <cmath>
+#include <cstdio>
+
 #include <algorithm>
+#include <filesystem>
 #include <memory>
 #include <set>
 #include <string>
@@ -52,12 +52,15 @@
 #include "gromacs/gmxlib/conformation_utilities.h"
 #include "gromacs/gmxpreprocess/makeexclusiondistances.h"
 #include "gromacs/math/functions.h"
+#include "gromacs/math/units.h"
 #include "gromacs/math/utilities.h"
-#include "gromacs/math/vec.h"
+#include "gromacs/mdtypes/md_enums.h"
 #include "gromacs/options/basicoptions.h"
 #include "gromacs/options/filenameoption.h"
 #include "gromacs/options/ioptionscontainer.h"
+#include "gromacs/options/optionfiletype.h"
 #include "gromacs/pbcutil/pbc.h"
+#include "gromacs/random/seed.h"
 #include "gromacs/random/threefry.h"
 #include "gromacs/random/uniformrealdistribution.h"
 #include "gromacs/selection/nbsearch.h"
@@ -72,11 +75,21 @@
 #include "gromacs/topology/symtab.h"
 #include "gromacs/topology/topology.h"
 #include "gromacs/trajectory/trajectoryframe.h"
+#include "gromacs/utility/arrayref.h"
+#include "gromacs/utility/basedefinitions.h"
 #include "gromacs/utility/cstringutil.h"
 #include "gromacs/utility/enumerationhelpers.h"
 #include "gromacs/utility/exceptions.h"
 #include "gromacs/utility/fatalerror.h"
+#include "gromacs/utility/real.h"
 #include "gromacs/utility/smalloc.h"
+#include "gromacs/utility/vec.h"
+#include "gromacs/utility/vectypes.h"
+
+namespace gmx
+{
+class CommandLineModuleSettings;
+} // namespace gmx
 
 using gmx::RVec;
 
@@ -88,8 +101,9 @@ enum class RotationType : int
     None,
     Count
 };
-static const gmx::EnumerationArray<RotationType, const char*> c_rotationTypeNames = { { "xyz", "z",
-                                                                                        "none" } };
+static const gmx::EnumerationArray<RotationType, const char*> c_rotationTypeNames = {
+    { "xyz", "z", "none" }
+};
 
 static void center_molecule(gmx::ArrayRef<RVec> x)
 {
@@ -264,8 +278,11 @@ static void insert_mols(int                  nmol_insrt,
             // Skip a position if ntry trials were not successful.
             if (trial >= firstTrial + ntry)
             {
-                fprintf(stderr, " skipped position (%.3f, %.3f, %.3f)\n", rpos[XX][mol],
-                        rpos[YY][mol], rpos[ZZ][mol]);
+                fprintf(stderr,
+                        " skipped position (%.3f, %.3f, %.3f)\n",
+                        rpos[XX][mol],
+                        rpos[YY][mol],
+                        rpos[ZZ][mol]);
                 ++mol;
                 ++failed;
                 firstTrial = trial;
@@ -277,16 +294,17 @@ static void insert_mols(int                  nmol_insrt,
             offset_x[ZZ] = rpos[ZZ][mol] + deltaR[ZZ] * (2 * dist(rng) - 1);
         }
         fprintf(stderr, "\rTry %d", ++trial);
-        fflush(stderr);
+        std::fflush(stderr);
 
         generate_trial_conf(x_insrt, offset_x, enum_rot, &rng, &x_n);
         gmx::AnalysisNeighborhoodPositions pos(*x);
         gmx::AnalysisNeighborhoodSearch    search = nb.initSearch(&pbc, pos);
-        if (isInsertionAllowed(&search, exclusionDistances, x_n, exclusionDistances_insrt, *atoms,
-                               removableAtoms, &remover))
+        if (isInsertionAllowed(
+                    &search, exclusionDistances, x_n, exclusionDistances_insrt, *atoms, removableAtoms, &remover))
         {
             x->insert(x->end(), x_n.begin(), x_n.end());
-            exclusionDistances.insert(exclusionDistances.end(), exclusionDistances_insrt.begin(),
+            exclusionDistances.insert(exclusionDistances.end(),
+                                      exclusionDistances_insrt.begin(),
                                       exclusionDistances_insrt.end());
             builder.mergeAtoms(atoms_insrt);
             ++mol;
@@ -306,7 +324,9 @@ static void insert_mols(int                  nmol_insrt,
     remover.removeMarkedAtoms(atoms);
     if (atoms->nr < originalAtomCount)
     {
-        fprintf(stderr, "Replaced %d residues (%d atoms)\n", originalResidueCount - atoms->nres,
+        fprintf(stderr,
+                "Replaced %d residues (%d atoms)\n",
+                originalResidueCount - atoms->nres,
                 originalAtomCount - atoms->nr);
     }
 
@@ -332,6 +352,8 @@ public:
     InsertMolecules() :
         bBox_(false),
         nmolIns_(0),
+        concIns_(0.0),
+        concInsIsSet_(false),
         nmolTry_(10),
         seed_(0),
         defaultDistance_(0.105),
@@ -363,6 +385,8 @@ private:
     rvec         newBox_;
     bool         bBox_;
     int          nmolIns_;
+    real         concIns_;
+    bool         concInsIsSet_;
     int          nmolTry_;
     int          seed_;
     real         defaultDistance_;
@@ -381,12 +405,13 @@ void InsertMolecules::initOptions(IOptionsContainer* options, ICommandLineOption
 {
     const char* const desc[] = {
         "[THISMODULE] inserts [TT]-nmol[tt] copies of the system specified in",
-        "the [TT]-ci[tt] input file. The insertions take place either into",
-        "vacant space in the solute conformation given with [TT]-f[tt], or",
-        "into an empty box given by [TT]-box[tt]. Specifying both [TT]-f[tt]",
-        "and [TT]-box[tt] behaves like [TT]-f[tt], but places a new box",
-        "around the solute before insertions. Any velocities present are",
-        "discarded.",
+        "the [TT]-ci[tt] input file. The number of copies can also be determined",
+        "by the concentration [TT]-conc[tt] in mol/liter and box volume.",
+        "The insertions take place either into vacant space in the solute conformation",
+        "given with [TT]-f[tt], or into an empty box given by [TT]-box[tt].",
+        "Specifying both [TT]-f[tt] and [TT]-box[tt] behaves like [TT]-f[tt],",
+        "but places a new box around the solute before insertions.",
+        "Any velocities present are discarded.",
         "",
         "It is possible to also insert into a solvated configuration and",
         "replace solvent atoms with the inserted atoms. To do this, use",
@@ -445,7 +470,7 @@ void InsertMolecules::initOptions(IOptionsContainer* options, ICommandLineOption
                                .defaultBasename("insert")
                                .description("Configuration to insert"));
     options->addOption(FileNameOption("ip")
-                               .filetype(eftGenericData)
+                               .filetype(OptionFileType::GenericData)
                                .inputFile()
                                .store(&positionFile_)
                                .defaultBasename("positions")
@@ -466,6 +491,12 @@ void InsertMolecules::initOptions(IOptionsContainer* options, ICommandLineOption
             "Box size (in nm)"));
     options->addOption(IntegerOption("nmol").store(&nmolIns_).description(
             "Number of extra molecules to insert"));
+    options->addOption(
+            RealOption("conc")
+                    .store(&concIns_)
+                    .storeIsSet(&concInsIsSet_)
+                    .description("Concentration (in mol/liter) of extra molecules to insert. "
+                                 "This overrides [TT]-nmol[tt]"));
     options->addOption(IntegerOption("try").store(&nmolTry_).description(
             "Try inserting [TT]-nmol[tt] times [TT]-try[tt] times"));
     options->addOption(IntegerOption("seed").store(&seed_).description(
@@ -484,10 +515,10 @@ void InsertMolecules::initOptions(IOptionsContainer* options, ICommandLineOption
 
 void InsertMolecules::optionsFinished()
 {
-    if (nmolIns_ <= 0 && positionFile_.empty())
+    if ((nmolIns_ <= 0 && concIns_ <= 0.0) && positionFile_.empty())
     {
         GMX_THROW(
-                InconsistentInputError("Either -nmol must be larger than 0, "
+                InconsistentInputError("Either -nmol or -conc must be larger than 0, "
                                        "or positions must be given with -ip."));
     }
     if (inputConfFile_.empty() && !bBox_)
@@ -508,8 +539,8 @@ void InsertMolecules::optionsFinished()
         bool  bTprFileWasRead;
         rvec* temporaryX = nullptr;
         fprintf(stderr, "Reading solute configuration\n");
-        readConfAndTopology(inputConfFile_.c_str(), &bTprFileWasRead, &top_, &pbcType_, &temporaryX,
-                            nullptr, box_);
+        readConfAndTopology(
+                inputConfFile_.c_str(), &bTprFileWasRead, &top_, &pbcType_, &temporaryX, nullptr, box_);
         x_.assign(temporaryX, temporaryX + top_.natoms);
         sfree(temporaryX);
         if (top_.natoms == 0)
@@ -548,11 +579,27 @@ int InsertMolecules::run()
         box_[YY][YY] = newBox_[YY];
         box_[ZZ][ZZ] = newBox_[ZZ];
     }
-    if (det(box_) == 0)
+    const real vol = det(box_);
+    if (!(vol > 0))
     {
         gmx_fatal(FARGS,
                   "Undefined solute box.\nCreate one with gmx editconf "
                   "or give explicit -box command line option");
+    }
+    if (concInsIsSet_)
+    {
+        if (concIns_ > 0)
+        {
+            nmolIns_ = gmx::roundToInt(concIns_ * vol * gmx::c_avogadro / 1e24);
+            if (!nmolIns_)
+            {
+                gmx_fatal(FARGS, "Very low concentration is set, nothing to insert");
+            }
+        }
+        else
+        {
+            gmx_fatal(FARGS, "Concentration is defined, but it is equal to zero or negative");
+        }
     }
 
     gmx_mtop_t        topInserted;
@@ -563,11 +610,11 @@ int InsertMolecules::run()
         PbcType pbcType_dummy;
         matrix  box_dummy;
         rvec*   temporaryX;
-        readConfAndTopology(insertConfFile_.c_str(), &bTprFileWasRead, &topInserted, &pbcType_dummy,
-                            &temporaryX, nullptr, box_dummy);
+        readConfAndTopology(
+                insertConfFile_.c_str(), &bTprFileWasRead, &topInserted, &pbcType_dummy, &temporaryX, nullptr, box_dummy);
         xInserted.assign(temporaryX, temporaryX + topInserted.natoms);
         sfree(temporaryX);
-        atomsInserted = gmx_mtop_global_atoms(&topInserted);
+        atomsInserted = gmx_mtop_global_atoms(topInserted);
         if (atomsInserted.nr == 0)
         {
             gmx_fatal(FARGS, "No molecule in %s, please check your input", insertConfFile_.c_str());
@@ -582,18 +629,31 @@ int InsertMolecules::run()
         }
     }
 
-    t_atoms atoms = gmx_mtop_global_atoms(&top_);
+    t_atoms atoms = gmx_mtop_global_atoms(top_);
 
     /* add nmol_ins molecules of atoms_ins
        in random orientation at random place */
-    insert_mols(nmolIns_, nmolTry_, seed_, defaultDistance_, scaleFactor_, &atoms, &top_.symtab,
-                &x_, removableAtoms, atomsInserted, xInserted, pbcTypeForOutput, box_,
-                positionFile_, deltaR_, enumRot_);
+    insert_mols(nmolIns_,
+                nmolTry_,
+                seed_,
+                defaultDistance_,
+                scaleFactor_,
+                &atoms,
+                &top_.symtab,
+                &x_,
+                removableAtoms,
+                atomsInserted,
+                xInserted,
+                pbcTypeForOutput,
+                box_,
+                positionFile_,
+                deltaR_,
+                enumRot_);
 
     /* write new configuration to file confout */
     fprintf(stderr, "Writing generated configuration to %s\n", outputConfFile_.c_str());
-    write_sto_conf(outputConfFile_.c_str(), *top_.name, &atoms, as_rvec_array(x_.data()), nullptr,
-                   pbcTypeForOutput, box_);
+    write_sto_conf(
+            outputConfFile_.c_str(), *top_.name, &atoms, as_rvec_array(x_.data()), nullptr, pbcTypeForOutput, box_);
 
     /* print size of generated configuration */
     fprintf(stderr, "\nOutput configuration contains %d atoms in %d residues\n", atoms.nr, atoms.nres);

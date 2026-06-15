@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2012,2013,2014,2015,2019, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2012- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,46 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
+ */
+/*! \defgroup module_commandline Command Line Program Management (commandline)
+ * \ingroup group_utilitymodules
+ * \brief
+ * Provides functionality for managing command line programs.
+ *
+ * This module provides utility classes and functions for implementing command
+ * line programs.  They are mainly used within \Gromacs, but can also be used
+ * from external programs if they want to get a similar user experience to
+ * \Gromacs tools.
+ *
+ * The classes exposed from this module can be roughly divided into two groups:
+ *
+ *  - Helper classes/functions for implementing the %main() function.
+ *    See \ref page_usinglibrary for an overview of those available for user
+ *    programs.  These are declared in cmdlineinit.h
+ *    (gmx::ICommandLineModule is declared in cmdlinemodule.h and
+ *    gmx::ICommandLineOptions in cmdlineoptionsmodule.h).
+ *    \if libapi
+ *
+ *    Additionally, for internal \Gromacs use, gmx::CommandLineModuleManager
+ *    provides the functionality to implement the `gmx` wrapper binary, as well
+ *    as command line options common to all \Gromacs programs (such as
+ *    `-version`).
+ *    This is described in more detail at \ref page_wrapperbinary.
+ *    \endif
+ *
+ *  - Helper classes for particular command line tasks:
+ *     - gmx::CommandLineParser implements command line parsing to assign
+ *       values to gmx::Options (see \ref module_options).
+ *     - gmx::CommandLineHelpWriter writes help text for a program that uses
+ *       the parser.
+ *     - parse_common_args() is an old interface to \Gromacs command line
+ *       parsing.  This is still used by many parts of \Gromacs.
+ *
+ * \author Teemu Murtola <teemu.murtola@gmail.com>
  */
 /*! \file
  * \brief
@@ -43,43 +78,11 @@
 #ifndef GMX_COMMANDLINE_CMDLINEMODULE_H
 #define GMX_COMMANDLINE_CMDLINEMODULE_H
 
-#include "gromacs/utility/classhelpers.h"
-
 namespace gmx
 {
 
 class CommandLineHelpContext;
-
-/*! \brief
- * Settings to pass information between a module and the general runner.
- *
- * Methods in this class do not throw, except that construction may throw
- * std::bad_alloc.
- *
- * \inpublicapi
- * \ingroup module_commandline
- */
-class CommandLineModuleSettings
-{
-public:
-    CommandLineModuleSettings();
-    ~CommandLineModuleSettings();
-
-    //! Returns the default nice level for this module.
-    int defaultNiceLevel() const;
-
-    /*! \brief
-     * Sets the default nice level for this module.
-     *
-     * If not called, the module will be niced.
-     */
-    void setDefaultNiceLevel(int niceLevel);
-
-private:
-    class Impl;
-
-    PrivateImplPointer<Impl> impl_;
-};
+class CommandLineModuleSettings;
 
 /*! \brief
  * Module that can be run from command line using CommandLineModuleManager.
@@ -129,7 +132,7 @@ public:
      * \throws    std::bad_alloc if out of memory.
      * \throws    FileIOError on any I/O error.
      *
-     * Note that for MPI-enabled builds, this is called only on the master
+     * Note that for MPI-enabled builds, this is called only on the main
      * rank.
      */
     virtual void writeHelp(const CommandLineHelpContext& context) const = 0;

@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2015,2017,2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2015- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \internal \file
  * \brief
@@ -41,12 +40,20 @@
  */
 #include "gmxpre.h"
 
-#include "filestream.h"
+#include "gromacs/utility/filestream.h"
 
 #include "config.h"
 
 #include <cerrno>
 #include <cstdio>
+#include <cstring>
+
+#include <filesystem>
+#include <memory>
+#include <string>
+
+#include "gromacs/utility/fileptr.h"
+#include "gromacs/utility/unique_cptr.h"
 
 #ifdef HAVE_UNISTD_H
 #    include <unistd.h>
@@ -100,13 +107,16 @@ class FileStreamImpl
 {
 public:
     explicit FileStreamImpl(FILE* fp) : fp_(fp), bClose_(false) {}
-    FileStreamImpl(const char* filename, const char* mode) : fp_(nullptr), bClose_(true)
+    FileStreamImpl(const std::filesystem::path& filename, const char* mode) :
+        fp_(nullptr), bClose_(true)
     {
-        fp_ = std::fopen(filename, mode);
+        fp_ = std::fopen(filename.string().c_str(), mode);
         if (fp_ == nullptr)
         {
-            GMX_THROW_WITH_ERRNO(FileIOError(formatString("Could not open file '%s'", filename)),
-                                 "fopen", errno);
+            GMX_THROW_WITH_ERRNO(
+                    FileIOError(formatString("Could not open file '%s'", filename.string().c_str())),
+                    "fopen",
+                    errno);
         }
     }
     ~FileStreamImpl()
@@ -173,25 +183,21 @@ bool StandardInputStream::readLine(std::string* line)
  */
 
 // static
-FilePtr TextInputFile::openRawHandle(const char* filename)
+FilePtr TextInputFile::openRawHandle(const std::filesystem::path& filename)
 {
-    FilePtr fp(fopen(filename, "r"));
+    FilePtr fp(std::fopen(filename.string().c_str(), "r"));
     if (fp == nullptr)
     {
-        GMX_THROW_WITH_ERRNO(FileIOError(formatString("Could not open file '%s'", filename)),
-                             "fopen", errno);
+        GMX_THROW_WITH_ERRNO(
+                FileIOError(formatString("Could not open file '%s'", filename.string().c_str())),
+                "fopen",
+                errno);
     }
     return fp;
 }
 
-// static
-FilePtr TextInputFile::openRawHandle(const std::string& filename)
-{
-    return openRawHandle(filename.c_str());
-}
-
-TextInputFile::TextInputFile(const std::string& filename) :
-    impl_(new FileStreamImpl(filename.c_str(), "r"))
+TextInputFile::TextInputFile(const std::filesystem::path& filename) :
+    impl_(new FileStreamImpl(filename, "r"))
 {
 }
 
@@ -218,8 +224,8 @@ void TextInputFile::close()
  * TextOutputFile
  */
 
-TextOutputFile::TextOutputFile(const std::string& filename) :
-    impl_(new FileStreamImpl(filename.c_str(), "w"))
+TextOutputFile::TextOutputFile(const std::filesystem::path& filename) :
+    impl_(new FileStreamImpl(filename, "w"))
 {
 }
 

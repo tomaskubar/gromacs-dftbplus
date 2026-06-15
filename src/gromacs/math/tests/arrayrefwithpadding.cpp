@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2018,2019, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2018- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \internal \file
  * \brief Tests for gmx::ArrayRefWithPadding.
@@ -42,6 +41,10 @@
 
 #include "gromacs/math/arrayrefwithpadding.h"
 
+#include <cstdint>
+
+#include <string>
+#include <type_traits>
 #include <vector>
 
 #include <gtest/gtest.h>
@@ -53,7 +56,8 @@
 
 namespace gmx
 {
-
+namespace test
+{
 namespace
 {
 
@@ -79,7 +83,7 @@ TEST(EmptyConstArrayRefWithPaddingTest, IsEmpty)
 typedef ::testing::Types<ArrayRefWithPadding<int32_t>, ArrayRefWithPadding<float>, ArrayRefWithPadding<double>> ArrayRefTypes;
 
 //! Helper constant used in the text fixture.
-constexpr index aSize = 3;
+constexpr Index aSize = 3;
 
 /*! \brief Permit all the tests to run on all kinds of ArrayRefWithPadding types
  *
@@ -111,7 +115,7 @@ public:
         auto unpaddedArrayRef = arrayRefWithPadding.unpaddedArrayRef();
         auto paddedArrayRef   = arrayRefWithPadding.paddedArrayRef();
         EXPECT_LE(unpaddedArrayRef.size(), paddedArrayRef.size());
-        for (index i = 0; i != aSize; ++i)
+        for (Index i = 0; i != aSize; ++i)
         {
             EXPECT_EQ(paddedArrayRef[i], unpaddedArrayRef[i]);
             EXPECT_EQ(a[i], unpaddedArrayRef[i]);
@@ -122,7 +126,7 @@ public:
             // Check that we can make a padded view that refers to const elements
             ConstArrayRefWithPaddingType constArrayRefWithPadding =
                     arrayRefWithPadding.constArrayRefWithPadding();
-            for (index i = 0; i != aSize; ++i)
+            for (Index i = 0; i != aSize; ++i)
             {
                 EXPECT_EQ(a[i], constArrayRefWithPadding.paddedArrayRef()[i]);
             }
@@ -131,7 +135,7 @@ public:
         {
             // Check that we can implicitly make a padded view that refers to const elements
             ConstArrayRefWithPaddingType constArrayRefWithPadding = arrayRefWithPadding;
-            for (index i = 0; i != aSize; ++i)
+            for (Index i = 0; i != aSize; ++i)
             {
                 EXPECT_EQ(a[i], constArrayRefWithPadding.paddedArrayRef()[i]);
             }
@@ -149,7 +153,7 @@ public:
             view.swap(arrayRefWithPadding);
             EXPECT_TRUE(arrayRefWithPadding.empty());
             EXPECT_LE(aSize, view.size());
-            for (index i = 0; i != v.size(); ++i)
+            for (Index i = 0; i != v.size(); ++i)
             {
                 EXPECT_EQ(v[i], view.paddedArrayRef()[i]);
             }
@@ -159,7 +163,7 @@ public:
     }
 };
 
-TYPED_TEST_CASE(ArrayRefWithPaddingTest, ArrayRefTypes);
+TYPED_TEST_SUITE(ArrayRefWithPaddingTest, ArrayRefTypes);
 
 
 TYPED_TEST(ArrayRefWithPaddingTest, AssignFromPaddedVectorWorks)
@@ -170,8 +174,8 @@ TYPED_TEST(ArrayRefWithPaddingTest, AssignFromPaddedVectorWorks)
 
 TYPED_TEST(ArrayRefWithPaddingTest, ConstructFromPointersWorks)
 {
-    typename TestFixture::ArrayRefType arrayRef(this->v.data(), this->v.data() + this->v.size(),
-                                                this->v.data() + this->v.paddedSize());
+    typename TestFixture::ArrayRefType arrayRef(
+            this->v.data(), this->v.data() + this->v.size(), this->v.data() + this->v.paddedSize());
     this->runTests(arrayRef);
 }
 
@@ -202,5 +206,5 @@ TEST(DISABLED_ArrayRefWithPaddingTest, GenericTests)
 #endif // GTEST_HAS_TYPED_TEST
 
 } // namespace
-
+} // namespace test
 } // namespace gmx

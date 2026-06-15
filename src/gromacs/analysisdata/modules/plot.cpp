@@ -1,11 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2010-2018, The GROMACS development team.
- * Copyright (c) 2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2010- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -19,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -28,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \internal \file
  * \brief
@@ -42,7 +40,7 @@
  */
 #include "gmxpre.h"
 
-#include "plot.h"
+#include "gromacs/analysisdata/modules/plot.h"
 
 #include <cstdio>
 #include <cstring>
@@ -54,28 +52,33 @@
 #include "gromacs/fileio/gmxfio.h"
 #include "gromacs/fileio/oenv.h"
 #include "gromacs/fileio/xvgr.h"
-#include "gromacs/math/vec.h"
 #include "gromacs/options/basicoptions.h"
 #include "gromacs/options/ioptionscontainer.h"
 #include "gromacs/options/timeunitmanager.h"
 #include "gromacs/selection/selectioncollection.h"
+#include "gromacs/utility/basedefinitions.h"
+#include "gromacs/utility/enumerationhelpers.h"
 #include "gromacs/utility/exceptions.h"
 #include "gromacs/utility/gmxassert.h"
 #include "gromacs/utility/programcontext.h"
+#include "gromacs/utility/real.h"
 #include "gromacs/utility/stringutil.h"
 #include "gromacs/utility/unique_cptr.h"
+#include "gromacs/utility/vec.h"
+#include "gromacs/utility/vectypes.h"
+
+struct gmx_output_env_t;
 
 namespace gmx
 {
+class AbstractAnalysisData;
 
 /********************************************************************
  * AnalysisDataPlotSettings
  */
 
 AnalysisDataPlotSettings::AnalysisDataPlotSettings() :
-    selections_(nullptr),
-    timeUnit_(TimeUnit::Default),
-    plotFormat_(XvgFormat::Xmgrace)
+    selections_(nullptr), timeUnit_(TimeUnit::Default), plotFormat_(XvgFormat::Xmgrace)
 {
 }
 
@@ -89,8 +92,9 @@ void AnalysisDataPlotSettings::setSelectionCollection(const SelectionCollection*
  * Technically this duplicates a definition in pargs.cpp for legacy
  * support code, but as the latter will go away and the alternatives
  * are ugly, the duplication is acceptable. */
-const gmx::EnumerationArray<XvgFormat, const char*> c_xvgFormatNames = { { "xmgrace", "xmgr",
-                                                                           "none" } };
+const gmx::EnumerationArray<XvgFormat, const char*> c_xvgFormatNames = {
+    { "xmgrace", "xmgr", "none" }
+};
 
 void AnalysisDataPlotSettings::initOptions(IOptionsContainer* options)
 {
@@ -277,7 +281,7 @@ void AbstractPlotModule::setXFormat(int width, int precision, char format)
 {
     GMX_RELEASE_ASSERT(width >= 0 && precision >= 0 && width <= 99 && precision <= 99,
                        "Invalid width or precision");
-    GMX_RELEASE_ASSERT(strchr("eEfFgG", format) != nullptr, "Invalid format specifier");
+    GMX_RELEASE_ASSERT(std::strchr("eEfFgG", format) != nullptr, "Invalid format specifier");
     impl_->xformat_ = formatString("%%%d.%d%c", width, precision, format);
 }
 
@@ -286,7 +290,7 @@ void AbstractPlotModule::setYFormat(int width, int precision, char format)
 {
     GMX_RELEASE_ASSERT(width >= 0 && precision >= 0 && width <= 99 && precision <= 99,
                        "Invalid width or precision");
-    GMX_RELEASE_ASSERT(strchr("eEfFgG", format) != nullptr, "Invalid format specifier");
+    GMX_RELEASE_ASSERT(std::strchr("eEfFgG", format) != nullptr, "Invalid format specifier");
     impl_->yformat_ = formatString(" %%%d.%d%c", width, precision, format);
 }
 
@@ -312,8 +316,8 @@ void AbstractPlotModule::dataStarted(AbstractAnalysisData* /* data */)
             gmx_output_env_t* oenv;
             output_env_init(&oenv, getProgramContext(), timeUnit, FALSE, xvgFormat, 0);
             const unique_cptr<gmx_output_env_t, output_env_done> oenvGuard(oenv);
-            impl_->fp_ = xvgropen(impl_->filename_.c_str(), impl_->title_.c_str(), impl_->xlabel_,
-                                  impl_->ylabel_, oenv);
+            impl_->fp_ = xvgropen(
+                    impl_->filename_.c_str(), impl_->title_.c_str(), impl_->xlabel_, impl_->ylabel_, oenv);
             const SelectionCollection* selections = impl_->settings_.selectionCollection();
             if (selections != nullptr && output_env_get_xvg_format(oenv) != XvgFormat::None)
             {
@@ -325,13 +329,7 @@ void AbstractPlotModule::dataStarted(AbstractAnalysisData* /* data */)
             }
             if (output_env_get_print_xvgr_codes(oenv) && !impl_->legend_.empty())
             {
-                std::vector<const char*> legend;
-                legend.reserve(impl_->legend_.size());
-                for (size_t i = 0; i < impl_->legend_.size(); ++i)
-                {
-                    legend.push_back(impl_->legend_[i].c_str());
-                }
-                xvgr_legend(impl_->fp_, legend.size(), legend.data(), oenv);
+                xvgrLegend(impl_->fp_, impl_->legend_, oenv);
             }
         }
     }
@@ -419,8 +417,7 @@ AnalysisDataVectorPlotModule::AnalysisDataVectorPlotModule() : bWrite_{ true, tr
 
 
 AnalysisDataVectorPlotModule::AnalysisDataVectorPlotModule(const AnalysisDataPlotSettings& settings) :
-    AbstractPlotModule(settings),
-    bWrite_{ true, true, true, false }
+    AbstractPlotModule(settings), bWrite_{ true, true, true, false }
 {
 }
 

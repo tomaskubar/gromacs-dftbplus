@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2020- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 
 /*! \libinternal \file
@@ -49,15 +48,13 @@
 #ifndef GMX_EWALD_PME_GPU_STAGING_H
 #define GMX_EWALD_PME_GPU_STAGING_H
 
-#include <vector>
+#include <array>
 
 #include "gromacs/gpu_utils/hostallocator.h"
-#include "gromacs/math/vectypes.h"
+#include "gromacs/utility/vectypes.h"
 
-#ifndef NUM_STATES
-//! Number of FEP states.
-#    define NUM_STATES 2
-#endif
+//! Number of FEP states
+static constexpr int sc_numFepStates = 2;
 
 /*! \internal \brief
  * The PME GPU intermediate buffers structure, included in the main PME GPU structure by value.
@@ -69,16 +66,16 @@ struct PmeGpuStaging
     gmx::PaddedHostVector<gmx::RVec> h_forces;
 
     /*! \brief Virial and energy intermediate host-side buffer. Size is PME_GPU_VIRIAL_AND_ENERGY_COUNT. */
-    float* h_virialAndEnergy[NUM_STATES];
+    std::array<gmx::HostVector<float>, sc_numFepStates> h_virialAndEnergy;
     /*! \brief B-spline values intermediate host-side buffer. */
-    float* h_splineModuli[NUM_STATES];
+    std::array<gmx::HostVector<float>, sc_numFepStates> h_splineModuli;
 
     /*! \brief Pointer to the host memory with B-spline values. Only used for host-side gather, or unit tests */
-    float* h_theta;
+    gmx::HostVector<float> h_theta;
     /*! \brief Pointer to the host memory with B-spline derivative values. Only used for host-side gather, or unit tests */
-    float* h_dtheta;
+    gmx::HostVector<float> h_dtheta;
     /*! \brief Pointer to the host memory with ivec atom gridline indices. Only used for host-side gather, or unit tests */
-    int* h_gridlineIndices;
+    gmx::HostVector<int> h_gridlineIndices;
 };
 
 #endif

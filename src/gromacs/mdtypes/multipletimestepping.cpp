@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2020- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,18 +26,20 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 #include "gmxpre.h"
 
 #include "multipletimestepping.h"
 
+#include <memory>
 #include <optional>
 
 #include "gromacs/mdtypes/inputrec.h"
+#include "gromacs/mdtypes/md_enums.h"
 #include "gromacs/mdtypes/pull_params.h"
 #include "gromacs/utility/arrayref.h"
 #include "gromacs/utility/gmxassert.h"
@@ -69,7 +70,7 @@ std::vector<MtsLevel> setupMtsLevels(const GromppMtsOpts& mtsOpts, std::vector<s
     {
         if (errorMessages)
         {
-            errorMessages->push_back("Only mts-levels = 2 is supported");
+            errorMessages->emplace_back("Only mts-levels = 2 is supported");
         }
     }
     else
@@ -106,7 +107,7 @@ std::vector<MtsLevel> setupMtsLevels(const GromppMtsOpts& mtsOpts, std::vector<s
 
         if (errorMessages && mtsLevels[1].stepFactor <= 1)
         {
-            errorMessages->push_back("mts-factor should be larger than 1");
+            errorMessages->emplace_back("mts-factor should be larger than 1");
         }
     }
 
@@ -133,8 +134,8 @@ std::optional<std::string> checkMtsInterval(ArrayRef<const MtsLevel> mtsLevels, 
     }
     else
     {
-        return gmx::formatString("With MTS, %s = %d should be a multiple of mts-factor = %d", param,
-                                 nstValue, mtsFactor);
+        return gmx::formatString(
+                "With MTS, %s = %d should be a multiple of mts-factor = %d", param, nstValue, mtsFactor);
     }
 }
 
@@ -153,14 +154,14 @@ std::vector<std::string> checkMtsRequirements(const t_inputrec& ir)
 
     ArrayRef<const MtsLevel> mtsLevels = ir.mtsLevels;
 
-    if (!(ir.eI == eiMD || ir.eI == eiSD1))
+    if (ir.eI != IntegrationAlgorithm::MD)
     {
-        errorMessages.push_back(gmx::formatString(
-                "Multiple time stepping is only supported with integrators %s and %s",
-                ei_names[eiMD], ei_names[eiSD1]));
+        errorMessages.push_back(
+                gmx::formatString("Multiple time stepping is only supported with integrator %s",
+                                  enumValueToString(IntegrationAlgorithm::MD)));
     }
 
-    if ((EEL_FULL(ir.coulombtype) || EVDW_PME(ir.vdwtype))
+    if ((usingFullElectrostatics(ir.coulombtype) || usingLJPme(ir.vdwtype))
         && forceGroupMtsLevel(ir.mtsLevels, MtsForceGroups::LongrangeNonbonded) == 0)
     {
         errorMessages.emplace_back(
@@ -188,7 +189,7 @@ std::vector<std::string> checkMtsRequirements(const t_inputrec& ir)
     {
         errorMessages.push_back(mesg.value());
     }
-    if (ir.efep != efepNO)
+    if (ir.efep != FreeEnergyPerturbationType::No)
     {
         if ((mesg = checkMtsInterval(mtsLevels, "nstdhdl", ir.fepvals->nstdhdl)))
         {

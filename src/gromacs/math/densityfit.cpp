@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2019- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \internal \file
  * \brief
@@ -41,14 +40,28 @@
  */
 #include "gmxpre.h"
 
-#include "densityfit.h"
+#include "gromacs/math/densityfit.h"
+
+#include <cmath>
 
 #include <algorithm>
+#include <functional>
+#include <iterator>
+#include <memory>
 #include <numeric>
+#include <vector>
 
+#include "gromacs/math/functions.h"
 #include "gromacs/math/multidimarray.h"
-#include "gromacs/math/vec.h"
+#include "gromacs/mdspan/extensions.h"
+#include "gromacs/mdspan/extents.h"
+#include "gromacs/mdspan/layouts.h"
+#include "gromacs/utility/arrayref.h"
+#include "gromacs/utility/basedefinitions.h"
 #include "gromacs/utility/exceptions.h"
+#include "gromacs/utility/gmxassert.h"
+#include "gromacs/utility/real.h"
+#include "gromacs/utility/vec.h"
 
 namespace gmx
 {
@@ -98,13 +111,14 @@ private:
 };
 
 DensitySimilarityInnerProduct::DensitySimilarityInnerProduct(density referenceDensity) :
-    referenceDensity_{ referenceDensity },
-    gradient_{ referenceDensity.extents() }
+    referenceDensity_{ referenceDensity }, gradient_{ referenceDensity.extents() }
 {
     const auto numVoxels = gradient_.asConstView().mapping().required_span_size();
     /* the gradient for the inner product measure of fit is constant and does not
      * depend on the compared density, so it is pre-computed here */
-    std::transform(begin(referenceDensity_), end(referenceDensity), begin(gradient_),
+    std::transform(begin(referenceDensity_),
+                   end(referenceDensity_),
+                   begin(gradient_),
                    [numVoxels](float x) { return x / numVoxels; });
 }
 
@@ -183,8 +197,7 @@ private:
 };
 
 DensitySimilarityRelativeEntropy::DensitySimilarityRelativeEntropy(density referenceDensity) :
-    referenceDensity_{ referenceDensity },
-    gradient_(referenceDensity.extents())
+    referenceDensity_{ referenceDensity }, gradient_(referenceDensity.extents())
 {
 }
 
@@ -194,8 +207,12 @@ real DensitySimilarityRelativeEntropy::similarity(density comparedDensity)
     {
         GMX_THROW(RangeError("Reference density and compared density need to have same extents."));
     }
-    return std::inner_product(begin(referenceDensity_), end(referenceDensity_),
-                              begin(comparedDensity), 0., std::plus<>(), relativeEntropyAtVoxel);
+    return std::inner_product(begin(referenceDensity_),
+                              end(referenceDensity_),
+                              begin(comparedDensity),
+                              0.,
+                              std::plus<>(),
+                              relativeEntropyAtVoxel);
 }
 
 DensitySimilarityMeasure::density DensitySimilarityRelativeEntropy::gradient(density comparedDensity)
@@ -204,8 +221,11 @@ DensitySimilarityMeasure::density DensitySimilarityRelativeEntropy::gradient(den
     {
         GMX_THROW(RangeError("Reference density and compared density need to have same extents."));
     }
-    std::transform(begin(referenceDensity_), end(referenceDensity_), begin(comparedDensity),
-                   begin(gradient_), relativeEntropyGradientAtVoxel);
+    std::transform(begin(referenceDensity_),
+                   end(referenceDensity_),
+                   begin(comparedDensity),
+                   begin(gradient_),
+                   relativeEntropyGradientAtVoxel);
     return gradient_.asConstView();
 }
 
@@ -227,7 +247,7 @@ struct CrossCorrelationEvaluationHelperValues
     real referenceSquaredSum = 0;
     //! The sum of the squared compared density voxel values
     real comparisonSquaredSum = 0;
-    //! The covariance of the refernce and the compared density
+    //! The covariance of the reference and the compared density
     real covariance = 0;
 };
 
@@ -243,9 +263,9 @@ CrossCorrelationEvaluationHelperValues evaluateHelperValues(DensitySimilarityMea
 {
     CrossCorrelationEvaluationHelperValues helperValues;
 
-    index i = 0;
+    Index i = 0;
 
-    auto referenceIterator = begin(reference);
+    const auto* referenceIterator = begin(reference);
     for (const real comp : compared)
     {
         const real refHelper        = *referenceIterator - helperValues.meanReference;
@@ -267,7 +287,7 @@ CrossCorrelationEvaluationHelperValues evaluateHelperValues(DensitySimilarityMea
 class CrossCorrelationGradientAtVoxel
 {
 public:
-    //! Set up the gradident calculation with pre-computed values
+    //! Set up the gradient calculation with pre-computed values
     CrossCorrelationGradientAtVoxel(const CrossCorrelationEvaluationHelperValues& preComputed) :
         prefactor_(evaluatePrefactor(preComputed.comparisonSquaredSum, preComputed.referenceSquaredSum)),
         comparisonPrefactor_(preComputed.covariance / preComputed.comparisonSquaredSum),
@@ -276,7 +296,7 @@ public:
     {
     }
     //! Evaluate the cross correlation gradient at a voxel
-    real operator()(real reference, real comparison)
+    real operator()(real reference, real comparison) const
     {
         return prefactor_
                * (reference - meanReference_ - comparisonPrefactor_ * (comparison - meanComparison_));
@@ -289,7 +309,7 @@ private:
                    "Squared sum of comparison values needs to be larger than zero.");
         GMX_ASSERT(referenceSquaredSum > 0,
                    "Squared sum of reference values needs to be larger than zero.");
-        return 1.0 / (sqrt(comparisonSquaredSum) * sqrt(referenceSquaredSum));
+        return 1.0 / (std::sqrt(comparisonSquaredSum) * std::sqrt(referenceSquaredSum));
     }
     const real prefactor_;
     const real comparisonPrefactor_;
@@ -322,8 +342,7 @@ private:
 };
 
 DensitySimilarityCrossCorrelation::DensitySimilarityCrossCorrelation(density referenceDensity) :
-    referenceDensity_{ referenceDensity },
-    gradient_(referenceDensity.extents())
+    referenceDensity_{ referenceDensity }, gradient_(referenceDensity.extents())
 {
 }
 
@@ -344,11 +363,11 @@ real DensitySimilarityCrossCorrelation::similarity(density comparedDensity)
 
     // To avoid numerical instability due to large squared density value sums
     // division is re-written to avoid multiplying two large numbers
-    // as product of two seperate divisions of smaller numbers
-    const real covarianceSqrt = sqrt(fabs(helperValues.covariance));
+    // as product of two separate divisions of smaller numbers
+    const real covarianceSqrt = std::sqrt(std::fabs(helperValues.covariance));
     const int  sign           = helperValues.covariance > 0 ? 1 : -1;
-    return sign * (covarianceSqrt / sqrt(helperValues.referenceSquaredSum))
-           * (covarianceSqrt / sqrt(helperValues.comparisonSquaredSum));
+    return sign * (covarianceSqrt / std::sqrt(helperValues.referenceSquaredSum))
+           * (covarianceSqrt / std::sqrt(helperValues.comparisonSquaredSum));
 }
 
 DensitySimilarityMeasure::density DensitySimilarityCrossCorrelation::gradient(density comparedDensity)
@@ -361,8 +380,11 @@ DensitySimilarityMeasure::density DensitySimilarityCrossCorrelation::gradient(de
     CrossCorrelationEvaluationHelperValues helperValues =
             evaluateHelperValues(referenceDensity_, comparedDensity);
 
-    std::transform(begin(referenceDensity_), end(referenceDensity_), begin(comparedDensity),
-                   begin(gradient_), CrossCorrelationGradientAtVoxel(helperValues));
+    std::transform(begin(referenceDensity_),
+                   end(referenceDensity_),
+                   begin(comparedDensity),
+                   begin(gradient_),
+                   CrossCorrelationGradientAtVoxel(helperValues));
 
     return gradient_.asConstView();
 }
@@ -422,5 +444,25 @@ DensitySimilarityMeasure& DensitySimilarityMeasure::operator=(const DensitySimil
 DensitySimilarityMeasure::DensitySimilarityMeasure(DensitySimilarityMeasure&&) noexcept = default;
 
 DensitySimilarityMeasure& DensitySimilarityMeasure::operator=(DensitySimilarityMeasure&&) noexcept = default;
+
+void normalizeSumPositiveValuesToUnity(ArrayRef<float> data)
+{
+    const double sumDataLargerZero =
+            std::accumulate(std::begin(data),
+                            std::end(data),
+                            0.,
+                            [](double sum, float value) { return value > 0 ? sum + value : sum; });
+
+    // leave the data untouched if there are no values larger than zero
+    if (sumDataLargerZero == 0.)
+    {
+        return;
+    }
+
+    std::transform(std::begin(data),
+                   std::end(data),
+                   std::begin(data),
+                   [sumDataLargerZero](float& datum) { return datum / sumDataLargerZero; });
+}
 
 } // namespace gmx

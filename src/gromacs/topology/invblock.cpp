@@ -1,12 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
- * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2010,2014,2015,2019, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 1991- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -20,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -29,78 +26,37 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /* This file is completely threadsafe - keep it that way! */
 #include "gmxpre.h"
 
-#include "invblock.h"
+#include "gromacs/topology/invblock.h"
 
-#include "gromacs/topology/block.h"
-#include "gromacs/utility/fatalerror.h"
-#include "gromacs/utility/smalloc.h"
+#include <vector>
 
-int* make_invblock(const t_block* block, int nr)
+#include "gromacs/utility/arrayref.h"
+#include "gromacs/utility/gmxassert.h"
+#include "gromacs/utility/listoflists.h"
+
+std::vector<int> make_invblock(const gmx::ListOfLists<int>& block, const int maxElement)
 {
-    int  i, j;
-    int* invblock;
+    std::vector<int> invBlock(maxElement + 1, -1);
 
-    snew(invblock, nr + 1);
-    /* Mark unused numbers */
-    for (i = 0; i <= nr; i++)
+    for (int listIndex = 0; listIndex < block.ssize(); listIndex++)
     {
-        invblock[i] = -1;
-    }
-    for (i = 0; (i < block->nr); i++)
-    {
-        for (j = block->index[i]; (j < block->index[i + 1]); j++)
+        for (const int element : block[listIndex])
         {
-            if (invblock[j] == -1)
-            {
-                invblock[j] = i;
-            }
-            else
-            {
-                gmx_fatal(FARGS,
-                          "Double entries in block structure. Item %d is in blocks %d and %d\n"
-                          " Cannot make an unambiguous inverse block.",
-                          j, i, invblock[j]);
-            }
+            GMX_ASSERT(element >= 0 && element <= maxElement,
+                       "List elements should be in range 0 <= element <= maxElement");
+            GMX_RELEASE_ASSERT(invBlock[element] == -1, "Double entries in ListOfLists");
+
+            invBlock[element] = listIndex;
         }
     }
-    return invblock;
-}
 
-int* make_invblocka(const t_blocka* block, int nr)
-{
-    int  i, j;
-    int* invblock;
-
-    snew(invblock, nr + 1);
-    /* Mark unused numbers */
-    for (i = 0; i <= nr; i++)
-    {
-        invblock[i] = -1;
-    }
-    for (i = 0; (i < block->nr); i++)
-    {
-        for (j = block->index[i]; (j < block->index[i + 1]); j++)
-        {
-            if (invblock[block->a[j]] == -1)
-            {
-                invblock[block->a[j]] = i;
-            }
-            else
-            {
-                gmx_fatal(FARGS,
-                          "Double entries in block structure. Item %d is in blocks %d and %d\n"
-                          " Cannot make an unambiguous inverse block.",
-                          j, i, invblock[block->a[j]]);
-            }
-        }
-    }
-    return invblock;
+    return invBlock;
 }

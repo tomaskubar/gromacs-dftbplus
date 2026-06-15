@@ -1,13 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
- * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2016,2018 by the GROMACS development team.
- * Copyright (c) 2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 1991- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -21,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -30,25 +26,27 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 #include "gmxpre.h"
 
 #include "trrio.h"
 
+#include <cstdio>
 #include <cstring>
+
+#include <string>
 
 #include "gromacs/fileio/gmxfio.h"
 #include "gromacs/fileio/gmxfio_xdr.h"
 #include "gromacs/mdtypes/md_enums.h"
 #include "gromacs/utility/fatalerror.h"
 #include "gromacs/utility/futil.h"
+#include "gromacs/utility/gmxassert.h"
 #include "gromacs/utility/smalloc.h"
-
-#define BUFSIZE 128
 
 static int nFloatSize(gmx_trr_header_t* sh)
 {
@@ -60,15 +58,15 @@ static int nFloatSize(gmx_trr_header_t* sh)
     }
     else if (sh->x_size)
     {
-        nflsize = sh->x_size / (sh->natoms * DIM);
+        nflsize = sh->x_size / (static_cast<unsigned int>(sh->natoms) * DIM);
     }
     else if (sh->v_size)
     {
-        nflsize = sh->v_size / (sh->natoms * DIM);
+        nflsize = sh->v_size / (static_cast<unsigned int>(sh->natoms) * DIM);
     }
     else if (sh->f_size)
     {
-        nflsize = sh->f_size / (sh->natoms * DIM);
+        nflsize = sh->f_size / (static_cast<unsigned int>(sh->natoms) * DIM);
     }
     else
     {
@@ -129,17 +127,20 @@ static gmx_bool do_trr_frame_header(t_fileio* fio, bool bRead, gmx_trr_header_t*
         sprintf(buf, "GMX_trn_file");
         *bOK = *bOK && gmx_fio_do_string(fio, buf);
     }
-    *bOK = *bOK && gmx_fio_do_int(fio, sh->ir_size);
-    *bOK = *bOK && gmx_fio_do_int(fio, sh->e_size);
-    *bOK = *bOK && gmx_fio_do_int(fio, sh->box_size);
-    *bOK = *bOK && gmx_fio_do_int(fio, sh->vir_size);
-    *bOK = *bOK && gmx_fio_do_int(fio, sh->pres_size);
-    *bOK = *bOK && gmx_fio_do_int(fio, sh->top_size);
-    *bOK = *bOK && gmx_fio_do_int(fio, sh->sym_size);
-    *bOK = *bOK && gmx_fio_do_int(fio, sh->x_size);
-    *bOK = *bOK && gmx_fio_do_int(fio, sh->v_size);
-    *bOK = *bOK && gmx_fio_do_int(fio, sh->f_size);
-    *bOK = *bOK && gmx_fio_do_int(fio, sh->natoms);
+    *bOK             = *bOK && gmx_fio_do_int(fio, sh->ir_size);
+    *bOK             = *bOK && gmx_fio_do_int(fio, sh->e_size);
+    *bOK             = *bOK && gmx_fio_do_int(fio, sh->box_size);
+    *bOK             = *bOK && gmx_fio_do_int(fio, sh->vir_size);
+    *bOK             = *bOK && gmx_fio_do_int(fio, sh->pres_size);
+    *bOK             = *bOK && gmx_fio_do_int(fio, sh->top_size);
+    *bOK             = *bOK && gmx_fio_do_int(fio, sh->sym_size);
+    int* xSizeIntPtr = reinterpret_cast<int*>(&sh->x_size);
+    *bOK             = *bOK && gmx_fio_do_int(fio, *xSizeIntPtr);
+    int* vSizeIntPtr = reinterpret_cast<int*>(&sh->v_size);
+    *bOK             = *bOK && gmx_fio_do_int(fio, *vSizeIntPtr);
+    int* fSizeIntPtr = reinterpret_cast<int*>(&sh->f_size);
+    *bOK             = *bOK && gmx_fio_do_int(fio, *fSizeIntPtr);
+    *bOK             = *bOK && gmx_fio_do_int(fio, sh->natoms);
 
     if (!*bOK)
     {
@@ -218,6 +219,9 @@ static gmx_bool do_trr_frame(t_fileio* fio,
     snew(sh, 1);
     if (!bRead)
     {
+        GMX_RELEASE_ASSERT(*natoms < sc_trrMaxAtomCount,
+                           "Can not write more than max_int/3 atoms to trr");
+
         sh->box_size = (box) ? sizeof(matrix) : 0;
         sh->x_size   = ((x) ? (*natoms * sizeof(x[0])) : 0);
         sh->v_size   = ((v) ? (*natoms * sizeof(v[0])) : 0);
@@ -268,13 +272,13 @@ static gmx_bool do_trr_frame(t_fileio* fio,
  *
  ************************************************************/
 
-void gmx_trr_read_single_header(const char* fn, gmx_trr_header_t* header)
+void gmx_trr_read_single_header(const std::filesystem::path& fn, gmx_trr_header_t* header)
 {
     t_fileio* fio = gmx_trr_open(fn, "r");
     gmx_bool  bOK;
     if (!do_trr_frame_header(fio, true, header, &bOK))
     {
-        gmx_fatal(FARGS, "Empty file %s", fn);
+        gmx_fatal(FARGS, "Empty file %s", fn.string().c_str());
     }
     gmx_trr_close(fio);
 }
@@ -284,31 +288,39 @@ gmx_bool gmx_trr_read_frame_header(t_fileio* fio, gmx_trr_header_t* header, gmx_
     return do_trr_frame_header(fio, true, header, bOK);
 }
 
-void gmx_trr_write_single_frame(const char* fn,
-                                int64_t     step,
-                                real        t,
-                                real        lambda,
-                                const rvec* box,
-                                int         natoms,
-                                const rvec* x,
-                                const rvec* v,
-                                const rvec* f)
+void gmx_trr_write_single_frame(const std::filesystem::path& fn,
+                                int64_t                      step,
+                                real                         t,
+                                real                         lambda,
+                                const rvec*                  box,
+                                int                          natoms,
+                                const rvec*                  x,
+                                const rvec*                  v,
+                                const rvec*                  f)
 {
     t_fileio* fio = gmx_trr_open(fn, "w");
-    do_trr_frame(fio, false, &step, &t, &lambda, const_cast<rvec*>(box), &natoms,
-                 const_cast<rvec*>(x), const_cast<rvec*>(v), const_cast<rvec*>(f));
+    do_trr_frame(fio,
+                 false,
+                 &step,
+                 &t,
+                 &lambda,
+                 const_cast<rvec*>(box),
+                 &natoms,
+                 const_cast<rvec*>(x),
+                 const_cast<rvec*>(v),
+                 const_cast<rvec*>(f));
     gmx_trr_close(fio);
 }
 
-void gmx_trr_read_single_frame(const char* fn,
-                               int64_t*    step,
-                               real*       t,
-                               real*       lambda,
-                               rvec*       box,
-                               int*        natoms,
-                               rvec*       x,
-                               rvec*       v,
-                               rvec*       f)
+void gmx_trr_read_single_frame(const std::filesystem::path& fn,
+                               int64_t*                     step,
+                               real*                        t,
+                               real*                        lambda,
+                               rvec*                        box,
+                               int*                         natoms,
+                               rvec*                        x,
+                               rvec*                        v,
+                               rvec*                        f)
 {
     t_fileio* fio = gmx_trr_open(fn, "r");
     do_trr_frame(fio, true, step, t, lambda, box, natoms, x, v, f);
@@ -325,8 +337,16 @@ void gmx_trr_write_frame(t_fileio*   fio,
                          const rvec* v,
                          const rvec* f)
 {
-    if (!do_trr_frame(fio, false, &step, &t, &lambda, const_cast<rvec*>(box), &natoms,
-                      const_cast<rvec*>(x), const_cast<rvec*>(v), const_cast<rvec*>(f)))
+    if (!do_trr_frame(fio,
+                      false,
+                      &step,
+                      &t,
+                      &lambda,
+                      const_cast<rvec*>(box),
+                      &natoms,
+                      const_cast<rvec*>(x),
+                      const_cast<rvec*>(v),
+                      const_cast<rvec*>(f)))
     {
         gmx_file("Cannot write trajectory frame; maybe you are out of disk space?");
     }
@@ -351,7 +371,7 @@ gmx_bool gmx_trr_read_frame_data(t_fileio* fio, gmx_trr_header_t* header, rvec* 
     return do_trr_frame_data(fio, header, box, x, v, f);
 }
 
-t_fileio* gmx_trr_open(const char* fn, const char* mode)
+t_fileio* gmx_trr_open(const std::filesystem::path& fn, const char* mode)
 {
     return gmx_fio_open(fn, mode);
 }

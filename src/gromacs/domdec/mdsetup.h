@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2016,2017,2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2016- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 
 /*! \libinternal \file
@@ -43,13 +42,13 @@
 #ifndef GMX_DOMDEC_MDSETUP_H
 #define GMX_DOMDEC_MDSETUP_H
 
-#include "gromacs/math/vectypes.h"
+#include "gromacs/utility/vectypes.h"
 
 struct bonded_threading_t;
+struct gmx_domdec_t;
 struct gmx_localtop_t;
 struct gmx_mtop_t;
 struct gmx_shellfc_t;
-struct t_commrec;
 struct t_forcerec;
 struct t_inputrec;
 struct t_mdatoms;
@@ -63,11 +62,11 @@ class VirtualSitesHandler;
 
 /*! \brief Gets the local shell with domain decomposition
  *
- * \param[in]     cr        Communication record
+ * \param[in]     dd        Domain decomposition struct, can be nullptr
  * \param[in]     md        The MD atom data
  * \param[in,out] shfc      The shell/flexible-constraint data
  */
-void make_local_shells(const t_commrec* cr, const t_mdatoms* md, gmx_shellfc_t* shfc);
+void make_local_shells(const gmx_domdec_t* dd, const t_mdatoms& md, gmx_shellfc_t* shfc);
 
 /*! \brief Sets atom data for several MD algorithms
  *
@@ -76,8 +75,8 @@ void make_local_shells(const t_commrec* cr, const t_mdatoms* md, gmx_shellfc_t* 
  * This routine sets the atom data for the (locally available) atoms.
  * This is called at the start of serial runs and during domain decomposition.
  *
- * \param[in]     cr         Communication record
- * \param[in]     ir         Input parameter record
+ * \param[in]     dd         Domain decomposition struct, can be nullptr
+ * \param[in]     inputrec   Input parameter record
  * \param[in]     top_global The global topology
  * \param[in,out] top        The local topology
  * \param[in,out] fr         The force calculation parameter/data record
@@ -87,8 +86,8 @@ void make_local_shells(const t_commrec* cr, const t_mdatoms* md, gmx_shellfc_t* 
  * \param[in,out] vsite      The virtual site data, can be NULL
  * \param[in,out] shellfc    The shell/flexible-constraint data, can be NULL
  */
-void mdAlgorithmsSetupAtomData(const t_commrec*     cr,
-                               const t_inputrec*    ir,
+void mdAlgorithmsSetupAtomData(const gmx_domdec_t*  dd,
+                               const t_inputrec&    inputrec,
                                const gmx_mtop_t&    top_global,
                                gmx_localtop_t*      top,
                                t_forcerec*          fr,

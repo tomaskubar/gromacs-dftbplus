@@ -36,8 +36,9 @@ simulations. Some stages are optional for some kinds of simulations.
    - the force field, which describes how the particles within the
      system interact with each other. Select one that is appropriate
      for the system being studied and the property or phenomena of
-     interest. This is a very important and non-trivial step! Consider
-     now how you will analyze your simulation data to make your
+     interest. This is a very important and non-trivial step!
+
+   - how you will analyze your simulation data to make your
      observations.
 
 3. Obtain or generate the initial coordinate file for each molecule to
@@ -54,14 +55,12 @@ simulations. Some stages are optional for some kinds of simulations.
 
 5. Obtain or generate the topology file for the system, using (for
    example) :ref:`gmx pdb2gmx`, :ref:`gmx x2top`, `SwissParam
-   <http://swissparam.ch/>`_ (for CHARMM forcefield), `PRODRG
-   <http://davapc1.bioch.dundee.ac.uk/cgi-bin/prodrg>`_ (for GROMOS96
-   43A1), `Automated Topology Builder
-   <http://compbio.biosci.uq.edu.au/atb/>`_ (for GROMOS96 53A6),
-   `MKTOP <http://www.aribeiro.net.br/mktop>`_ (for OPLS/AA) or your
-   favourite text editor in concert with chapter 5 of the |Gromacs|
+   <http://swissparam.ch/>`_ (for CHARMM forcefield), `CHARMM-GUI
+   <https://www.charmm-gui.org/>`_ , `Automated Topology Builder
+   <https://atb.uq.edu.au/>`_ (for GROMOS96 53A6) or your
+   favourite text editor in concert with :ref:`Chapter 5 <ff>` of the |Gromacs|
    `Reference Manual`_. For the AMBER force fields, `antechamber
-   <http://amber.scripps.edu/antechamber/antechamber.html>`__ or
+   <https://ambermd.org/antechamber/antechamber.html>`__ or
    `acpype <https://github.com/alanwilter/acpype>`__
    might be appropriate.
 
@@ -89,9 +88,8 @@ simulations. Some stages are optional for some kinds of simulations.
    parameters that are consistent with how force field was
    derived. You may need to simulate at NVT with position restraints
    on your solvent and/or solute to get the temperature almost right,
-   then relax to NPT to fix the density (which should be done with
-   Berendsen until after the density is stabilized, before a further
-   switch to a barostat that produces the correct ensemble), then move
+   then relax to NPT to fix the density (with the recommendation to use the
+   c-rescale barostat), then move
    further (if needed) to reach your production simulation ensemble
    (e.g. NVT, NVE). If you have problems here with the system :ref:`blowing
    up <blowing-up>`,
@@ -102,9 +100,7 @@ simulations. Some stages are optional for some kinds of simulations.
 9. Run the equilibration simulation for sufficient time so that the
    system relaxes sufficiently in the target ensemble to allow the
    production run to be commenced (using :ref:`gmx grompp` and
-   :ref:`gmx mdrun`, then :ref:`gmx energy` and `trajectory
-   visualization tools
-   <http://www.gromacs.org/Documentation/How-tos/Trajectory_Visualization>`_).
+   :ref:`gmx mdrun`, then :ref:`gmx energy` and :doc:`/how-to/visualize`).
 
 10. Select the appropriate simulation parameters for the production
     simulation (defined in :ref:`mdp` file). In particular, be careful not

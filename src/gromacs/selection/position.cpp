@@ -1,11 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2009-2018, The GROMACS development team.
- * Copyright (c) 2019, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2009- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -19,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -28,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \internal \file
  * \brief
@@ -42,14 +40,16 @@
  */
 #include "gmxpre.h"
 
-#include "position.h"
+#include "gromacs/selection/position.h"
 
 #include <cstring>
 
-#include "gromacs/math/vec.h"
 #include "gromacs/selection/indexutil.h"
+#include "gromacs/topology/block.h"
 #include "gromacs/utility/gmxassert.h"
 #include "gromacs/utility/smalloc.h"
+#include "gromacs/utility/vec.h"
+#include "gromacs/utility/vectypes.h"
 
 gmx_ana_pos_t::gmx_ana_pos_t()
 {
@@ -202,16 +202,16 @@ void gmx_ana_pos_copy(gmx_ana_pos_t* dest, gmx_ana_pos_t* src, bool bFirst)
             gmx_ana_pos_reserve_forces(dest);
         }
     }
-    memcpy(dest->x, src->x, src->count() * sizeof(*dest->x));
+    std::memcpy(dest->x, src->x, src->count() * sizeof(*dest->x));
     if (dest->v)
     {
         GMX_ASSERT(src->v, "src velocities should be non-null if dest velocities are allocated");
-        memcpy(dest->v, src->v, src->count() * sizeof(*dest->v));
+        std::memcpy(dest->v, src->v, src->count() * sizeof(*dest->v));
     }
     if (dest->f)
     {
         GMX_ASSERT(src->f, "src forces should be non-null if dest forces are allocated");
-        memcpy(dest->f, src->f, src->count() * sizeof(*dest->f));
+        std::memcpy(dest->f, src->f, src->count() * sizeof(*dest->f));
     }
     gmx_ana_indexmap_copy(&dest->m, &src->m, bFirst);
 }

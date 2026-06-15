@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2019- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \defgroup module_modularsimulator The modular simulator
  * \ingroup group_mdrun
@@ -60,27 +59,31 @@
 #include <memory>
 #include <optional>
 
-#include "gromacs/math/vectypes.h"
+#include "gromacs/math/matrix.h"
 #include "gromacs/mdtypes/checkpointdata.h"
 #include "gromacs/utility/basedefinitions.h"
 #include "gromacs/utility/exceptions.h"
+#include "gromacs/utility/vectypes.h"
 
+struct gmx_domdec_t;
 struct gmx_localtop_t;
 struct gmx_mdoutf;
-struct t_commrec;
 class t_state;
 
 namespace gmx
 {
 template<typename T>
 class ArrayRef;
-template<class Signaller>
-class SignallerBuilder;
-class NeighborSearchSignaller;
+class EnergySignaller;
+class MpiComm;
 class LastStepSignaller;
 class LoggingSignaller;
+class NeighborSearchSignaller;
+enum class ReferenceTemperatureChangeAlgorithm;
+enum class ScaleVelocities;
+template<class Signaller>
+class SignallerBuilder;
 class TrajectorySignaller;
-class EnergySignaller;
 
 //! \addtogroup module_modularsimulator
 //! \{
@@ -96,6 +99,8 @@ typedef std::function<void()> SimulatorRunFunction;
 
 //! The function type that allows to register run functions
 typedef std::function<void(SimulatorRunFunction)> RegisterRunFunction;
+//! The function type scheduling run functions for a step / time using a RegisterRunFunction reference
+typedef std::function<void(Step, Time, const RegisterRunFunction&)> SchedulingFunction;
 
 /*! \internal
  * \brief The general interface for elements of the modular simulator
@@ -351,19 +356,19 @@ protected:
  * to write a single templated function, e.g.
  *     template<CheckpointDataOperation operation>
  *     void doCheckpointData(CheckpointData<operation>* checkpointData,
- *                           const t_commrec* cr)
+ *                           const MpiComm& mpiComm)
  *     {
  *         checkpointData->scalar("important value", &value_);
  *     }
  * for both checkpoint reading and writing. This function can then be
  * dispatched from the interface functions,
- *     void writeCheckpoint(WriteCheckpointData checkpointData, const t_commrec* cr)
+ *     void writeCheckpoint(WriteCheckpointData checkpointData, const MpiComm& mpiComm)
  *     {
- *         doCheckpointData<CheckpointDataOperation::Write>(&checkpointData, cr);
+ *         doCheckpointData<CheckpointDataOperation::Write>(&checkpointData, mpiComm);
  *     }
- *     void readCheckpoint(ReadCheckpointData checkpointData, const t_commrec* cr)
+ *     void readCheckpoint(ReadCheckpointData checkpointData, const MpiComm& mpiComm, gmx_domdec_t* dd)
  *     {
- *         doCheckpointData<CheckpointDataOperation::Read>(&checkpointData, cr);
+ *         doCheckpointData<CheckpointDataOperation::Read>(&checkpointData, mpiComm, dd);
  *     }
  * This reduces code duplication and ensures that reading and writing
  * operations will not get out of sync.
@@ -374,12 +379,14 @@ public:
     //! Standard virtual destructor
     virtual ~ICheckpointHelperClient() = default;
 
-    //! Write checkpoint (CheckpointData object only passed on master rank)
+    //! Write checkpoint (CheckpointData object only passed on main rank)
     virtual void saveCheckpointState(std::optional<WriteCheckpointData> checkpointData,
-                                     const t_commrec*                   cr) = 0;
-    //! Read checkpoint (CheckpointData object only passed on master rank)
+                                     const MpiComm&                     mpiComm,
+                                     gmx_domdec_t*                      dd) = 0;
+    //! Read checkpoint (CheckpointData object only passed on main rank)
     virtual void restoreCheckpointState(std::optional<ReadCheckpointData> checkpointData,
-                                        const t_commrec*                  cr) = 0;
+                                        const MpiComm&                    mpiComm,
+                                        gmx_domdec_t*                     dd) = 0;
     //! Get unique client id
     [[nodiscard]] virtual const std::string& clientID() = 0;
 };
@@ -455,28 +462,137 @@ enum class ModularSimulatorBuilderState
 typedef std::function<void(Step)> PropagatorCallback;
 
 /*! \internal
- * \brief Information needed to connect a propagator to a thermostat
+ * \brief Strong type used to name propagators
  */
-struct PropagatorThermostatConnection
+struct PropagatorTag
 {
-    //! Function variable for setting velocity scaling variables.
-    std::function<void(int)> setNumVelocityScalingVariables;
-    //! Function variable for receiving view on velocity scaling.
-    std::function<ArrayRef<real>()> getViewOnVelocityScaling;
-    //! Function variable for callback.
-    std::function<PropagatorCallback()> getVelocityScalingCallback;
+    //! Explicit constructor
+    explicit PropagatorTag(std::string_view name) : name_(name) {}
+    //! Can be used as string
+    operator const std::string&() const { return name_; }
+    //! Equality operator
+    bool operator==(const PropagatorTag& other) const { return name_ == other.name_; }
+    //! Inequality operator
+    bool operator!=(const PropagatorTag& other) const { return name_ != other.name_; }
+
+private:
+    //! The name of the propagator
+    const std::string name_;
 };
 
 /*! \internal
- * \brief Information needed to connect a propagator to a barostat
+ * \brief Strong type used to denote propagation time steps
  */
-struct PropagatorBarostatConnection
+struct TimeStep
 {
-    //! Function variable for receiving view on pressure scaling matrix.
-    std::function<ArrayRef<rvec>()> getViewOnPRScalingMatrix;
-    //! Function variable for callback.
+    //! Explicit constructor
+    explicit TimeStep(real timeStep) : timeStep_(timeStep) {}
+    //! Can be used as underlying type
+    operator const real&() const { return timeStep_; }
+
+private:
+    //! The time step
+    real timeStep_;
+};
+
+/*! \internal
+ * \brief Strong type used to denote scheduling offsets
+ */
+struct Offset
+{
+    //! Explicit constructor
+    explicit Offset(int offset) : offset_(offset) {}
+    //! Can be used as underlying type
+    operator const int&() const { return offset_; }
+
+private:
+    //! The offset
+    int offset_;
+};
+
+/*! \internal
+ * \brief Information needed to connect a propagator to a temperature and / or pressure coupling element
+ */
+struct PropagatorConnection
+{
+    //! The tag of the creating propagator
+    PropagatorTag tag;
+
+    //! Whether the propagator offers start velocity scaling
+    bool hasStartVelocityScaling() const
+    {
+        return setNumVelocityScalingVariables && getVelocityScalingCallback && getViewOnStartVelocityScaling;
+    }
+    //! Whether the propagator offers end velocity scaling
+    bool hasEndVelocityScaling() const
+    {
+        return setNumVelocityScalingVariables && getVelocityScalingCallback && getViewOnEndVelocityScaling;
+    }
+    //! Whether the propagator offers position scaling
+    bool hasPositionScaling() const
+    {
+        return setNumPositionScalingVariables && getPositionScalingCallback && getViewOnPositionScaling;
+    }
+    //! Whether the propagator offers Parrinello-Rahman scaling
+    bool hasParrinelloRahmanScaling() const
+    {
+        return getPRScalingCallback && getViewOnPRScalingMatrix;
+    }
+
+    //! Function object for setting velocity scaling variables
+    std::function<void(int, ScaleVelocities)> setNumVelocityScalingVariables;
+    //! Function object for setting velocity scaling variables
+    std::function<void(int)> setNumPositionScalingVariables;
+    //! Function object for receiving view on velocity scaling (before step)
+    std::function<ArrayRef<real>()> getViewOnStartVelocityScaling;
+    //! Function object for receiving view on velocity scaling (after step)
+    std::function<ArrayRef<real>()> getViewOnEndVelocityScaling;
+    //! Function object for receiving view on position scaling
+    std::function<ArrayRef<real>()> getViewOnPositionScaling;
+    //! Function object to request callback allowing to signal a velocity scaling step
+    std::function<PropagatorCallback()> getVelocityScalingCallback;
+    //! Function object to request callback allowing to signal a position scaling step
+    std::function<PropagatorCallback()> getPositionScalingCallback;
+    //! Function object for receiving view on pressure scaling matrix
+    std::function<Matrix3x3*()> getViewOnPRScalingMatrix;
+    //! Function object to request callback allowing to signal a Parrinello-Rahman scaling step
     std::function<PropagatorCallback()> getPRScalingCallback;
 };
+
+//! Enum describing whether an element is reporting conserved energy from the previous step
+enum class ReportPreviousStepConservedEnergy
+{
+    Yes,
+    No,
+    Count
+};
+
+//! Callback used by the DomDecHelper object to inform clients about system re-partitioning
+typedef std::function<void()> DomDecCallback;
+
+/*! \internal
+ * \brief Client interface of the DomDecHelper class
+ *
+ * Classes implementing this interface will register with the DomDecHelper
+ * builder object.
+ * Before the simulation, the DomDecHelper builder will call the clients'
+ * registerDomDecCallback() function and build a list of callbacks to be
+ * passed to the DomDecHelper. After every time the DomDecHelper object
+ * performed system partitioning, it will use the callbacks to inform the
+ * clients that a re-partitioning has happened.
+ */
+class IDomDecHelperClient
+{
+public:
+    //! Standard virtual destructor
+    virtual ~IDomDecHelperClient() = default;
+    //! Register function to be informed about system re-partitioning
+    virtual DomDecCallback registerDomDecCallback() = 0;
+};
+
+//! Callback updating the reference temperature
+using ReferenceTemperatureCallback =
+        std::function<void(ArrayRef<const real>, ReferenceTemperatureChangeAlgorithm algorithm)>;
 
 //! /}
 } // namespace gmx

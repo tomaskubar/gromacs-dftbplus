@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2015,2016,2017,2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2015- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 
 /*! \internal \file
@@ -52,6 +51,8 @@
 #ifndef GMX_AWH_COORDSTATE_H
 #define GMX_AWH_COORDSTATE_H
 
+#include <cstdint>
+
 #include <vector>
 
 #include "dimparams.h"
@@ -61,7 +62,7 @@ namespace gmx
 
 template<typename>
 class ArrayRef;
-struct AwhBiasParams;
+class AwhBiasParams;
 struct AwhBiasStateHistory;
 class BiasParams;
 class BiasGrid;
@@ -77,9 +78,7 @@ public:
      * \param[in] dimParams      The dimension Parameters.
      * \param[in] grid           The grid.
      */
-    CoordState(const AwhBiasParams&          awhBiasParams,
-               const std::vector<DimParams>& dimParams,
-               const BiasGrid&               grid);
+    CoordState(const AwhBiasParams& awhBiasParams, ArrayRef<const DimParams> dimParams, const BiasGrid& grid);
 
     /*! \brief
      * Sample a new umbrella reference point given the current coordinate value.
@@ -92,7 +91,6 @@ public:
      * \param[in] step                Step number, needed for the random number generator.
      * \param[in] seed                Random seed.
      * \param[in] indexSeed           Second random seed, should be the bias Index.
-     * \returns the index of the sampled point.
      */
     void sampleUmbrellaGridpoint(const BiasGrid&             grid,
                                  int                         gridpointIndex,
@@ -131,9 +129,9 @@ public:
     void setUmbrellaGridpointToGridpoint();
 
 private:
-    awh_dvec coordValue_;        /**< Current coordinate value in (nm or rad) */
-    int      gridpointIndex_;    /**< The grid point index for the current coordinate value */
-    int      umbrellaGridpoint_; /**< Index for the current reference grid point for the umbrella, only used with umbrella potential type */
+    awh_dvec coordValue_;     /**< Current coordinate value in (nm or rad) */
+    int      gridpointIndex_; /**< The grid point index for the current coordinate value */
+    int umbrellaGridpoint_; /**< Index for the current reference grid point for the umbrella, only used with umbrella potential type */
 };
 
 } // namespace gmx

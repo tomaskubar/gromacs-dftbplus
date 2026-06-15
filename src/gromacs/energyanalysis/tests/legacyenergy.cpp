@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2017,2018,2019, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2017- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \internal \file
  * \brief
@@ -47,6 +46,9 @@
 #include <cstring>
 
 #include <string>
+#include <string_view>
+
+#include <gtest/gtest.h>
 
 #include "gromacs/gmxana/gmx_ana.h"
 
@@ -119,15 +121,15 @@ TEST_F(OriresTest, ExtractOrires)
 class EnergyTest : public CommandLineTestBase
 {
 public:
-    void runTest(const char* stringForStdin)
+    void runTest(const std::string& energyFile, const std::string& stringForStdin)
     {
         auto& cmdline = commandLine();
 
-        setInputFile("-f", "ener.edr");
+        setInputFile("-f", energyFile);
         setOutputFile("-o", "energy.xvg", XvgMatch());
 
         StdioTestHelper stdioHelper(&fileManager());
-        stdioHelper.redirectStringToStdin(stringForStdin);
+        stdioHelper.redirectStringToStdin(stringForStdin.c_str());
         ASSERT_EQ(0, gmx_energy(cmdline.argc(), cmdline.argv()));
 
         // All the .edr files used in the tests contain only
@@ -141,23 +143,34 @@ public:
 
 TEST_F(EnergyTest, ExtractEnergy)
 {
-    runTest("Potential\nKinetic-En.\nTotal-Energy\n");
+    runTest("ener.edr", "Potential\nKinetic-En.\nTotal-Energy\n");
 }
 
 TEST_F(EnergyTest, ExtractEnergyByNumber)
 {
-    runTest("4 6 9");
+    runTest("ener.edr", "4 6 9");
 }
 
 TEST_F(EnergyTest, ExtractEnergyMixed)
 {
-    runTest("Pressu\n7\nbox-z\nvol\n");
+    runTest("ener.edr", "Pressu\n7\nbox-z\nvol\n");
 }
 
+TEST_F(EnergyTest, ExtractEnergyWithNumberInName)
+{
+    runTest("ener_numberInName.edr", "1/Viscosity\n");
+}
+
+TEST_F(EnergyTest, ExtractEnergyWithNumberInNameAndAlsoByNumber)
+{
+    runTest("ener_numberInName.edr", "1/Viscosity\n7\n");
+}
+
+/* TODO: test -einstein_blocks and -einstein_restarts */
 class ViscosityTest : public CommandLineTestBase
 {
 public:
-    void runTest()
+    void runTest(const CommandLine& einstein_args)
     {
         auto& cmdline = commandLine();
         setInputFile("-f", "ener.edr");
@@ -180,6 +193,8 @@ public:
             setOutputFile("-corr", "corr.xvg", NoTextMatch());
         }
 
+        cmdline.merge(einstein_args);
+
         ASSERT_EQ(0, gmx_energy(cmdline.argc(), cmdline.argv()));
 
         checkOutputFiles();
@@ -190,14 +205,24 @@ TEST_F(ViscosityTest, EinsteinViscosity)
 {
     auto tolerance = relativeToleranceAsFloatingPoint(1e-4, 1e-5);
     setOutputFile("-evisco", "evisco.xvg", XvgMatch().tolerance(tolerance));
-    runTest();
+    const char* const einstein_args[] = { "-einstein_restarts", "50", "-einstein_blocks", "10" };
+    runTest(CommandLine(einstein_args));
 }
 
 TEST_F(ViscosityTest, EinsteinViscosityIntegral)
 {
     auto tolerance = relativeToleranceAsFloatingPoint(1e-4, 1e-5);
     setOutputFile("-eviscoi", "eviscoi.xvg", XvgMatch().tolerance(tolerance));
-    runTest();
+    const char* const einstein_args[] = { "-einstein_restarts", "50", "-einstein_blocks", "10" };
+    runTest(CommandLine(einstein_args));
+}
+
+TEST_F(ViscosityTest, EinsteinViscosityDefaultArguments)
+{
+    auto tolerance = relativeToleranceAsFloatingPoint(1e-4, 1e-5);
+    setOutputFile("-evisco", "evisco.xvg", XvgMatch().tolerance(tolerance));
+    setOutputFile("-eviscoi", "eviscoi.xvg", XvgMatch().tolerance(tolerance));
+    runTest(CommandLine());
 }
 
 } // namespace

@@ -1,13 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
- * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2017,2018 by the GROMACS development team.
- * Copyright (c) 2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 1991- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -21,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -30,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 #include "gmxpre.h"
 
@@ -43,28 +39,72 @@
 #include <cstdio>
 
 #include <algorithm>
+#include <filesystem>
+#include <optional>
+#include <string>
 
 #include "gromacs/topology/idef.h"
+#include "gromacs/topology/ifunc.h"
+#include "gromacs/utility/basedefinitions.h"
 #include "gromacs/utility/cstringutil.h"
 #include "gromacs/utility/enumerationhelpers.h"
 #include "gromacs/utility/fatalerror.h"
 #include "gromacs/utility/smalloc.h"
+#include "gromacs/utility/stringcompare.h"
+#include "gromacs/utility/stringtoenumvalueconverter.h"
 
-/* Must correspond to the Directive enum in grompp_impl.h */
-static gmx::EnumerationArray<Directive, const char*> directive_names = {
-    { "defaults", "atomtypes", "bondtypes", "constrainttypes", "pairtypes", "angletypes",
-      "dihedraltypes", "nonbond_params", "implicit_genborn_params", "implicit_surface_params",
-      "cmaptypes",
-      /* All the directives above can not appear after moleculetype */
-      "moleculetype", "atoms", "virtual_sites2", "virtual_sites3", "virtual_sites4",
-      "virtual_sitesn", "bonds", "exclusions", "pairs", "pairs_nb", "angles", "dihedrals",
-      "constraints", "settles", "polarization", "water_polarization", "thole_polarization",
-      "system", "molecules", "position_restraints", "angle_restraints", "angle_restraints_z",
-      "distance_restraints", "orientation_restraints", "dihedral_restraints", "cmap",
-      "intermolecular_interactions", "maxdirs", "invalid", "none" }
-};
+const char* enumValueToString(Directive d)
+{
+    /* Must correspond to the Directive enum in topdirs.h */
+    static constexpr gmx::EnumerationArray<Directive, const char*> directiveNames = {
+        "defaults",
+        "atomtypes",
+        "bondtypes",
+        "constrainttypes",
+        "pairtypes",
+        "angletypes",
+        "dihedraltypes",
+        "nonbond_params",
+        "implicit_genborn_params",
+        "implicit_surface_params",
+        "cmaptypes",
+        /* All the directives above can not appear after moleculetype */
+        "moleculetype",
+        "atoms",
+        "virtual_sites1",
+        "virtual_sites2",
+        "virtual_sites3",
+        "virtual_sites4",
+        "virtual_sitesn",
+        "bonds",
+        "exclusions",
+        "pairs",
+        "pairs_nb",
+        "angles",
+        "dihedrals",
+        "constraints",
+        "settles",
+        "polarization",
+        "water_polarization",
+        "thole_polarization",
+        "system",
+        "molecules",
+        "position_restraints",
+        "angle_restraints",
+        "angle_restraints_z",
+        "distance_restraints",
+        "orientation_restraints",
+        "dihedral_restraints",
+        "cmap",
+        "intermolecular_interactions",
+        "maxdirs",
+        "invalid",
+        "none"
+    };
+    return directiveNames[d];
+}
 
-int ifunc_index(Directive d, int type)
+InteractionFunction ifunc_index(Directive d, int type)
 {
     switch (d)
     {
@@ -72,175 +112,196 @@ int ifunc_index(Directive d, int type)
         case Directive::d_bonds:
             switch (type)
             {
-                case 1: return F_BONDS;
-                case 2: return F_G96BONDS;
-                case 3: return F_MORSE;
-                case 4: return F_CUBICBONDS;
-                case 5: return F_CONNBONDS;
-                case 6: return F_HARMONIC;
-                case 7: return F_FENEBONDS;
-                case 8: return F_TABBONDS;
-                case 9: return F_TABBONDSNC;
-                case 10: return F_RESTRBONDS;
+                case 1: return InteractionFunction::Bonds;
+                case 2: return InteractionFunction::GROMOS96Bonds;
+                case 3: return InteractionFunction::MorsePotential;
+                case 4: return InteractionFunction::CubicBonds;
+                case 5: return InteractionFunction::ConnectBonds;
+                case 6: return InteractionFunction::HarmonicPotential;
+                case 7: return InteractionFunction::FENEBonds;
+                case 8: return InteractionFunction::TabulatedBonds;
+                case 9: return InteractionFunction::TabulatedBondsNoCoupling;
+                case 10: return InteractionFunction::RestraintBonds;
                 default: gmx_fatal(FARGS, "Invalid bond type %d", type);
             }
         case Directive::d_angles:
         case Directive::d_angletypes:
             switch (type)
             {
-                case 1: return F_ANGLES;
-                case 2: return F_G96ANGLES;
-                case 3: return F_CROSS_BOND_BONDS;
-                case 4: return F_CROSS_BOND_ANGLES;
-                case 5: return F_UREY_BRADLEY;
-                case 6: return F_QUARTIC_ANGLES;
-                case 8: return F_TABANGLES;
-                case 9: return F_LINEAR_ANGLES;
-                case 10: return F_RESTRANGLES;
+                case 1: return InteractionFunction::Angles;
+                case 2: return InteractionFunction::GROMOS96Angles;
+                case 3: return InteractionFunction::CrossBondBonds;
+                case 4: return InteractionFunction::CrossBondAngles;
+                case 5: return InteractionFunction::UreyBradleyPotential;
+                case 6: return InteractionFunction::QuarticAngles;
+                case 8: return InteractionFunction::TabulatedAngles;
+                case 9: return InteractionFunction::LinearAngles;
+                case 10: return InteractionFunction::RestrictedBendingPotential;
                 default: gmx_fatal(FARGS, "Invalid angle type %d", type);
             }
         case Directive::d_pairs:
         case Directive::d_pairtypes:
             if (type == 1 || (d == Directive::d_pairtypes && type == 2))
             {
-                return F_LJ14;
+                return InteractionFunction::LennardJones14;
             }
             else if (type == 2)
             {
-                return F_LJC14_Q;
+                return InteractionFunction::LennardJonesCoulomb14Q;
             }
             else
             {
                 gmx_fatal(FARGS, "Invalid pairs type %d", type);
             }
-        case Directive::d_pairs_nb: return F_LJC_PAIRS_NB;
+        case Directive::d_pairs_nb: return InteractionFunction::LennardJonesCoulombNonBondedPairs;
         case Directive::d_dihedrals:
         case Directive::d_dihedraltypes:
             switch (type)
             {
-                case 1: return F_PDIHS;
-                case 2: return F_IDIHS;
-                case 3: return F_RBDIHS;
-                case 4: return F_PIDIHS;
-                case 5: return F_FOURDIHS;
-                case 8: return F_TABDIHS;
+                case 1: return InteractionFunction::ProperDihedrals;
+                case 2: return InteractionFunction::ImproperDihedrals;
+                case 3: return InteractionFunction::RyckaertBellemansDihedrals;
+                case 4: return InteractionFunction::PeriodicImproperDihedrals;
+                case 5: return InteractionFunction::FourierDihedrals;
+                case 8: return InteractionFunction::TabulatedDihedrals;
                 case 9:
-                    return F_PDIHS; /* proper dihedrals where we allow multiple terms over single bond */
-                case 10: return F_RESTRDIHS;
-                case 11: return F_CBTDIHS;
+                    return InteractionFunction::ProperDihedrals; /* proper dihedrals where we allow multiple terms over single bond */
+                case 10: return InteractionFunction::RestrictedTorsionPotential;
+                case 11: return InteractionFunction::CombinedBendingTorsionPotential;
                 default: gmx_fatal(FARGS, "Invalid dihedral type %d", type);
             }
         case Directive::d_cmaptypes:
-        case Directive::d_cmap: return F_CMAP;
+        case Directive::d_cmap: return InteractionFunction::DihedralEnergyCorrectionMap;
 
         case Directive::d_nonbond_params:
             if (type == 1)
             {
-                return F_LJ;
+                return InteractionFunction::LennardJonesShortRange;
             }
             else
             {
-                return F_BHAM;
+                return InteractionFunction::BuckinghamShortRange;
+            }
+        case Directive::d_vsites1:
+            if (type == 1)
+            {
+                return InteractionFunction::VirtualSite1;
+            }
+            else
+            {
+                gmx_fatal(FARGS, "Invalid vsites1 type %d", type);
             }
         case Directive::d_vsites2:
             switch (type)
             {
-                case 1: return F_VSITE2;
-                case 2: return F_VSITE2FD;
+                case 1: return InteractionFunction::VirtualSite2;
+                case 2: return InteractionFunction::VirtualSite2FlexibleDistance;
                 default: gmx_fatal(FARGS, "Invalid vsites2 type %d", type);
             }
         case Directive::d_vsites3:
             switch (type)
             {
-                case 1: return F_VSITE3;
-                case 2: return F_VSITE3FD;
-                case 3: return F_VSITE3FAD;
-                case 4: return F_VSITE3OUT;
+                case 1: return InteractionFunction::VirtualSite3;
+                case 2: return InteractionFunction::VirtualSite3FlexibleDistance;
+                case 3: return InteractionFunction::VirtualSite3FlexibleAngleDistance;
+                case 4: return InteractionFunction::VirtualSite3Outside;
                 default: gmx_fatal(FARGS, "Invalid vsites3 type %d", type);
             }
         case Directive::d_vsites4:
             switch (type)
             {
-                case 1: return F_VSITE4FD;
-                case 2: return F_VSITE4FDN;
+                case 1: return InteractionFunction::VirtualSite4FlexibleDistance;
+                case 2: return InteractionFunction::VirtualSite4FlexibleDistanceNormalization;
                 default: gmx_fatal(FARGS, "Invalid vsites4 type %d", type);
             }
-        case Directive::d_vsitesn: return F_VSITEN;
+        case Directive::d_vsitesn: return InteractionFunction::VirtualSiteN;
         case Directive::d_constraints:
         case Directive::d_constrainttypes:
             switch (type)
             {
-                case 1: return F_CONSTR;
-                case 2: return F_CONSTRNC;
+                case 1: return InteractionFunction::Constraints;
+                case 2: return InteractionFunction::ConstraintsNoCoupling;
                 default: gmx_fatal(FARGS, "Invalid constraints type %d", type);
             }
-        case Directive::d_settles: return F_SETTLE;
+        case Directive::d_settles: return InteractionFunction::SETTLE;
         case Directive::d_position_restraints:
             switch (type)
             {
-                case 1: return F_POSRES;
-                case 2: return F_FBPOSRES;
+                case 1: return InteractionFunction::PositionRestraints;
+                case 2: return InteractionFunction::FlatBottomedPositionRestraints;
                 default: gmx_fatal(FARGS, "Invalid position restraint type %d", type);
             }
         case Directive::d_polarization:
             switch (type)
             {
-                case 1: return F_POLARIZATION;
-                case 2: return F_ANHARM_POL;
+                case 1: return InteractionFunction::Polarization;
+                case 2: return InteractionFunction::AnharmonicPolarization;
                 default: gmx_fatal(FARGS, "Invalid polarization type %d", type);
             }
-        case Directive::d_thole_polarization: return F_THOLE_POL;
-        case Directive::d_water_polarization: return F_WATER_POL;
-        case Directive::d_angle_restraints: return F_ANGRES;
-        case Directive::d_angle_restraints_z: return F_ANGRESZ;
-        case Directive::d_distance_restraints: return F_DISRES;
-        case Directive::d_orientation_restraints: return F_ORIRES;
-        case Directive::d_dihedral_restraints: return F_DIHRES;
+        case Directive::d_thole_polarization: return InteractionFunction::TholePolarization;
+        case Directive::d_water_polarization: return InteractionFunction::WaterPolarization;
+        case Directive::d_angle_restraints: return InteractionFunction::AngleRestraints;
+        case Directive::d_angle_restraints_z: return InteractionFunction::AngleZAxisRestraints;
+        case Directive::d_distance_restraints: return InteractionFunction::DistanceRestraints;
+        case Directive::d_orientation_restraints: return InteractionFunction::OrientationRestraints;
+        case Directive::d_dihedral_restraints: return InteractionFunction::DihedralRestraints;
         default:
-            gmx_fatal(FARGS, "invalid directive %s in ifunc_index (%s:%d)", dir2str(d), __FILE__, __LINE__);
+            gmx_fatal(FARGS, "invalid directive %s in ifunc_index (%s:%d)", enumValueToString(d), __FILE__, __LINE__);
     }
 }
 
-const char* dir2str(Directive d)
+enum class DeprecatedDirectives : int
 {
-    int index = static_cast<int>(d);
-    return directive_names[index];
+    d_dummies1,
+    d_dummies2,
+    d_dummies3,
+    d_dummies4,
+    d_dummiesn,
+    Count
+};
+
+static const char* enumValueToString(DeprecatedDirectives d)
+{
+    static constexpr gmx::EnumerationArray<DeprecatedDirectives, const char*> directiveNames = {
+        "dummies1", "dummies2", "dummies3", "dummies4", "dummiesn"
+    };
+    return directiveNames[d];
 }
 
-Directive str2dir(char* dstr)
+Directive str2dir(const char* dstr)
 {
-    char buf[STRLEN], *ptr;
+    static const gmx::StringToEnumValueConverter<Directive, enumValueToString, gmx::StringCompareType::CaseAndDashInsensitive> s_converter;
 
-    /* Hack to be able to read old topologies */
-    if (gmx_strncasecmp_min(dstr, "dummies", 7) == 0)
+    if (std::optional<Directive> d = s_converter.valueFrom(dstr); d.has_value())
     {
-        sprintf(buf, "virtual_sites%s", dstr + 7);
-        ptr = buf;
+        return d.value();
     }
-    else
-    {
-        ptr = dstr;
-    }
+    // Also handle deprecated directives that have modern replacements, like
+    // "dummies*" -> "virtual_sites*"
 
-    for (auto d : gmx::EnumerationWrapper<Directive>())
-    {
-        if (gmx_strcasecmp_min(ptr, dir2str(static_cast<Directive>(d))) == 0)
-        {
-            return static_cast<Directive>(d);
-        }
-    }
+    static const gmx::StringToEnumValueConverter<DeprecatedDirectives, enumValueToString, gmx::StringCompareType::CaseAndDashInsensitive>
+            s_converterForDeprecated;
 
+    if (std::optional<DeprecatedDirectives> d = s_converterForDeprecated.valueFrom(dstr); d.has_value())
+    {
+        static constexpr gmx::EnumerationArray<DeprecatedDirectives, Directive> s_deprecatedDirectiveToDirective = {
+            Directive::d_vsites1, Directive::d_vsites2, Directive::d_vsites3,
+            Directive::d_vsites4, Directive::d_vsitesn,
+        };
+        return s_deprecatedDirectiveToDirective[d.value()];
+    }
     return Directive::d_invalid;
 }
 
+// NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)
 static gmx::EnumerationArray<Directive, Directive*> necessary = { { nullptr } };
 
 static void set_nec(Directive** n, ...)
 /* Must always have at least one extra argument */
 {
-    va_list   ap;
-    int       ind = 0;
-    Directive d;
+    std::va_list ap;
+    int          ind = 0;
+    Directive    d;
 
     va_start(ap, n);
     do
@@ -271,20 +332,22 @@ void DS_Init(DirStack** DS)
         // be in the same place that was valid in old versions (ie. child
         // directive of [atomtypes]) but any relevant case will
         // satisfy that.
-        set_nec(&(necessary[Directive::d_implicit_genborn_params]), Directive::d_atomtypes,
-                Directive::d_none);
-        set_nec(&(necessary[Directive::d_implicit_surface_params]), Directive::d_atomtypes,
-                Directive::d_none);
+        set_nec(&(necessary[Directive::d_implicit_genborn_params]), Directive::d_atomtypes, Directive::d_none);
+        set_nec(&(necessary[Directive::d_implicit_surface_params]), Directive::d_atomtypes, Directive::d_none);
         set_nec(&(necessary[Directive::d_cmaptypes]), Directive::d_atomtypes, Directive::d_none);
         set_nec(&(necessary[Directive::d_moleculetype]), Directive::d_atomtypes, Directive::d_none);
         set_nec(&(necessary[Directive::d_atoms]), Directive::d_moleculetype, Directive::d_none);
+        set_nec(&(necessary[Directive::d_vsites1]), Directive::d_atoms, Directive::d_none);
         set_nec(&(necessary[Directive::d_vsites2]), Directive::d_atoms, Directive::d_none);
         set_nec(&(necessary[Directive::d_vsites3]), Directive::d_atoms, Directive::d_none);
         set_nec(&(necessary[Directive::d_vsites4]), Directive::d_atoms, Directive::d_none);
         set_nec(&(necessary[Directive::d_vsitesn]), Directive::d_atoms, Directive::d_none);
         set_nec(&(necessary[Directive::d_bonds]), Directive::d_atoms, Directive::d_none);
-        set_nec(&(necessary[Directive::d_exclusions]), Directive::d_bonds, Directive::d_constraints,
-                Directive::d_settles, Directive::d_none);
+        set_nec(&(necessary[Directive::d_exclusions]),
+                Directive::d_bonds,
+                Directive::d_constraints,
+                Directive::d_settles,
+                Directive::d_none);
         set_nec(&(necessary[Directive::d_pairs]), Directive::d_atoms, Directive::d_none);
         set_nec(&(necessary[Directive::d_pairs_nb]), Directive::d_atoms, Directive::d_none);
         set_nec(&(necessary[Directive::d_angles]), Directive::d_atoms, Directive::d_none);
@@ -303,7 +366,8 @@ void DS_Init(DirStack** DS)
         set_nec(&(necessary[Directive::d_orientation_restraints]), Directive::d_atoms, Directive::d_none);
         set_nec(&(necessary[Directive::d_dihedral_restraints]), Directive::d_atoms, Directive::d_none);
         set_nec(&(necessary[Directive::d_cmap]), Directive::d_atoms, Directive::d_none);
-        set_nec(&(necessary[Directive::d_intermolecular_interactions]), Directive::d_molecules,
+        set_nec(&(necessary[Directive::d_intermolecular_interactions]),
+                Directive::d_molecules,
                 Directive::d_none);
     }
     *DS = nullptr;

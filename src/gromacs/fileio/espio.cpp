@@ -1,12 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2005, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2016,2017 by the GROMACS development team.
- * Copyright (c) 2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2005- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -20,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -29,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 #include "gmxpre.h"
 
@@ -42,15 +39,18 @@
 #include <cstdlib>
 #include <cstring>
 
+#include <string>
+
 #include "gromacs/fileio/gmxfio.h"
-#include "gromacs/math/vec.h"
 #include "gromacs/pbcutil/pbc.h"
 #include "gromacs/topology/atoms.h"
 #include "gromacs/topology/symtab.h"
 #include "gromacs/topology/topology.h"
+#include "gromacs/utility/basedefinitions.h"
 #include "gromacs/utility/cstringutil.h"
 #include "gromacs/utility/fatalerror.h"
 #include "gromacs/utility/smalloc.h"
+#include "gromacs/utility/vec.h"
 
 static int get_espresso_word(FILE* fp, char word[])
 {
@@ -61,7 +61,7 @@ static int get_espresso_word(FILE* fp, char word[])
 
     do
     {
-        i = fgetc(fp);
+        i = std::fgetc(fp);
         if (i != EOF)
         {
             if (i == ' ' || i == '\n' || i == '\t')
@@ -99,7 +99,7 @@ static int get_espresso_word(FILE* fp, char word[])
     return ret;
 }
 
-static int check_open_parenthesis(FILE* fp, int r, const char* infile, const char* keyword)
+static int check_open_parenthesis(FILE* fp, int r, const std::filesystem::path& infile, const char* keyword)
 {
     int  level_inc;
     char word[STRLEN];
@@ -118,14 +118,14 @@ static int check_open_parenthesis(FILE* fp, int r, const char* infile, const cha
         }
         else
         {
-            gmx_fatal(FARGS, "Expected '{' after '%s' in file '%s'", keyword, infile);
+            gmx_fatal(FARGS, "Expected '{' after '%s' in file '%s'", keyword, infile.string().c_str());
         }
     }
 
     return level_inc;
 }
 
-static int check_close_parenthesis(FILE* fp, int r, const char* infile, const char* keyword)
+static int check_close_parenthesis(FILE* fp, int r, const std::filesystem::path& infile, const char* keyword)
 {
     int  level_inc;
     char word[STRLEN];
@@ -144,7 +144,8 @@ static int check_close_parenthesis(FILE* fp, int r, const char* infile, const ch
         }
         else
         {
-            gmx_fatal(FARGS, "Expected '}' after section '%s' in file '%s'", keyword, infile);
+            gmx_fatal(
+                    FARGS, "Expected '}' after section '%s' in file '%s'", keyword, infile.string().c_str());
         }
     }
 
@@ -164,7 +165,13 @@ enum
 };
 static const char* const esp_prop[espNR] = { "id", "pos", "type", "q", "v", "f", "molecule" };
 
-void gmx_espresso_read_conf(const char* infile, t_symtab* symtab, char** name, t_atoms* atoms, rvec x[], rvec* v, matrix box)
+void gmx_espresso_read_conf(const std::filesystem::path& infile,
+                            t_symtab*                    symtab,
+                            char**                       name,
+                            t_atoms*                     atoms,
+                            rvec                         x[],
+                            rvec*                        v,
+                            matrix                       box)
 {
     FILE*    fp;
     char     word[STRLEN], buf[STRLEN];
@@ -205,7 +212,7 @@ void gmx_espresso_read_conf(const char* infile, t_symtab* symtab, char** name, t
                 bFoundProp = FALSE;
                 for (p = 0; p < espNR; p++)
                 {
-                    if (strcmp(word, esp_prop[p]) == 0)
+                    if (std::strcmp(word, esp_prop[p]) == 0)
                     {
                         bFoundProp    = TRUE;
                         prop[nprop++] = p;
@@ -327,8 +334,7 @@ void gmx_espresso_read_conf(const char* infile, t_symtab* symtab, char** name, t
                         }
                         else
                         {
-                            sprintf(buf, "T%c%c", 'A' + atoms->atom[i].type / 26,
-                                    'A' + atoms->atom[i].type % 26);
+                            sprintf(buf, "T%c%c", 'A' + atoms->atom[i].type / 26, 'A' + atoms->atom[i].type % 26);
                         }
                         t_atoms_set_resinfo(atoms, i, symtab, buf, i, ' ', 0, ' ');
                     }
@@ -347,7 +353,8 @@ void gmx_espresso_read_conf(const char* infile, t_symtab* symtab, char** name, t
                 gmx_fatal(FARGS,
                           "Internal inconsistency in Espresso routines, read %d atoms, expected %d "
                           "atoms",
-                          i, atoms->nr);
+                          i,
+                          atoms->nr);
             }
         }
         else if (level == 1 && std::strcmp(word, "variable") == 0 && !bFoundVariable)
@@ -380,13 +387,13 @@ void gmx_espresso_read_conf(const char* infile, t_symtab* symtab, char** name, t
 
     if (!bFoundParticles)
     {
-        fprintf(stderr, "Did not find a particles section in Espresso file '%s'\n", infile);
+        fprintf(stderr, "Did not find a particles section in Espresso file '%s'\n", infile.string().c_str());
     }
 
     gmx_fio_fclose(fp);
 }
 
-int get_espresso_coordnum(const char* infile)
+int get_espresso_coordnum(const std::filesystem::path& infile)
 {
     FILE*    fp;
     char     word[STRLEN];
@@ -401,7 +408,7 @@ int get_espresso_coordnum(const char* infile)
     level           = 0;
     while ((r = get_espresso_word(fp, word)) && !bFoundParticles)
     {
-        if (level == 1 && strcmp(word, "particles") == 0 && !bFoundParticles)
+        if (level == 1 && std::strcmp(word, "particles") == 0 && !bFoundParticles)
         {
             bFoundParticles = TRUE;
             level += check_open_parenthesis(fp, r, infile, "particles");
@@ -432,7 +439,7 @@ int get_espresso_coordnum(const char* infile)
     }
     if (!bFoundParticles)
     {
-        fprintf(stderr, "Did not find a particles section in Espresso file '%s'\n", infile);
+        fprintf(stderr, "Did not find a particles section in Espresso file '%s'\n", infile.string().c_str());
     }
 
     gmx_fio_fclose(fp);
@@ -469,7 +476,13 @@ void write_espresso_conf_indexed(FILE*          out,
         {
             j = i;
         }
-        fprintf(out, "\t{%d %f %f %f %hu %g", j, x[j][XX], x[j][YY], x[j][ZZ], atoms->atom[j].type,
+        fprintf(out,
+                "\t{%d %f %f %f %hu %g",
+                j,
+                x[j][XX],
+                x[j][YY],
+                x[j][ZZ],
+                atoms->atom[j].type,
                 atoms->atom[j].q);
         if (v)
         {

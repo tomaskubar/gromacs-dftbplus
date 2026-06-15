@@ -1,11 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2013,2014,2015,2016,2017, The GROMACS development team.
- * Copyright (c) 2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2013- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -19,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -28,19 +26,23 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 #include "gmxpre.h"
 
 #include "trajectory_writing.h"
 
+#include <filesystem>
+#include <memory>
+
 #include "gromacs/commandline/filenm.h"
 #include "gromacs/fileio/confio.h"
+#include "gromacs/fileio/filetypes.h"
 #include "gromacs/fileio/tngio.h"
-#include "gromacs/math/vec.h"
+#include "gromacs/mdlib/energyoutput.h"
 #include "gromacs/mdlib/mdoutf.h"
 #include "gromacs/mdlib/stat.h"
 #include "gromacs/mdlib/update.h"
@@ -53,7 +55,9 @@
 #include "gromacs/pbcutil/pbc.h"
 #include "gromacs/timing/wallcycle.h"
 #include "gromacs/topology/topology.h"
+#include "gromacs/utility/arrayref.h"
 #include "gromacs/utility/smalloc.h"
+#include "gromacs/utility/vec.h"
 
 void do_md_trajectory_writing(FILE*                          fplog,
                               t_commrec*                     cr,
@@ -62,11 +66,11 @@ void do_md_trajectory_writing(FILE*                          fplog,
                               int64_t                        step,
                               int64_t                        step_rel,
                               double                         t,
-                              t_inputrec*                    ir,
+                              const t_inputrec*              ir,
                               t_state*                       state,
                               t_state*                       state_global,
                               ObservablesHistory*            observablesHistory,
-                              const gmx_mtop_t*              top_global,
+                              const gmx_mtop_t&              top_global,
                               t_forcerec*                    fr,
                               gmx_mdoutf_t                   outf,
                               const gmx::EnergyOutput&       energyOutput,
@@ -76,7 +80,7 @@ void do_md_trajectory_writing(FILE*                          fplog,
                               gmx_bool                       bRerunMD,
                               gmx_bool                       bLastStep,
                               gmx_bool                       bDoConfOut,
-                              gmx_bool                       bSumEkinhOld)
+                              const EkindataState            ekindataState)
 {
     int   mdof_flags;
     rvec* x_for_confout = nullptr;
@@ -121,20 +125,22 @@ void do_md_trajectory_writing(FILE*                          fplog,
 
     if (mdof_flags != 0)
     {
-        wallcycle_start(mdoutf_get_wcycle(outf), ewcTRAJ);
+        wallcycle_start(mdoutf_get_wcycle(outf), WallCycleCounter::Traj);
         if (bCPT)
         {
-            if (MASTER(cr))
+            const bool checkpointEkindata = (ekindataState != EkindataState::NotUsed);
+            if (checkpointEkindata)
             {
-                if (bSumEkinhOld)
-                {
-                    state_global->ekinstate.bUpToDate = FALSE;
-                }
-                else
-                {
-                    update_ekinstate(&state_global->ekinstate, ekind);
-                    state_global->ekinstate.bUpToDate = TRUE;
-                }
+                update_ekinstate(cr->commMyGroup.isMainRank() ? &state_global->ekinstate : nullptr,
+                                 ekind,
+                                 ekindataState == EkindataState::UsedNeedToReduce,
+                                 cr->commMyGroup,
+                                 cr->dd);
+            }
+
+            if (cr->commMyGroup.isMainRank())
+            {
+                state_global->ekinstate.bUpToDate = checkpointEkindata;
 
                 energyOutput.fillEnergyHistory(observablesHistory->energyHistory.get());
             }
@@ -146,11 +152,15 @@ void do_md_trajectory_writing(FILE*                          fplog,
         // Note that part of the following code is duplicated in StatePropagatorData::trajectoryWriterTeardown.
         // This duplication is needed while both legacy and modular code paths are in use.
         // TODO: Remove duplication asap, make sure to keep in sync in the meantime.
-        mdoutf_write_to_trajectory_files(fplog, cr, outf, mdof_flags, top_global->natoms, step, t, state,
-                                         state_global, observablesHistory, f, &checkpointDataHolder);
-        if (bLastStep && step_rel == ir->nsteps && bDoConfOut && MASTER(cr) && !bRerunMD)
+        mdoutf_write_to_trajectory_files(
+                fplog, cr, outf, mdof_flags, top_global.natoms, step, t, state, state_global, observablesHistory, f, &checkpointDataHolder);
+        if (bLastStep && step_rel == ir->nsteps && bDoConfOut && cr->commMyGroup.isMainRank() && !bRerunMD)
         {
-            if (fr->bMolPBC && state == state_global)
+            // With box deformation we would have to correct the output velocities, which is tedious
+            const bool makeMoleculesWholeInConfout =
+                    (fr->bMolPBC && !ir->bPeriodicMols && !ir_haveBoxDeformation(*ir));
+
+            if (makeMoleculesWholeInConfout && state == state_global)
             {
                 /* This (single-rank) run needs to allocate a
                    temporary array of size natoms so that any
@@ -159,8 +169,8 @@ void do_md_trajectory_writing(FILE*                          fplog,
                    output. This makes .cpt restarts look binary
                    identical, and makes .edr restarts binary
                    identical. */
-                snew(x_for_confout, state_global->natoms);
-                copy_rvecn(state_global->x.rvec_array(), x_for_confout, 0, state_global->natoms);
+                snew(x_for_confout, state_global->numAtoms());
+                copy_rvecn(state_global->x.rvec_array(), x_for_confout, 0, state_global->numAtoms());
             }
             else
             {
@@ -174,24 +184,29 @@ void do_md_trajectory_writing(FILE*                          fplog,
              * at the last step.
              */
             fprintf(stderr, "\nWriting final coordinates.\n");
-            if (fr->bMolPBC && !ir->bPeriodicMols)
+            if (makeMoleculesWholeInConfout)
             {
                 /* Make molecules whole only for confout writing */
-                do_pbc_mtop(ir->pbcType, state->box, top_global, x_for_confout);
+                do_pbc_mtop(ir->pbcType, state->box, &top_global, x_for_confout);
             }
-            write_sto_conf_mtop(ftp2fn(efSTO, nfile, fnm), *top_global->name, top_global,
-                                x_for_confout, state_global->v.rvec_array(), ir->pbcType, state->box);
-            if (fr->bMolPBC && state == state_global)
+            write_sto_conf_mtop(ftp2fn(efSTO, nfile, fnm),
+                                *top_global.name,
+                                top_global,
+                                x_for_confout,
+                                state_global->v.rvec_array(),
+                                ir->pbcType,
+                                state->box);
+            if (makeMoleculesWholeInConfout && state == state_global)
             {
                 sfree(x_for_confout);
             }
         }
-        wallcycle_stop(mdoutf_get_wcycle(outf), ewcTRAJ);
+        wallcycle_stop(mdoutf_get_wcycle(outf), WallCycleCounter::Traj);
     }
 #if GMX_FAHCORE
-    if (MASTER(cr))
+    if (MAIN(cr))
     {
-        fcWriteVisFrame(ir->ePBC, state_global->box, top_global, state_global->x.rvec_array());
+        fcWriteVisFrame(ir->pbcType, state_global->box, top_global, state_global->x.rvec_array());
     }
 #endif
 }

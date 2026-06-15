@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2016,2017,2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2016- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 #include "gmxpre.h"
 
@@ -60,36 +59,34 @@ MockThreadAffinityAccess::MockThreadAffinityAccess() : supported_(true)
     ON_CALL(*this, setCurrentThreadAffinityToCore(_)).WillByDefault(Return(true));
 }
 
-MockThreadAffinityAccess::~MockThreadAffinityAccess() {}
-
-
-ThreadAffinityTestHelper::ThreadAffinityTestHelper()
+ThreadAffinityTestHelper::ThreadAffinityTestHelper() : mpiComm_(MPI_COMM_WORLD)
 {
-    snew(cr_, 1);
-    cr_->nnodes = gmx_node_num();
-    cr_->nodeid = gmx_node_rank();
-    // Default communicator is needed for [SIM]MASTER(cr) to work
-    // TODO: Should get cleaned up once thread affinity works with
-    //       communicators rather than the full cr (part of #2395)
-    cr_->sizeOfDefaultCommunicator = gmx_node_num();
-    cr_->rankInDefaultCommunicator = gmx_node_rank();
-    cr_->duty                      = DUTY_PP;
-#if GMX_MPI
-    cr_->mpi_comm_mysim = MPI_COMM_WORLD;
-#endif
     hwOpt_.threadAffinity      = ThreadAffinity::Auto;
     hwOpt_.totNumThreadsIsAuto = false;
     physicalNodeId_            = 0;
 }
 
-ThreadAffinityTestHelper::~ThreadAffinityTestHelper()
-{
-    sfree(cr_);
-}
+ThreadAffinityTestHelper::~ThreadAffinityTestHelper() = default;
 
 void ThreadAffinityTestHelper::setLogicalProcessorCount(int logicalProcessorCount)
 {
     hwTop_ = std::make_unique<HardwareTopology>(logicalProcessorCount);
+}
+
+void ThreadAffinityTestHelper::setExternalAffinitySet(const std::vector<int>& cores)
+{
+    GMX_RELEASE_ASSERT(
+            hwTop_ && hwTop_->maxThreads() > 0 && hwTop_->cpuLimit() > 0,
+            "Must have valid topology before calling setLogicalProcessorExternalAffinitySet");
+    int logicalProcessorCount = hwTop_->maxThreads();
+    hwTop_                    = std::make_unique<HardwareTopology>(logicalProcessorCount, cores);
+}
+
+void ThreadAffinityTestHelper::setTopologyFromSavedMock(const std::string&      filesystemRoot,
+                                                        const std::vector<int>& allowedProcessors,
+                                                        const std::vector<int>& externalAffinitySet)
+{
+    hwTop_ = std::make_unique<HardwareTopology>(filesystemRoot, allowedProcessors, externalAffinitySet);
 }
 
 } // namespace test

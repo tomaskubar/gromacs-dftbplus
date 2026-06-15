@@ -1,11 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2012,2013,2014,2015,2016 by the GROMACS development team.
- * Copyright (c) 2017,2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2012- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -19,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -28,31 +26,54 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 
 #include "gmxpre.h"
 
 #include "nbnxm_geometry.h"
 
-#include "gromacs/nbnxm/nbnxm.h"
-#include "gromacs/utility/fatalerror.h"
+#include <cmath>
+
+#include "gromacs/nbnxm/nbnxm_enums.h"
 #include "gromacs/utility/real.h"
 
-#include "pairlist.h"
+
+namespace gmx
+{
 
 /* Clusters at the cut-off only increase rlist by 60% of their size */
 static constexpr real c_nbnxnRlistIncreaseOutsideFactor = 0.6;
 
-real nbnxn_get_rlist_effective_inc(const int jClusterSize, const real atomDensity)
+real nbnxmPairlistVolumeRadiusIncrease(const bool useGpu, const real atomDensity)
 {
-    /* We should get this from the setup, but currently it's the same for
-     * all setups, including GPUs.
+    /* Note that this routine assumes the most common cluster layout.
+     * The results should only be used for cost estimates and therefore
+     * do not need to be exact.
      */
-    const real iClusterSize = c_nbnxnCpuIClusterSize;
+
+    int iClusterSize;
+    int jClusterSize;
+    if (useGpu)
+    {
+        iClusterSize = sc_gpuClusterSize(PairlistType::Hierarchical8x8x8);
+        // The most common value is 4 (8 atoms split in 2 halves)
+        jClusterSize = sc_gpuSplitJClusterSize(PairlistType::Hierarchical8x8x8);
+    }
+    else
+    {
+        // The i-cluster size is currently always 4
+        iClusterSize = 4;
+#if GMX_SIMD_HAVE_REAL && ((GMX_SIMD_REAL_WIDTH == 8 && GMX_SIMD_HAVE_FMA) || GMX_SIMD_REAL_WIDTH > 8)
+        jClusterSize = 8;
+#else
+        // The most common value is 4, GMX_SIMD_REAL_WIDTH==4 or plain-C 4x4
+        jClusterSize = 4;
+#endif
+    }
 
     const real iVolumeIncrease = (iClusterSize - 1) / atomDensity;
     const real jVolumeIncrease = (jClusterSize - 1) / atomDensity;
@@ -60,12 +81,14 @@ real nbnxn_get_rlist_effective_inc(const int jClusterSize, const real atomDensit
     return c_nbnxnRlistIncreaseOutsideFactor * std::cbrt(iVolumeIncrease + jVolumeIncrease);
 }
 
-real nbnxn_get_rlist_effective_inc(const int clusterSize, const gmx::RVec& averageClusterBoundingBox)
+real nbnxn_get_rlist_effective_inc(const int clusterSize, const RVec& averageClusterBoundingBox)
 {
     /* The average length of the diagonal of a sub cell */
     const real diagonal = std::sqrt(norm2(averageClusterBoundingBox));
 
     const real volumeRatio = (clusterSize - 1.0_real) / clusterSize;
 
-    return c_nbnxnRlistIncreaseOutsideFactor * gmx::square(volumeRatio) * 0.5_real * diagonal;
+    return c_nbnxnRlistIncreaseOutsideFactor * square(volumeRatio) * 0.5_real * diagonal;
 }
+
+} // namespace gmx

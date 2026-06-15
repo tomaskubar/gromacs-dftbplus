@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2018,2019, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2018- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \internal \file
  *
@@ -43,13 +42,23 @@
 #define GMX_DOMDEC_ATOMDISTRIBUTION_H
 
 #include <array>
+#include <limits>
 #include <vector>
 
-#include "gromacs/math/vectypes.h"
 #include "gromacs/utility/arrayref.h"
+#include "gromacs/utility/real.h"
+#include "gromacs/utility/vectypes.h"
+
+namespace gmx
+{
+
+template<typename>
+class ArrayRef;
+
+} // namespace gmx
 
 /*! \internal
- * \brief Distribution of atom groups over the domain (only available on the master rank)
+ * \brief Distribution of atom groups over the domain (only available on the main rank)
  */
 struct AtomDistribution
 {
@@ -66,7 +75,7 @@ struct AtomDistribution
     AtomDistribution(const ivec numCells, int numAtomGroups, int numAtoms);
 
     std::vector<DomainAtomGroups> domainGroups; /**< Group and atom division over ranks/domains */
-    std::vector<int>              atomGroups; /**< The atom group division of the whole system, pointed into by counts[].atomGroups */
+    std::vector<int> atomGroups; /**< The atom group division of the whole system, pointed into by counts[].atomGroups */
 
     /* Temporary buffers, stored permanently here to avoid reallocation */
     std::array<std::vector<real>, DIM> cellSizesBuffer; /**< Cell boundaries, sizes: num_cells_in_dim + 1 */
@@ -74,11 +83,13 @@ struct AtomDistribution
     std::vector<gmx::RVec> rvecBuffer; /**< Buffer for state scattering and gathering */
 };
 
-/*! \brief Returns state scatter/gather buffer element counts and displacements
+/*! \brief Returns state scatter/gather buffer atom counts and displacements
  *
  * NOTE: Should only be called with a pointer to a valid ma struct
- *       (only available on the master rank).
+ *       (only available on the main rank).
  */
-void get_commbuffer_counts(AtomDistribution* ma, int** counts, int** disps);
+void get_commbuffer_counts(AtomDistribution*         ma,
+                           gmx::ArrayRef<const int>* counts,
+                           gmx::ArrayRef<const int>* displacements);
 
 #endif

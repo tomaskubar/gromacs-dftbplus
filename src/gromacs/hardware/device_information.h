@@ -1,11 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2012,2013,2014,2015,2016, by the GROMACS development team.
- * Copyright (c) 2017,2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2012- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -19,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -28,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \libinternal \file
  *  \brief Declares the GPU information structure and its helpers
@@ -48,8 +46,18 @@
 
 #include "config.h"
 
+#include <cstddef>
+
+#include <array>
+#include <optional>
+#include <type_traits>
+
 #if GMX_GPU_CUDA
 #    include <cuda_runtime.h>
+#endif
+
+#if GMX_GPU_HIP
+#    include <hip/hip_runtime.h>
 #endif
 
 #if GMX_GPU_OPENCL
@@ -61,54 +69,63 @@
 #endif
 
 #include "gromacs/utility/enumerationhelpers.h"
+#include "gromacs/utility/fixedcapacityvector.h"
+#include "gromacs/utility/mpiinfo.h"
 
 //! Constant used to help minimize preprocessed code
 static constexpr bool c_binarySupportsGpus = (GMX_GPU != 0);
-static constexpr bool c_canSerializeDeviceInformation =
-        (!GMX_GPU_OPENCL && !GMX_GPU_SYCL); /*NOLINT(misc-redundant-expression)*/
 
 //! Possible results of the GPU detection/check.
 enum class DeviceStatus : int
 {
     //! The device is compatible
-    Compatible = 0,
+    Compatible,
     //! Device does not exist
-    Nonexistent = 1,
+    Nonexistent,
     //! Device is not compatible
-    Incompatible = 2,
-    //! OpenCL device has incompatible cluster size for non-bonded kernels.
-    IncompatibleClusterSize = 3,
-    //! There are known issues with NVIDIA Volta and newer.
-    IncompatibleNvidiaVolta = 4,
+    Incompatible,
+    //! OpenCL/SYCL device has incompatible cluster size for non-bonded kernels.
+    IncompatibleClusterSize,
+    //! There are known issues with OpenCL on NVIDIA Volta and newer.
+    IncompatibleNvidiaVolta,
+    /*! \brief The device originates from non-recommended SYCL backend.
+     * The device might work by itself, but to simplify device allocation, it is marked as incompatible.
+     * */
+    NotPreferredBackend,
     /*! \brief An error occurred during the functionality checks.
      * That indicates malfunctioning of the device, driver, or incompatible driver/runtime.
      */
-    NonFunctional = 5,
+    NonFunctional,
     /*! \brief CUDA devices are busy or unavailable.
      * typically due to use of \p cudaComputeModeExclusive, \p cudaComputeModeProhibited modes.
      */
-    Unavailable = 6,
+    Unavailable,
+    /*! \brief The device is outside the set of compilation targets.
+     * See \c GMX_CUDA_TARGET_SM and \c GMX_CUDA_TARGET_COMPUTE CMake variables.
+     */
+    DeviceNotTargeted,
+    //! \brief AMD RDNA devices (gfx10xx, gfx11xx) with 32-wide execution are not supported with OpenCL,
+    IncompatibleOclAmdRdna,
+    //! \brief RDNA not targeted (SYCL)
+    IncompatibleAmdRdnaNotTargeted,
     //! Enumeration size
-    Count = 7
+    Count
 };
 
 /*! \brief Names of the GPU detection/check results
- *
- * Check-source wants to warn about the use of a symbol name that would
- * require an inclusion of config.h. However the use is in a comment, so that
- * is a false warning. So C-style string concatenation is used to fool the
- * naive parser in check-source. That needs a clang-format suppression
- * in order to look reasonable. Also clang-tidy wants to suggest that a comma is
- * missing, so that is suppressed.
  */
-static const gmx::EnumerationArray<DeviceStatus, const char*> c_deviceStateString = {
-    "compatible", "nonexistent", "incompatible",
-    // clang-format off
-    // NOLINTNEXTLINE(bugprone-suspicious-missing-comma)
-    "incompatible (please recompile with correct GMX" "_OPENCL_NB_CLUSTER_SIZE of 4)",
-    // clang-format on
-    "incompatible (please use CUDA build for NVIDIA Volta GPUs or newer)", "non-functional",
-    "unavailable"
+static constexpr gmx::EnumerationArray<DeviceStatus, const char*> c_deviceStateString = {
+    "compatible",
+    "nonexistent",
+    "incompatible",
+    "incompatible (please recompile with correct GMX_GPU_NB_CLUSTER_SIZE)",
+    "incompatible (please use CUDA build for NVIDIA Volta GPUs or newer)",
+    "not recommended (please use ONEAPI_DEVICE_SELECTOR to limit visibility to a single backend)",
+    "non-functional",
+    "unavailable",
+    "not in set of targeted devices",
+    "incompatible (AMD RDNA devices are not supported)", // Issue #4521
+    "incompatible (please recompile with GMX_ENABLE_AMD_RDNA_SUPPORT)"
 };
 
 //! Device vendors
@@ -122,8 +139,12 @@ enum class DeviceVendor : int
     Amd = 2,
     //! Intel
     Intel = 3,
+    //! Apple
+    Apple = 4,
+    //! PoclCpu, any CPU vendor with PoCL CPU driver
+    PoclCpu = 5,
     //! Enumeration size
-    Count = 4
+    Count = 6
 };
 
 
@@ -137,13 +158,28 @@ struct DeviceInformation
 {
     //! Device status.
     DeviceStatus status;
-    //! ID of the device.
+    //! ID of the device, ie. the index into the device order reported by the GPU runtime.
     int id;
     //! Device vendor.
     DeviceVendor deviceVendor;
+    /*! \brief Warp/sub-group sizes supported by the device.
+     *
+     * \ref DeviceInformation must be serializable in CUDA, so we cannot use \c std::vector here.
+     * Limiting to 12 as the minimum needed for PoCL CPU.
+     */
+    gmx::FixedCapacityVector<int, 12> supportedSubGroupSizes;
+
+    gmx::GpuAwareMpiStatus gpuAwareMpiStatus;
 #if GMX_GPU_CUDA
     //! CUDA device properties.
     cudaDeviceProp prop;
+    //! Whether the device architecture was explicitly targeted at compile time.
+    bool haveNativeKernels;
+#elif GMX_GPU_HIP
+    //! HIP device properties.
+    hipDeviceProp_t prop;
+    //! Manual checking device generation for large register pool
+    bool deviceHasLargeRegisterPool;
 #elif GMX_GPU_OPENCL
     cl_platform_id oclPlatformId;       //!< OpenCL Platform ID.
     cl_device_id   oclDeviceId;         //!< OpenCL Device ID.
@@ -153,10 +189,33 @@ struct DeviceInformation
     int            compute_units;       //!< Number of compute units.
     int            adress_bits;         //!< Number of address bits the device is capable of.
     size_t         maxWorkItemSizes[3]; //!< Workgroup size limits (CL_DEVICE_MAX_WORK_ITEM_SIZES).
-    size_t         maxWorkGroupSize;    //!< Workgroup total size limit (CL_DEVICE_MAX_WORK_GROUP_SIZE).
+    size_t maxWorkGroupSize; //!< Workgroup total size limit (CL_DEVICE_MAX_WORK_GROUP_SIZE).
 #elif GMX_GPU_SYCL
-    cl::sycl::device syclDevice;
+    sycl::device syclDevice;
+    //! CUDA CC major for NVIDIA devices, generation code for AMD (gfx90a -> 9), architecture code for Intel (Gen9 -> 9, Xe -> 12)
+    std::optional<int> hardwareVersionMajor;
+    //! CUDA CC minor for NVIDIA devices, major architecture(?) code for AMD (gfx90a -> 0), release code for Intel
+    std::optional<int> hardwareVersionMinor;
+    //! CUDA CC minor for NVIDIA devices, device code for AMD (gfx90a -> a -> 10), revision code for Intel
+    std::optional<int> hardwareVersionPatch;
+    //! Does the device support SYCL Graph
+    bool supportsSyclGraph;
+    //! Max. work-group shape supported by the device
+    int maxWorkGroupSize;
 #endif
+    /*! \brief UUID of the device, when available
+     *
+     * If device UUIDs are not available, then multi-rank DLB may
+     * not work properly when environment variables restrict
+     * device visibility to each rank.
+     *
+     * Note that even if the device and SDK support UUID queries,
+     * compatibility or version issues mean we need a field that might
+     * not contain a value in practice. */
+    std::optional<std::array<std::byte, 16>> uuid;
 };
+
+//! Whether \ref DeviceInformation can be serialized for sending via MPI.
+static constexpr bool c_canSerializeDeviceInformation = std::is_trivially_copyable_v<DeviceInformation>;
 
 #endif // GMX_HARDWARE_DEVICE_INFORMATION_H

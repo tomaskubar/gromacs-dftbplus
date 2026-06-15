@@ -1,13 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
- * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2017,2018 by the GROMACS development team.
- * Copyright (c) 2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 1991- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -21,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -30,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /* This file is completely threadsafe - keep it that way! */
 #include "gmxpre.h"
@@ -42,16 +38,26 @@
 
 #include <cctype>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
+
+#include <array>
+#include <filesystem>
+#include <optional>
+#include <string>
+#include <vector>
 
 #include "gromacs/gmxpreprocess/gpp_atomtype.h"
 #include "gromacs/gmxpreprocess/grompp_impl.h"
 #include "gromacs/gmxpreprocess/toputil.h"
 #include "gromacs/topology/ifunc.h"
+#include "gromacs/utility/arrayref.h"
 #include "gromacs/utility/cstringutil.h"
 #include "gromacs/utility/fatalerror.h"
+#include "gromacs/utility/fileptr.h"
 #include "gromacs/utility/futil.h"
+#include "gromacs/utility/real.h"
 #include "gromacs/utility/smalloc.h"
 
 typedef struct
@@ -110,7 +116,7 @@ static int nequal(const char* a1, const char* a2)
      */
     for (i = 0; (a1[i] != '\0') && (a2[i] != '\0'); i++)
     {
-        if (toupper(a1[i]) != toupper(a2[i]))
+        if (std::toupper(a1[i]) != std::toupper(a2[i]))
         {
             break;
         }
@@ -206,9 +212,9 @@ void convert_harmonics(gmx::ArrayRef<MoleculeInformation> mols, PreprocessingAto
         /* Check how many morse and harmonic BONDSs there are, increase size of
          * morse with the number of harmonics
          */
-        for (int bb = 0; (bb < F_NRE); bb++)
+        for (const auto bb : gmx::EnumerationWrapper<InteractionFunction>{})
         {
-            if ((interaction_function[bb].flags & IF_BTYPE) && (bb != F_MORSE))
+            if ((interaction_function[bb].flags & IF_BTYPE) && (bb != InteractionFunction::MorsePotential))
             {
                 int nrharm = mol.interactions[bb].size();
 
@@ -218,9 +224,11 @@ void convert_harmonics(gmx::ArrayRef<MoleculeInformation> mols, PreprocessingAto
                 {
                     int  ni   = harmonic->ai();
                     int  nj   = harmonic->aj();
-                    real edis = search_e_diss(n2m, t2m,
-                                              atype->atomNameFromAtomType(mol.atoms.atom[ni].type),
-                                              atype->atomNameFromAtomType(mol.atoms.atom[nj].type));
+                    real edis = search_e_diss(
+                            n2m,
+                            t2m,
+                            atype->atomNameFromAtomType(mol.atoms.atom[ni].type)->c_str(),
+                            atype->atomNameFromAtomType(mol.atoms.atom[nj].type)->c_str());
                     if (edis != 0)
                     {
                         real              b0         = harmonic->c0();
@@ -228,7 +236,7 @@ void convert_harmonics(gmx::ArrayRef<MoleculeInformation> mols, PreprocessingAto
                         real              beta       = std::sqrt(kb / (2 * edis));
                         std::vector<int>  atoms      = { ni, nj };
                         std::vector<real> forceParam = { b0, edis, beta };
-                        mol.interactions[F_MORSE].interactionTypes.emplace_back(
+                        mol.interactions[InteractionFunction::MorsePotential].interactionTypes.emplace_back(
                                 InteractionOfType(atoms, forceParam));
                         harmonic = mol.interactions[bb].interactionTypes.erase(harmonic);
                     }
@@ -239,8 +247,12 @@ void convert_harmonics(gmx::ArrayRef<MoleculeInformation> mols, PreprocessingAto
                 }
 
                 int newHarmonics = mol.interactions[bb].size();
-                fprintf(stderr, "Converted %d out of %d %s to morse bonds for mol %d\n",
-                        nrharm - newHarmonics, nrharm, interaction_function[bb].name, i);
+                fprintf(stderr,
+                        "Converted %d out of %d %s to morse bonds for mol %d\n",
+                        nrharm - newHarmonics,
+                        nrharm,
+                        interaction_function[bb].name,
+                        i);
             }
         }
         i++;

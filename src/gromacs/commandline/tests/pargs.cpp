@@ -1,11 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2013,2014,2015,2016,2017 by the GROMACS development team.
- * Copyright (c) 2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2013- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -19,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -28,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \internal \file
  * \brief
@@ -47,19 +45,35 @@
 
 #include "gromacs/commandline/pargs.h"
 
+#include <cstddef>
+#include <cstdint>
+
+#include <filesystem>
 #include <string>
 
 #include <gtest/gtest.h>
 
+#include "gromacs/commandline/filenm.h"
+#include "gromacs/fileio/filetypes.h"
+#include "gromacs/fileio/oenv.h"
 #include "gromacs/utility/arrayref.h"
+#include "gromacs/utility/basedefinitions.h"
 #include "gromacs/utility/path.h"
+#include "gromacs/utility/real.h"
 #include "gromacs/utility/stringutil.h"
 #include "gromacs/utility/textwriter.h"
+#include "gromacs/utility/vectypes.h"
 
 #include "testutils/cmdlinetest.h"
 #include "testutils/testasserts.h"
 #include "testutils/testfilemanager.h"
 
+struct gmx_output_env_t;
+
+namespace gmx
+{
+namespace test
+{
 namespace
 {
 
@@ -83,8 +97,8 @@ public:
     void parseFromArgs(unsigned long flags, gmx::ArrayRef<t_filenm> fnm, gmx::ArrayRef<t_pargs> pa)
     {
         fileCount_ = fnm.size();
-        bool bOk   = parse_common_args(&args_.argc(), args_.argv(), flags, fnm.size(), fnm.data(),
-                                     pa.size(), pa.data(), 0, nullptr, 0, nullptr, &oenv_);
+        bool bOk   = parse_common_args(
+                &args_.argc(), args_.argv(), flags, fnm.size(), fnm.data(), pa.size(), pa.data(), 0, nullptr, 0, nullptr, &oenv_);
         EXPECT_TRUE(bOk);
     }
     void parseFromArray(gmx::ArrayRef<const char* const> cmdline,
@@ -97,19 +111,19 @@ public:
     }
     std::string addFileArg(const char* name, const char* extension, FileArgumentType type)
     {
-        std::string filename(tempFiles_.getTemporaryFilePath(extension));
-        gmx::TextWriter::writeFileFromString(filename, "Dummy file");
+        auto filename(tempFiles_.getTemporaryFilePath(extension));
+        gmx::TextWriter::writeFileFromString(filename.string(), "Dummy file");
         if (name != nullptr)
         {
             args_.append(name);
             switch (type)
             {
-                case efFull: args_.append(filename); break;
-                case efNoExtension: args_.append(gmx::Path::stripExtension(filename)); break;
+                case efFull: args_.append(filename.string()); break;
+                case efNoExtension: args_.append(gmx::stripExtension(filename).string()); break;
                 case efEmptyValue: break;
             }
         }
-        return filename;
+        return filename.string();
     }
 
     // This must be a member that persists until the end of the test,
@@ -130,8 +144,8 @@ TEST_F(ParseCommonArgsTest, ParsesIntegerArgs)
 {
     int               value1 = 0, value2 = 0, value3 = 3;
     t_pargs           pa[]      = { { "-i1", FALSE, etINT, { &value1 }, "Description" },
-                     { "-i2", FALSE, etINT, { &value2 }, "Description" },
-                     { "-i3", FALSE, etINT, { &value3 }, "Description" } };
+                                    { "-i2", FALSE, etINT, { &value2 }, "Description" },
+                                    { "-i3", FALSE, etINT, { &value3 }, "Description" } };
     const char* const cmdline[] = { "test", "-i1", "2", "-i2", "-3" };
     parseFromArray(cmdline, 0, {}, pa);
     EXPECT_EQ(2, value1);
@@ -143,8 +157,8 @@ TEST_F(ParseCommonArgsTest, ParsesInt64Args)
 {
     int64_t           value1 = 0, value2 = 0, value3 = 3;
     t_pargs           pa[]      = { { "-i1", FALSE, etINT64, { &value1 }, "Description" },
-                     { "-i2", FALSE, etINT64, { &value2 }, "Description" },
-                     { "-i3", FALSE, etINT64, { &value3 }, "Description" } };
+                                    { "-i2", FALSE, etINT64, { &value2 }, "Description" },
+                                    { "-i3", FALSE, etINT64, { &value3 }, "Description" } };
     const char* const cmdline[] = { "test", "-i1", "2", "-i2", "-3" };
     parseFromArray(cmdline, 0, {}, pa);
     EXPECT_EQ(2, value1);
@@ -156,8 +170,8 @@ TEST_F(ParseCommonArgsTest, ParsesRealArgs)
 {
     real              value1 = 0.0, value2 = 0.0, value3 = 2.5;
     t_pargs           pa[]      = { { "-r1", FALSE, etREAL, { &value1 }, "Description" },
-                     { "-r2", FALSE, etREAL, { &value2 }, "Description" },
-                     { "-r3", FALSE, etREAL, { &value3 }, "Description" } };
+                                    { "-r2", FALSE, etREAL, { &value2 }, "Description" },
+                                    { "-r3", FALSE, etREAL, { &value3 }, "Description" } };
     const char* const cmdline[] = { "test", "-r1", "2", "-r2", "-.5" };
     parseFromArray(cmdline, 0, {}, pa);
     EXPECT_EQ(2.0, value1);
@@ -169,8 +183,8 @@ TEST_F(ParseCommonArgsTest, ParsesStringArgs)
 {
     const char *      value1 = "def", *value2 = "", *value3 = "default";
     t_pargs           pa[]      = { { "-s1", FALSE, etSTR, { &value1 }, "Description" },
-                     { "-s2", FALSE, etSTR, { &value2 }, "Description" },
-                     { "-s3", FALSE, etSTR, { &value3 }, "Description" } };
+                                    { "-s2", FALSE, etSTR, { &value2 }, "Description" },
+                                    { "-s3", FALSE, etSTR, { &value3 }, "Description" } };
     const char* const cmdline[] = { "test", "-s1", "", "-s2", "test" };
     parseFromArray(cmdline, 0, {}, pa);
     EXPECT_STREQ("", value1);
@@ -182,8 +196,8 @@ TEST_F(ParseCommonArgsTest, ParsesBooleanArgs)
 {
     gmx_bool          value1 = TRUE, value2 = FALSE, value3 = TRUE;
     t_pargs           pa[]      = { { "-b1", FALSE, etBOOL, { &value1 }, "Description" },
-                     { "-b2", FALSE, etBOOL, { &value2 }, "Description" },
-                     { "-b3", FALSE, etBOOL, { &value3 }, "Description" } };
+                                    { "-b2", FALSE, etBOOL, { &value2 }, "Description" },
+                                    { "-b3", FALSE, etBOOL, { &value3 }, "Description" } };
     const char* const cmdline[] = { "test", "-nob1", "-b2" };
     parseFromArray(cmdline, 0, {}, pa);
     EXPECT_FALSE(value1);
@@ -191,12 +205,46 @@ TEST_F(ParseCommonArgsTest, ParsesBooleanArgs)
     EXPECT_TRUE(value3);
 }
 
+TEST_F(ParseCommonArgsTest, ParsesBooleanArgsToValuesOfSuitableEnum)
+{
+    enum class LikeBool : bool
+    {
+        No  = false,
+        Yes = true
+    };
+    // Set up the default values
+    LikeBool value1 = LikeBool::No;
+    LikeBool value2 = LikeBool::No;
+    LikeBool value3 = LikeBool::No;
+    LikeBool value4 = LikeBool::Yes;
+    LikeBool value5 = LikeBool::Yes;
+    LikeBool value6 = LikeBool::Yes;
+    // Set up 6 options
+    t_pargs pa[] = { { "-b1", FALSE, etBOOL, { &value1 }, "Description" },
+                     { "-b2", FALSE, etBOOL, { &value2 }, "Description" },
+                     { "-b3", FALSE, etBOOL, { &value3 }, "Description" },
+                     { "-b4", FALSE, etBOOL, { &value4 }, "Description" },
+                     { "-b5", FALSE, etBOOL, { &value5 }, "Description" },
+                     { "-b6", FALSE, etBOOL, { &value6 }, "Description" } };
+    // Set some to yes and no, leave some as default
+    const char* const cmdline[] = { "test", "-b1", "-nob2", "-b4", "-nob5" };
+
+    parseFromArray(cmdline, 0, {}, pa);
+    // Expetactions
+    EXPECT_EQ(value1, LikeBool::Yes) << "set to yes";
+    EXPECT_EQ(value2, LikeBool::No) << "set to no";
+    EXPECT_EQ(value3, LikeBool::No) << "preserves the default of no";
+    EXPECT_EQ(value4, LikeBool::Yes) << "set to yes";
+    EXPECT_EQ(value5, LikeBool::No) << "set to no";
+    EXPECT_EQ(value6, LikeBool::Yes) << "preserves the default of yes";
+}
+
 TEST_F(ParseCommonArgsTest, ParsesVectorArgs)
 {
     rvec              value1 = { 0, 0, 0 }, value2 = { 0, 0, 0 }, value3 = { 1, 2, 3 };
     t_pargs           pa[]      = { { "-v1", FALSE, etRVEC, { &value1 }, "Description" },
-                     { "-v2", FALSE, etRVEC, { &value2 }, "Description" },
-                     { "-v3", FALSE, etRVEC, { &value3 }, "Description" } };
+                                    { "-v2", FALSE, etRVEC, { &value2 }, "Description" },
+                                    { "-v3", FALSE, etRVEC, { &value3 }, "Description" } };
     const char* const cmdline[] = { "test", "-v1", "2", "1", "3", "-v2", "1" };
     parseFromArray(cmdline, 0, {}, pa);
     EXPECT_EQ(2.0, value1[XX]);
@@ -214,8 +262,8 @@ TEST_F(ParseCommonArgsTest, ParsesTimeArgs)
 {
     real              value1 = 1.0, value2 = 2.0, value3 = 2.5;
     t_pargs           pa[]      = { { "-t1", FALSE, etTIME, { &value1 }, "Description" },
-                     { "-t2", FALSE, etTIME, { &value2 }, "Description" },
-                     { "-t3", FALSE, etTIME, { &value3 }, "Description" } };
+                                    { "-t2", FALSE, etTIME, { &value2 }, "Description" },
+                                    { "-t3", FALSE, etTIME, { &value3 }, "Description" } };
     const char* const cmdline[] = { "test", "-t1", "2", "-t2", "-.5" };
     parseFromArray(cmdline, 0, {}, pa);
     EXPECT_EQ(2.0, value1);
@@ -227,8 +275,8 @@ TEST_F(ParseCommonArgsTest, ParsesTimeArgsWithTimeUnit)
 {
     real              value1 = 1.0, value2 = 2.0, value3 = 2.5;
     t_pargs           pa[]      = { { "-t1", FALSE, etTIME, { &value1 }, "Description" },
-                     { "-t2", FALSE, etTIME, { &value2 }, "Description" },
-                     { "-t3", FALSE, etTIME, { &value3 }, "Description" } };
+                                    { "-t2", FALSE, etTIME, { &value2 }, "Description" },
+                                    { "-t3", FALSE, etTIME, { &value3 }, "Description" } };
     const char* const cmdline[] = { "test", "-t1", "2", "-t2", "-.5", "-tu", "ns" };
     parseFromArray(cmdline, PCA_TIME_UNIT, {}, pa);
     EXPECT_EQ(2000.0, value1);
@@ -242,8 +290,8 @@ TEST_F(ParseCommonArgsTest, ParsesEnumArgs)
     const char*       value2[]  = { nullptr, "def", "value", "value_other", nullptr };
     const char*       value3[]  = { nullptr, "default", "value", nullptr };
     t_pargs           pa[]      = { { "-s1", FALSE, etENUM, { value1 }, "Description" },
-                     { "-s2", FALSE, etENUM, { value2 }, "Description" },
-                     { "-s3", FALSE, etENUM, { value3 }, "Description" } };
+                                    { "-s2", FALSE, etENUM, { value2 }, "Description" },
+                                    { "-s3", FALSE, etENUM, { value3 }, "Description" } };
     const char* const cmdline[] = { "test", "-s1", "off", "-s2", "val" };
     parseFromArray(cmdline, 0, {}, pa);
     EXPECT_STREQ("off", value1[0]);
@@ -261,9 +309,9 @@ TEST_F(ParseCommonArgsTest, ParsesEnumArgs)
 TEST_F(ParseCommonArgsTest, ParsesFileArgs)
 {
     t_filenm          fnm[]     = { { efXVG, "-o1", "out1", ffOPTWR },
-                       { efXVG, "-o2", "out2", ffOPTWR },
-                       { efXVG, "-om", "outm", ffWRMULT },
-                       { efXVG, "-om2", "outm2", ffWRMULT } };
+                                    { efXVG, "-o2", "out2", ffOPTWR },
+                                    { efXVG, "-om", "outm", ffWRMULT },
+                                    { efXVG, "-om2", "outm2", ffWRMULT } };
     const char* const cmdline[] = { "test", "-o1",   "-o2",       "test",
                                     "-om",  "test1", "test2.xvg", "-om2" };
     parseFromArray(cmdline, 0, fnm, {});
@@ -282,10 +330,10 @@ TEST_F(ParseCommonArgsTest, ParsesFileArgs)
 TEST_F(ParseCommonArgsTest, ParsesFileArgsWithDefaults)
 {
     t_filenm          fnm[]     = { { efTPS, nullptr, nullptr, ffWRITE },
-                       { efTRX, "-f2", nullptr, ffOPTWR },
-                       { efTRX, "-f3", "trj3", ffWRITE },
-                       { efXVG, "-o", "out", ffWRITE },
-                       { efXVG, "-om", "outm", ffWRMULT } };
+                                    { efTRX, "-f2", nullptr, ffOPTWR },
+                                    { efTRX, "-f3", "trj3", ffWRITE },
+                                    { efXVG, "-o", "out", ffWRITE },
+                                    { efXVG, "-om", "outm", ffWRMULT } };
     const char* const cmdline[] = { "test" };
     parseFromArray(cmdline, 0, fnm, {});
     EXPECT_STREQ("topol.tpr", ftp2fn(efTPS, nfile(), fnm));
@@ -299,10 +347,10 @@ TEST_F(ParseCommonArgsTest, ParsesFileArgsWithDefaults)
 TEST_F(ParseCommonArgsTest, ParsesFileArgsWithDefaultFileName)
 {
     t_filenm          fnm[]     = { { efTPS, "-s", nullptr, ffWRITE },
-                       { efTRX, "-f2", nullptr, ffWRITE },
-                       { efTRX, "-f3", "trj3", ffWRITE },
-                       { efXVG, "-o", "out", ffWRITE },
-                       { efXVG, "-om", "outm", ffWRMULT } };
+                                    { efTRX, "-f2", nullptr, ffWRITE },
+                                    { efTRX, "-f3", "trj3", ffWRITE },
+                                    { efXVG, "-o", "out", ffWRITE },
+                                    { efXVG, "-om", "outm", ffWRMULT } };
     const char* const cmdline[] = { "test", "-deffnm", "def", "-f2", "other", "-o" };
     parseFromArray(cmdline, PCA_CAN_SET_DEFFNM, fnm, {});
     EXPECT_STREQ("def.tpr", ftp2fn(efTPS, nfile(), fnm));
@@ -315,8 +363,8 @@ TEST_F(ParseCommonArgsTest, ParsesFileArgsWithDefaultFileName)
 TEST_F(ParseCommonArgsTest, ParseFileArgsWithCustomDefaultExtension)
 {
     t_filenm          fnm[]     = { { efTRX, "-o1", "conf1.gro", ffWRITE },
-                       { efTRX, "-o2", "conf2.pdb", ffWRITE },
-                       { efTRX, "-o3", "conf3.gro", ffWRITE } };
+                                    { efTRX, "-o2", "conf2.pdb", ffWRITE },
+                                    { efTRX, "-o3", "conf3.gro", ffWRITE } };
     const char* const cmdline[] = { "test", "-o2", "-o3", "test" };
     parseFromArray(cmdline, PCA_CAN_SET_DEFFNM, fnm, {});
     EXPECT_STREQ("conf1.gro", opt2fn("-o1", nfile(), fnm));
@@ -331,9 +379,9 @@ TEST_F(ParseCommonArgsTest, ParseFileArgsWithCustomDefaultExtension)
 TEST_F(ParseCommonArgsTest, HandlesNonExistentInputFiles)
 {
     t_filenm          fnm[] = { { efTPS, "-s", nullptr, ffREAD }, { efTRX, "-f", "trj", ffREAD },
-                       { efTRX, "-f2", "trj2", ffREAD }, { efTRX, "-f3", "trj3", ffREAD },
-                       { efTRX, "-f4", "trj4", ffREAD }, { efGRO, "-g", "cnf", ffREAD },
-                       { efGRO, "-g2", "cnf2", ffREAD } };
+                                { efTRX, "-f2", "trj2", ffREAD }, { efTRX, "-f3", "trj3", ffREAD },
+                                { efTRX, "-f4", "trj4", ffREAD }, { efGRO, "-g", "cnf", ffREAD },
+                                { efGRO, "-g2", "cnf2", ffREAD } };
     const char* const cmdline[] = { "test", "-f2", "-f3", "other", "-f4", "trj.gro", "-g2", "foo" };
     parseFromArray(cmdline, PCA_DISABLE_INPUT_FILE_CHECKING, fnm, {});
     EXPECT_STREQ("topol.tpr", ftp2fn(efTPS, nfile(), fnm));
@@ -357,10 +405,10 @@ TEST_F(ParseCommonArgsTest, HandlesNonExistentOptionalInputFiles)
 TEST_F(ParseCommonArgsTest, AcceptsNonExistentInputFilesIfSpecified)
 {
     t_filenm          fnm[]     = { { efCPT, "-c", "file1", ffOPTRD | ffALLOW_MISSING },
-                       { efCPT, "-c2", "file2", ffOPTRD | ffALLOW_MISSING },
-                       { efCPT, "-c3", "file3", ffOPTRD | ffALLOW_MISSING },
-                       { efCPT, "-c4", "file4", ffOPTRD | ffALLOW_MISSING },
-                       { efTRX, "-f", "trj", ffOPTRD | ffALLOW_MISSING } };
+                                    { efCPT, "-c2", "file2", ffOPTRD | ffALLOW_MISSING },
+                                    { efCPT, "-c3", "file3", ffOPTRD | ffALLOW_MISSING },
+                                    { efCPT, "-c4", "file4", ffOPTRD | ffALLOW_MISSING },
+                                    { efTRX, "-f", "trj", ffOPTRD | ffALLOW_MISSING } };
     const char* const cmdline[] = { "test",        "-c2",        "-c3",
                                     "nonexistent", "-c4",        "nonexistent.cpt",
                                     "-f",          "nonexistent" };
@@ -376,13 +424,13 @@ TEST_F(ParseCommonArgsTest, HandlesCompressedFiles)
 {
     t_filenm fnm[] = { { efTRX, "-f", nullptr, ffREAD }, { efGRO, "-g", nullptr, ffREAD } };
     args_.append("test");
-    std::string expectedF = addFileArg("-f", ".pdb.gz", efFull);
-    std::string expectedG = addFileArg("-g", ".gro.Z", efFull);
-    expectedF             = gmx::Path::stripExtension(expectedF);
-    expectedG             = gmx::Path::stripExtension(expectedG);
+    std::filesystem::path expectedF = addFileArg("-f", ".pdb.gz", efFull);
+    std::filesystem::path expectedG = addFileArg("-g", ".gro.Z", efFull);
+    expectedF                       = gmx::stripExtension(expectedF);
+    expectedG                       = gmx::stripExtension(expectedG);
     parseFromArgs(0, fnm, {});
-    EXPECT_EQ(expectedF, opt2fn("-f", nfile(), fnm));
-    EXPECT_EQ(expectedG, opt2fn("-g", nfile(), fnm));
+    EXPECT_EQ(expectedF.string(), opt2fn("-f", nfile(), fnm));
+    EXPECT_EQ(expectedG.string(), opt2fn("-g", nfile(), fnm));
 }
 
 TEST_F(ParseCommonArgsTest, AcceptsUnknownTrajectoryExtension)
@@ -401,11 +449,11 @@ TEST_F(ParseCommonArgsTest, CompletesExtensionFromExistingFile)
     std::string expected2 = addFileArg("-f2", "2.gro", efNoExtension);
     std::string expected3 = addFileArg("-f3", "3.tng", efNoExtension);
     std::string expected4 = addFileArg("-f4", ".gro", efEmptyValue);
-    std::string def4      = gmx::Path::stripExtension(expected4);
+    std::string def4      = gmx::stripExtension(expected4).string();
     t_filenm    fnm[]     = { { efTRX, "-f1", nullptr, ffREAD },
-                       { efTRX, "-f2", nullptr, ffREAD },
-                       { efTRX, "-f3", nullptr, ffREAD },
-                       { efTRX, "-f4", def4.c_str(), ffREAD } };
+                              { efTRX, "-f2", nullptr, ffREAD },
+                              { efTRX, "-f3", nullptr, ffREAD },
+                              { efTRX, "-f4", def4.c_str(), ffREAD } };
     parseFromArgs(0, fnm, {});
     EXPECT_EQ(expected1, opt2fn("-f1", nfile(), fnm));
     EXPECT_EQ(expected2, opt2fn("-f2", nfile(), fnm));
@@ -424,7 +472,7 @@ TEST_F(ParseCommonArgsTest, CompletesExtensionFromExistingFileWithDefaultFileNam
     std::string expected2 = addFileArg("-f2", ".pdb", efEmptyValue);
     std::string expected3 = addFileArg("-f3", ".trr", efEmptyValue);
     std::string expected4 = addFileArg(nullptr, ".pdb", efEmptyValue);
-    std::string deffnm    = gmx::Path::stripExtension(expected3);
+    std::string deffnm    = gmx::stripExtension(expected3).string();
     args_.append("-deffnm");
     args_.append(deffnm);
     parseFromArgs(PCA_CAN_SET_DEFFNM, fnm, {});
@@ -462,3 +510,5 @@ TEST_F(ParseCommonArgsTest, CanKeepUnknownArgs)
 }
 
 } // namespace
+} // namespace test
+} // namespace gmx

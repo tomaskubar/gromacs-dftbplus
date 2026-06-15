@@ -1,13 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
- * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2016,2017 by the GROMACS development team.
- * Copyright (c) 2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 1991- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -21,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -30,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 #include "gmxpre.h"
 
@@ -43,21 +39,33 @@
 #include <cstring>
 
 #include <algorithm>
+#include <array>
+#include <filesystem>
+#include <string>
 
+#include "gromacs/commandline/filenm.h"
+#include "gromacs/commandline/pargs.h"
 #include "gromacs/commandline/viewit.h"
 #include "gromacs/correlationfunctions/expfit.h"
 #include "gromacs/correlationfunctions/integrate.h"
 #include "gromacs/fft/fft.h"
+#include "gromacs/fileio/filetypes.h"
 #include "gromacs/fileio/xvgr.h"
 #include "gromacs/gmxana/gmx_ana.h"
 #include "gromacs/gmxana/gstat.h"
 #include "gromacs/math/gmxcomplex.h"
+#include "gromacs/math/units.h"
 #include "gromacs/math/utilities.h"
+#include "gromacs/utility/arrayref.h"
 #include "gromacs/utility/arraysize.h"
+#include "gromacs/utility/basedefinitions.h"
 #include "gromacs/utility/fatalerror.h"
 #include "gromacs/utility/futil.h"
 #include "gromacs/utility/pleasecite.h"
+#include "gromacs/utility/real.h"
 #include "gromacs/utility/smalloc.h"
+
+struct gmx_output_env_t;
 
 /* Determines at which point in the array the fit should start */
 static int calc_nbegin(int nx, real x[], real tbegin)
@@ -236,7 +244,9 @@ static void do_four(const char*             fn,
         fprintf(fp, "%10.5e  %10.5e  %10.5e\n", nu, kw.re, kw.im);
         fprintf(cp, "%10.5e  %10.5e\n", kw.re, kw.im);
     }
-    printf("MAXEPS = %10.5e at frequency %10.5e GHz (tauD = %8.1f ps)\n", maxeps, numax,
+    printf("MAXEPS = %10.5e at frequency %10.5e GHz (tauD = %8.1f ps)\n",
+           maxeps,
+           numax,
            1000 / (2 * M_PI * numax));
     xvgrclose(fp);
     xvgrclose(cp);
@@ -275,28 +285,30 @@ int gmx_dielectric(int argc, char* argv[])
                        { efXVG, "-o", "epsw", ffWRITE },
                        { efXVG, "-c", "cole", ffWRITE } };
 #define NFILE asize(fnm)
-    gmx_output_env_t* oenv;
-    int               i, j, nx, ny, nxtail, eFitFn, nfitparm;
-    real              dt, integral, fitintegral, fac, rffac;
-    double*           fitparms;
-    double**          yd;
-    real**            y;
-    const char*       legend[] = { "Correlation", "Std. Dev.", "Fit", "Combined", "Derivative" };
-    static int        fix = 0, bX = 1, nsmooth = 3;
-    static real       tendInt = 5.0, tbegin = 5.0, tend = 500.0;
-    static real       A = 0.5, tau1 = 10.0, tau2 = 1.0, eps0 = 80, epsRF = 78.5, tail = 500.0;
-    real              lambda;
-    t_pargs           pa[] = {
+    gmx_output_env_t*          oenv;
+    int                        i, j, nx, ny, nxtail, eFitFn, nfitparm;
+    real                       dt, integral, fitintegral, fac, rffac;
+    double*                    fitparms;
+    double**                   yd;
+    real**                     y;
+    std::array<std::string, 5> legend = {
+        "Correlation", "Std. Dev.", "Fit", "Combined", "Derivative"
+    };
+    static int  fix = 0, bX = 1, nsmooth = 3;
+    static real tendInt = 5.0, tbegin = 5.0, tend = 500.0;
+    static real A = 0.5, tau1 = 10.0, tau2 = 1.0, eps0 = 80, epsRF = 78.5, tail = 500.0;
+    real        lambda;
+    t_pargs     pa[] = {
         { "-x1",
-          FALSE,
-          etBOOL,
-          { &bX },
-          "use first column as [IT]x[it]-axis rather than first data set" },
+              FALSE,
+              etBOOL,
+              { &bX },
+              "use first column as [IT]x[it]-axis rather than first data set" },
         { "-eint",
-          FALSE,
-          etREAL,
-          { &tendInt },
-          "Time to end the integration of the data and start to use the fit" },
+              FALSE,
+              etREAL,
+              { &tendInt },
+              "Time to end the integration of the data and start to use the fit" },
         { "-bfit", FALSE, etREAL, { &tbegin }, "Begin time of fit" },
         { "-efit", FALSE, etREAL, { &tend }, "End time of fit" },
         { "-tail", FALSE, etREAL, { &tail }, "Length of function including data and tail from fit" },
@@ -305,22 +317,22 @@ int gmx_dielectric(int argc, char* argv[])
         { "-tau2", FALSE, etREAL, { &tau2 }, "Start value for fit parameter [GRK]tau[grk]2" },
         { "-eps0", FALSE, etREAL, { &eps0 }, "[GRK]epsilon[grk]0 of your liquid" },
         { "-epsRF",
-          FALSE,
-          etREAL,
-          { &epsRF },
-          "[GRK]epsilon[grk] of the reaction field used in your simulation. A value of 0 means "
-          "infinity." },
+              FALSE,
+              etREAL,
+              { &epsRF },
+              "[GRK]epsilon[grk] of the reaction field used in your simulation. A value of 0 means "
+                  "infinity." },
         { "-fix",
-          FALSE,
-          etINT,
-          { &fix },
-          "Fix parameters at their start values, A (2), tau1 (1), or tau2 (4)" },
+              FALSE,
+              etINT,
+              { &fix },
+              "Fix parameters at their start values, A (2), tau1 (1), or tau2 (4)" },
         { "-ffn", FALSE, etENUM, { s_ffn }, "Fit function" },
         { "-nsmooth", FALSE, etINT, { &nsmooth }, "Number of points for smoothing" }
     };
 
-    if (!parse_common_args(&argc, argv, PCA_CAN_TIME | PCA_CAN_VIEW, NFILE, fnm, asize(pa), pa,
-                           asize(desc), desc, 0, nullptr, &oenv))
+    if (!parse_common_args(
+                &argc, argv, PCA_CAN_TIME | PCA_CAN_VIEW, NFILE, fnm, asize(pa), pa, asize(desc), desc, 0, nullptr, &oenv))
     {
         return 0;
     }
@@ -334,7 +346,7 @@ int gmx_dielectric(int argc, char* argv[])
     dt     = yd[0][1] - yd[0][0];
     nxtail = std::min(static_cast<int>(tail / dt), nx);
 
-    printf("Read data set containing %d colums and %d rows\n", ny, nx);
+    printf("Read data set containing %d columns and %d rows\n", ny, nx);
     printf("Assuming (from data) that timestep is %g, nxtail = %d\n", dt, nxtail);
     snew(y, 6);
     for (i = 0; (i < ny); i++)
@@ -414,9 +426,13 @@ int gmx_dielectric(int argc, char* argv[])
     }
     printf("DATA INTEGRAL: %5.1f, tauD(old) = %5.1f ps, "
            "tau_slope = %5.1f, tau_slope,D = %5.1f ps\n",
-           integral, integral * rffac, fitparms[0], fitparms[0] * rffac);
+           integral,
+           integral * rffac,
+           fitparms[0],
+           fitparms[0] * rffac);
 
-    printf("tau_D from tau1 = %8.3g , eps(Infty) = %8.3f\n", fitparms[0] * (1 + fitparms[1] * lambda),
+    printf("tau_D from tau1 = %8.3g , eps(Infty) = %8.3f\n",
+           fitparms[0] * (1 + fitparms[1] * lambda),
            1 + ((1 - fitparms[1]) * (eps0 - 1)) / (1 + fitparms[1] * lambda));
 
     fitintegral = numerical_deriv(nx, y[0], y[1], y[3], y[4], y[5], tendInt, nsmooth);

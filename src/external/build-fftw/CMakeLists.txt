@@ -1,11 +1,9 @@
 #
 # This file is part of the GROMACS molecular simulation package.
 #
-# Copyright (c) 2012,2013,2014,2015,2016 by the GROMACS development team.
-# Copyright (c) 2017,2018, by the GROMACS development team, led by
-# Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
-# and including many others, as listed in the AUTHORS file in the
-# top-level source directory and at http://www.gromacs.org.
+# Copyright 2012- The GROMACS Authors
+# and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+# Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
 #
 # GROMACS is free software; you can redistribute it and/or
 # modify it under the terms of the GNU Lesser General Public License
@@ -19,7 +17,7 @@
 #
 # You should have received a copy of the GNU Lesser General Public
 # License along with GROMACS; if not, see
-# http://www.gnu.org/licenses, or write to the Free Software Foundation,
+# https://www.gnu.org/licenses, or write to the Free Software Foundation,
 # Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
 #
 # If you want to redistribute modifications to GROMACS, please
@@ -28,10 +26,10 @@
 # consider code for inclusion in the official distribution, but
 # derived work must not be called official GROMACS. Details are found
 # in the README & COPYING files - if they are missing, get the
-# official version at http://www.gromacs.org.
+# official version at https://www.gromacs.org.
 #
 # To help us fund GROMACS development, we humbly ask that you cite
-# the research papers on the package. Check out http://www.gromacs.org.
+# the research papers on the package. Check out https://www.gromacs.org.
 
 # Download and build a suitable copy of FFTW.
 # The GROMACS team won't distribute source or binaries linked to FFTW
@@ -55,7 +53,7 @@ endif()
 
 # Always build a static lib, so it gets added to libmd and doesn't need to be installed
 set(GMX_BUILD_OWN_FFTW_SHARED_FLAG --disable-shared --enable-static)
-if (CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64" AND BUILD_SHARED_LIBS) # FFTW doesn't use -DPIC by default
+if ((CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64" OR CMAKE_SYSTEM_PROCESSOR STREQUAL "aarch64") AND BUILD_SHARED_LIBS) # FFTW doesn't use -DPIC by default
     set(GMX_BUILD_OWN_FFTW_SHARED_FLAG ${GMX_BUILD_OWN_FFTW_SHARED_FLAG} --with-pic)
 endif()
 
@@ -101,11 +99,11 @@ if (TARGET_HOST)
 endif()
 
 # Machinery for running the external project
-set(EXTERNAL_FFTW_VERSION 3.3.8)
+set(EXTERNAL_FFTW_VERSION 3.3.10)
 set(GMX_BUILD_OWN_FFTW_URL
     "http://www.fftw.org/fftw-${EXTERNAL_FFTW_VERSION}.tar.gz" CACHE STRING
     "URL from where to download fftw (use an absolute path when offline, adjust GMX_BUILD_OWN_FFTW_MD5 if downloading other version than ${EXTERNAL_FFTW_VERSION})")
-set(GMX_BUILD_OWN_FFTW_MD5 8aac833c943d8e90d51b697b27d4384d CACHE STRING
+set(GMX_BUILD_OWN_FFTW_MD5 8ccbf6a5ea78a16dbc3e1306e234cc5c CACHE STRING
     "Expected MD5 hash for the file at GMX_BUILD_OWN_FFTW_URL")
 mark_as_advanced(GMX_BUILD_OWN_FFTW_URL GMX_BUILD_OWN_FFTW_MD5)
 
@@ -115,7 +113,7 @@ include(ExternalProject)
 ExternalProject_add(${EXTERNAL_FFTW_BUILD_TARGET}
         URL "${GMX_BUILD_OWN_FFTW_URL}"
         URL_MD5 ${GMX_BUILD_OWN_FFTW_MD5}
-        CONFIGURE_COMMAND <SOURCE_DIR>/configure --prefix=<INSTALL_DIR> --libdir=<INSTALL_DIR>/lib --disable-fortran
+        CONFIGURE_COMMAND <SOURCE_DIR>/configure --prefix=<INSTALL_DIR> CC=${CMAKE_C_COMPILER} --libdir=<INSTALL_DIR>/lib --disable-fortran
         ${GMX_BUILD_OWN_FFTW_SHARED_FLAG} ${GMX_BUILD_OWN_FFTW_OPTIMIZATION_CONFIGURATION}
         ${GMX_BUILD_OWN_FFTW_PREC}
         ${GMX_BUILD_OWN_FFTW_TARGET_HOST})

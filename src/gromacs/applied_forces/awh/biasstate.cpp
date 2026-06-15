@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2015,2016,2017,2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2015- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 
 /*! \internal \file
@@ -58,20 +57,24 @@
 #include "gromacs/fileio/gmxfio.h"
 #include "gromacs/fileio/xvgr.h"
 #include "gromacs/gmxlib/network.h"
+#include "gromacs/math/units.h"
 #include "gromacs/math/utilities.h"
 #include "gromacs/mdrunutility/multisim.h"
 #include "gromacs/mdtypes/awh_history.h"
 #include "gromacs/mdtypes/awh_params.h"
-#include "gromacs/mdtypes/commrec.h"
 #include "gromacs/simd/simd.h"
 #include "gromacs/simd/simd_math.h"
 #include "gromacs/utility/arrayref.h"
 #include "gromacs/utility/exceptions.h"
 #include "gromacs/utility/gmxassert.h"
-#include "gromacs/utility/smalloc.h"
+#include "gromacs/utility/mpicomm.h"
 #include "gromacs/utility/stringutil.h"
 
 #include "biasgrid.h"
+#include "biassharing.h"
+#include "correlationgrid.h"
+#include "correlationtensor.h"
+#include "dimparams.h"
 #include "pointstate.h"
 
 namespace gmx
@@ -94,69 +97,23 @@ namespace
 {
 
 /*! \brief
- * Sum an array over all simulations on the master rank of each simulation.
- *
- * \param[in,out] arrayRef      The data to sum.
- * \param[in]     multiSimComm  Struct for multi-simulation communication.
- */
-void sumOverSimulations(gmx::ArrayRef<int> arrayRef, const gmx_multisim_t* multiSimComm)
-{
-    gmx_sumi_sim(arrayRef.size(), arrayRef.data(), multiSimComm);
-}
-
-/*! \brief
- * Sum an array over all simulations on the master rank of each simulation.
- *
- * \param[in,out] arrayRef      The data to sum.
- * \param[in]     multiSimComm  Struct for multi-simulation communication.
- */
-void sumOverSimulations(gmx::ArrayRef<double> arrayRef, const gmx_multisim_t* multiSimComm)
-{
-    gmx_sumd_sim(arrayRef.size(), arrayRef.data(), multiSimComm);
-}
-
-/*! \brief
- * Sum an array over all simulations on all ranks of each simulation.
- *
- * This assumes the data is identical on all ranks within each simulation.
- *
- * \param[in,out] arrayRef      The data to sum.
- * \param[in]     commRecord    Struct for intra-simulation communication.
- * \param[in]     multiSimComm  Struct for multi-simulation communication.
- */
-template<typename T>
-void sumOverSimulations(gmx::ArrayRef<T> arrayRef, const t_commrec* commRecord, const gmx_multisim_t* multiSimComm)
-{
-    if (MASTER(commRecord))
-    {
-        sumOverSimulations(arrayRef, multiSimComm);
-    }
-    if (commRecord->nnodes > 1)
-    {
-        gmx_bcast(arrayRef.size() * sizeof(T), arrayRef.data(), commRecord->mpi_comm_mygroup);
-    }
-}
-
-/*! \brief
  * Sum PMF over multiple simulations, when requested.
  *
  * \param[in,out] pointState         The state of the points in the bias.
  * \param[in]     numSharedUpdate    The number of biases sharing the histogram.
- * \param[in]     commRecord         Struct for intra-simulation communication.
- * \param[in]     multiSimComm       Struct for multi-simulation communication.
+ * \param[in]     biasSharing        Object for sharing bias data over multiple simulations
+ * \param[in]     biasIndex          Index of this bias in the total list of biases in this simulation
  */
-void sumPmf(gmx::ArrayRef<PointState> pointState,
-            int                       numSharedUpdate,
-            const t_commrec*          commRecord,
-            const gmx_multisim_t*     multiSimComm)
+void sumPmf(gmx::ArrayRef<PointState> pointState, int numSharedUpdate, const BiasSharing* biasSharing, const int biasIndex)
 {
     if (numSharedUpdate == 1)
     {
         return;
     }
-    GMX_ASSERT(multiSimComm != nullptr && numSharedUpdate % multiSimComm->numSimulations_ == 0,
+    GMX_ASSERT(biasSharing != nullptr
+                       && numSharedUpdate % biasSharing->numSharingSimulations(biasIndex) == 0,
                "numSharedUpdate should be a multiple of multiSimComm->numSimulations_");
-    GMX_ASSERT(numSharedUpdate == multiSimComm->numSimulations_,
+    GMX_ASSERT(numSharedUpdate == biasSharing->numSharingSimulations(biasIndex),
                "Sharing within a simulation is not implemented (yet)");
 
     std::vector<double> buffer(pointState.size());
@@ -164,18 +121,18 @@ void sumPmf(gmx::ArrayRef<PointState> pointState,
     /* Need to temporarily exponentiate the log weights to sum over simulations */
     for (size_t i = 0; i < buffer.size(); i++)
     {
-        buffer[i] = pointState[i].inTargetRegion() ? std::exp(-pointState[i].logPmfSum()) : 0;
+        buffer[i] = pointState[i].inTargetRegion() ? std::exp(pointState[i].logPmfSum()) : 0;
     }
 
-    sumOverSimulations(gmx::ArrayRef<double>(buffer), commRecord, multiSimComm);
+    biasSharing->sumOverSharingSimulations(gmx::ArrayRef<double>(buffer), biasIndex);
 
     /* Take log again to get (non-normalized) PMF */
     double normFac = 1.0 / numSharedUpdate;
-    for (gmx::index i = 0; i < pointState.ssize(); i++)
+    for (gmx::Index i = 0; i < pointState.ssize(); i++)
     {
         if (pointState[i].inTargetRegion())
         {
-            pointState[i].setLogPmfSum(-std::log(buffer[i] * normFac));
+            pointState[i].setLogPmfSum(std::log(buffer[i] * normFac));
         }
     }
 }
@@ -219,14 +176,14 @@ double freeEnergyMinimumValue(gmx::ArrayRef<const PointState> pointState)
  * \param[in] gridpointIndex         The index of the current grid point.
  * \returns the log of the biased probability weight.
  */
-double biasedLogWeightFromPoint(const std::vector<DimParams>&  dimParams,
-                                const std::vector<PointState>& points,
-                                const BiasGrid&                grid,
-                                int                            pointIndex,
-                                double                         pointBias,
-                                const awh_dvec                 value,
-                                gmx::ArrayRef<const double>    neighborLambdaEnergies,
-                                int                            gridpointIndex)
+double biasedLogWeightFromPoint(ArrayRef<const DimParams>  dimParams,
+                                ArrayRef<const PointState> points,
+                                const BiasGrid&            grid,
+                                int                        pointIndex,
+                                double                     pointBias,
+                                const awh_dvec             value,
+                                ArrayRef<const double>     neighborLambdaEnergies,
+                                int                        gridpointIndex)
 {
     double logWeight = detail::c_largeNegativeExponent;
 
@@ -247,9 +204,17 @@ double biasedLogWeightFromPoint(const std::vector<DimParams>&  dimParams,
                 {
                     const int pointLambdaIndex     = grid.point(pointIndex).coordValue[d];
                     const int gridpointLambdaIndex = grid.point(gridpointIndex).coordValue[d];
-                    logWeight -= dimParams[d].fepDimParams().beta
-                                 * (neighborLambdaEnergies[pointLambdaIndex]
-                                    - neighborLambdaEnergies[gridpointLambdaIndex]);
+
+                    const double energyDiff = neighborLambdaEnergies[pointLambdaIndex]
+                                              - neighborLambdaEnergies[gridpointLambdaIndex];
+                    if (dimParams[d].fepDimParams().beta * energyDiff < -0.5 * detail::c_largePositiveExponent)
+                    {
+                        GMX_THROW(SimulationInstabilityError(gmx::formatString(
+                                "AWH lambda dimension encountered a too large negative neighbor "
+                                "energy difference of %f kJ/mol",
+                                energyDiff)));
+                    }
+                    logWeight -= dimParams[d].fepDimParams().beta * energyDiff;
                 }
             }
             else
@@ -274,9 +239,9 @@ double biasedLogWeightFromPoint(const std::vector<DimParams>&  dimParams,
  * \returns The calculated marginal distribution in a 1D array with
  * as many elements as there are points along the axis of interest.
  */
-std::vector<double> calculateFELambdaMarginalDistribution(const BiasGrid&          grid,
-                                                          gmx::ArrayRef<const int> neighbors,
-                                                          gmx::ArrayRef<const double> probWeightNeighbor)
+std::vector<double> calculateFELambdaMarginalDistribution(const BiasGrid&        grid,
+                                                          ArrayRef<const int>    neighbors,
+                                                          ArrayRef<const double> probWeightNeighbor)
 {
     const std::optional<int> lambdaAxisIndex = grid.lambdaAxisIndex();
     GMX_RELEASE_ASSERT(lambdaAxisIndex,
@@ -296,9 +261,9 @@ std::vector<double> calculateFELambdaMarginalDistribution(const BiasGrid&       
 
 } // namespace
 
-void BiasState::calcConvolvedPmf(const std::vector<DimParams>& dimParams,
-                                 const BiasGrid&               grid,
-                                 std::vector<float>*           convolvedPmf) const
+void BiasState::calcConvolvedPmf(ArrayRef<const DimParams> dimParams,
+                                 const BiasGrid&           grid,
+                                 std::vector<float>*       convolvedPmf) const
 {
     size_t numPoints = grid.numPoints();
 
@@ -312,7 +277,7 @@ void BiasState::calcConvolvedPmf(const std::vector<DimParams>& dimParams,
     {
         double           freeEnergyWeights = 0;
         const GridPoint& point             = grid.point(m);
-        for (auto& neighbor : point.neighbor)
+        for (const auto& neighbor : point.neighbor)
         {
             /* Do not convolve the bias along a lambda axis - only use the pmf from the current point */
             if (!pointsHaveDifferentLambda(grid, m, neighbor))
@@ -323,53 +288,97 @@ void BiasState::calcConvolvedPmf(const std::vector<DimParams>& dimParams,
                 /* Add the convolved PMF weights for the neighbors of this point.
                 Note that this function only adds point within the target > 0 region.
                 Sum weights, take the logarithm last to get the free energy. */
-                double logWeight = biasedLogWeightFromPoint(dimParams, points_, grid, neighbor,
-                                                            biasNeighbor, point.coordValue, {}, m);
+                double logWeight = biasedLogWeightFromPoint(
+                        dimParams, points_, grid, neighbor, biasNeighbor, point.coordValue, {}, m);
                 freeEnergyWeights += std::exp(logWeight);
             }
         }
 
         GMX_RELEASE_ASSERT(freeEnergyWeights > 0,
                            "Attempting to do log(<= 0) in AWH convolved PMF calculation.");
-        (*convolvedPmf)[m] = -std::log(static_cast<float>(freeEnergyWeights));
+        // We should cast to float after taking the logarithm to avoid underflows
+        (*convolvedPmf)[m] = static_cast<float>(-std::log(freeEnergyWeights));
     }
+}
+
+double BiasState::calculateAverageNonZeroMetric()
+{
+    int    elementCount = 0;
+    double sumVolume    = 0;
+    for (gmx::Index pointIndex = 0; pointIndex < gmx::ssize(points_); pointIndex++)
+    {
+        std::vector<double> correlationIntegral     = getSharedPointCorrelationIntegral(pointIndex);
+        double              correlationTensorVolume = getSqrtDeterminant(correlationIntegral);
+
+        if (correlationTensorVolume > 0)
+        {
+            sumVolume += correlationTensorVolume;
+            elementCount++;
+        }
+    }
+    double averageVolume = 0;
+    if (elementCount != 0)
+    {
+        averageVolume = sumVolume / elementCount;
+    }
+    return averageVolume;
+}
+
+double BiasState::scaleTargetByMetric(double targetMetricScalingLimit)
+{
+    GMX_RELEASE_ASSERT(targetMetricScalingLimit > 1,
+                       "When scaling by friction metric, the upper scaling limit must be > 1.");
+    /* Calculate the average of non-zero correlation tensor volume elements before
+     * scaling by the friction tensor. The average will be used to scale the target
+     * relatively and to avoid scaling (scaleFactor = 1) where there is not enough
+     * data (no valid correlationTensorVolume) to use for scaling. */
+    double averageVolume = calculateAverageNonZeroMetric();
+    if (averageVolume == 0)
+    {
+        averageVolume = 1;
+    }
+    double sumTarget = 0;
+
+    /* There is a global scaling factor limit. The lower limit can be modified per
+     * point depending on its sampling, but it cannot be lower than lowerScalingLimit. */
+    double upperScalingLimit = averageVolume * targetMetricScalingLimit;
+    double lowerScalingLimit = averageVolume / targetMetricScalingLimit;
+    for (gmx::Index pointIndex = 0; pointIndex < gmx::ssize(points_); pointIndex++)
+    {
+        PointState& ps = points_[pointIndex];
+
+        std::vector<double> correlationIntegral     = getSharedPointCorrelationIntegral(pointIndex);
+        double              correlationTensorVolume = getSqrtDeterminant(correlationIntegral);
+
+        /* Points may have a very low correlation tensor from not being sampled enough.
+         * This sets a lower limit on the scaling based on the amount of samples */
+        const double weightSumTot = points_[pointIndex].weightSumTot();
+        double pointLowerScalingLimit = weightSumTot > 1 ? averageVolume / weightSumTot : averageVolume;
+        pointLowerScalingLimit = std::max(lowerScalingLimit, pointLowerScalingLimit);
+
+        /* If there is no correlation tensor volume from this point use the average
+         * volume. This will result in no friction tensor scaling for the target
+         * distribution of this point. */
+        if (correlationTensorVolume == 0)
+        {
+            correlationTensorVolume = averageVolume;
+        }
+        /* Clamp the scaling to the allowed interval */
+        else
+        {
+            correlationTensorVolume =
+                    std::clamp(correlationTensorVolume, pointLowerScalingLimit, upperScalingLimit);
+        }
+        double scaleFactor = correlationTensorVolume / averageVolume;
+        ps.scaleTarget(scaleFactor);
+
+        sumTarget += ps.target();
+    }
+    return sumTarget;
 }
 
 namespace
 {
-
-/*! \brief
- * Updates the target distribution for all points.
- *
- * The target distribution is always updated for all points
- * at the same time.
- *
- * \param[in,out] pointState  The state of all points.
- * \param[in]     params      The bias parameters.
- */
-void updateTargetDistribution(gmx::ArrayRef<PointState> pointState, const BiasParams& params)
-{
-    double freeEnergyCutoff = 0;
-    if (params.eTarget == eawhtargetCUTOFF)
-    {
-        freeEnergyCutoff = freeEnergyMinimumValue(pointState) + params.freeEnergyCutoffInKT;
-    }
-
-    double sumTarget = 0;
-    for (PointState& ps : pointState)
-    {
-        sumTarget += ps.updateTargetWeight(params, freeEnergyCutoff);
-    }
-    GMX_RELEASE_ASSERT(sumTarget > 0, "We should have a non-zero distribution");
-
-    /* Normalize to 1 */
-    double invSum = 1.0 / sumTarget;
-    for (PointState& ps : pointState)
-    {
-        ps.scaleTarget(invSum);
-    }
-}
-
 /*! \brief
  * Puts together a string describing a grid point.
  *
@@ -401,6 +410,36 @@ std::string gridPointValueString(const BiasGrid& grid, int point)
 
 } // namespace
 
+void BiasState::updateTargetDistribution(const BiasParams& params, const CorrelationGrid& forceCorrelation)
+{
+    double freeEnergyCutoff = 0;
+    if (params.eTarget == AwhTargetType::Cutoff)
+    {
+        freeEnergyCutoff = freeEnergyMinimumValue(points_) + params.freeEnergyCutoffInKT;
+    }
+
+    double sumTarget = 0;
+    for (PointState& ps : points_)
+    {
+        sumTarget += ps.updateTargetWeight(params, freeEnergyCutoff);
+    }
+    GMX_RELEASE_ASSERT(sumTarget > 0, "We should have a non-zero distribution");
+
+    /* Scale the target distribution by the friction metric - normalize afterwards */
+    if (params.scaleTargetByMetric && !inInitialStage())
+    {
+        updateSharedCorrelationTensorTimeIntegral(params, forceCorrelation, true);
+        sumTarget = scaleTargetByMetric(params.targetMetricScalingLimit);
+    }
+
+    /* Normalize to 1 */
+    double invSum = 1.0 / sumTarget;
+    for (PointState& ps : points_)
+    {
+        ps.scaleTarget(invSum);
+    }
+}
+
 int BiasState::warnForHistogramAnomalies(const BiasGrid& grid, int biasIndex, double t, FILE* fplog, int maxNumWarnings) const
 {
     GMX_ASSERT(fplog != nullptr, "Warnings can only be issued if there is log file.");
@@ -409,7 +448,7 @@ int BiasState::warnForHistogramAnomalies(const BiasGrid& grid, int biasIndex, do
     /* Sum up the histograms and get their normalization */
     double sumVisits  = 0;
     double sumWeights = 0;
-    for (auto& pointState : points_)
+    for (const auto& pointState : points_)
     {
         if (pointState.inTargetRegion())
         {
@@ -450,12 +489,15 @@ int BiasState::warnForHistogramAnomalies(const BiasGrid& grid, int biasIndex, do
             std::string pointValueString = gridPointValueString(grid, m);
             std::string warningMessage   = gmx::formatString(
                     "\nawh%d warning: "
-                    "at t = %g ps the obtained coordinate distribution at coordinate value %s "
-                    "is less than a fraction %g of the reference distribution at that point. "
-                    "If you are not certain about your settings you might want to increase your "
-                    "pull force constant or "
-                    "modify your sampling region.\n",
-                    biasIndex + 1, t, pointValueString.c_str(), maxHistogramRatio);
+                      "at t = %g ps the obtained coordinate distribution at coordinate value %s "
+                      "is less than a fraction %g of the reference distribution at that point. "
+                      "If you are not certain about your settings you might want to increase your "
+                      "pull force constant or "
+                      "modify your sampling region.\n",
+                    biasIndex + 1,
+                    t,
+                    pointValueString.c_str(),
+                    maxHistogramRatio);
             gmx::TextLineWrapper wrapper;
             wrapper.settings().setLineLength(c_linewidth);
             fprintf(fplog, "%s", wrapper.wrapToString(warningMessage).c_str());
@@ -471,17 +513,18 @@ int BiasState::warnForHistogramAnomalies(const BiasGrid& grid, int biasIndex, do
     return numWarnings;
 }
 
-double BiasState::calcUmbrellaForceAndPotential(const std::vector<DimParams>& dimParams,
-                                                const BiasGrid&               grid,
-                                                int                           point,
-                                                ArrayRef<const double>        neighborLambdaDhdl,
-                                                gmx::ArrayRef<double>         force) const
+double BiasState::calcUmbrellaForceAndPotential(ArrayRef<const DimParams> dimParams,
+                                                const BiasGrid&           grid,
+                                                int                       point,
+                                                ArrayRef<const double>    neighborLambdaDhdl,
+                                                ArrayRef<double>          force) const
 {
     double potential = 0;
     for (size_t d = 0; d < dimParams.size(); d++)
     {
         if (dimParams[d].isFepLambdaDimension())
         {
+            /* The force we set here is only used for computing the friction metric */
             if (!neighborLambdaDhdl.empty())
             {
                 const int coordpointLambdaIndex = grid.point(point).coordValue[d];
@@ -504,12 +547,12 @@ double BiasState::calcUmbrellaForceAndPotential(const std::vector<DimParams>& di
     return potential;
 }
 
-void BiasState::calcConvolvedForce(const std::vector<DimParams>& dimParams,
-                                   const BiasGrid&               grid,
-                                   gmx::ArrayRef<const double>   probWeightNeighbor,
-                                   ArrayRef<const double>        neighborLambdaDhdl,
-                                   gmx::ArrayRef<double>         forceWorkBuffer,
-                                   gmx::ArrayRef<double>         force) const
+void BiasState::calcConvolvedForce(ArrayRef<const DimParams> dimParams,
+                                   const BiasGrid&           grid,
+                                   ArrayRef<const double>    probWeightNeighbor,
+                                   ArrayRef<const double>    neighborLambdaDhdl,
+                                   ArrayRef<double>          forceWorkBuffer,
+                                   ArrayRef<double>          force) const
 {
     for (size_t d = 0; d < dimParams.size(); d++)
     {
@@ -535,19 +578,19 @@ void BiasState::calcConvolvedForce(const std::vector<DimParams>& dimParams,
     }
 }
 
-double BiasState::moveUmbrella(const std::vector<DimParams>& dimParams,
-                               const BiasGrid&               grid,
-                               gmx::ArrayRef<const double>   probWeightNeighbor,
-                               ArrayRef<const double>        neighborLambdaDhdl,
-                               gmx::ArrayRef<double>         biasForce,
-                               int64_t                       step,
-                               int64_t                       seed,
-                               int                           indexSeed,
-                               bool                          onlySampleUmbrellaGridpoint)
+double BiasState::moveUmbrella(ArrayRef<const DimParams> dimParams,
+                               const BiasGrid&           grid,
+                               ArrayRef<const double>    probWeightNeighbor,
+                               ArrayRef<const double>    neighborLambdaDhdl,
+                               ArrayRef<double>          biasForce,
+                               int64_t                   step,
+                               int64_t                   seed,
+                               int                       indexSeed,
+                               bool                      onlySampleUmbrellaGridpoint)
 {
     /* Generate and set a new coordinate reference value */
-    coordState_.sampleUmbrellaGridpoint(grid, coordState_.gridpointIndex(), probWeightNeighbor,
-                                        step, seed, indexSeed);
+    coordState_.sampleUmbrellaGridpoint(
+            grid, coordState_.gridpointIndex(), probWeightNeighbor, step, seed, indexSeed);
 
     if (onlySampleUmbrellaGridpoint)
     {
@@ -565,7 +608,7 @@ double BiasState::moveUmbrella(const std::vector<DimParams>& dimParams,
         at steps when the reference value has been moved. E.g. if the ref. value
         is set every step to (coord dvalue +/- delta) would give zero force.
      */
-    for (gmx::index d = 0; d < biasForce.ssize(); d++)
+    for (gmx::Index d = 0; d < biasForce.ssize(); d++)
     {
         /* Average of the current and new force */
         biasForce[d] = 0.5 * (biasForce[d] + newForce[d]);
@@ -632,8 +675,8 @@ void BiasState::getSkippedUpdateHistogramScaleFactors(const BiasParams& params,
         /* In between global updates the reference histogram size is kept constant so we trivially
            know what the histogram size was at the time of the skipped update. */
         double histogramSize = histogramSize_.histogramSize();
-        setHistogramUpdateScaleFactors(params, histogramSize, histogramSize, weightHistScaling,
-                                       logPmfSumScaling);
+        setHistogramUpdateScaleFactors(
+                params, histogramSize, histogramSize, weightHistScaling, logPmfSumScaling);
     }
     else
     {
@@ -655,7 +698,7 @@ void BiasState::doSkippedUpdatesForAllPoints(const BiasParams& params)
         bool didUpdate = pointState.performPreviouslySkippedUpdates(
                 params, histogramSize_.numUpdates(), weightHistScaling, logPmfsumScaling);
 
-        /* Update the bias for this point only if there were skipped updates in the past to avoid calculating the log unneccessarily */
+        /* Update the bias for this point only if there were skipped updates in the past to avoid calculating the log unnecessarily */
         if (didUpdate)
         {
             pointState.updateBias();
@@ -672,7 +715,7 @@ void BiasState::doSkippedUpdatesInNeighborhood(const BiasParams& params, const B
 
     /* For each neighbor point of the center point, refresh its state by adding the results of all past, skipped updates. */
     const std::vector<int>& neighbors = grid.point(coordState_.gridpointIndex()).neighbor;
-    for (auto& neighbor : neighbors)
+    for (const auto& neighbor : neighbors)
     {
         bool didUpdate = points_[neighbor].performPreviouslySkippedUpdates(
                 params, histogramSize_.numUpdates(), weightHistScaling, logPmfsumScaling);
@@ -692,13 +735,13 @@ namespace
  *
  * \param[in,out] updateList    Update list for this simulation (assumed >= npoints long).
  * \param[in]     numPoints     Total number of points.
- * \param[in]     commRecord    Struct for intra-simulation communication.
- * \param[in]     multiSimComm  Struct for multi-simulation communication.
+ * \param[in]     biasSharing   Object for sharing bias data over multiple simulations
+ * \param[in]     biasIndex     Index of this bias in the total list of biases in this simulation
  */
-void mergeSharedUpdateLists(std::vector<int>*     updateList,
-                            int                   numPoints,
-                            const t_commrec*      commRecord,
-                            const gmx_multisim_t* multiSimComm)
+void mergeSharedUpdateLists(std::vector<int>*  updateList,
+                            int                numPoints,
+                            const BiasSharing& biasSharing,
+                            const int          biasIndex)
 {
     std::vector<int> numUpdatesOfPoint;
 
@@ -711,7 +754,7 @@ void mergeSharedUpdateLists(std::vector<int>*     updateList,
     }
 
     /* Sum over the sims to get all the flagged points */
-    sumOverSimulations(arrayRefFromArray(numUpdatesOfPoint.data(), numPoints), commRecord, multiSimComm);
+    biasSharing.sumOverSharingSimulations(arrayRefFromArray(numUpdatesOfPoint.data(), numPoints), biasIndex);
 
     /* Collect the indices of the flagged points in place. The resulting array will be the merged update list.*/
     updateList->clear();
@@ -730,14 +773,16 @@ void mergeSharedUpdateLists(std::vector<int>*     updateList,
  * \param[in] grid              The AWH bias.
  * \param[in] points            The point state.
  * \param[in] originUpdatelist  The origin of the rectangular region that has been sampled since
- * last update. \param[in] endUpdatelist     The end of the rectangular that has been sampled since
- * last update. \param[in,out] updateList    Local update list to set (assumed >= npoints long).
+ *                              last update.
+ * \param[in] endUpdatelist     The end of the rectangular that has been sampled since
+ *                              last update.
+ * \param[in,out] updateList    Local update list to set (assumed >= npoints long).
  */
-void makeLocalUpdateList(const BiasGrid&                grid,
-                         const std::vector<PointState>& points,
-                         const awh_ivec                 originUpdatelist,
-                         const awh_ivec                 endUpdatelist,
-                         std::vector<int>*              updateList)
+void makeLocalUpdateList(const BiasGrid&            grid,
+                         ArrayRef<const PointState> points,
+                         const awh_ivec             originUpdatelist,
+                         const awh_ivec             endUpdatelist,
+                         std::vector<int>*          updateList)
 {
     awh_ivec origin;
     awh_ivec numPoints;
@@ -791,16 +836,19 @@ namespace
  * \param[in,out] pointState         The state of the points in the bias.
  * \param[in,out] weightSumCovering  The weights for checking covering.
  * \param[in]     numSharedUpdate    The number of biases sharing the histrogram.
- * \param[in]     commRecord         Struct for intra-simulation communication.
- * \param[in]     multiSimComm       Struct for multi-simulation communication.
+ * \param[in]     biasSharing        Object for sharing bias data over multiple simulations
+ * \param[in]     biasIndex          Index of this bias in the total list of biases in this
+                                     simulation
  * \param[in]     localUpdateList    List of points with data.
+ * \param[in,out] buffer             A buffer used for the MPI reduction
  */
 void sumHistograms(gmx::ArrayRef<PointState> pointState,
                    gmx::ArrayRef<double>     weightSumCovering,
                    int                       numSharedUpdate,
-                   const t_commrec*          commRecord,
-                   const gmx_multisim_t*     multiSimComm,
-                   const std::vector<int>&   localUpdateList)
+                   const BiasSharing*        biasSharing,
+                   const int                 biasIndex,
+                   gmx::ArrayRef<const int>  localUpdateList,
+                   FastVector<double>*       buffer)
 {
     /* The covering checking histograms are added before summing over simulations, so that the
        weights from different simulations are kept distinguishable. */
@@ -812,26 +860,26 @@ void sumHistograms(gmx::ArrayRef<PointState> pointState,
     /* Sum histograms over multiple simulations if needed. */
     if (numSharedUpdate > 1)
     {
-        GMX_ASSERT(numSharedUpdate == multiSimComm->numSimulations_,
+        GMX_ASSERT(numSharedUpdate == biasSharing->numSharingSimulations(biasIndex),
                    "Sharing within a simulation is not implemented (yet)");
 
-        /* Collect the weights and counts in linear arrays to be able to use gmx_sumd_sim. */
-        std::vector<double> weightSum;
-        std::vector<double> coordVisits;
-
-        weightSum.resize(localUpdateList.size());
-        coordVisits.resize(localUpdateList.size());
+        /* Collect the weights and counts in a single, linear buffer to be able to use gmx_sumd_sim. */
+        buffer->resize(2 * localUpdateList.size());
+        ArrayRef<double> bufferRef = *buffer;
+        ArrayRef<double> weightSum = bufferRef.subArray(0, localUpdateList.size());
+        ArrayRef<double> coordVisits =
+                bufferRef.subArray(localUpdateList.size(), localUpdateList.size());
 
         for (size_t localIndex = 0; localIndex < localUpdateList.size(); localIndex++)
         {
-            const PointState& ps = pointState[localUpdateList[localIndex]];
+            PointState& ps = pointState[localUpdateList[localIndex]];
 
             weightSum[localIndex]   = ps.weightSumIteration();
             coordVisits[localIndex] = ps.numVisitsIteration();
+            ps.addLocalWeightSum();
         }
 
-        sumOverSimulations(gmx::ArrayRef<double>(weightSum), commRecord, multiSimComm);
-        sumOverSimulations(gmx::ArrayRef<double>(coordVisits), commRecord, multiSimComm);
+        biasSharing->sumOverSharingSimulations(bufferRef, biasIndex);
 
         /* Transfer back the result */
         for (size_t localIndex = 0; localIndex < localUpdateList.size(); localIndex++)
@@ -839,15 +887,25 @@ void sumHistograms(gmx::ArrayRef<PointState> pointState,
             PointState& ps = pointState[localUpdateList[localIndex]];
 
             ps.setPartialWeightAndCount(weightSum[localIndex], coordVisits[localIndex]);
+
+            /* Now add the partial counts and weights to the accumulating histograms.
+            Note: we still need to use the weights for the update so we wait
+            with resetting them until the end of the update. */
+            ps.addPartialWeightAndCount();
         }
     }
-
-    /* Now add the partial counts and weights to the accumulating histograms.
-       Note: we still need to use the weights for the update so we wait
-       with resetting them until the end of the update. */
-    for (int globalIndex : localUpdateList)
+    else
     {
-        pointState[globalIndex].addPartialWeightAndCount();
+        for (int globalIndex : localUpdateList)
+        {
+            PointState& ps = pointState[globalIndex];
+            ps.addLocalWeightSum();
+
+            /* Now add the partial counts and weights to the accumulating histograms.
+            Note: we still need to use the weights for the update so we wait
+            with resetting them until the end of the update. */
+            ps.addPartialWeightAndCount();
+        }
     }
 }
 
@@ -928,26 +986,26 @@ void labelCoveredPoints(const std::vector<bool>& visited,
 
         /* Lower end. For periodic boundaries the last upper end not visited point becomes the low-end not visited point.
            For non-periodic boundaries there is no lower end point so a dummy value is used. */
-        int notVisitedHigh = firstNotVisited;
-        int notVisitedLow  = period > 0 ? (lastNotVisited - period) : -(coverRadius + 1);
+        int notVisitedBoundaryHigh = firstNotVisited;
+        int notVisitedBoundaryLow  = period > 0 ? (lastNotVisited - period) : -(coverRadius + 1);
 
-        int notCoveredLow  = notVisitedLow + coverRadius;
-        int notCoveredHigh = notVisitedHigh - coverRadius;
+        int notCoveredLow  = notVisitedBoundaryLow + coverRadius;
+        int notCoveredHigh = notVisitedBoundaryHigh - coverRadius;
 
-        for (int i = 0; i <= notVisitedHigh; i++)
+        for (int i = 0; i <= notVisitedBoundaryHigh; i++)
         {
             /* For non-periodic boundaries notCoveredLow = -1 will impose no restriction. */
             covered[i] = static_cast<int>((i > notCoveredLow) && (i < notCoveredHigh));
         }
 
         /* Upper end. Same as for lower end but in the other direction. */
-        notVisitedHigh = period > 0 ? (firstNotVisited + period) : (numPoints + coverRadius);
-        notVisitedLow  = lastNotVisited;
+        notVisitedBoundaryHigh = period > 0 ? (firstNotVisited + period) : (numPoints + coverRadius);
+        notVisitedBoundaryLow = lastNotVisited;
 
-        notCoveredLow  = notVisitedLow + coverRadius;
-        notCoveredHigh = notVisitedHigh - coverRadius;
+        notCoveredLow  = notVisitedBoundaryLow + coverRadius;
+        notCoveredHigh = notVisitedBoundaryHigh - coverRadius;
 
-        for (int i = notVisitedLow; i <= numPoints - 1; i++)
+        for (int i = notVisitedBoundaryLow; i <= numPoints - 1; i++)
         {
             /* For non-periodic boundaries notCoveredHigh = numPoints will impose no restriction. */
             covered[i] = static_cast<int>((i > notCoveredLow) && (i < notCoveredHigh));
@@ -957,11 +1015,9 @@ void labelCoveredPoints(const std::vector<bool>& visited,
 
 } // namespace
 
-bool BiasState::isSamplingRegionCovered(const BiasParams&             params,
-                                        const std::vector<DimParams>& dimParams,
-                                        const BiasGrid&               grid,
-                                        const t_commrec*              commRecord,
-                                        const gmx_multisim_t*         multiSimComm) const
+bool BiasState::isSamplingRegionCovered(const BiasParams&         params,
+                                        ArrayRef<const DimParams> dimParams,
+                                        const BiasGrid&           grid) const
 {
     /* Allocate and initialize arrays: one for checking visits along each dimension,
        one for keeping track of which points to check and one for the covered points.
@@ -992,7 +1048,7 @@ bool BiasState::isSamplingRegionCovered(const BiasParams&             params,
     /* Set the free energy cutoff */
     double maxFreeEnergy = GMX_FLOAT_MAX;
 
-    if (params.eTarget == eawhtargetCUTOFF)
+    if (params.eTarget == AwhTargetType::Cutoff)
     {
         maxFreeEnergy = freeEnergyMinimumValue(points_) + params.freeEnergyCutoffInKT;
     }
@@ -1040,8 +1096,12 @@ bool BiasState::isSamplingRegionCovered(const BiasParams&             params,
     /* Label each point along each dimension as covered or not. */
     for (int d = 0; d < grid.numDimensions(); d++)
     {
-        labelCoveredPoints(checkDim[d].visited, checkDim[d].checkCovering, grid.axis(d).numPoints(),
-                           grid.axis(d).numPointsInPeriod(), params.coverRadius()[d], checkDim[d].covered);
+        labelCoveredPoints(checkDim[d].visited,
+                           checkDim[d].checkCovering,
+                           grid.axis(d).numPoints(),
+                           grid.axis(d).numPointsInPeriod(),
+                           params.coverRadius()[d],
+                           checkDim[d].covered);
     }
 
     /* Now check for global covering. Each dimension needs to be covered separately.
@@ -1063,9 +1123,9 @@ bool BiasState::isSamplingRegionCovered(const BiasParams&             params,
         /* For multiple dimensions this may not be the best way to do it. */
         for (int d = 0; d < grid.numDimensions(); d++)
         {
-            sumOverSimulations(
+            biasSharing_->sumOverSharingSimulations(
                     gmx::arrayRefFromArray(checkDim[d].covered.data(), grid.axis(d).numPoints()),
-                    commRecord, multiSimComm);
+                    params.biasIndex_);
         }
     }
 
@@ -1097,15 +1157,14 @@ static void normalizeFreeEnergyAndPmfSum(std::vector<PointState>* pointState)
     }
 }
 
-void BiasState::updateFreeEnergyAndAddSamplesToHistogram(const std::vector<DimParams>& dimParams,
-                                                         const BiasGrid&               grid,
-                                                         const BiasParams&             params,
-                                                         const t_commrec*              commRecord,
-                                                         const gmx_multisim_t*         multiSimComm,
-                                                         double                        t,
-                                                         int64_t                       step,
-                                                         FILE*                         fplog,
-                                                         std::vector<int>*             updateList)
+void BiasState::updateFreeEnergyAndAddSamplesToHistogram(ArrayRef<const DimParams> dimParams,
+                                                         const BiasGrid&           grid,
+                                                         const BiasParams&         params,
+                                                         const CorrelationGrid&    forceCorrelation,
+                                                         double                    t,
+                                                         int64_t                   step,
+                                                         FILE*                     fplog,
+                                                         std::vector<int>*         updateList)
 {
     /* Note hat updateList is only used in this scope and is always
      * re-initialized. We do not use a local vector, because that would
@@ -1120,16 +1179,22 @@ void BiasState::updateFreeEnergyAndAddSamplesToHistogram(const std::vector<DimPa
     makeLocalUpdateList(grid, points_, originUpdatelist_, endUpdatelist_, updateList);
     if (params.numSharedUpdate > 1)
     {
-        mergeSharedUpdateLists(updateList, points_.size(), commRecord, multiSimComm);
+        mergeSharedUpdateLists(updateList, points_.size(), *biasSharing_, params.biasIndex_);
     }
 
     /* Reset the range for the next update */
     resetLocalUpdateRange(grid);
 
     /* Add samples to histograms for all local points and sync simulations if needed */
-    sumHistograms(points_, weightSumCovering_, params.numSharedUpdate, commRecord, multiSimComm, *updateList);
+    sumHistograms(points_,
+                  weightSumCovering_,
+                  params.numSharedUpdate,
+                  biasSharing_,
+                  params.biasIndex_,
+                  *updateList,
+                  &biasSharingBuffer_);
 
-    sumPmf(points_, params.numSharedUpdate, commRecord, multiSimComm);
+    sumPmf(points_, params.numSharedUpdate, biasSharing_, params.biasIndex_);
 
     /* Renormalize the free energy if values are too large. */
     bool needToNormalizeFreeEnergy = false;
@@ -1148,21 +1213,22 @@ void BiasState::updateFreeEnergyAndAddSamplesToHistogram(const std::vector<DimPa
     }
 
     /* Update target distribution? */
+    bool doScaleTargetByMetric = params.scaleTargetByMetric && !inInitialStage();
     bool needToUpdateTargetDistribution =
-            (params.eTarget != eawhtargetCONSTANT && params.isUpdateTargetStep(step));
+            ((params.eTarget != AwhTargetType::Constant || doScaleTargetByMetric)
+             && params.isUpdateTargetStep(step));
 
     /* In the initial stage, the histogram grows dynamically as a function of the number of coverings. */
     bool detectedCovering = false;
     if (inInitialStage())
     {
         detectedCovering =
-                (params.isCheckCoveringStep(step)
-                 && isSamplingRegionCovered(params, dimParams, grid, commRecord, multiSimComm));
+                (params.isCheckCoveringStep(step) && isSamplingRegionCovered(params, dimParams, grid));
     }
 
     /* The weighthistogram size after this update. */
-    double newHistogramSize = histogramSize_.newHistogramSize(params, t, detectedCovering, points_,
-                                                              weightSumCovering_, fplog);
+    double newHistogramSize = histogramSize_.newHistogramSize(
+            params, t, detectedCovering, points_, weightSumCovering_, fplog);
 
     /* Make the update list. Usually we try to only update local points,
      * but if the update has non-trivial or non-deterministic effects
@@ -1198,8 +1264,8 @@ void BiasState::updateFreeEnergyAndAddSamplesToHistogram(const std::vector<DimPa
     }
     double weightHistScalingNew;
     double logPmfsumScalingNew;
-    setHistogramUpdateScaleFactors(params, newHistogramSize, histogramSize_.histogramSize(),
-                                   &weightHistScalingNew, &logPmfsumScalingNew);
+    setHistogramUpdateScaleFactors(
+            params, newHistogramSize, histogramSize_.histogramSize(), &weightHistScalingNew, &logPmfsumScalingNew);
 
     /* Update free energy and reference weight histogram for points in the update list. */
     for (int pointIndex : *updateList)
@@ -1209,14 +1275,13 @@ void BiasState::updateFreeEnergyAndAddSamplesToHistogram(const std::vector<DimPa
         /* Do updates from previous update steps that were skipped because this point was at that time non-local. */
         if (params.skipUpdates())
         {
-            pointStateToUpdate->performPreviouslySkippedUpdates(params, histogramSize_.numUpdates(),
-                                                                weightHistScalingSkipped,
-                                                                logPmfsumScalingSkipped);
+            pointStateToUpdate->performPreviouslySkippedUpdates(
+                    params, histogramSize_.numUpdates(), weightHistScalingSkipped, logPmfsumScalingSkipped);
         }
 
         /* Now do an update with new sampling data. */
-        pointStateToUpdate->updateWithNewSampling(params, histogramSize_.numUpdates(),
-                                                  weightHistScalingNew, logPmfsumScalingNew);
+        pointStateToUpdate->updateWithNewSampling(
+                params, histogramSize_.numUpdates(), weightHistScalingNew, logPmfsumScalingNew);
     }
 
     /* Only update the histogram size after we are done with the local point updates */
@@ -1230,7 +1295,7 @@ void BiasState::updateFreeEnergyAndAddSamplesToHistogram(const std::vector<DimPa
     if (needToUpdateTargetDistribution)
     {
         /* The target distribution is always updated for all points at once. */
-        updateTargetDistribution(points_, params);
+        updateTargetDistribution(params, forceCorrelation);
     }
 
     /* Update the bias. The bias is updated separately and last since it simply a function of
@@ -1244,9 +1309,9 @@ void BiasState::updateFreeEnergyAndAddSamplesToHistogram(const std::vector<DimPa
     histogramSize_.incrementNumUpdates();
 }
 
-double BiasState::updateProbabilityWeightsAndConvolvedBias(const std::vector<DimParams>& dimParams,
-                                                           const BiasGrid&               grid,
-                                                           gmx::ArrayRef<const double> neighborLambdaEnergies,
+double BiasState::updateProbabilityWeightsAndConvolvedBias(ArrayRef<const DimParams> dimParams,
+                                                           const BiasGrid&           grid,
+                                                           ArrayRef<const double> neighborLambdaEnergies,
                                                            std::vector<double, AlignedAllocator<double>>* weight) const
 {
     /* Only neighbors of the current coordinate value will have a non-negligible chance of getting sampled */
@@ -1260,7 +1325,7 @@ double BiasState::updateProbabilityWeightsAndConvolvedBias(const std::vector<Dim
     constexpr int  packSize = 1;
 #endif
     /* Round the size of the weight array up to packSize */
-    const int weightSize = ((neighbors.size() + packSize - 1) / packSize) * packSize;
+    const int weightSize = gmx::divideRoundUp<int>(neighbors.size(), packSize) * packSize;
     weight->resize(weightSize);
 
     double* gmx_restrict weightData = weight->data();
@@ -1272,9 +1337,14 @@ double BiasState::updateProbabilityWeightsAndConvolvedBias(const std::vector<Dim
             if (n < neighbors.size())
             {
                 const int neighbor = neighbors[n];
-                (*weight)[n]       = biasedLogWeightFromPoint(
-                        dimParams, points_, grid, neighbor, points_[neighbor].bias(),
-                        coordState_.coordValue(), neighborLambdaEnergies, coordState_.gridpointIndex());
+                (*weight)[n]       = biasedLogWeightFromPoint(dimParams,
+                                                        points_,
+                                                        grid,
+                                                        neighbor,
+                                                        points_[neighbor].bias(),
+                                                        coordState_.coordValue(),
+                                                        neighborLambdaEnergies,
+                                                        coordState_.gridpointIndex());
             }
             else
             {
@@ -1315,6 +1385,9 @@ double BiasState::updateProbabilityWeightsAndConvolvedBias(const std::vector<Dim
                     weightSum -= weightData[i];
                 }
             }
+            /* Subtracting potentially very large values above may lead to rounding errors, causing
+             * negative weightSum, even in double precision. */
+            weightSum = std::max(weightSum, GMX_DOUBLE_MIN);
         }
     }
 
@@ -1327,9 +1400,9 @@ double BiasState::updateProbabilityWeightsAndConvolvedBias(const std::vector<Dim
     return std::log(weightSum);
 }
 
-double BiasState::calcConvolvedBias(const std::vector<DimParams>& dimParams,
-                                    const BiasGrid&               grid,
-                                    const awh_dvec&               coordValue) const
+double BiasState::calcConvolvedBias(ArrayRef<const DimParams> dimParams,
+                                    const BiasGrid&           grid,
+                                    const awh_dvec&           coordValue) const
 {
     int              point     = grid.nearestIndex(coordValue);
     const GridPoint& gridPoint = grid.point(point);
@@ -1343,8 +1416,8 @@ double BiasState::calcConvolvedBias(const std::vector<DimParams>& dimParams,
         {
             continue;
         }
-        double logWeight = biasedLogWeightFromPoint(dimParams, points_, grid, neighbor,
-                                                    points_[neighbor].bias(), coordValue, {}, point);
+        double logWeight = biasedLogWeightFromPoint(
+                dimParams, points_, grid, neighbor, points_[neighbor].bias(), coordValue, {}, point);
         weightSum += std::exp(logWeight);
     }
 
@@ -1435,8 +1508,10 @@ void BiasState::sampleCoordAndPmf(const std::vector<DimParams>& dimParams,
         std::vector<double> lambdaMarginalDistribution =
                 calculateFELambdaMarginalDistribution(grid, neighbors, probWeightNeighbor);
 
-        awh_dvec coordValueAlongLambda = { coordState_.coordValue()[0], coordState_.coordValue()[1],
-                                           coordState_.coordValue()[2], coordState_.coordValue()[3] };
+        awh_dvec coordValueAlongLambda = { coordState_.coordValue()[0],
+                                           coordState_.coordValue()[1],
+                                           coordState_.coordValue()[2],
+                                           coordState_.coordValue()[3] };
         for (size_t i = 0; i < neighbors.size(); i++)
         {
             const int neighbor = neighbors[i];
@@ -1540,19 +1615,18 @@ void BiasState::restoreFromHistory(const AwhBiasHistory& biasHistory, const Bias
     linearGridindexToMultiDim(grid, stateHistory.end_index_updatelist, endUpdatelist_);
 }
 
-void BiasState::broadcast(const t_commrec* commRecord)
+void BiasState::broadcast(const MpiComm& mpiComm)
 {
-    gmx_bcast(sizeof(coordState_), &coordState_, commRecord->mpi_comm_mygroup);
+    gmx_bcast(sizeof(coordState_), &coordState_, mpiComm.comm());
 
-    gmx_bcast(points_.size() * sizeof(PointState), points_.data(), commRecord->mpi_comm_mygroup);
+    gmx_bcast(points_.size() * sizeof(PointState), points_.data(), mpiComm.comm());
 
-    gmx_bcast(weightSumCovering_.size() * sizeof(double), weightSumCovering_.data(),
-              commRecord->mpi_comm_mygroup);
+    gmx_bcast(weightSumCovering_.size() * sizeof(double), weightSumCovering_.data(), mpiComm.comm());
 
-    gmx_bcast(sizeof(histogramSize_), &histogramSize_, commRecord->mpi_comm_mygroup);
+    gmx_bcast(sizeof(histogramSize_), &histogramSize_, mpiComm.comm());
 }
 
-void BiasState::setFreeEnergyToConvolvedPmf(const std::vector<DimParams>& dimParams, const BiasGrid& grid)
+void BiasState::setFreeEnergyToConvolvedPmf(ArrayRef<const DimParams> dimParams, const BiasGrid& grid)
 {
     std::vector<float> convolvedPmf;
 
@@ -1564,6 +1638,116 @@ void BiasState::setFreeEnergyToConvolvedPmf(const std::vector<DimParams>& dimPar
     }
 }
 
+void BiasState::updateSharedCorrelationTensorTimeIntegral(const BiasParams&      biasParams,
+                                                          const CorrelationGrid& forceCorrelation,
+                                                          bool shareAcrossAllRanks)
+{
+    const int numCorrelation = forceCorrelation.tensorSize();
+    const int numPoints      = points_.size();
+
+    GMX_ASSERT(numPoints > 0, "There must be points in the AWH coordinate grid.");
+    GMX_ASSERT(static_cast<int>(sharedCorrelationTensorTimeIntegral_.size()) == numPoints,
+               "The number of points in sharedCorrelationTensorTimeIntegral_ does not match the "
+               "number of AWH points.");
+    GMX_ASSERT(
+            static_cast<int>(sharedCorrelationTensorTimeIntegral_[0].size()) == numCorrelation,
+            "The number of correlations in sharedCorrelationTensorTimeIntegral_ does not match the "
+            "AWH correlation grid tensor size.");
+
+    std::vector<double> buffer(numCorrelation * numPoints, 0);
+
+    if (biasParams.numSharedUpdate > 1)
+    {
+        GMX_ASSERT(biasSharing_ != nullptr
+                           && biasParams.numSharedUpdate
+                                              % biasSharing_->numSharingSimulations(biasParams.biasIndex_)
+                                      == 0,
+                   "numSharedUpdate should be a multiple of multiSimComm->numSimulations_");
+        GMX_ASSERT(biasParams.numSharedUpdate == biasSharing_->numSharingSimulations(biasParams.biasIndex_),
+                   "Sharing within a simulation is not implemented (yet)");
+
+        for (int gridPointIndex = 0; gridPointIndex < numPoints; gridPointIndex++)
+        {
+            if (points_[gridPointIndex].inTargetRegion())
+            {
+                for (int correlationTensorIndex = 0; correlationTensorIndex < numCorrelation;
+                     correlationTensorIndex++)
+                {
+                    int index     = gridPointIndex * numCorrelation + correlationTensorIndex;
+                    buffer[index] = forceCorrelation.tensors()[gridPointIndex].getTimeIntegral(
+                                            correlationTensorIndex, forceCorrelation.dtSample_)
+                                    * points_[gridPointIndex].localWeightSum();
+                }
+            }
+        }
+
+        if (shareAcrossAllRanks)
+        {
+            biasSharing_->sumOverSharingSimulations(buffer, biasParams.biasIndex_);
+        }
+        else
+        {
+            biasSharing_->sumOverSharingMainRanks(buffer, biasParams.biasIndex_);
+        }
+
+        for (int gridPointIndex = 0; gridPointIndex < numPoints; gridPointIndex++)
+        {
+            for (int correlationTensorIndex = 0; correlationTensorIndex < numCorrelation;
+                 correlationTensorIndex++)
+            {
+                int index = gridPointIndex * numCorrelation + correlationTensorIndex;
+                if (points_[gridPointIndex].weightSumTot() > 0 && points_[gridPointIndex].inTargetRegion())
+                {
+                    sharedCorrelationTensorTimeIntegral_[gridPointIndex][correlationTensorIndex] =
+                            buffer[index] / points_[gridPointIndex].weightSumTot();
+                }
+                else
+                {
+                    sharedCorrelationTensorTimeIntegral_[gridPointIndex][correlationTensorIndex] = 0;
+                }
+            }
+        }
+    }
+    else
+    {
+        for (int gridPointIndex = 0; gridPointIndex < numPoints; gridPointIndex++)
+        {
+            for (int correlationTensorIndex = 0; correlationTensorIndex < numCorrelation;
+                 correlationTensorIndex++)
+            {
+                sharedCorrelationTensorTimeIntegral_[gridPointIndex][correlationTensorIndex] =
+                        forceCorrelation.tensors()[gridPointIndex].getTimeIntegral(
+                                correlationTensorIndex, forceCorrelation.dtSample_);
+            }
+        }
+    }
+}
+
+double BiasState::getSharedCorrelationTensorTimeIntegral(const int gridPointIndex,
+                                                         const int correlationTensorIndex) const
+{
+    if (!points_[gridPointIndex].inTargetRegion() || points_[gridPointIndex].weightSumTot() <= 0)
+    {
+        return 0;
+    }
+
+    return sharedCorrelationTensorTimeIntegral_[gridPointIndex][correlationTensorIndex];
+}
+
+const std::vector<double>& BiasState::getSharedPointCorrelationIntegral(const int gridPointIndex) const
+{
+    if (!points_[gridPointIndex].inTargetRegion() || points_[gridPointIndex].weightSumTot() <= 0)
+    {
+        for (size_t i = 0; i < sharedCorrelationTensorTimeIntegral_[gridPointIndex].size(); i++)
+        {
+            GMX_RELEASE_ASSERT(sharedCorrelationTensorTimeIntegral_[gridPointIndex][i] == 0,
+                               "Correlation tensor time integral of unvisited points should be 0.");
+        }
+    }
+
+    return sharedCorrelationTensorTimeIntegral_[gridPointIndex];
+}
+
 /*! \brief
  * Count trailing data rows containing only zeros.
  *
@@ -1572,15 +1756,19 @@ void BiasState::setFreeEnergyToConvolvedPmf(const std::vector<DimParams>& dimPar
  * \param[in] numColumns  Number of cols in array.
  * \returns the number of trailing zero rows.
  */
-static int countTrailingZeroRows(const double* const* data, int numRows, int numColumns)
+static int countTrailingZeroRows(const MultiDimArray<std::vector<double>, dynamicExtents2D>& data,
+                                 int numRows,
+                                 int numColumns)
 {
+    const auto& dataView = data.asConstView();
+
     int numZeroRows = 0;
     for (int m = numRows - 1; m >= 0; m--)
     {
         bool rowIsZero = true;
         for (int d = 0; d < numColumns; d++)
         {
-            if (data[d][m] != 0)
+            if (dataView[d][m] != 0)
             {
                 rowIsZero = false;
                 break;
@@ -1612,12 +1800,12 @@ static int countTrailingZeroRows(const double* const* data, int numRows, int num
  * \param[in]     biasIndex   The index of the bias.
  * \param[in,out] pointState  The state of the points in this bias.
  */
-static void readUserPmfAndTargetDistribution(const std::vector<DimParams>& dimParams,
-                                             const BiasGrid&               grid,
-                                             const std::string&            filename,
-                                             int                           numBias,
-                                             int                           biasIndex,
-                                             std::vector<PointState>*      pointState)
+static void readUserPmfAndTargetDistribution(ArrayRef<const DimParams> dimParams,
+                                             const BiasGrid&           grid,
+                                             const std::string&        filename,
+                                             int                       numBias,
+                                             int                       biasIndex,
+                                             std::vector<PointState>*  pointState)
 {
     /* Read the PMF and target distribution.
        From the PMF, the convolved PMF, or the reference value free energy, can be calculated
@@ -1648,16 +1836,16 @@ static void readUserPmfAndTargetDistribution(const std::vector<DimParams>& dimPa
     wrapper.settings().setLineLength(c_linewidth);
     correctFormatMessage = wrapper.wrapToString(correctFormatMessage);
 
-    double** data;
-    int      numColumns;
-    int      numRows = read_xvg(filenameModified.c_str(), &data, &numColumns);
+    gmx::MultiDimArray<std::vector<double>, gmx::dynamicExtents2D> data = readXvgData(filenameModified);
+    const int numColumns = data.extent(0);
+    const int numRows    = data.extent(1);
 
     /* Check basic data properties here. BiasGrid takes care of more complicated things. */
 
     if (numRows <= 0)
     {
-        std::string mesg = gmx::formatString("%s is empty!.\n\n%s", filename.c_str(),
-                                             correctFormatMessage.c_str());
+        std::string mesg = gmx::formatString(
+                "%s is empty!.\n\n%s", filename.c_str(), correctFormatMessage.c_str());
         GMX_THROW(InvalidInputError(mesg));
     }
 
@@ -1667,7 +1855,8 @@ static void readUserPmfAndTargetDistribution(const std::vector<DimParams>& dimPa
         std::string mesg = gmx::formatString(
                 "%s contains too few data points (%d)."
                 "The minimum number of points is 2.",
-                filename.c_str(), numRows);
+                filename.c_str(),
+                numRows);
         GMX_THROW(InvalidInputError(mesg));
     }
 
@@ -1695,9 +1884,13 @@ static void readUserPmfAndTargetDistribution(const std::vector<DimParams>& dimPa
         std::string mesg = gmx::formatString(
                 "The number of columns in %s should be at least %d."
                 "\n\n%s",
-                filename.c_str(), numColumnsMin, correctFormatMessage.c_str());
+                filename.c_str(),
+                numColumnsMin,
+                correctFormatMessage.c_str());
         GMX_THROW(InvalidInputError(mesg));
     }
+
+    const auto& dataView = data.asView();
 
     /* read_xvg can give trailing zero data rows for trailing new lines in the input. We allow 1 zero row,
        since this could be real data. But multiple trailing zero rows cannot correspond to valid data. */
@@ -1707,7 +1900,8 @@ static void readUserPmfAndTargetDistribution(const std::vector<DimParams>& dimPa
         std::string mesg = gmx::formatString(
                 "Found %d trailing zero data rows in %s. Please remove trailing empty lines and "
                 "try again.",
-                numZeroRows, filename.c_str());
+                numZeroRows,
+                filename.c_str());
         GMX_THROW(InvalidInputError(mesg));
     }
 
@@ -1721,7 +1915,7 @@ static void readUserPmfAndTargetDistribution(const std::vector<DimParams>& dimPa
         }
         for (size_t m = 0; m < pointState->size(); m++)
         {
-            data[d][m] *= scalingFactor;
+            dataView[d][m] *= scalingFactor;
         }
     }
 
@@ -1729,20 +1923,31 @@ static void readUserPmfAndTargetDistribution(const std::vector<DimParams>& dimPa
     std::vector<int> gridIndexToDataIndex(grid.numPoints());
     mapGridToDataGrid(&gridIndexToDataIndex, data, numRows, filename, grid, correctFormatMessage);
 
+    // The bounds for the PMF such that exp(pmf) doesn't over/underflow in double precision
+    const double c_pmfMax = 700.0;
+
     /* Extract the data for each grid point.
      * We check if the target distribution is zero for all points.
      */
     bool targetDistributionIsZero = true;
     for (size_t m = 0; m < pointState->size(); m++)
     {
-        (*pointState)[m].setLogPmfSum(-data[columnIndexPmf][gridIndexToDataIndex[m]]);
-        double target = data[columnIndexTarget][gridIndexToDataIndex[m]];
+        const double pmf = dataView[columnIndexPmf][gridIndexToDataIndex[m]];
+        if (pmf < -c_pmfMax || pmf > c_pmfMax)
+        {
+            GMX_THROW(InvalidInputError(
+                    "A value in the user input PMF is beyond the bounds of +-700 kT"));
+        }
+        (*pointState)[m].setLogPmfSum(-pmf);
+        double target = dataView[columnIndexTarget][gridIndexToDataIndex[m]];
 
         /* Check if the values are allowed. */
         if (target < 0)
         {
             std::string mesg = gmx::formatString(
-                    "Target distribution weight at point %zu (%g) in %s is negative.", m, target,
+                    "Target distribution weight at point %zu (%g) in %s is negative.",
+                    m,
+                    target,
                     filename.c_str());
             GMX_THROW(InvalidInputError(mesg));
         }
@@ -1757,16 +1962,10 @@ static void readUserPmfAndTargetDistribution(const std::vector<DimParams>& dimPa
     {
         std::string mesg =
                 gmx::formatString("The target weights given in column %d in %s are all 0",
-                                  columnIndexTarget, filename.c_str());
+                                  columnIndexTarget,
+                                  filename.c_str());
         GMX_THROW(InvalidInputError(mesg));
     }
-
-    /* Free the arrays. */
-    for (int m = 0; m < numColumns; m++)
-    {
-        sfree(data[m]);
-    }
-    sfree(data);
 }
 
 void BiasState::normalizePmf(int numSharingSims)
@@ -1800,28 +1999,29 @@ void BiasState::normalizePmf(int numSharingSims)
     }
 }
 
-void BiasState::initGridPointState(const AwhBiasParams&          awhBiasParams,
-                                   const std::vector<DimParams>& dimParams,
-                                   const BiasGrid&               grid,
-                                   const BiasParams&             params,
-                                   const std::string&            filename,
-                                   int                           numBias)
+void BiasState::initGridPointState(const AwhBiasParams&      awhBiasParams,
+                                   ArrayRef<const DimParams> dimParams,
+                                   const BiasGrid&           grid,
+                                   const BiasParams&         params,
+                                   const CorrelationGrid&    forceCorrelation,
+                                   const std::string&        filename,
+                                   int                       numBias)
 {
     /* Modify PMF, free energy and the constant target distribution factor
      * to user input values if there is data given.
      */
-    if (awhBiasParams.bUserData)
+    if (awhBiasParams.userPMFEstimate())
     {
-        readUserPmfAndTargetDistribution(dimParams, grid, filename, numBias, params.biasIndex, &points_);
+        readUserPmfAndTargetDistribution(dimParams, grid, filename, numBias, params.biasIndex_, &points_);
         setFreeEnergyToConvolvedPmf(dimParams, grid);
     }
 
     /* The local Boltzmann distribution is special because the target distribution is updated as a function of the reference weighthistogram. */
-    GMX_RELEASE_ASSERT(params.eTarget != eawhtargetLOCALBOLTZMANN || points_[0].weightSumRef() != 0,
+    GMX_RELEASE_ASSERT(params.eTarget != AwhTargetType::LocalBoltzmann || points_[0].weightSumRef() != 0,
                        "AWH reference weight histogram not initialized properly with local "
                        "Boltzmann target distribution.");
 
-    updateTargetDistribution(points_, params);
+    updateTargetDistribution(params, forceCorrelation);
 
     for (PointState& pointState : points_)
     {
@@ -1848,14 +2048,20 @@ void BiasState::initGridPointState(const AwhBiasParams&          awhBiasParams,
     normalizePmf(params.numSharedUpdate);
 }
 
-BiasState::BiasState(const AwhBiasParams&          awhBiasParams,
-                     double                        histogramSizeInitial,
-                     const std::vector<DimParams>& dimParams,
-                     const BiasGrid&               grid) :
+BiasState::BiasState(const AwhBiasParams&      awhBiasParams,
+                     double                    histogramSizeInitial,
+                     ArrayRef<const DimParams> dimParams,
+                     const BiasGrid&           grid,
+                     const BiasSharing*        biasSharing) :
     coordState_(awhBiasParams, dimParams, grid),
     points_(grid.numPoints()),
     weightSumCovering_(grid.numPoints()),
-    histogramSize_(awhBiasParams, histogramSizeInitial)
+    histogramSize_(awhBiasParams, histogramSizeInitial),
+    biasSharing_(biasSharing),
+    /* The number of tensor elements are dim*(dim+1)/2 */
+    sharedCorrelationTensorTimeIntegral_(
+            grid.numPoints(),
+            std::vector<double>(dimParams.size() * (dimParams.size() + 1) / 2, 0))
 {
     /* The minimum and maximum multidimensional point indices that are affected by the next update */
     for (size_t d = 0; d < dimParams.size(); d++)

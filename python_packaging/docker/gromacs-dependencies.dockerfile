@@ -5,26 +5,31 @@
 
 # This image serves as a base for integration with the gmxapi Python tools and sample code.
 
-FROM ubuntu:bionic
+FROM ubuntu:jammy as base
 
 # Basic packages
 RUN apt-get update && \
-    apt-get -yq --no-install-suggests --no-install-recommends install software-properties-common && \
+    DEBIAN_FRONTEND=noninteractive \
+    apt-get -yq --no-install-suggests --no-install-recommends install \
+        software-properties-common \
+        build-essential && \
+    DEBIAN_FRONTEND=noninteractive \
     apt-get -yq --no-install-suggests --no-install-recommends install \
         cmake \
         git \
         libblas-dev \
-        libcr-dev \
         libfftw3-dev \
         liblapack-dev \
         libxml2-dev \
         make \
+        vim \
         wget \
         zlib1g-dev && \
     rm -rf /var/lib/apt/lists/*
 
 # mpich installation layer
 RUN apt-get update && \
+    DEBIAN_FRONTEND=noninteractive \
     apt-get -yq --no-install-suggests --no-install-recommends install \
         libmpich-dev \
         mpich && \

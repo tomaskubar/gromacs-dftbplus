@@ -1,11 +1,9 @@
 #
 # This file is part of the GROMACS molecular simulation package.
 #
-# Copyright (c) 2014,2015,2016,2017,2018 by the GROMACS development team.
-# Copyright (c) 2019,2020, by the GROMACS development team, led by
-# Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
-# and including many others, as listed in the AUTHORS file in the
-# top-level source directory and at http://www.gromacs.org.
+# Copyright 2014- The GROMACS Authors
+# and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+# Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
 #
 # GROMACS is free software; you can redistribute it and/or
 # modify it under the terms of the GNU Lesser General Public License
@@ -19,7 +17,7 @@
 #
 # You should have received a copy of the GNU Lesser General Public
 # License along with GROMACS; if not, see
-# http://www.gnu.org/licenses, or write to the Free Software Foundation,
+# https://www.gnu.org/licenses, or write to the Free Software Foundation,
 # Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
 #
 # If you want to redistribute modifications to GROMACS, please
@@ -28,10 +26,10 @@
 # consider code for inclusion in the official distribution, but
 # derived work must not be called official GROMACS. Details are found
 # in the README & COPYING files - if they are missing, get the
-# official version at http://www.gromacs.org.
+# official version at https://www.gromacs.org.
 #
 # To help us fund GROMACS development, we humbly ask that you cite
-# the research papers on the package. Check out http://www.gromacs.org.
+# the research papers on the package. Check out https://www.gromacs.org.
 
 # This directory provides a unified place for building all kinds of
 # GROMACS documentation. This includes some "static" content (Doxygen
@@ -58,7 +56,7 @@ mark_as_advanced(SOURCE_MD5SUM)
 
 set(EXPECTED_DOXYGEN_VERSION 1.8.5)
 
-set(EXPECTED_SPHINX_VERSION 1.6.1)
+set(EXPECTED_SPHINX_VERSION 4.0.0)
 
 # By default, suppress output after first configuration.
 if(SPHINX_ALREADY_SEARCHED)
@@ -89,10 +87,9 @@ endif()
 
 add_subdirectory(doxygen)
 
-# TODO: Consider whether this could just be replaced by using
-# GMX_DEVELOPER_BUILD to control this as well.
 option(GMX_BUILD_MANUAL "Whether to try to configure to build the PDF manual" OFF)
 mark_as_advanced(GMX_BUILD_MANUAL)
+gmx_add_cache_dependency(GMX_BUILD_MANUAL BOOL GMX_DEVELOPER_BUILD ON)
 
 set(MANUAL_BUILD_IS_POSSIBLE ON)
 set(MANUAL_BUILD_NOT_POSSIBLE_REASON)
@@ -153,7 +150,7 @@ if (SPHINX_FOUND)
         # Definitions and Units chapter
         reference-manual/definitions.rst
         # Topologies chapter
-        reference-manual/topologies.rst
+        reference-manual/topologies/topologies.rst
         reference-manual/topologies/particle-type.rst
         reference-manual/topologies/parameter-files.rst
         reference-manual/topologies/molecule-definition.rst
@@ -173,14 +170,13 @@ if (SPHINX_FOUND)
         reference-manual/references.rst
         # PNG formated plot files that don't need to be converted into PNG
         # for the web page.
-        reference-manual/plots/peregrine.png
-        reference-manual/plots/adress.png
+        reference-manual/plots/GMX_logos/gmx_falcon_blue.png
         reference-manual/plots/plotje.png
         reference-manual/plots/xvgr.png
         )
     set(REFERENCEMANUAL_SPHINX_FILES_WITH_IMAGES
         # Algorithms chapter
-        reference-manual/algorithms.rst
+        reference-manual/algorithms/algorithms.rst
         reference-manual/algorithms/periodic-boundary-conditions.rst
         reference-manual/algorithms/group-concept.rst
         reference-manual/algorithms/molecular-dynamics.rst
@@ -197,7 +193,7 @@ if (SPHINX_FOUND)
         reference-manual/algorithms/expanded-ensemble.rst
         reference-manual/algorithms/parallelization-domain-decomp.rst
         # Interaction functions and force fields chapter
-        reference-manual/functions.rst
+        reference-manual/functions/functions.rst
         reference-manual/functions/bonded-interactions.rst
         reference-manual/functions/force-field.rst
         reference-manual/functions/free-energy-interactions.rst
@@ -208,7 +204,7 @@ if (SPHINX_FOUND)
         reference-manual/functions/polarization.rst
         reference-manual/functions/restraints.rst
         # Special topics chapter
-        reference-manual/special.rst
+        reference-manual/special/special.rst
         reference-manual/special/free-energy-implementation.rst
         reference-manual/special/pulling.rst
         reference-manual/special/awh.rst
@@ -218,14 +214,19 @@ if (SPHINX_FOUND)
         reference-manual/special/free-energy-pmf.rst
         reference-manual/special/remove-fast-dgf.rst
         reference-manual/special/viscosity-calculation.rst
+        reference-manual/special/shearing.rst
         reference-manual/special/tabulated-interaction-functions.rst
         reference-manual/special/qmmm.rst
         reference-manual/special/vmd-imd.rst
         reference-manual/special/membrane-embedding.rst
         reference-manual/special/mimic-qmmm.rst
         reference-manual/special/density-guided-simulation.rst
+        reference-manual/special/colvars.rst
+        reference-manual/special/plumed.rst
+        reference-manual/special/nnpot.rst
+        reference-manual/special/fmm.rst
         # Analysis chapter
-        reference-manual/analysis.rst
+        reference-manual/analysis/analysis.rst
         reference-manual/analysis/using-groups.rst
         reference-manual/analysis/looking-at-trajectory.rst
         reference-manual/analysis/general-properties.rst
@@ -290,6 +291,7 @@ if (SPHINX_FOUND)
         reference-manual/functions/plots/f-rbs.pdf
         reference-manual/functions/plots/ring-imp.pdf
         reference-manual/functions/plots/softcore.pdf
+        reference-manual/functions/plots/gapsys-sc.pdf
         reference-manual/functions/plots/subst-im.pdf
         reference-manual/functions/plots/tetra-im.pdf
         reference-manual/functions/plots/vcrf.pdf
@@ -305,6 +307,7 @@ if (SPHINX_FOUND)
         reference-manual/special/plots/equipotential.pdf
         reference-manual/special/plots/field.pdf
         reference-manual/special/plots/gaussians.pdf
+        reference-manual/special/plots/lambda-values.pdf
         reference-manual/special/plots/pulldirrel.pdf
         reference-manual/special/plots/pull.pdf
         reference-manual/special/plots/pullref.pdf
@@ -312,37 +315,36 @@ if (SPHINX_FOUND)
         # Analysis chapter
         reference-manual/analysis/plots/dih-def.pdf
         reference-manual/analysis/plots/distm.pdf
-        reference-manual/analysis/plots/dssp.pdf
         reference-manual/analysis/plots/hbond-insert.pdf
         reference-manual/analysis/plots/hbond.pdf
         reference-manual/analysis/plots/hpr-wheel.pdf
         reference-manual/analysis/plots/msdwater.pdf
-        reference-manual/analysis/plots/ngmxdump.pdf
         reference-manual/analysis/plots/phipsi.pdf
         reference-manual/analysis/plots/rama.pdf
         reference-manual/analysis/plots/rdfO-O.pdf
         reference-manual/analysis/plots/rdf.pdf
-        reference-manual/analysis/plots/sgangle.pdf 
+        reference-manual/analysis/plots/sgangle.pdf
         )
     set(SPHINX_SOURCE_FILES
         index.rst
+        texindex.rst
         download.rst
         links.dat
+        api/gmxlibs.rst
+        api/index.rst
         dev-manual/build-system.rst
         dev-manual/change-management.rst
         dev-manual/commitstyle.rst
-        dev-manual/containers.rst
         dev-manual/documentation-generation.rst
         dev-manual/contribute.rst
         dev-manual/doxygen.rst
         dev-manual/error-handling.rst
         dev-manual/formatting.rst
-        dev-manual/gitlab.rst
+        dev-manual/gitlab-ci.rst
         dev-manual/gmxtree.rst
         dev-manual/includestyle.rst
         dev-manual/index.rst
         dev-manual/infrastructure.rst
-        dev-manual/jenkins.rst
         dev-manual/known-issues.rst
         dev-manual/language-features.rst
         dev-manual/naming.rst
@@ -362,7 +364,70 @@ if (SPHINX_FOUND)
         how-to/special.rst
         how-to/visualize.rst
         install-guide/index.rst
+        install-guide/exotic.rst
+        reference-manual/plots/GMX_logos/gmx_logo_blue.svg
         release-notes/index.rst
+        release-notes/2026/2026.1.rst
+        release-notes/2026/2026.2.rst
+	release-notes/2026/2026.3.rst
+        release-notes/2026/major/highlights.rst
+        release-notes/2026/major/features.rst
+        release-notes/2026/major/performance.rst
+        release-notes/2026/major/bugs-fixed.rst
+        release-notes/2026/major/removed-functionality.rst
+        release-notes/2026/major/deprecated-functionality.rst
+        release-notes/2026/major/portability.rst
+        release-notes/2026/major/miscellaneous.rst
+        release-notes/2025/2025.1.rst
+        release-notes/2025/2025.2.rst
+        release-notes/2025/2025.3.rst
+        release-notes/2025/2025.4.rst
+        release-notes/2025/2025.5.rst
+        release-notes/2025/major/highlights.rst
+        release-notes/2025/major/features.rst
+        release-notes/2025/major/performance.rst
+        release-notes/2025/major/tools.rst
+        release-notes/2025/major/bugs-fixed.rst
+        release-notes/2025/major/removed-functionality.rst
+        release-notes/2025/major/deprecated-functionality.rst
+        release-notes/2025/major/portability.rst
+        release-notes/2025/major/miscellaneous.rst
+        release-notes/2024/2024.1.rst
+        release-notes/2024/2024.2.rst
+        release-notes/2024/2024.3.rst
+        release-notes/2024/2024.4.rst
+        release-notes/2024/2024.5.rst
+        release-notes/2024/2024.6.rst
+        release-notes/2024/2024.7.rst
+        release-notes/2024/major/highlights.rst
+        release-notes/2024/major/features.rst
+        release-notes/2024/major/performance.rst
+        release-notes/2024/major/tools.rst
+        release-notes/2024/major/bugs-fixed.rst
+        release-notes/2024/major/deprecated-functionality.rst
+        release-notes/2024/major/portability.rst
+        release-notes/2024/major/miscellaneous.rst
+        release-notes/2023/2023.1.rst
+        release-notes/2023/2023.2.rst
+        release-notes/2023/2023.3.rst
+        release-notes/2023/2023.4.rst
+        release-notes/2023/2023.5.rst
+        release-notes/2023/major/highlights.rst
+        release-notes/2023/major/features.rst
+        release-notes/2023/major/performance.rst
+        release-notes/2023/major/tools.rst
+        release-notes/2023/major/bugs-fixed.rst
+        release-notes/2023/major/removed-functionality.rst
+        release-notes/2023/major/deprecated-functionality.rst
+        release-notes/2023/major/portability.rst
+        release-notes/2023/major/miscellaneous.rst
+        release-notes/2023/major/api.rst
+        release-notes/2022/2022.1.rst
+        release-notes/2022/2022.2.rst
+        release-notes/2022/2022.3.rst
+        release-notes/2022/2022.4.rst
+        release-notes/2022/2022.5.rst
+        release-notes/2022/2022.6.rst
         release-notes/2022/major/highlights.rst
         release-notes/2022/major/features.rst
         release-notes/2022/major/performance.rst
@@ -372,6 +437,14 @@ if (SPHINX_FOUND)
         release-notes/2022/major/deprecated-functionality.rst
         release-notes/2022/major/portability.rst
         release-notes/2022/major/miscellaneous.rst
+        release-notes/2022/major/api.rst
+        release-notes/2021/2021.7.rst
+        release-notes/2021/2021.6.rst
+        release-notes/2021/2021.5.rst
+        release-notes/2021/2021.4.rst
+        release-notes/2021/2021.3.rst
+        release-notes/2021/2021.2.rst
+        release-notes/2021/2021.1.rst
         release-notes/2021/major/highlights.rst
         release-notes/2021/major/features.rst
         release-notes/2021/major/performance.rst
@@ -386,6 +459,8 @@ if (SPHINX_FOUND)
         release-notes/2020/2020.3.rst
         release-notes/2020/2020.4.rst
         release-notes/2020/2020.5.rst
+        release-notes/2020/2020.6.rst
+        release-notes/2020/2020.7.rst
         release-notes/2020/major/highlights.rst
         release-notes/2020/major/features.rst
         release-notes/2020/major/performance.rst
@@ -451,6 +526,7 @@ if (SPHINX_FOUND)
         user-guide/force-fields.rst
         user-guide/getting-started.rst
         user-guide/index.rst
+        user-guide/known-issues.rst
         user-guide/managing-simulations.rst
         user-guide/mdp-options.rst
         user-guide/mdrun-features.rst
@@ -459,6 +535,7 @@ if (SPHINX_FOUND)
         user-guide/security.rst
         user-guide/system-preparation.rst
         user-guide/terminology.rst
+        user-guide/validation.rst
         )
 
     include(SphinxMacros.cmake)
@@ -490,14 +567,14 @@ if (SPHINX_FOUND)
     endif()
 
     if(IMAGE_CONVERT_POSSIBLE)
-        set(IMAGE_CONVERT_STRING "possible")
+        set(IMAGE_CONVERT_STRING "gmx_image_convert_possible")
     else()
-        set(IMAGE_CONVERT_STRING "impossible")
+        set(IMAGE_CONVERT_STRING "gmx_image_convert_impossible")
     endif()
 
     set(SPHINX_CONFIG_FILE ${SPHINX_INPUT_DIR}/conf.py)
     if (GMX_PYTHON_PACKAGE)
-        set(GMXAPI_PYTHON_STAGING_DIR ${CMAKE_BINARY_DIR}/python_packaging/src/gmxapi_staging)
+        set(GMXAPI_PYTHON_STAGING_DIR ${CMAKE_BINARY_DIR}/python_packaging/gmxapi/gmxapi_staging)
         # TODO: Resolve circular reference. We would like to get the CMake build-time directory for
         # the gmxapi Python package from the _gmxapi target, as we do when building sample_restraint.
         # Instead of the above hard-coded path, how can we do
@@ -512,6 +589,9 @@ if (SPHINX_FOUND)
             EXPECTED_DOXYGEN_VERSION
             EXPECTED_SPHINX_VERSION
             GMX_ADMIN_DIR
+            GMX_CLANG_MINIMUM_REQUIRED_VERSION
+            GMX_GCC_MINIMUM_REQUIRED_VERSION
+            GMX_HDF5_MINIMUM_REQUIRED_VERSION
             GMX_LMFIT_REQUIRED_VERSION
             GMX_MANUAL_DOI_STRING
             GMX_TNG_MINIMUM_REQUIRED_VERSION
@@ -519,45 +599,39 @@ if (SPHINX_FOUND)
             GMXAPI_PYTHON_STAGING_DIR
             IMAGE_CONVERT_STRING
             REGRESSIONTEST_VERSION
-            REQUIRED_CUDA_COMPUTE_CAPABILITY
-            REQUIRED_CUDA_VERSION
+            GMX_CUDA_MINIMUM_REQUIRED_COMPUTE_CAPABILITY
+            GMX_CUDA_MINIMUM_REQUIRED_VERSION
             REQUIRED_OPENCL_MIN_VERSION
             REGRESSIONTEST_MD5SUM_STRING
             RELENG_PATH
             SOURCE_MD5SUM
             SPHINX_EXTENSION_PATH
+            GMX_CURRENT_CONTRIBUTORS_STRING
+            GMX_PREVIOUS_CONTRIBUTORS_STRING
+            GMX_CURRENT_PROJECT_LEADERS_STRING
         COMMENT "Configuring Sphinx configuration file")
     gmx_add_sphinx_input_file(${SPHINX_CONFIG_FILE})
     gmx_add_sphinx_source_files(FILES ${SPHINX_SOURCE_FILES})
-    if (EXISTS ${RELENG_PATH}/docs/FileList.cmake)
-        include(${RELENG_PATH}/docs/FileList.cmake)
-        gmx_add_sphinx_source_files(
-            FROM ${RELENG_PATH}/docs TO dev-manual/releng PREFIX releng/docs/
-            FILES ${RELENG_SPHINX_FILES})
-    else()
-        gmx_add_sphinx_source_files(FILES
-            dev-manual/releng/index.rst
-            )
-    endif()
 
     gmx_add_sphinx_source_files(
             FILES
             gmxapi/index.rst
             gmxapi/userguide/install.rst
-            gmxapi/userguide/usage.rst
-            gmxapi/userguide/userguide.rst
     )
 
     if (GMX_PYTHON_PACKAGE)
         gmx_add_sphinx_source_files(
             FILES
             gmxapi/userguide/pythonreference.rst
-            )
+            gmxapi/userguide/usage.rst
+        )
     else()
         gmx_add_sphinx_source_files(
             FROM ${CMAKE_CURRENT_SOURCE_DIR}/gmxapi/userguide-stub
-            TO gmxapi/userguide/ 
-            FILES pythonreference.rst 
+            TO gmxapi/userguide/
+            FILES
+            pythonreference.rst
+            usage.rst
             )
     endif ()
 
@@ -596,7 +670,8 @@ if (SPHINX_FOUND)
     # TODO: Make this remove obsolete .rst files.
     # TODO: This does not work in cross-compilation scenarios; disable up to
     # the necessary level.
-    gmx_add_custom_output_target(sphinx-programs OUTPUT STAMP
+    gmx_add_custom_output_target(sphinx-programs
+        OUTPUT ${SPHINX_INPUT_DIR}/conf-man.py
         COMMAND ${CMAKE_COMMAND} -E make_directory onlinehelp
         COMMAND gmx -quiet help -export rst
         DEPENDS gmx
@@ -610,6 +685,8 @@ if (SPHINX_FOUND)
     # into the tarball via the CPack rules below, which requires that
     # the INSTALL file is in a separate directory by itself.
     set(TEXT_INSTALL_GUIDE_OUTPUT_DIR "install-guide/text")
+    # Note: the automatically generated builder tags are not available until after
+    # conf.py is processed, so we use additional custom tags in our sphinx targets.
     add_custom_target(install-guide
         COMMAND
             ${SPHINX_EXECUTABLE}
@@ -617,8 +694,10 @@ if (SPHINX_FOUND)
             -w sphinx-install.log
             -d ${CMAKE_CURRENT_BINARY_DIR}/install-guide/_doctrees
             -c ${SPHINX_INPUT_DIR}
+            -t do_text
             "${SPHINX_INPUT_DIR}/install-guide"
             "${TEXT_INSTALL_GUIDE_OUTPUT_DIR}"
+            "${SPHINX_INPUT_DIR}/install-guide/index.rst"
         COMMAND
             ${CMAKE_COMMAND} -E rename
             ${TEXT_INSTALL_GUIDE_OUTPUT_DIR}/index.txt
@@ -631,8 +710,6 @@ if (SPHINX_FOUND)
     add_dependencies(install-guide sphinx-input)
     gmx_cpack_add_generated_source_directory(install-guide/text DESTINATION /)
 
-    # Sphinx cache with pickled ReST documents
-    set(SPHINX_CACHE_DIR "${CMAKE_CURRENT_BINARY_DIR}/_doctrees")
     set(SPHINX_CONFIG_OVERRIDES "")
     if (GMX_DEVELOPER_BUILD)
         set(SPHINX_CONFIG_OVERRIDES "-Dtodo_include_todos=1")
@@ -642,13 +719,14 @@ if (SPHINX_FOUND)
         DEPENDS sphinx-input
         DEPENDS sphinx-image-conversion
         DEPENDS manual
-        COMMAND
-            ${CMAKE_COMMAND} -E make_directory ${SPHINX_INPUT_DIR}/_static
+        # Note: the automatically generated builder tags are not available until after
+        # conf.py is processed, so we use additional custom tags in our sphinx targets.
         COMMAND
             ${SPHINX_EXECUTABLE}
             -q -b html
             -w sphinx-html.log
-            -d "${SPHINX_CACHE_DIR}"
+            -d "${CMAKE_CURRENT_BINARY_DIR}/_html_doctrees"
+            -t do_html
             ${SPHINX_CONFIG_OVERRIDES}
             "${SPHINX_INPUT_DIR}"
             "${HTML_OUTPUT_DIR}"
@@ -658,12 +736,15 @@ if (SPHINX_FOUND)
         VERBATIM
         )
 
+    # Note: the automatically generated builder tags are not available until after
+    # conf.py is processed, so we use additional custom tags in our sphinx targets.
     add_custom_target(man
+        DEPENDS ${SPHINX_INPUT_DIR}/conf-man.py
         COMMAND
             ${SPHINX_EXECUTABLE}
             -q -b man
             -w sphinx-man.log
-            -d ${SPHINX_CACHE_DIR}
+            -d "${CMAKE_CURRENT_BINARY_DIR}/_man_doctrees"
             -t do_man
             ${SPHINX_INPUT_DIR}
             ${CMAKE_CURRENT_BINARY_DIR}/man
@@ -721,7 +802,7 @@ set(HTML_BUILD_IS_POSSIBLE ON)
 set(HTML_BUILD_NOT_POSSIBLE_REASON)
 set(HTML_BUILD_WARNINGS)
 
-# Next, turn it off if any of the preconditions are unsatisified
+# Next, turn it off if any of the preconditions are unsatisfied
 if (NOT Python3_Interpreter_FOUND)
     set(HTML_BUILD_IS_POSSIBLE OFF)
     set(HTML_BUILD_NOT_POSSIBLE_REASON "Python is required")
@@ -779,8 +860,10 @@ if (HTML_BUILD_IS_POSSIBLE)
     # to).
 
     # Add a top-level target that builds everything related to the webpage,
-    # for Jenkins (and possibly others) to use
+    # for CI (and possibly others) to use
     add_custom_target(webpage ${_webpage_target_properties}
+        COMMAND ${CMAKE_COMMAND} -E echo
+            "Webpage output: file://${HTML_OUTPUT_DIR}/index.html"
         COMMENT "Building webpage"
         VERBATIM)
     add_dependencies(webpage webpage-sphinx doxygen-all)

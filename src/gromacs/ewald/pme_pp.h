@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2020- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \internal \file
  *
@@ -45,12 +44,14 @@
 #ifndef GMX_EWALD_PME_PP_H
 #define GMX_EWALD_PME_PP_H
 
-#include "gromacs/math/vectypes.h"
-#include "gromacs/utility/basedefinitions.h"
+#include <cstdint>
 
+#include "gromacs/utility/real.h"
+#include "gromacs/utility/vectypes.h"
+
+struct gmx_domdec_t;
 struct gmx_wallcycle;
 struct interaction_const_t;
-struct t_commrec;
 struct t_forcerec;
 
 class GpuEventSynchronizer;
@@ -58,47 +59,52 @@ class GpuEventSynchronizer;
 namespace gmx
 {
 class ForceWithVirial;
+class MpiComm;
 class PmePpCommGpu;
+template<typename>
+class ArrayRef;
 } // namespace gmx
 
 /*! \brief Send the charges and maxshift to out PME-only node. */
-void gmx_pme_send_parameters(const t_commrec*           cr,
-                             const interaction_const_t* ic,
-                             gmx_bool                   bFreeEnergy_q,
-                             gmx_bool                   bFreeEnergy_lj,
-                             real*                      chargeA,
-                             real*                      chargeB,
-                             real*                      sqrt_c6A,
-                             real*                      sqrt_c6B,
-                             real*                      sigmaA,
-                             real*                      sigmaB,
+void gmx_pme_send_parameters(gmx_domdec_t*              dd,
+                             const interaction_const_t& interactionConst,
+                             bool                       bFreeEnergy_q,
+                             bool                       bFreeEnergy_lj,
+                             gmx::ArrayRef<const real>  chargeA,
+                             gmx::ArrayRef<const real>  chargeB,
+                             gmx::ArrayRef<const real>  sqrt_c6A,
+                             gmx::ArrayRef<const real>  sqrt_c6B,
+                             gmx::ArrayRef<const real>  sigmaA,
+                             gmx::ArrayRef<const real>  sigmaB,
                              int                        maxshift_x,
                              int                        maxshift_y);
 
 /*! \brief Send the coordinates to our PME-only node and request a PME calculation */
-void gmx_pme_send_coordinates(t_forcerec*           fr,
-                              const t_commrec*      cr,
-                              const matrix          box,
-                              const rvec*           x,
-                              real                  lambda_q,
-                              real                  lambda_lj,
-                              bool                  computeEnergyAndVirial,
-                              int64_t               step,
-                              bool                  useGpuPmePpComms,
-                              bool                  reinitGpuPmePpComms,
-                              bool                  sendCoordinatesFromGpu,
-                              GpuEventSynchronizer* coordinatesReadyOnDeviceEvent,
-                              gmx_wallcycle*        wcycle);
+void gmx_pme_send_coordinates(t_forcerec*                    fr,
+                              gmx_domdec_t*                  dd,
+                              const matrix                   box,
+                              gmx::ArrayRef<const gmx::RVec> x,
+                              real                           lambda_q,
+                              real                           lambda_lj,
+                              bool                           computeEnergyAndVirial,
+                              int64_t                        step,
+                              bool                           useGpuPmePpComms,
+                              bool                           reinitGpuPmePpComms,
+                              bool                           sendCoordinatesFromGpu,
+                              bool                           receiveForcesToGpu,
+                              GpuEventSynchronizer*          coordinatesReadyOnDeviceEvent,
+                              bool                           useMdGpuGraph,
+                              gmx_wallcycle*                 wcycle);
 
 /*! \brief Tell our PME-only node to finish */
-void gmx_pme_send_finish(const t_commrec* cr);
+void gmx_pme_send_finish(gmx_domdec_t* dd);
 
 /*! \brief Tell our PME-only node to reset all cycle and flop counters */
-void gmx_pme_send_resetcounters(const t_commrec* cr, int64_t step);
+void gmx_pme_send_resetcounters(const gmx::MpiComm& mpiCommMySim, gmx_domdec_t* dd, int64_t step);
 
 /*! \brief PP nodes receive the long range forces from the PME nodes */
 void gmx_pme_receive_f(gmx::PmePpCommGpu*    pmePpCommGpu,
-                       const t_commrec*      cr,
+                       gmx_domdec_t*         dd,
                        gmx::ForceWithVirial* forceWithVirial,
                        real*                 energy_q,
                        real*                 energy_lj,
@@ -109,6 +115,6 @@ void gmx_pme_receive_f(gmx::PmePpCommGpu*    pmePpCommGpu,
                        float*                pme_cycles);
 
 /*! \brief Tell our PME-only node to switch to a new grid size */
-void gmx_pme_send_switchgrid(const t_commrec* cr, ivec grid_size, real ewaldcoeff_q, real ewaldcoeff_lj);
+void gmx_pme_send_switchgrid(const gmx_domdec_t& dd, ivec grid_size, real ewaldcoeff_q, real ewaldcoeff_lj);
 
 #endif

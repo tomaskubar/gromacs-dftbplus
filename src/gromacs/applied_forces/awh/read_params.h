@@ -1,11 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2013,2014,2015,2016,2017 by the GROMACS development team.
- * Copyright (c) 2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2013- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -19,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -28,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 
 /*! \libinternal \file
@@ -48,7 +46,8 @@
 #define GMX_AWH_READPARAMS_H
 
 #include "gromacs/fileio/readinp.h"
-#include "gromacs/math/vectypes.h"
+#include "gromacs/utility/real.h"
+#include "gromacs/utility/vectypes.h"
 
 struct t_grpopts;
 struct t_inputrec;
@@ -56,42 +55,38 @@ struct gmx_mtop_t;
 struct pull_params_t;
 struct pull_t;
 enum class PbcType : int;
+class WarningHandler;
 
 namespace gmx
 {
-struct AwhParams;
 
-/*! \brief Allocate and initialize the AWH parameters with values from the input file.
- *
- * \param[in,out] inp          Input file entries.
- * \param[in,out] wi           Struct for bookeeping warnings.
- * \returns AWH parameters.
- */
-AwhParams* readAwhParams(std::vector<t_inpfile>* inp, warninp_t wi);
+class AwhParams;
+class ISerializer;
 
 /*! \brief Check the AWH parameters.
  *
- * \param[in,out] awhParams    The AWH parameters.
+ * \param[in]     awhParams    The AWH parameters.
  * \param[in]     inputrec     Input parameter struct.
  * \param[in,out] wi           Struct for bookeeping warnings.
  */
-void checkAwhParams(const AwhParams* awhParams, const t_inputrec* inputrec, warninp_t wi);
+void checkAwhParams(const AwhParams& awhParams, const t_inputrec& inputrec, WarningHandler* wi);
 
 
 /*! \brief
  * Sets AWH parameters that need state parameters such as the box vectors.
  *
- * \param[in,out] awhParams             AWH parameters.
- * \param[in]     pull_params           Pull parameters.
- * \param[in,out] pull_work             Pull working struct to register AWH bias in.
- * \param[in]     box                   Box vectors.
- * \param[in]     pbcType               Periodic boundary conditions enum.
- * \param[in]     compressibility       Compressibility matrix for pressure coupling, pass all 0 without pressure coupling
- * \param[in]     inputrecGroupOptions  Parameters for atom groups.
- * \param[in]     initLambda            The starting lambda, to allow using free energy lambda as reaction coordinate
- * provider in any dimension.
- * \param[in]     mtop                  The system topology.
- * \param[in,out] wi                    Struct for bookeeping warnings.
+ * \param[in,out] awhParams        AWH parameters.
+ * \param[in]     pull_params      Pull parameters.
+ * \param[in,out] pull_work        Pull working struct to register AWH bias in.
+ * \param[in]     box              Box vectors.
+ * \param[in]     pbcType          Periodic boundary conditions enum.
+ * \param[in]     compressibility  Compressibility matrix for pressure coupling, pass all 0
+ *                                 without pressure coupling
+ * \param[in]     inputrec         Input record, for checking the reference temperature
+ * \param[in]     initLambda       The starting lambda, to allow using free energy lambda
+ *                                 as reaction coordinate provider in any dimension.
+ * \param[in]     mtop             The system topology.
+ * \param[in,out] wi               Struct for bookeeping warnings.
  *
  * \note This function currently relies on the function set_pull_init to have been called.
  */
@@ -101,10 +96,13 @@ void setStateDependentAwhParams(AwhParams*           awhParams,
                                 const matrix         box,
                                 PbcType              pbcType,
                                 const tensor&        compressibility,
-                                const t_grpopts*     inputrecGroupOptions,
+                                const t_inputrec&    inputrec,
                                 real                 initLambda,
                                 const gmx_mtop_t&    mtop,
-                                warninp_t            wi);
+                                WarningHandler*      wi);
+
+//! Returns true when AWH has a bias with a free energy lambda state dimension
+bool awhHasFepLambdaDimension(const AwhParams& awhParams);
 
 } // namespace gmx
 

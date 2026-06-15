@@ -1,12 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
- * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 1991- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -20,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -29,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \libinternal \file
  * \brief Declares structures related to domain decomposition.
@@ -51,17 +48,16 @@
 #include <memory>
 #include <vector>
 
-#include "gromacs/math/vectypes.h"
+#include "gromacs/domdec/domdec_zones.h"
+#include "gromacs/gpu_utils/hostallocator.h"
 #include "gromacs/topology/block.h"
-#include "gromacs/utility/basedefinitions.h"
+#include "gromacs/topology/idef.h"
+#include "gromacs/utility/defaultinitializationallocator.h"
 #include "gromacs/utility/gmxmpi.h"
+#include "gromacs/utility/mpicomm.h"
 #include "gromacs/utility/range.h"
 #include "gromacs/utility/real.h"
-
-//! Max number of zones in domain decomposition
-#define DD_MAXZONE 8
-//! Max number of izones in domain decomposition
-#define DD_MAXIZONE 4
+#include "gromacs/utility/vectypes.h"
 
 struct AtomDistribution;
 struct gmx_domdec_comm_t;
@@ -69,63 +65,21 @@ struct gmx_domdec_constraints_t;
 struct gmx_domdec_specat_comm_t;
 class gmx_ga2la_t;
 struct gmx_pme_comm_n_box_t;
-struct gmx_reverse_top_t;
 struct t_inputrec;
+class gmx_reverse_top_t;
+struct gmx_mtop_t;
+struct ReverseTopOptions;
 
 namespace gmx
 {
+class HaloExchange;
 template<typename T>
 class HashedMap;
 class LocalAtomSetManager;
+class LocalTopologyChecker;
 class GpuHaloExchange;
+class GpuHaloExchangeNvshmemHelper;
 } // namespace gmx
-
-/*! \internal
- * \brief Pair interaction zone and atom range for an i-zone
- */
-struct DDPairInteractionRanges
-{
-    //! The index of this i-zone in the i-zone list
-    int iZoneIndex = -1;
-    //! The range of j-zones
-    gmx::Range<int> jZoneRange;
-    //! The i-atom range
-    gmx::Range<int> iAtomRange;
-    //! The j-atom range
-    gmx::Range<int> jAtomRange;
-    //! Minimum shifts to consider
-    gmx::IVec shift0 = { 0, 0, 0 };
-    //! Maximum shifts to consider
-    gmx::IVec shift1 = { 0, 0, 0 };
-};
-
-typedef struct gmx_domdec_zone_size
-{
-    /* Zone lower corner in triclinic coordinates         */
-    gmx::RVec x0 = { 0, 0, 0 };
-    /* Zone upper corner in triclinic coordinates         */
-    gmx::RVec x1 = { 0, 0, 0 };
-    /* Zone bounding box lower corner in Cartesian coords */
-    gmx::RVec bb_x0 = { 0, 0, 0 };
-    /* Zone bounding box upper corner in Cartesian coords */
-    gmx::RVec bb_x1 = { 0, 0, 0 };
-} gmx_domdec_zone_size_t;
-
-struct gmx_domdec_zones_t
-{
-    /* The number of zones including the home zone */
-    int n = 0;
-    /* The shift of the zones with respect to the home zone */
-    ivec shift[DD_MAXZONE] = {};
-    /* The charge group boundaries for the zones */
-    int cg_range[DD_MAXZONE + 1] = {};
-    /* The pair interaction zone and atom ranges per each i-zone */
-    std::vector<DDPairInteractionRanges> iZones;
-    /* Boundaries of the zones */
-    gmx_domdec_zone_size_t size[DD_MAXZONE];
-    /* The cg density of the home zone */
-    real dens_zone0 = 0;
-};
 
 struct gmx_ddbox_t
 {
@@ -161,20 +115,34 @@ struct UnitCellInfo
 struct gmx_domdec_t
 { //NOLINT(clang-analyzer-optin.performance.Padding)
     //! Constructor, only partial for now
-    gmx_domdec_t(const t_inputrec& ir);
+    gmx_domdec_t(const gmx::MpiComm& mpiComm, const t_inputrec& ir, gmx::ArrayRef<const int> ddDims);
+    ~gmx_domdec_t();
+
+    //! Returns the group MPI communicator, i.e. for the PP or PME ranks
+    const gmx::MpiComm& mpiComm() const { return mpiComm_; }
+
+    //! Returns the communicator for the whole simulation
+    const gmx::MpiComm& mpiCommMySim() const;
+
+    //! Whether this rank computes particle-particle interactions
+    bool hasPPDuty = true;
+    //! Whether this rank computes PME mesh interactions, also true when PME is not in use
+    bool hasPmeDuty = true;
+
+    //! The group MPI communicator, ie. of PP or PME-only ranks
+    gmx::MpiComm mpiComm_;
 
     /* The DD particle-particle nodes only */
     /* The communication setup within the communicator all
      * defined in dd->comm in domdec.c
      */
-    int      nnodes       = 0;
-    MPI_Comm mpi_comm_all = MPI_COMM_NULL;
-    /* The local DD cell index and rank */
-    gmx::IVec ci         = { 0, 0, 0 };
-    int       rank       = 0;
-    gmx::IVec master_ci  = { 0, 0, 0 };
-    int       masterrank = 0;
+    int nnodes = 1;
+    /* The local DD cell index */
+    gmx::IVec ci = { 0, 0, 0 };
+    /* The cell index of the main rank */
+    gmx::IVec main_ci = { 0, 0, 0 };
     /* Communication with the PME only nodes */
+    int                   numPmeOnlyRanks      = 0;
     int                   pme_nodeid           = 0;
     gmx_bool              pme_receive_vir_ener = false;
     gmx_pme_comm_n_box_t* cnb                  = nullptr;
@@ -185,71 +153,133 @@ struct gmx_domdec_t
     UnitCellInfo unitCellInfo;
 
     /* The communication setup, identical for each cell, cartesian index */
-    //! Todo: refactor nbnxm to not rely on this sometimes being a nullptr so this can be IVec
-    ivec      numCells = { 0, 0, 0 };
+    gmx::IVec numCells = { 0, 0, 0 };
     int       ndim     = 0;
     gmx::IVec dim      = { 0, 0, 0 }; /* indexed by 0 to ndim */
 
     /* Forward and backward neighboring cells, indexed by 0 to ndim */
     int neighbor[DIM][2] = { { 0, 0 }, { 0, 0 }, { 0, 0 } };
 
-    /* Only available on the master node */
+    /* The shift, atom ranges and dimensions of the DD zones */
+    gmx::DomdecZones zones;
+
+    /* Only available on the main node */
     std::unique_ptr<AtomDistribution> ma;
 
     /* Global atom number to interaction list */
-    gmx_reverse_top_t* reverse_top    = nullptr;
-    int                nbonded_global = 0;
-    int                nbonded_local  = 0;
+    std::unique_ptr<gmx_reverse_top_t> reverse_top;
 
     /* Whether we have non-self exclusion */
     bool haveExclusions = false;
 
     /* Vsite stuff */
-    gmx::HashedMap<int>*      ga2la_vsite = nullptr;
-    gmx_domdec_specat_comm_t* vsite_comm  = nullptr;
-    std::vector<int>          vsite_requestedGlobalAtomIndices;
+    std::unique_ptr<gmx::HashedMap<int>>      ga2la_vsite;
+    std::unique_ptr<gmx_domdec_specat_comm_t> vsite_comm;
+    std::vector<int>                          vsite_requestedGlobalAtomIndices;
 
     /* Constraint stuff */
-    gmx_domdec_constraints_t* constraints     = nullptr;
-    gmx_domdec_specat_comm_t* constraint_comm = nullptr;
+    std::unique_ptr<gmx_domdec_constraints_t> constraints;
+    std::unique_ptr<gmx_domdec_specat_comm_t> constraint_comm;
 
-    /* The number of home atom groups */
-    int ncg_home = 0;
-    /* Global atom group indices for the home and all non-home groups */
-    std::vector<int> globalAtomGroupIndices;
+    /* The number of home atoms */
+    int numHomeAtoms = 0;
 
     /* Index from the local atoms to the global atoms, covers home and received zones */
-    std::vector<int> globalAtomIndices;
+    gmx::FastVector<int> globalAtomIndices;
 
     /* Global atom number to local atom number list */
-    gmx_ga2la_t* ga2la = nullptr;
+    std::unique_ptr<gmx_ga2la_t> ga2la;
 
     /* Communication stuff */
-    gmx_domdec_comm_t* comm = nullptr;
+    std::unique_ptr<gmx_domdec_comm_t> comm;
 
-    /* The partioning count, to keep track of the state */
+    //! The number of communication pulses along the Cartesian dimension
+    gmx::IVec numPulses = { 0, 0, 0 };
+
+    /* The halo communication setup */
+    std::unique_ptr<gmx::HaloExchange> haloExchange;
+
+    /* The partitioning count, to keep track of the state */
     int64_t ddp_count = 0;
 
     /* The managed atom sets that are updated in domain decomposition */
     gmx::LocalAtomSetManager* atomSets = nullptr;
 
+    //! The handler for checking whether the local topology is missing interactions
+    std::unique_ptr<gmx::LocalTopologyChecker> localTopologyChecker;
+
     /* gmx_pme_recv_f buffer */
-    std::vector<gmx::RVec> pmeForceReceiveBuffer;
+    gmx::HostVector<gmx::RVec> pmeForceReceiveBuffer;
+
+    //! GPU halo exchange aspects specific to NVSHMEM.
+    std::unique_ptr<gmx::GpuHaloExchangeNvshmemHelper> gpuHaloExchangeNvshmemHelper;
 
     /* GPU halo exchange objects: this structure supports a vector of pulses for each dimension */
     std::vector<std::unique_ptr<gmx::GpuHaloExchange>> gpuHaloExchange[DIM];
+
+    //! Enables NVSHMEM-based GPU halo exchange
+    bool useGpuHaloExchangeNvshmem = false;
 };
 
-//! Are we the master node for domain decomposition
-static inline bool DDMASTER(const gmx_domdec_t& dd)
+/*! \brief Returns whether this rank computes particle-particle interactions
+ *
+ * Can be called with \p dd=nullptr, in which case this returns \c true.
+ */
+static bool inline thisRankHasPPDuty(const gmx_domdec_t* dd)
 {
-    return dd.rank == dd.masterrank;
+    return (dd == nullptr || dd->hasPPDuty);
+}
+
+/*! \brief Returns whether this rank computes PME mesh interactions, also returns true when PME is not in use
+ *
+ * Can be called with \p dd=nullptr, in which case this returns \c true.
+ */
+static bool inline thisRankHasPmeDuty(const gmx_domdec_t* dd)
+{
+    return (dd == nullptr || dd->hasPmeDuty);
+}
+
+/*! \brief Returns whether atoms are (re)ordered by domain decomposition
+ *
+ * When \c true is returned, the atoms are not ordered according to the (global) topology.
+ *
+ * Can be called with \p dd=nullptr, in which case this returns \c false.
+ */
+static bool inline haveDDAtomOrdering(const gmx_domdec_t* dd)
+{
+    return (dd != nullptr);
+}
+
+/*! \brief Returns whether we have actual domain decomposition for the particle-particle interactions
+ *
+ * Will return false when we use 1 rank for PP and 1 for PME
+ */
+static bool inline havePPDomainDecomposition(const gmx_domdec_t* dd)
+{
+    return (dd != nullptr) && (dd->nnodes > 1);
+}
+
+/*! Return whether \p globalAtomIndex is a valid global atom (and not a filler particle)
+ *
+ * \param[in] globalAtomIndex  The index in the global topology to check
+ *
+ * \returns true when \p globalAtomIndex >= 0, false otherwise
+ */
+static inline bool isValidGlobalAtom(const int globalAtomIndex)
+{
+    return globalAtomIndex >= 0;
 };
 
-//! Are we the master node for domain decomposition, deprecated
-static inline bool DDMASTER(const gmx_domdec_t* dd)
+//! Are we the main node for domain decomposition
+static inline bool DDMAIN(const gmx_domdec_t& dd)
 {
-    return dd->rank == dd->masterrank;
+    return dd.mpiComm().isMainRank();
+};
+
+//! Are we the main node for domain decomposition, deprecated
+static inline bool DDMAIN(const gmx_domdec_t* dd)
+{
+    return dd->mpiComm().isMainRank();
 };
 
 #endif

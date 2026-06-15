@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2018- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 
 /*! \libinternal \file
@@ -57,37 +56,43 @@
 #include "gromacs/ewald/pme_gpu_program.h"
 #include "gromacs/gpu_utils/clfftinitializer.h"
 #include "gromacs/gpu_utils/hostallocator.h"
-#include "gromacs/math/vectypes.h"
+#include "gromacs/utility/gmxmpi.h"
+#include "gromacs/utility/vectypes.h"
 
+#include "pme_force_sender_gpu.h"
 #include "pme_gpu_settings.h"
 #include "pme_gpu_staging.h"
 
-namespace gmx
-{
-class PmeDeviceBuffers;
-} // namespace gmx
-
 #if GMX_GPU
 struct PmeGpuSpecific;
+struct PmeGpuHaloExchange;
 #else
 /*! \brief A dummy typedef for the GPU host data placeholder on non-GPU builds */
 typedef int PmeGpuSpecific;
+typedef int PmeGpuHaloExchange;
 #endif
 
-#if GMX_GPU_CUDA
-struct PmeGpuCudaKernelParams;
-/*! \brief A typedef for including the GPU kernel arguments data by pointer */
-typedef PmeGpuCudaKernelParams PmeGpuKernelParams;
-#elif GMX_GPU_OPENCL
-struct PmeGpuKernelParamsBase;
-/*! \brief A typedef for including the GPU kernel arguments data by pointer */
-typedef PmeGpuKernelParamsBase PmeGpuKernelParams;
+#if GMX_GPU
+struct PmeGpuKernelParams;
 #else
 /*! \brief A dummy typedef for the GPU kernel arguments data placeholder on non-GPU builds */
 typedef int PmeGpuKernelParams;
 #endif
 
 struct DeviceInformation;
+
+/*! \internal \brief
+ * Contains information about the PP ranks that partners this PME rank.
+ * used in the pme gather kernel for nvshmem purpose*/
+struct PpRanksSendFInfo
+{
+    //! The MPI rank ID of this partner PP rank.
+    int rankId = -1;
+    //! The number of atoms to communicate with this partner PP rank.
+    int numAtoms = -1;
+    //! starting offset of this PP rank in the larger force buffer
+    int startAtomOffset = -1;
+};
 
 /*! \internal \brief
  * The PME GPU structure for all the data copied directly from the CPU PME structure.
@@ -122,11 +127,63 @@ struct PmeShared
     bool isRankPmeOnly;
     /*! \brief The box scaler based on inputrec - created in pme_init and managed by CPU structure */
     class EwaldBoxZScaler* boxScaler;
-    /*! \brief The previous computation box to know if we even need to update the current box params.
-     * \todo Manage this on higher level.
-     * \todo Alternatively, when this structure is used by CPU PME code, make use of this field there as well.
-     */
-    matrix previousBox;
+
+    /*! \brief The The number of decomposition dimensions */
+    int ndecompdim;
+    /*! \brief MPI rank within communicator */
+    int nodeid;
+    /*! \brief Number of MPI ranks doing PME */
+    int nnodes;
+    /*! \brief MPI rank within communicator for PME X-decomposition */
+    int nodeidX;
+    /*! \brief MPI rank within communicator for PME Y-decomposition */
+    int nodeidY;
+    /*! \brief Number of MPI ranks in X-decomposition */
+    int nnodesX;
+    /*! \brief Number of MPI ranks in Y-decomposition */
+    int nnodesY;
+    /*! \brief MPI communicator for PME ranks */
+    MPI_Comm mpiComm;
+    /*! \brief MPI communicator for ranks in X-decomposition */
+    MPI_Comm mpiCommX;
+    /*! \brief MPI communicator for ranks in Y-decomposition */
+    MPI_Comm mpiCommY;
+    /*! \brief local interpolation grid start values in x-dimension*/
+    std::vector<int> s2g0X;
+    /*! \brief local interpolation grid end values in x-dimension*/
+    std::vector<int> s2g1X;
+    /*! \brief local interpolation grid start values in y-dimension*/
+    std::vector<int> s2g0Y;
+    /*! \brief local interpolation grid end values in y-dimension*/
+    std::vector<int> s2g1Y;
+    /*! \brief local grid size*/
+    std::array<int, DIM> pmegridNk;
+    /*! \brief Size of the grid halo region */
+    int gridHalo;
+};
+
+struct PmeNvshmemHost
+{
+    /*! \brief symmetric value across PME+PP ranks of max num atoms to allocate */
+    int nAtomsAlloc_symmetric;
+    /*! \brief PpRanks struct reference */
+    gmx::ArrayRef<PpRanks> ppRanksRef;
+    /*! \brief PpRanksSendFInfo struct containing info about each PP rank offsets */
+    gmx::HostVector<PpRanksSendFInfo> ppRanksFInfo;
+    /*! \brief PpRanksSendFInfo struct allocation size tracker */
+    int ppRanksFInfoSize = 0;
+    /*! \brief PpRanksSendFInfo struct allocation size tracker */
+    int ppRanksFInfoSizeAlloc = 0;
+    /*! \brief per pp rank atomic counter allocation size tracker */
+    int lastProcessedBlockPerPpRankSize = 0;
+    /*! \brief per pp rank atomic counter allocation size tracker */
+    int lastProcessedBlockPerPpRankSizeAlloc = 0;
+    /*! \brief sync object for nvshmem based pme-pp force comm allocation size tracker */
+    int forcesReadyNvshmemFlagsSize = 0;
+    /*! \brief sync object for nvshmem based pme-pp force comm allocation size tracker */
+    int forcesReadyNvshmemFlagsSizeAlloc = 0;
+    //! MPI Communicator for simulation == NVSHMEM Team
+    MPI_Comm mpiCommMySim;
 };
 
 /*! \internal \brief
@@ -169,6 +226,18 @@ struct PmeGpu
      */
     std::intmax_t maxGridWidthX;
 
+    /*! \brief Minimum particle count to prefer recalculating splines.
+     *
+     * The gather kernel can either recalculate the splines or load
+     * those saved during the spline (and spread)
+     * kernel. Recalculating is advantageous when there are enough
+     * particles. When so doing, it is best to use fewer threads per
+     * atom in the spline and spread.
+     *
+     * This feature is supported by CUDA and SYCL. Spread pipelining
+     * requires spline recalculation. */
+    int minParticleCountToRecalculateSplines = 23000;
+
     /*! \brief A single structure encompassing all the PME data used on GPU.
      * Its value is the only argument to all the PME GPU kernels.
      * \todo Test whether this should be copied to the constant GPU memory once for each computation
@@ -178,6 +247,13 @@ struct PmeGpu
 
     /*! \brief The pointer to GPU-framework specific host-side data, such as CUDA streams and events. */
     std::shared_ptr<PmeGpuSpecific> archSpecific; /* FIXME: make it an unique_ptr */
+
+    /*! \brief The pointer to PME halo-exchange specific host-side data */
+    std::unique_ptr<PmeGpuHaloExchange> haloExchange;
+
+    bool useNvshmem = false;
+
+    std::unique_ptr<PmeNvshmemHost> nvshmemParams;
 };
 
 #endif

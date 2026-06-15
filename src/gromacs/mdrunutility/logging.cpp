@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2018,2019, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2018- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \internal \file
  *
@@ -43,13 +42,15 @@
 
 #include "logging.h"
 
+#include <filesystem>
 #include <memory>
+#include <string>
 
 #include "gromacs/fileio/gmxfio.h"
-#include "gromacs/utility/binaryinformation.h"
+#include "gromacs/mdrun/binary_information.h"
 #include "gromacs/utility/cstringutil.h"
 #include "gromacs/utility/exceptions.h"
-#include "gromacs/utility/fatalerror.h"
+#include "gromacs/utility/gmxassert.h"
 #include "gromacs/utility/programcontext.h"
 #include "gromacs/utility/smalloc.h"
 
@@ -60,11 +61,6 @@ namespace gmx
 static void prepareLogFile(BinaryInformationSettings settings, FILE* fplog)
 {
     GMX_RELEASE_ASSERT(fplog != nullptr, "Log file must be already open");
-    // TODO This function is writing initial content to the log
-    // file. Preparing the error output handling should happen at some
-    // later point, using this log file, but should not be done at the
-    // same time as writing content. Move this call there.
-    gmx_fatal_set_log_file(fplog);
 
     try
     {
@@ -74,7 +70,7 @@ static void prepareLogFile(BinaryInformationSettings settings, FILE* fplog)
     GMX_CATCH_ALL_AND_EXIT_WITH_FATAL_ERROR
     fprintf(fplog, "\n");
 
-    fflush(fplog);
+    std::fflush(fplog);
 }
 
 LogFilePtr openLogFile(const char* lognm, bool appendFiles)
@@ -121,7 +117,6 @@ void closeLogFile(t_fileio* logfio)
 {
     if (logfio)
     {
-        gmx_fatal_set_log_file(nullptr);
         gmx_fio_close(logfio);
     }
 }

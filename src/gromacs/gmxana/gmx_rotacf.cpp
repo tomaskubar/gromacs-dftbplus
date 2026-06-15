@@ -1,13 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
- * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2016,2017 by the GROMACS development team.
- * Copyright (c) 2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 1991- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -21,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -30,29 +26,40 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 #include "gmxpre.h"
 
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 
+#include <filesystem>
+#include <string>
+
+#include "gromacs/commandline/filenm.h"
 #include "gromacs/commandline/pargs.h"
 #include "gromacs/commandline/viewit.h"
 #include "gromacs/correlationfunctions/autocorr.h"
+#include "gromacs/fileio/filetypes.h"
 #include "gromacs/fileio/trxio.h"
 #include "gromacs/gmxana/gmx_ana.h"
-#include "gromacs/math/vec.h"
 #include "gromacs/pbcutil/rmpbc.h"
 #include "gromacs/topology/index.h"
 #include "gromacs/topology/topology.h"
 #include "gromacs/utility/arraysize.h"
+#include "gromacs/utility/basedefinitions.h"
 #include "gromacs/utility/fatalerror.h"
-#include "gromacs/utility/futil.h"
+#include "gromacs/utility/real.h"
 #include "gromacs/utility/smalloc.h"
+#include "gromacs/utility/vec.h"
+#include "gromacs/utility/vectypes.h"
+
+enum class PbcType : int;
+struct gmx_output_env_t;
 
 int gmx_rotacf(int argc, char* argv[])
 {
@@ -101,9 +108,9 @@ int gmx_rotacf(int argc, char* argv[])
     t_topology*   top;
     PbcType       pbcType;
     t_filenm      fnm[] = { { efTRX, "-f", nullptr, ffREAD },
-                       { efTPR, nullptr, nullptr, ffREAD },
-                       { efNDX, nullptr, nullptr, ffREAD },
-                       { efXVG, "-o", "rotacf", ffWRITE } };
+                            { efTPR, nullptr, nullptr, ffREAD },
+                            { efNDX, nullptr, nullptr, ffREAD },
+                            { efXVG, "-o", "rotacf", ffWRITE } };
 #define NFILE asize(fnm)
     int      npargs;
     t_pargs* ppa;
@@ -113,8 +120,8 @@ int gmx_rotacf(int argc, char* argv[])
     npargs = asize(pa);
     ppa    = add_acf_pargs(&npargs, pa);
 
-    if (!parse_common_args(&argc, argv, PCA_CAN_VIEW | PCA_CAN_TIME, NFILE, fnm, npargs, ppa,
-                           asize(desc), desc, 0, nullptr, &oenv))
+    if (!parse_common_args(
+                &argc, argv, PCA_CAN_VIEW | PCA_CAN_TIME, NFILE, fnm, npargs, ppa, asize(desc), desc, 0, nullptr, &oenv))
     {
         sfree(ppa);
         return 0;
@@ -228,8 +235,8 @@ int gmx_rotacf(int argc, char* argv[])
 
         mode = eacVector;
 
-        do_autocorr(ftp2fn(efXVG, NFILE, fnm), oenv, "Rotational Correlation Function", teller,
-                    nvec, c1, dt, mode, bAver);
+        do_autocorr(
+                ftp2fn(efXVG, NFILE, fnm), oenv, "Rotational Correlation Function", teller, nvec, c1, dt, mode, bAver);
     }
 
     do_view(oenv, ftp2fn(efXVG, NFILE, fnm), nullptr);

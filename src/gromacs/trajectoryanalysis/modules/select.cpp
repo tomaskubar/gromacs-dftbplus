@@ -1,12 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2009,2010,2011,2012,2013 by the GROMACS development team.
- * Copyright (c) 2014,2015,2016,2017,2018 by the GROMACS development team.
- * Copyright (c) 2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2009- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -20,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -29,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \internal \file
  * \brief
@@ -46,9 +43,10 @@
 #include "select.h"
 
 #include <cstdio>
-#include <cstring>
 
 #include <algorithm>
+#include <filesystem>
+#include <memory>
 #include <set>
 #include <string>
 #include <vector>
@@ -64,21 +62,29 @@
 #include "gromacs/options/basicoptions.h"
 #include "gromacs/options/filenameoption.h"
 #include "gromacs/options/ioptionscontainer.h"
+#include "gromacs/options/optionfiletype.h"
+#include "gromacs/selection/indexutil.h"
 #include "gromacs/selection/selection.h"
+#include "gromacs/selection/selectionenums.h"
 #include "gromacs/selection/selectionoption.h"
-#include "gromacs/topology/topology.h"
+#include "gromacs/topology/atoms.h"
 #include "gromacs/trajectory/trajectoryframe.h"
 #include "gromacs/trajectoryanalysis/analysissettings.h"
 #include "gromacs/trajectoryanalysis/topologyinformation.h"
 #include "gromacs/utility/arrayref.h"
-#include "gromacs/utility/exceptions.h"
+#include "gromacs/utility/basedefinitions.h"
+#include "gromacs/utility/enumerationhelpers.h"
 #include "gromacs/utility/gmxassert.h"
+#include "gromacs/utility/real.h"
 #include "gromacs/utility/smalloc.h"
 #include "gromacs/utility/stringutil.h"
-#include "gromacs/utility/unique_cptr.h"
+#include "gromacs/utility/vectypes.h"
+
+struct t_pbc;
 
 namespace gmx
 {
+class AbstractAnalysisData;
 
 namespace analysismodules
 {
@@ -119,10 +125,10 @@ private:
 
     struct GroupInfo
     {
-        GroupInfo(const std::string& name, bool bDynamic) : name(name), bDynamic(bDynamic) {}
+        GroupInfo(const std::string& name, bool bDynamic) : name_(name), bDynamic_(bDynamic) {}
 
-        std::string name;
-        bool        bDynamic;
+        std::string name_;
+        bool        bDynamic_;
     };
 
     std::string            fnm_;
@@ -138,10 +144,7 @@ private:
  */
 
 IndexFileWriterModule::IndexFileWriterModule() :
-    fp_(nullptr),
-    currentGroup_(-1),
-    currentSize_(0),
-    bAnyWritten_(false)
+    fp_(nullptr), currentGroup_(-1), currentSize_(0), bAnyWritten_(false)
 {
 }
 
@@ -208,15 +211,15 @@ void IndexFileWriterModule::pointsAdded(const AnalysisDataPointSetRef& points)
     if (points.firstColumn() == 0)
     {
         ++currentGroup_;
-        GMX_RELEASE_ASSERT(currentGroup_ < ssize(groups_), "Too few groups initialized");
-        if (bFirstFrame || groups_[currentGroup_].bDynamic)
+        GMX_RELEASE_ASSERT(currentGroup_ < gmx::ssize(groups_), "Too few groups initialized");
+        if (bFirstFrame || groups_[currentGroup_].bDynamic_)
         {
             if (!bFirstFrame || currentGroup_ > 0)
             {
                 std::fprintf(fp_, "\n\n");
             }
-            std::string name = groups_[currentGroup_].name;
-            if (groups_[currentGroup_].bDynamic)
+            std::string name = groups_[currentGroup_].name_;
+            if (groups_[currentGroup_].bDynamic_)
             {
                 name += formatString("_f%d_t%.3f", points.frameIndex(), points.x());
             }
@@ -227,7 +230,7 @@ void IndexFileWriterModule::pointsAdded(const AnalysisDataPointSetRef& points)
     }
     else
     {
-        if (bFirstFrame || groups_[currentGroup_].bDynamic)
+        if (bFirstFrame || groups_[currentGroup_].bDynamic_)
         {
             if (currentSize_ % 15 == 0)
             {
@@ -275,8 +278,9 @@ enum class PdbAtomsSelection : int
 const EnumerationArray<ResidueNumbering, const char*> c_residueNumberingTypeNames = { { "number",
                                                                                         "index" } };
 //! String values corresponding to PdbAtomsSelection.
-const EnumerationArray<PdbAtomsSelection, const char*> c_pdbAtomsTypeNames = { { "all", "maxsel",
-                                                                                 "selected" } };
+const EnumerationArray<PdbAtomsSelection, const char*> c_pdbAtomsTypeNames = {
+    { "all", "maxsel", "selected" }
+};
 
 class Select : public TrajectoryAnalysisModule
 {
@@ -428,50 +432,50 @@ void Select::initOptions(IOptionsContainer* options, TrajectoryAnalysisSettings*
     settings->setHelpText(desc);
 
     options->addOption(FileNameOption("os")
-                               .filetype(eftPlot)
+                               .filetype(OptionFileType::Plot)
                                .outputFile()
                                .store(&fnSize_)
                                .defaultBasename("size")
                                .description("Number of positions in each selection"));
     options->addOption(FileNameOption("oc")
-                               .filetype(eftPlot)
+                               .filetype(OptionFileType::Plot)
                                .outputFile()
                                .store(&fnFrac_)
                                .defaultBasename("cfrac")
                                .description("Covered fraction for each selection"));
     options->addOption(FileNameOption("oi")
-                               .filetype(eftGenericData)
+                               .filetype(OptionFileType::GenericData)
                                .outputFile()
                                .store(&fnIndex_)
                                .defaultBasename("index")
                                .description("Indices selected by each selection"));
     options->addOption(FileNameOption("on")
-                               .filetype(eftIndex)
+                               .filetype(OptionFileType::AtomIndex)
                                .outputFile()
                                .store(&fnNdx_)
                                .defaultBasename("index")
                                .description("Index file from the selection"));
     options->addOption(FileNameOption("om")
-                               .filetype(eftPlot)
+                               .filetype(OptionFileType::Plot)
                                .outputFile()
                                .store(&fnMask_)
                                .defaultBasename("mask")
                                .description("Mask for selected positions"));
     options->addOption(FileNameOption("of")
-                               .filetype(eftPlot)
+                               .filetype(OptionFileType::Plot)
                                .outputFile()
                                .store(&fnOccupancy_)
                                .defaultBasename("occupancy")
                                .description("Occupied fraction for selected positions"));
     options->addOption(
             FileNameOption("ofpdb")
-                    .filetype(eftPDB)
+                    .filetype(OptionFileType::PDB)
                     .outputFile()
                     .store(&fnPDB_)
                     .defaultBasename("occupancy")
                     .description("PDB file with occupied fraction for selected positions"));
     options->addOption(FileNameOption("olt")
-                               .filetype(eftPlot)
+                               .filetype(OptionFileType::Plot)
                                .outputFile()
                                .store(&fnLifetime_)
                                .defaultBasename("lifetime")
@@ -510,9 +514,9 @@ void Select::initAnalysis(const TrajectoryAnalysisSettings& settings, const Topo
 {
     bResInd_ = (resNumberType_ == ResidueNumbering::ByIndex);
 
-    for (SelectionList::iterator i = sel_.begin(); i != sel_.end(); ++i)
+    for (auto& i : sel_)
     {
-        i->initCoveredFraction(CFRAC_SOLIDANGLE);
+        i.initCoveredFraction(CFRAC_SOLIDANGLE);
     }
 
     // TODO: For large systems, a float may not have enough precision

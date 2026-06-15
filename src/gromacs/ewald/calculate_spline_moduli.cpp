@@ -1,13 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
- * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2016,2017 by the GROMACS development team.
- * Copyright (c) 2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 1991- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -21,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -30,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 #include "gmxpre.h"
 
@@ -43,14 +39,18 @@
 
 #include <algorithm>
 
+#include "gromacs/math/units.h"
 #include "gromacs/math/utilities.h"
-#include "gromacs/math/vec.h"
+#include "gromacs/utility/arrayref.h"
 #include "gromacs/utility/exceptions.h"
 #include "gromacs/utility/gmxassert.h"
-#include "gromacs/utility/smalloc.h"
+#include "gromacs/utility/vec.h"
+#include "gromacs/utility/vectypes.h"
 
-static void make_dft_mod(real* mod, const double* data, int splineOrder, int ndata)
+static std::vector<real> make_dft_mod(gmx::ArrayRef<const double> data, int splineOrder, int ndata)
 {
+    std::vector<real> mod(ndata);
+
     for (int i = 0; i < ndata; i++)
     {
         /* We use double precision, since this is only called once per grid.
@@ -62,8 +62,8 @@ static void make_dft_mod(real* mod, const double* data, int splineOrder, int nda
         for (int j = 0; j < splineOrder; j++)
         {
             double arg = (2.0 * M_PI * i * (j + 1)) / ndata;
-            sc += data[j] * cos(arg);
-            ss += data[j] * sin(arg);
+            sc += data[j] * std::cos(arg);
+            ss += data[j] * std::sin(arg);
         }
         mod[i] = sc * sc + ss * ss;
     }
@@ -82,16 +82,12 @@ static void make_dft_mod(real* mod, const double* data, int splineOrder, int nda
          */
         mod[ndata / 2] = (mod[ndata / 2 - 1] + mod[ndata / 2 + 1]) * 0.5;
     }
+
+    return mod;
 }
 
-void make_bspline_moduli(splinevec bsp_mod, int nx, int ny, int nz, int pme_order)
+std::array<std::vector<real>, 3> make_bspline_moduli(int nx, int ny, int nz, int pme_order)
 {
-    /* We use double precision, since this is only called once per grid.
-     * But for single precision bsp_mod, single precision also seems
-     * to give full accuracy.
-     */
-    double* data;
-
     /* In GROMACS we, confusingly, defined pme-order as the order
      * of the cardinal B-spline + 1. This probably happened because
      * the smooth PME paper only talks about "n" which is the number
@@ -99,7 +95,11 @@ void make_bspline_moduli(splinevec bsp_mod, int nx, int ny, int nz, int pme_orde
      */
     const int splineOrder = pme_order - 1;
 
-    snew(data, splineOrder);
+    /* We use double precision, since this is only called once per grid.
+     * But for single precision bsp_mod, single precision also seems
+     * to give full accuracy.
+     */
+    std::vector<double> data(splineOrder);
 
     data[0] = 1;
     for (int k = 1; k < splineOrder; k++)
@@ -117,11 +117,13 @@ void make_bspline_moduli(splinevec bsp_mod, int nx, int ny, int nz, int pme_orde
         data[0] = div * data[0];
     }
 
-    make_dft_mod(bsp_mod[XX], data, splineOrder, nx);
-    make_dft_mod(bsp_mod[YY], data, splineOrder, ny);
-    make_dft_mod(bsp_mod[ZZ], data, splineOrder, nz);
+    std::array<std::vector<real>, 3> bsp_mod;
 
-    sfree(data);
+    bsp_mod[XX] = make_dft_mod(data, splineOrder, nx);
+    bsp_mod[YY] = make_dft_mod(data, splineOrder, ny);
+    bsp_mod[ZZ] = make_dft_mod(data, splineOrder, nz);
+
+    return bsp_mod;
 }
 
 /* Return the P3M optimal influence function */
@@ -158,7 +160,7 @@ static double do_p3m_influence(double z, int order)
 }
 
 /* Calculate the P3M B-spline moduli for one dimension */
-static void make_p3m_bspline_moduli_dim(real* bsp_mod, int n, int order)
+static std::vector<real> make_p3m_bspline_moduli_dim(int n, int order)
 {
     double zarg, zai, sinzai, infl;
     int    maxk, i;
@@ -168,6 +170,8 @@ static void make_p3m_bspline_moduli_dim(real* bsp_mod, int n, int order)
         GMX_THROW(gmx::InconsistentInputError("The current P3M code only supports orders up to 8"));
     }
 
+    std::vector<real> bsp_mod(n);
+
     zarg = M_PI / n;
 
     maxk = (n + 1) / 2;
@@ -175,24 +179,30 @@ static void make_p3m_bspline_moduli_dim(real* bsp_mod, int n, int order)
     for (i = -maxk; i < 0; i++)
     {
         zai            = zarg * i;
-        sinzai         = sin(zai);
+        sinzai         = std::sin(zai);
         infl           = do_p3m_influence(sinzai, order);
-        bsp_mod[n + i] = infl * infl * pow(sinzai / zai, -2.0 * order);
+        bsp_mod[n + i] = infl * infl * std::pow(sinzai / zai, -2.0 * order);
     }
     bsp_mod[0] = 1.0;
     for (i = 1; i < maxk; i++)
     {
         zai        = zarg * i;
-        sinzai     = sin(zai);
+        sinzai     = std::sin(zai);
         infl       = do_p3m_influence(sinzai, order);
-        bsp_mod[i] = infl * infl * pow(sinzai / zai, -2.0 * order);
+        bsp_mod[i] = infl * infl * std::pow(sinzai / zai, -2.0 * order);
     }
+
+    return bsp_mod;
 }
 
 /* Calculate the P3M B-spline moduli */
-void make_p3m_bspline_moduli(splinevec bsp_mod, int nx, int ny, int nz, int order)
+std::array<std::vector<real>, 3> make_p3m_bspline_moduli(int nx, int ny, int nz, int order)
 {
-    make_p3m_bspline_moduli_dim(bsp_mod[XX], nx, order);
-    make_p3m_bspline_moduli_dim(bsp_mod[YY], ny, order);
-    make_p3m_bspline_moduli_dim(bsp_mod[ZZ], nz, order);
+    std::array<std::vector<real>, 3> bsp_mod;
+
+    bsp_mod[XX] = make_p3m_bspline_moduli_dim(nx, order);
+    bsp_mod[YY] = make_p3m_bspline_moduli_dim(ny, order);
+    bsp_mod[ZZ] = make_p3m_bspline_moduli_dim(nz, order);
+
+    return bsp_mod;
 }

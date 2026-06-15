@@ -1,11 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2010-2018, The GROMACS development team.
- * Copyright (c) 2019, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2010- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -19,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -28,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \internal \file
  * \brief
@@ -42,23 +40,40 @@
  */
 #include "gmxpre.h"
 
-#include "basicoptions.h"
+#include "gromacs/options/basicoptions.h"
 
 #include <cerrno>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 
 #include <algorithm>
+#include <functional>
 #include <limits>
+#include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
+#include "gromacs/options/abstractoption.h"
+#include "gromacs/options/ivaluestore.h"
+#include "gromacs/options/optionflags.h"
+#include "gromacs/utility/any.h"
+#include "gromacs/utility/arrayref.h"
+#include "gromacs/utility/basedefinitions.h"
 #include "gromacs/utility/cstringutil.h"
 #include "gromacs/utility/exceptions.h"
+#include "gromacs/utility/gmxassert.h"
 #include "gromacs/utility/strconvert.h"
 #include "gromacs/utility/stringutil.h"
 
 #include "basicoptionstorage.h"
+
+namespace gmx
+{
+class AbstractOptionStorage;
+class OptionManagerContainer;
+} // namespace gmx
 
 namespace
 {
@@ -105,7 +120,7 @@ void expandVector(size_t length, std::vector<ValueType>* values)
  * \ingroup module_options
  */
 std::vector<std::string>::const_iterator findEnumValue(const std::vector<std::string>& allowedValues,
-                                                       const std::string&              value)
+                                                       const std::string& value)
 {
     std::vector<std::string>::const_iterator i;
     std::vector<std::string>::const_iterator match = allowedValues.end();
@@ -122,7 +137,9 @@ std::vector<std::string>::const_iterator findEnumValue(const std::vector<std::st
     }
     if (match == allowedValues.end())
     {
-        GMX_THROW(gmx::InvalidInputError("Invalid value: " + value));
+        const std::string allowedValuesJoined = gmx::joinStrings(allowedValues, ", ");
+        GMX_THROW(gmx::InvalidInputError(gmx::formatString(
+                "Invalid value: %s. Allowed values: %s.", value.c_str(), allowedValuesJoined.c_str())));
     }
     return match;
 }
@@ -168,6 +185,7 @@ bool BooleanOptionInfo::defaultValue() const
 
 AbstractOptionStorage* BooleanOption::createStorage(const OptionManagerContainer& /*managers*/) const
 {
+    // NOLINTNEXTLINE(cppcoreguidelines-owning-memory)
     return new BooleanOptionStorage(*this);
 }
 
@@ -206,7 +224,49 @@ IntegerOptionInfo::IntegerOptionInfo(IntegerOptionStorage* option) : OptionInfo(
 
 AbstractOptionStorage* IntegerOption::createStorage(const OptionManagerContainer& /*managers*/) const
 {
+    // NOLINTNEXTLINE(cppcoreguidelines-owning-memory)
     return new IntegerOptionStorage(*this);
+}
+
+/********************************************************************
+ * UnsignedIntegerOptionStorage
+ */
+
+std::string UnsignedIntegerOptionStorage::formatSingleValue(const unsigned int& value) const
+{
+    return toString(value);
+}
+
+void UnsignedIntegerOptionStorage::initConverter(ConverterType* converter)
+{
+    converter->addConverter<std::string>(&fromStdString<unsigned int>);
+}
+
+void UnsignedIntegerOptionStorage::processSetValues(ValueList* values)
+{
+    if (isVector())
+    {
+        expandVector(maxValueCount(), values);
+    }
+}
+
+/********************************************************************
+ * UnsignedIntegerOptionInfo
+ */
+
+UnsignedIntegerOptionInfo::UnsignedIntegerOptionInfo(UnsignedIntegerOptionStorage* option) :
+    OptionInfo(option)
+{
+}
+
+/********************************************************************
+ * UnsignedIntegerOption
+ */
+
+AbstractOptionStorage* UnsignedIntegerOption::createStorage(const OptionManagerContainer& /*managers*/) const
+{
+    // NOLINTNEXTLINE(cppcoreguidelines-owning-memory)
+    return new UnsignedIntegerOptionStorage(*this);
 }
 
 
@@ -224,6 +284,14 @@ void Int64OptionStorage::initConverter(ConverterType* converter)
     converter->addConverter<std::string>(&fromStdString<int64_t>);
 }
 
+void Int64OptionStorage::processSetValues(ValueList* values)
+{
+    if (isVector())
+    {
+        expandVector(maxValueCount(), values);
+    }
+}
+
 /********************************************************************
  * Int64OptionInfo
  */
@@ -236,7 +304,50 @@ Int64OptionInfo::Int64OptionInfo(Int64OptionStorage* option) : OptionInfo(option
 
 AbstractOptionStorage* Int64Option::createStorage(const OptionManagerContainer& /*managers*/) const
 {
+    // NOLINTNEXTLINE(cppcoreguidelines-owning-memory)
     return new Int64OptionStorage(*this);
+}
+
+/********************************************************************
+ * UnsignedInt64OptionStorage
+ */
+
+std::string UnsignedInt64OptionStorage::formatSingleValue(const uint64_t& value) const
+{
+    return toString(value);
+}
+
+void UnsignedInt64OptionStorage::initConverter(ConverterType* converter)
+{
+    converter->addConverter<std::string>(&fromStdString<uint64_t>);
+}
+
+void UnsignedInt64OptionStorage::processSetValues(ValueList* values)
+{
+    if (isVector())
+    {
+        expandVector(maxValueCount(), values);
+    }
+}
+
+
+/********************************************************************
+ * UnsignedInt64OptionInfo
+ */
+
+UnsignedInt64OptionInfo::UnsignedInt64OptionInfo(UnsignedInt64OptionStorage* option) :
+    OptionInfo(option)
+{
+}
+
+/********************************************************************
+ * UnsignedInt64Option
+ */
+
+AbstractOptionStorage* UnsignedInt64Option::createStorage(const OptionManagerContainer& /*managers*/) const
+{
+    // NOLINTNEXTLINE(cppcoreguidelines-owning-memory)
+    return new UnsignedInt64OptionStorage(*this);
 }
 
 
@@ -245,10 +356,7 @@ AbstractOptionStorage* Int64Option::createStorage(const OptionManagerContainer& 
  */
 
 DoubleOptionStorage::DoubleOptionStorage(const DoubleOption& settings) :
-    MyBase(settings),
-    info_(this),
-    bTime_(settings.bTime_),
-    factor_(1.0)
+    MyBase(settings), info_(this), bTime_(settings.bTime_), factor_(1.0)
 {
 }
 
@@ -328,6 +436,7 @@ void DoubleOptionInfo::setScaleFactor(double factor)
 
 AbstractOptionStorage* DoubleOption::createStorage(const OptionManagerContainer& /*managers*/) const
 {
+    // NOLINTNEXTLINE(cppcoreguidelines-owning-memory)
     return new DoubleOptionStorage(*this);
 }
 
@@ -337,10 +446,7 @@ AbstractOptionStorage* DoubleOption::createStorage(const OptionManagerContainer&
  */
 
 FloatOptionStorage::FloatOptionStorage(const FloatOption& settings) :
-    MyBase(settings),
-    info_(this),
-    bTime_(settings.bTime_),
-    factor_(1.0)
+    MyBase(settings), info_(this), bTime_(settings.bTime_), factor_(1.0)
 {
 }
 
@@ -420,6 +526,7 @@ void FloatOptionInfo::setScaleFactor(double factor)
 
 AbstractOptionStorage* FloatOption::createStorage(const OptionManagerContainer& /*managers*/) const
 {
+    // NOLINTNEXTLINE(cppcoreguidelines-owning-memory)
     return new FloatOptionStorage(*this);
 }
 
@@ -429,8 +536,7 @@ AbstractOptionStorage* FloatOption::createStorage(const OptionManagerContainer& 
  */
 
 StringOptionStorage::StringOptionStorage(const StringOption& settings) :
-    MyBase(settings),
-    info_(this)
+    MyBase(settings), info_(this)
 {
     if (settings.defaultEnumIndex_ >= 0 && settings.enumValues_ == nullptr)
     {
@@ -525,6 +631,7 @@ const std::vector<std::string>& StringOptionInfo::allowedValues() const
 
 AbstractOptionStorage* StringOption::createStorage(const OptionManagerContainer& /*managers*/) const
 {
+    // NOLINTNEXTLINE(cppcoreguidelines-owning-memory)
     return new StringOptionStorage(*this);
 }
 
@@ -539,8 +646,7 @@ EnumOptionStorage::EnumOptionStorage(const AbstractOption& settings,
                                      int                   defaultValue,
                                      int                   defaultValueIfSet,
                                      StorePointer          store) :
-    MyBase(settings, std::move(store)),
-    info_(this)
+    MyBase(settings, std::move(store)), info_(this)
 {
     if (enumValues == nullptr)
     {
@@ -587,7 +693,7 @@ std::string EnumOptionStorage::formatExtraDescription() const
 
 std::string EnumOptionStorage::formatSingleValue(const int& value) const
 {
-    if (value < 0 || value >= ssize(allowed_))
+    if (value < 0 || value >= gmx::ssize(allowed_))
     {
         return std::string();
     }
@@ -601,9 +707,10 @@ Any EnumOptionStorage::normalizeValue(const int& value) const
 
 void EnumOptionStorage::initConverter(ConverterType* converter)
 {
-    converter->addConverter<std::string>([this](const std::string& value) {
-        return findEnumValue(this->allowed_, value) - this->allowed_.begin();
-    });
+    converter->addConverter<std::string>(
+            [this](const std::string& value) {
+                return static_cast<int>(findEnumValue(this->allowed_, value) - this->allowed_.begin());
+            });
 }
 
 /********************************************************************
@@ -637,7 +744,9 @@ AbstractOptionStorage* createEnumOptionStorage(const AbstractOption& option,
                                                int                   defaultValueIfSet,
                                                std::unique_ptr<IOptionValueStore<int>> store)
 {
-    return new EnumOptionStorage(option, enumValues, count, defaultValue, defaultValueIfSet, move(store));
+    // NOLINTNEXTLINE(cppcoreguidelines-owning-memory)
+    return new EnumOptionStorage(
+            option, enumValues, count, defaultValue, defaultValueIfSet, std::move(store));
 }
 //! \endcond
 

@@ -29,9 +29,9 @@ improper dihedral potential as well.
                           {\lambda}k_b^B\right] \left[b - {(1-{\lambda})}b_0^A - {\lambda}b_0^B\right]^2  \\
           {\frac{\partial V_b}{\partial {\lambda}}}&=&{\frac{1}{2}}(k_b^B-k_b^A)
                           \left[b - {(1-{\lambda})}b_0^A + {\lambda}b_0^B\right]^2 + 
-          		\nonumber\\
+                \nonumber\\
                   & & \phantom{{\frac{1}{2}}}(b_0^A-b_0^B) \left[b - {(1-{\lambda})}b_0^A -{\lambda}b_0^B\right]
-          		\left[{(1-{\lambda})}k_b^A + {\lambda}k_b^B \right]\end{aligned}
+                \left[{(1-{\lambda})}k_b^A + {\lambda}k_b^B \right]\end{aligned}
           :label: eqnfepharmpot
 
 GROMOS-96 bonds and angles
@@ -49,15 +49,15 @@ For the proper dihedrals, the equations are somewhat more complicated:
 .. math:: \begin{aligned}
           V_d     &=&\left[{(1-{\lambda})}k_d^A + {\lambda}k_d^B \right]
                   \left( 1+ \cos\left[n_{\phi} \phi - 
-          		    {(1-{\lambda})}\phi_s^A - {\lambda}\phi_s^B
-          		    \right]\right)\\
+                    {(1-{\lambda})}\phi_s^A - {\lambda}\phi_s^B
+                    \right]\right)\\
           {\frac{\partial V_d}{\partial {\lambda}}}&=&(k_d^B-k_d^A) 
                    \left( 1+ \cos
-          		 \left[
-          		    n_{\phi} \phi- {(1-{\lambda})}\phi_s^A - {\lambda}\phi_s^B
-          		 \right]
-          	 \right) +
-          	 \nonumber\\
+                 \left[
+                    n_{\phi} \phi- {(1-{\lambda})}\phi_s^A - {\lambda}\phi_s^B
+                 \right]
+             \right) +
+             \nonumber\\
                   &&(\phi_s^B - \phi_s^A) \left[{(1-{\lambda})}k_d^A - {\lambda}k_d^B\right] 
                   \sin\left[  n_{\phi}\phi - {(1-{\lambda})}\phi_s^A - {\lambda}\phi_s^B \right]\end{aligned}
           :label: eqnfeppropdihedral
@@ -138,7 +138,7 @@ Kinetic Energy
 When the mass of a particle changes, there is also a contribution of the
 kinetic energy to the free energy (note that we can not write the
 momentum :math:`\mathbf{p}` as
-m :math:`\mathbf{v}`, since that would result in the
+:math:`m \mathbf{v}`, since that would result in the
 sign of :math:`{\frac{\partial E_k}{\partial {\lambda}}}` being
 incorrect \ :ref:`99 <refGunsteren98a>`):
 
@@ -148,7 +148,7 @@ incorrect \ :ref:`99 <refGunsteren98a>`):
           :label: eqnfepekin
 
 after taking the derivative, we *can* insert
-:math:`\mathbf{p}` = m :math:`\mathbf{v}`, such that:
+:math:`\mathbf{p}` = :math:`m \mathbf{v}`, such that:
 
 .. math:: {\frac{\partial E_k}{\partial {\lambda}}}~=~    -{\frac{1}{2}}\mathbf{v}^2(m^B-m^A)
           :label: eqnfepekinderivative
@@ -198,8 +198,8 @@ with :math:`d_k` as before, so
           {\frac{\partial G}{\partial {\lambda}}}    &=&     -2 \sum^K_k \lambda_k \left(d_k^B-d_k^A\right)\end{aligned}
           :label: eqnfepshakeconstr2
 
-Soft-core interactions
-~~~~~~~~~~~~~~~~~~~~~~
+Soft-core interactions: Beutler *et al.*
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 .. _fig-softcore:
 
@@ -229,7 +229,8 @@ energies and forces involved at :math:`{\lambda}` values between 0 and
 
 In |Gromacs| the soft-core potentials :math:`V_{sc}` are shifted versions
 of the regular potentials, so that the singularity in the potential and
-its derivatives at :math:`r=0` is never reached:
+its derivatives at :math:`r=0` is never reached. This formulation was
+introduced by Beutler *et al.*\ :ref:`100 <refBeutler94>`:
 
 .. math:: \begin{aligned}
           V_{sc}(r) &=& {(1-{\lambda})}V^A(r_A) + {\lambda}V^B(r_B)
@@ -247,7 +248,10 @@ soft-core parameter (set with ``sc_alpha`` in the
 power (set with ``sc_power``), :math:`\sigma` is the radius
 of the interaction, which is :math:`(C_{12}/C_6)^{1/6}` or an input
 parameter (``sc_sigma``) when :math:`C_6` or :math:`C_{12}`
-is zero.
+is zero. Beutler *et al.*\ :ref:`100 <refBeutler94>` probed various
+combinations of the :math:`r` power values for the Lennard-Jones
+and Coulombic interactions. |Gromacs| uses :math:`r^6` for both,
+van der Waals and electrostatic interactions.
 
 For intermediate :math:`{\lambda}`, :math:`r_A` and :math:`r_B` alter
 the interactions very little for :math:`r > \alpha^{1/6} \sigma` and
@@ -265,25 +269,24 @@ contribution to the derivative of the free energy is:
 .. math:: \begin{aligned}
           {\frac{\partial V_{sc}(r)}{\partial {\lambda}}} & = &
            V^B(r_B) -V^A(r_A)  + 
-          	{(1-{\lambda})}\frac{\partial V^A(r_A)}{\partial r_A}
-          		   \frac{\partial r_A}{\partial {\lambda}} + 
-          	{\lambda}\frac{\partial V^B(r_B)}{\partial r_B}
-          		   \frac{\partial r_B}{\partial {\lambda}}
+            {(1-{\lambda})}\frac{\partial V^A(r_A)}{\partial r_A}
+                   \frac{\partial r_A}{\partial {\lambda}} + 
+            {\lambda}\frac{\partial V^B(r_B)}{\partial r_B}
+                   \frac{\partial r_B}{\partial {\lambda}}
           \nonumber\\
           &=&
            V^B(r_B) -V^A(r_A)  + \nonumber \\
            & &
            \frac{p \alpha}{6}
                  \left[ {\lambda}F^B(r_B) r^{-5}_B \sigma_B^6 {(1-{\lambda})}^{p-1} -
-          	       {(1-{\lambda})}F^A(r_A) r^{-5}_A \sigma_A^6 {\lambda}^{p-1} \right]\end{aligned}
+                   {(1-{\lambda})}F^A(r_A) r^{-5}_A \sigma_A^6 {\lambda}^{p-1} \right]\end{aligned}
           :label: eqnfepsoftcorederivative
 
 The original GROMOS Lennard-Jones soft-core
-function\ :ref:`100 <refBeutler94>` uses :math:`p=2`, but :math:`p=1` gives a smoother
+function :ref:`100 <refBeutler94>` uses :math:`p=2`, but :math:`p=1` gives a smoother
 :math:`\partial H/\partial{\lambda}` curve. Another issue that should be
 considered is the soft-core effect of hydrogens without Lennard-Jones
-interaction. Their soft-core :math:`\sigma` is set with
-``sc_sigma`` in the :ref:`mdp` file. These
+interaction. Their soft-core :math:`\sigma` is set with :mdp:`sc_sigma`. These
 hydrogens produce peaks in :math:`\partial H/\partial{\lambda}` at
 :math:`{\lambda}` is 0 and/or 1 for :math:`p=1` and close to 0 and/or 1
 with :math:`p=2`. Lowering ``sc_sigma``
@@ -292,38 +295,192 @@ with hydrogens relative to the other interactions in the soft-core
 state.
 
 When soft-core potentials are selected (by setting
-``sc_alpha >0``), and the Coulomb and Lennard-Jones
+:mdp-value:`sc_alpha >0`), and the Coulomb and Lennard-Jones
 potentials are turned on or off sequentially, then the Coulombic
 interaction is turned off linearly, rather than using soft-core
 interactions, which should be less statistically noisy in most cases.
-This behavior can be overwritten by using the :ref:`mdp` option
-``sc-coul`` to ``yes``. Note that the
-``sc-coul`` is only taken into account when lambda states
-are used, not with ``couple-lambda0``  /
-``couple-lambda1``, and you can still turn off soft-core
-interactions by setting ``sc-alpha=0``. Additionally, the
+This behavior can be overwritten by setting :mdp-value:`sc-coul=yes`. Note that
+:mdp:`sc-coul` is only taken into account when lambda states
+are used, and you can still turn off soft-core
+interactions by setting :mdp-value:`sc-alpha=0`. Additionally, the
 soft-core interaction potential is only applied when either the A or B
 state has zero interaction potential. If both A and B states have
 nonzero interaction potential, default linear scaling described above is
 used. When both Coulombic and Lennard-Jones interactions are turned off
 simultaneously, a soft-core potential is used, and a hydrogen is being
-introduced or deleted, the sigma is set to ``sc-sigma-min``,
-which itself defaults to ``sc-sigma-default``.
+introduced or deleted, the sigma is set to :mdp:`sc-sigma-min`,
+which itself defaults to :mdp:`sc-sigma-default`.
 
-Recently, a new formulation of the soft-core approach has been derived
-that in most cases gives lower and more even statistical variance than
-the standard soft-core path described above \ :ref:`101 <refPham2011>`,
-:ref:`102 <refPham2012>`. Specifically, we have:
+
+Soft-core interactions: Gapsys *et al.*
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+In this section we describe the functional form and parameters for 
+the soft-cored non-bonded interactions using the formalism by Gapsys *et al.* :ref:`183 <refGapsys2012>`.
+
+The Gapsys *et al.* soft-core is formulated to act on the level of van der Waals and electrostatic forces:
+the non-bonded interactions are linearized at a point defined as, :math:`r_{scLJ}` or :math:`r_{scQ}`, respectively.
+The linearization point depends on the state of the system as controlled by the :math:`\lambda` parameter and 
+two parameters :math:`\alpha_Q` (set with :mdp:`sc-gapsys-scale-linpoint-q`) and :math:`\alpha_{LJ}` (set with :mdp:`sc-gapsys-scale-linpoint-lj`).
+The dependence on :math:`\lambda` guarantees that the end-states are properly represented by their hard-core potentials.
+:numref:`Fig. %s <fig-gapsyssc>` illustrates the behaviour of the linearization point, forces and integrated potential energies with respect
+to the parameters :math:`\alpha_Q` and :math:`\alpha_{LJ}`. The optimal choices of the parameter values have been systematically explored in :ref:`183 <refGapsys2012>`. These recommended values are set by default when :mdp:`sc-function=gapsys` is selected: :mdp-value:`sc-gapsys-scale-linpoint-q=0.3` and :mdp-value:`sc-gapsys-scale-linpoint-lj=0.85`.
+
+.. _fig-gapsyssc:
+
+.. figure:: plots/gapsys-sc.*
+        :width: 15.0cm
+
+        Illustration of the soft-core parameter influence on the linearization point (top row), 
+        forces (middle row) and energies (bottom row)
+        for van der Waals (left column) and electrostatic interactions (right column).
+        The case of two interacting atoms is considered.
+        In state A both atoms have charges of 0.5 and :math:`\sigma=0.3` nm, :math:`\epsilon=0.5` kJ/mol.
+        In state B all the non-bonded interactions are set to zero.
+        The parameter :math:`\lambda` is set to 0.5 and electrostatic interaction cutoff is 1 nm.
+
+The parameter :math:`\alpha_{LJ}` is a unitless scaling factor in the range :math:`[0,1)`.
+It scales the position of the point from which the van der Waals force will be linearized.
+The linearization of the force is allowed in the range :math:`[0,F_{min}^{LJ})`,
+where setting :math:`\alpha_{LJ}=0` results in a standard hard-core van der Waals interaction.
+Setting :math:`\alpha_{LJ}` closer to 1 brings the force linearization point towards 
+the minimum in the Lennard-Jones force curve (:math:`F_{min}^{LJ}`).
+This construct allows retaining the repulsion between two particles with non-zero C12 parameter at any :math:`\lambda` value.
+
+The parameter :math:`\alpha_{Q}` has a unit of :math:`\frac{nm}{e^2}` and is defined in the range :math:`[0,\inf)`.
+It scales the position of the point from which the Coulombic force will be linearized.
+Even though in theory :math:`\alpha_{Q}` can be set to an arbitrarily large value,
+algorithmically the linearization point for the force is bound in the range :math:`[0,F_{rcoul}^{Q})`,
+where setting :math:`\alpha_{Q}=0` results in a standard hard-core Coulombic interaction.
+Setting :math:`\alpha_{Q}` to a larger value softens the Coulombic force.
+
+In all the notations below, for simplicity, the distance between two atoms :math:`i` and :math:`j` is noted as :math:`r`, i.e. :math:`r=r_{ij}`.
+
+Forces: van der Waals interactions
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 .. math:: \begin{aligned}
-          V_{sc}(r) &=& {(1-{\lambda})}V^A(r_A) + {\lambda}V^B(r_B)
-              \\
-          r_A &=& \left(\alpha \sigma_A^{48} {\lambda}^p + r^{48} \right)^\frac{1}{48}
-              \\
-          r_B &=& \left(\alpha \sigma_B^{48} {(1-{\lambda})}^p + r^{48} \right)^\frac{1}{48}\end{aligned}
-          :label: eqnnewsoftcore
+          \mathbf{F}_{ij}^{LJ}(\mathbf{r})=\begin{cases}
+          (\frac{12C_{ij}^{(12)}}{r^{13}} - \frac{6C_{ij}^{(6)}}{r^7})\frac{\mathbf{r}}{r}, & \mbox{if } \mbox{ $r \geq r_{scLJ}$} 
+          \\
+          \frac{d\mathbf{F}_{ij}^{LJ}}{dr}_{r=r_{scLJ}}r + \mathbf{F}_{ij}^{LJ}(r_{scLJ}), & \mbox{if } \mbox{ $r<r_{scLJ}$}
+          \end{cases}\end{aligned}
+          :label: eqvdwforces
 
-This “1-1-48” path is also implemented in |Gromacs|. Note that for this
-path the soft core :math:`\alpha` should satisfy
-:math:`0.001 < \alpha < 0.003`, rather than :math:`\alpha \approx
-0.5`.
+where the switching point between the soft and hard-core Lennard-Jones forces
+:math:`r_{scLJ} = \alpha_{LJ}(\frac{26}{7}\sigma^6\lambda)^{\frac{1}{6}}` for state A, and
+:math:`r_{scLJ} = \alpha_{LJ}(\frac{26}{7}\sigma^6(1-\lambda))^{\frac{1}{6}}` for state B.
+In analogy to the Beutler *et al.* soft core version, :math:`\sigma` is the radius of the interaction, which is :math:`(C_{12}/C_6)^{1/6}`
+or an input parameter (set with :mdp:`sc-sigma-LJ-gapsys`) when C6 or C12 is zero. The default value for this parameter is :mdp-value:`sc-sigma-LJ-gapsys=0.3`.
+
+Explicit expression:
+
+.. math:: \begin{aligned}
+          \mathbf{F}_{LJ}(\mathbf{r})=\begin{cases}
+          \left(\frac{12C^{(12)}}{r^{13}} - \frac{6C^{(6)}}{r^7}\right)\frac{\mathbf{r}}{r}, & \mbox{if } \mbox{ $r \geq r_{scLJ}$} 
+          \\
+          \left(-\frac{156C^{(12)}}{r_{scLJ}^{14}} + \frac{42C^{(6)}}{r_{scLJ}^{8}}\right)\mathbf{r} + \frac{168C^{(12)}}{r_{scLJ}^{13}} - \frac{48C^{(6)}}{r_{scLJ}^{7}}, & \mbox{if } \mbox{ $r<r_{scLJ}$}
+          \end{cases}\end{aligned}
+          :label: eqvdwforcesexpl
+
+Forces: Coulomb interactions
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+.. math:: \begin{aligned}
+          \mathbf{F}_{ij}^{Q}(\mathbf{r})=\begin{cases}
+          \frac{q_{i}q_{j}}{4{\pi}{\varepsilon_0}{\varepsilon_r}r^{2}}\frac{\mathbf{r}}{r}, & \mbox{if } \mbox{ $r \geq r_{scQ} < r_{cutoffQ}$} 
+          \\
+          \frac{d\mathbf{F}_{ij}^{Q}}{dr}_{r=r_{scQ}}r + \mathbf{F}_{ij}^{Q}(r_{scQ}), & \mbox{if } \mbox{ $r<r_{scQ} < r_{cutoffQ}$}
+          \\
+          \frac{d\mathbf{F}_{ij}^{Q}}{dr}_{r=r_{cutoffQ}}r + \mathbf{F}_{ij}^{Q}(r_{cutoffQ}), & \mbox{if } \mbox{ $r < r^{scQ} \geq r_{cutoffQ}$} 
+          \end{cases}\end{aligned}
+          :label: eqqforces
+
+where the switching point :math:`r^{sc}` between the soft and hard-core electrostatic forces is 
+:math:`r_{scQ} = \alpha_Q(1+|q_iq_j|)\lambda^{\frac{1}{6}}` for state A, and
+:math:`r_{scQ} = \alpha_Q(1+|q_iq_j|)(1-\lambda)^{\frac{1}{6}}` for state B.
+The :math:`\lambda` dependence of the linearization point for both van der Waals and Coulombic interactions is of the same power :math:`1/6`.
+
+Explicit expression:
+
+.. math:: \begin{aligned}
+          \mathbf{F}_{Q}(\mathbf{r})=\begin{cases}
+          \frac{q_iq_j}{4{\pi}{\varepsilon_0}{\varepsilon_r}r^{2}}\frac{\mathbf{r}}{r}, & \mbox{if } \mbox{ $r \geq r_{scQ} < r_{cutoffQ}$} 
+          \\
+          \frac{1}{4{\pi}{\varepsilon_0}{\varepsilon_r}}\big( -\frac{2q_{i}q_{j}}{r_{sc}^3}\mathbf{r} + \frac{3q_iq_j}{r_{sc}^2} \big), & \mbox{if } \mbox{ $r<r_{scQ} < r_{cutoffQ}$}
+          \\
+          \frac{1}{4{\pi}{\varepsilon_0}{\varepsilon_r}}\big( -\frac{2q_{i}q_{j}}{r_{cutoffQ}^3}\mathbf{r} + \frac{3q_iq_j}{r_{cutoffQ}^2} \big), & \mbox{if } \mbox{ $r < r_{scQ} \geq r_{cutoffQ}$}                        \end{cases}\end{aligned}
+          :label: eqqforcesexpl
+
+Energies: van der Waals interactions
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Explicit definition of energies:
+
+.. math:: \begin{aligned}
+          V_{LJ}(r)=\begin{cases}
+          \frac{C^{(12)}}{r^{12}} - \frac{C^{(6)}}{r^6}, & \mbox{if } \mbox{ $r \geq r_{scLJ}$} 
+          \\
+          \left(\frac{78C^{(12)}}{r_{scLJ}^{14}} - \frac{21C^{(6)}}{r_{scLJ}^{8}}\right)r^2 - \left(\frac{168C^{(12)}}{r_{scLJ}^{13}} - \frac{48C^{(6)}}{r_{scLJ}^{7}}\right)r
+          + \frac{91C^{(12)}}{r_{scLJ}^{12}} - \frac{28C^{(6)}}{r_{scLJ}^{6}}, & \mbox{if } \mbox{ $r<r_{scLJ}$}
+          \end{cases}\end{aligned}
+          :label: eqvdwener
+
+Energies: Coulomb interactions
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+.. math:: \begin{aligned}
+          V_{Q}(r)=\begin{cases}
+          \frac{q_{i}q_{j}}{4{\pi}{\varepsilon_0}{\varepsilon_r}r}, & \mbox{if } \mbox{ $r \geq r_{scQ} < r_{cutoffQ}$}
+          \\
+          \frac{q_{i}q_{j}}{r_{scQ}^3}r^2 - \frac{3q_iq_j}{r_{scQ}^2}r + \frac{3q_iq_j}{r_{scQ}}, & \mbox{if } \mbox{ $r<r_{scQ} < r_{cutoffQ}$}
+          \\
+          \frac{q_{i}q_{j}}{r_{cutoffQ}^3}r^2 - \frac{3q_iq_j}{r_{cutoffQ}^2}r + \frac{3q_iq_j}{r_{cutoffQ}}, & \mbox{if } \mbox{ $r < r_{scQ} \geq r_{cutoffQ}$}                
+          \end{cases}\end{aligned}
+          :label: eqqener
+
+:math:`\partial H / \partial \lambda`: van der Waals interactions
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Here we provide the explicit expressions of :math:`\partial H/ \partial \lambda` for Lennard-Jones potential, when :math:`r<r_{scLJ}`.
+For simplicity, in the expression below we use the notation :math:`r_{scLJ_A}=r_{scA}` and :math:`r_{scLJ_B}=r_{scB}`.
+
+.. math:: \begin{aligned}
+          \frac{\partial{H}}{\partial{\lambda}} &= V_{LJ}^B(r) - V_{LJ}^A(r) + (1-\lambda)\frac{\partial{V_{LJ}^A(r)}}{\partial{\lambda}} + \lambda\frac{\partial{V_{LJ}^B(r)}}{\partial{\lambda}} \\
+          & =  \left(\frac{78C^{(12)}_B}{r_{scB}^{14}} - \frac{21C^{(6)}_B}{r_{scB}^{8}}\right)r^2 - \left(\frac{168C^{(12)}_B}{r_{scB}^{13}} - \frac{48C^{(6)}_B}{r_{scB}^{7}}\right)r
+          + \frac{91C^{(12)}_B}{r_{scB}^{12}} - \frac{28C^{(6)}_B}{r_{scB}^{6}} \\
+          & -  \left[\left(\frac{78C^{(12)}_A}{r_{scA}^{14}} - \frac{21C^{(6)}_A}{r_{scA}^{8}}\right)r^2 - \left(\frac{168C^{(12)}_A}{r_{scA}^{13}} - \frac{48C^{(6)}_A}{r_{scA}^{7}}\right)r
+          + \frac{91C^{(12)}_A}{r_{scA}^{12}} - \frac{28C^{(6)}_A}{r_{scA}^{6}} \right]\\
+          & +  \frac{14(\lambda-1)}{\lambda}\left[\left(\frac{13C^{(12)}_A}{r_{scA}^{14}} - \frac{2C^{(6)}_A}{r_{scA}^{8}}\right)r^2
+          - \left(\frac{26C^{(12)}_A}{r_{scA}^{13}} - \frac{4C^{(6)}_A}{r_{scA}^{7}}\right)r
+          + \frac{13C^{(12)}_A}{r_{scA}^{12}} - \frac{2C^{(6)}_A}{r_{scA}^{6}}\right] \\
+          & +  \frac{14\lambda}{1-\lambda}\left[\left(\frac{13C^{(12)}_B}{r_{scB}^{14}} - \frac{2C^{(6)}_B}{r_{scB}^{8}}\right)r^2
+          - \left(\frac{26C^{(12)}_B}{r_{scB}^{13}} - \frac{4C^{(6)}_B}{r_{scB}^{7}}\right)r
+          + \frac{13C^{(12)}_B}{r_{scB}^{12}} - \frac{2C^{(6)}_B}{r_{scB}^{6}}\right] \end{aligned}
+          :label: eqvdwdhdl
+
+:math:`\partial H/ \partial \lambda` for Lennard-Jones potential, when :math:`r \geq r_{scLJ}` is calculated as a standard hard-core
+contribution to :math:`\partial H/ \partial \lambda`: :math:`\frac{\partial{H}}{\partial{\lambda}} = V_{LJ}^B(r) - V_{LJ}^A(r)`.
+
+:math:`\partial H/ \partial \lambda` for Coulomb interactions
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Here we provide the explicit expressions of :math:`\partial H/ \partial \lambda` for Coulomb potential, when :math:`r<r_{scQ}<r_{cutoffQ}`.
+For simplicity, in the expression below we use the notation :math:`r_{scQ_A}=r_{scA}` and :math:`r_{scQ_B}=r_{scB}`.
+
+.. math:: \begin{aligned}
+          \frac{\partial{H}}{\partial{\lambda}} &= V_Q^B(r) - V_Q^A(r) + (1-\lambda)\frac{\partial{V_Q^A(r)}}{\partial{\lambda}} + \lambda\frac{\partial{V_Q^B(r)}}{\partial{\lambda}} \\
+          & =  \frac{q_{i}^Bq_{j}^B}{r_{scB}^3}r^2 - \frac{3q_i^Bq_j^B}{r_{scB}^2}r + \frac{3q^B_iq_j^B}{r_{scB}} \\
+          & -  \left[\frac{q_{i}^Aq_{j}^A}{r_{scA}^3}r^2 - \frac{3q_i^Aq_j^A}{r_{scA}^2}r + \frac{3q^A_iq_j^A}{r_{scA}}\right] \\
+          & +  \frac{\lambda-1}{2\lambda}\left[\frac{q_i^Aq_j^A}{r_{scA}^3}r^2 - \frac{2q_i^Aq_j^A}{r_{scA}^2}r + \frac{q_i^Aq_j^A}{r_{scA}}\right] \\
+          & +  \frac{\lambda}{2(1-\lambda)}\left[\frac{q_i^Bq_j^B}{r_{scB}^3}r^2 - \frac{2q_i^Bq_j^B}{r_{scB}^2}r + \frac{q_i^Bq_j^B}{r_{scB}}\right] \end{aligned}
+          :label: eqqdhdl
+
+:math:`\partial H/ \partial \lambda` for Coulomb potential, when :math:`r < r_{scQ} \geq r_{cutoffQ}` is calculated using the same expression above
+by setting :math:`r_{scA}=r_{cutoffQ}` and :math:`r_{scB}=r_{cutoffQ}`.
+
+:math:`\partial H/ \partial \lambda` for Coulomb potential, when :math:`r \geq r_{scQ} < r_{cutoffQ}` is calculated as a standard hard-core
+contribution to :math:`\partial H/ \partial \lambda`: :math:`\frac{\partial{H}}{\partial{\lambda}} = V_{Q}^B(r) - V_{Q}^A(r)`.
+
+
+

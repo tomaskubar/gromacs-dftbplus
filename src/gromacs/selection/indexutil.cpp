@@ -1,12 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2009,2010,2011,2012,2013 by the GROMACS development team.
- * Copyright (c) 2014,2015,2016,2017,2018 by the GROMACS development team.
- * Copyright (c) 2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2009- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -20,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -29,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \internal \file
  * \brief
@@ -43,21 +40,25 @@
  */
 #include "gmxpre.h"
 
-#include "indexutil.h"
+#include "gromacs/selection/indexutil.h"
 
 #include <cstdlib>
 #include <cstring>
 
 #include <algorithm>
+#include <iterator>
 #include <numeric>
 #include <string>
 #include <vector>
 
+#include "gromacs/topology/atoms.h"
 #include "gromacs/topology/block.h"
 #include "gromacs/topology/index.h"
 #include "gromacs/topology/mtop_lookup.h"
 #include "gromacs/topology/mtop_util.h"
 #include "gromacs/topology/topology.h"
+#include "gromacs/utility/arrayref.h"
+#include "gromacs/utility/basedefinitions.h"
 #include "gromacs/utility/exceptions.h"
 #include "gromacs/utility/gmxassert.h"
 #include "gromacs/utility/smalloc.h"
@@ -67,44 +68,41 @@
 namespace gmx
 {
 
-IndexGroupsAndNames::IndexGroupsAndNames(const t_blocka& indexGroup, ArrayRef<char const* const> groupNames) :
-    indexGroup_{ indexGroup }
+IndexGroupsAndNames::IndexGroupsAndNames(gmx::ArrayRef<const IndexGroup> indexGroups) :
+    indexGroups_(indexGroups.begin(), indexGroups.end())
 {
-    std::copy(groupNames.begin(), groupNames.end(), std::back_inserter(groupNames_));
-    GMX_ASSERT(indexGroup_.nr == ssize(groupNames),
-               "Number of groups must match number of group names.");
 }
 
 bool IndexGroupsAndNames::containsGroupName(const std::string& groupName) const
 {
-    return std::any_of(
-            std::begin(groupNames_), std::end(groupNames_),
-            [&groupName](const std::string& name) { return equalCaseInsensitive(groupName, name); });
+    return std::any_of(std::begin(indexGroups_),
+                       std::end(indexGroups_),
+                       [&groupName](const IndexGroup& indexGroup)
+                       { return equalCaseInsensitive(groupName, indexGroup.name); });
 }
 
-std::vector<index> IndexGroupsAndNames::indices(const std::string& groupName) const
+std::vector<Index> IndexGroupsAndNames::indices(const std::string& groupName) const
 {
     if (!containsGroupName(groupName))
     {
         GMX_THROW(
                 InconsistentInputError(
                         std::string("Group ") + groupName
-                        + " referenced in the .mdp file was not found in the index file.\n"
+                        + " referenced in the .mdp file was not found in the list of index "
+                          "groups.\n"
                           "Group names must match either [moleculetype] names or custom index "
                           "group\n"
                           "names, in which case you must supply an index file to the '-n' option\n"
                           "of grompp."));
     }
-    const auto groupNamePosition = std::find_if(
-            std::begin(groupNames_), std::end(groupNames_),
-            [&groupName](const std::string& name) { return equalCaseInsensitive(groupName, name); });
-    const auto groupIndex = std::distance(std::begin(groupNames_), groupNamePosition);
-    const auto groupSize  = indexGroup_.index[groupIndex + 1] - indexGroup_.index[groupIndex];
-    std::vector<index> groupIndices(groupSize);
-    const auto         startingIndex = indexGroup_.index[groupIndex];
-    std::iota(std::begin(groupIndices), std::end(groupIndices), startingIndex);
-    std::transform(std::begin(groupIndices), std::end(groupIndices), std::begin(groupIndices),
-                   [blockLookup = indexGroup_.a](auto i) { return blockLookup[i]; });
+    const auto groupNamePosition =
+            std::find_if(std::begin(indexGroups_),
+                         std::end(indexGroups_),
+                         [&groupName](const IndexGroup& indexGroup)
+                         { return equalCaseInsensitive(groupName, indexGroup.name); });
+    const auto         groupIndex = std::distance(std::begin(indexGroups_), groupNamePosition);
+    std::vector<Index> groupIndices(indexGroups_[groupIndex].particleIndices.begin(),
+                                    indexGroups_[groupIndex].particleIndices.end());
     return groupIndices;
 }
 
@@ -151,19 +149,17 @@ struct gmx_ana_indexgrps_t
  */
 void gmx_ana_indexgrps_init(gmx_ana_indexgrps_t** g, gmx_mtop_t* top, const char* fnm)
 {
-    t_blocka* block = nullptr;
-    char**    names = nullptr;
+    std::vector<IndexGroup> indexGroups;
 
     if (fnm)
     {
-        block = init_index(fnm, &names);
+        indexGroups = init_index(fnm);
     }
     else if (top)
     {
-        block = new_blocka();
         // TODO: Propagate mtop further.
-        t_atoms atoms = gmx_mtop_global_atoms(top);
-        analyse(&atoms, block, &names, FALSE, FALSE);
+        t_atoms atoms = gmx_mtop_global_atoms(*top);
+        indexGroups   = analyse(&atoms, FALSE, FALSE);
         done_atom(&atoms);
     }
     else
@@ -172,41 +168,22 @@ void gmx_ana_indexgrps_init(gmx_ana_indexgrps_t** g, gmx_mtop_t* top, const char
         return;
     }
 
-    try
+    *g = new gmx_ana_indexgrps_t(gmx::ssize(indexGroups));
+    for (int i = 0; i < gmx::ssize(indexGroups); i++)
     {
-        *g = new gmx_ana_indexgrps_t(block->nr);
-        for (int i = 0; i < block->nr; ++i)
-        {
-            gmx_ana_index_t* grp = &(*g)->g[i];
+        gmx::ArrayRef<const int> indexGroup = indexGroups[i].particleIndices;
 
-            grp->isize = block->index[i + 1] - block->index[i];
-            snew(grp->index, grp->isize);
-            for (int j = 0; j < grp->isize; ++j)
-            {
-                grp->index[j] = block->a[block->index[i] + j];
-            }
-            grp->nalloc_index = grp->isize;
-            (*g)->names.emplace_back(names[i]);
-        }
-    }
-    catch (...)
-    {
-        for (int i = 0; i < block->nr; ++i)
+        gmx_ana_index_t* grp = &(*g)->g[i];
+
+        grp->isize = indexGroup.ssize();
+        snew(grp->index, grp->isize);
+        for (int j = 0; j < grp->isize; ++j)
         {
-            sfree(names[i]);
+            grp->index[j] = indexGroup[j];
         }
-        sfree(names);
-        done_blocka(block);
-        sfree(block);
-        throw;
+        grp->nalloc_index = grp->isize;
+        (*g)->names.emplace_back(indexGroups[i].name);
     }
-    for (int i = 0; i < block->nr; ++i)
-    {
-        sfree(names[i]);
-    }
-    sfree(names);
-    done_blocka(block);
-    sfree(block);
 }
 
 /*!
@@ -230,16 +207,12 @@ void gmx_ana_indexgrps_free(gmx_ana_indexgrps_t* g)
 bool gmx_ana_indexgrps_extract(gmx_ana_index_t* dest, std::string* destName, gmx_ana_indexgrps_t* src, int n)
 {
     destName->clear();
-    if (n < 0 || n >= gmx::index(src->g.size()))
+    if (n < 0 || n >= gmx::Index(src->g.size()))
     {
         dest->isize = 0;
         return false;
     }
-
-    if (destName != nullptr)
-    {
-        *destName = src->names[n];
-    }
+    *destName = src->names[n];
     gmx_ana_index_copy(dest, &src->g[n], true);
     return true;
 }
@@ -264,7 +237,7 @@ bool gmx_ana_indexgrps_find(gmx_ana_index_t* dest, std::string* destName, gmx_an
     {
         names[i] = src->names[i].c_str();
     }
-    int n = find_group(const_cast<char*>(name), src->g.size(), const_cast<char**>(names));
+    int n = find_group(name, src->g.size(), names);
     sfree(names);
     if (n < 0)
     {
@@ -283,7 +256,7 @@ bool gmx_ana_indexgrps_find(gmx_ana_index_t* dest, std::string* destName, gmx_an
  */
 void gmx_ana_indexgrps_print(gmx::TextWriter* writer, gmx_ana_indexgrps_t* g, int maxn)
 {
-    for (gmx::index i = 0; i < gmx::ssize(g->g); ++i)
+    for (gmx::Index i = 0; i < gmx::ssize(g->g); ++i)
     {
         writer->writeString(gmx::formatString(" Group %2zd \"%s\" ", i, g->names[i].c_str()));
         gmx_ana_index_dump(writer, &g->g[i], maxn);
@@ -767,14 +740,14 @@ static bool next_group_index(int atomIndex, const gmx_mtop_t* top, e_index_t typ
         case INDEX_RES:
         {
             int resind, molb = 0;
-            mtopGetAtomAndResidueName(top, atomIndex, &molb, nullptr, nullptr, nullptr, &resind);
+            mtopGetAtomAndResidueName(*top, atomIndex, &molb, nullptr, nullptr, nullptr, &resind);
             *id = resind;
             break;
         }
         case INDEX_MOL:
         {
             int molb = 0;
-            *id      = mtopGetMoleculeIndex(top, atomIndex, &molb);
+            *id      = mtopGetMoleculeIndex(*top, atomIndex, &molb);
             break;
         }
         case INDEX_UNKNOWN:
@@ -885,7 +858,7 @@ void gmx_ana_index_make_block(t_blocka* t, const gmx_mtop_t* top, gmx_ana_index_
                     case INDEX_RES:
                     {
                         int molnr, atnr_mol;
-                        mtopGetMolblockIndex(top, ai, &molb, &molnr, &atnr_mol);
+                        mtopGetMolblockIndex(*top, ai, &molb, &molnr, &atnr_mol);
                         const t_atoms& mol_atoms    = top->moltype[top->molblock[molb].type].atoms;
                         int            last_atom    = atnr_mol + 1;
                         const int      currentResid = mol_atoms.atom[atnr_mol].resind;
@@ -912,7 +885,7 @@ void gmx_ana_index_make_block(t_blocka* t, const gmx_mtop_t* top, gmx_ana_index_
                     case INDEX_MOL:
                     {
                         int molnr, atnr_mol;
-                        mtopGetMolblockIndex(top, ai, &molb, &molnr, &atnr_mol);
+                        mtopGetMolblockIndex(*top, ai, &molb, &molnr, &atnr_mol);
                         const MoleculeBlockIndices& blockIndices = top->moleculeBlockIndices[molb];
                         const int                   atomStart    = blockIndices.globalAtomStart
                                               + (id - blockIndices.moleculeIndexStart)
@@ -932,6 +905,10 @@ void gmx_ana_index_make_block(t_blocka* t, const gmx_mtop_t* top, gmx_ana_index_
             {
                 /* If not using completion, simply store the start of the block. */
                 t->index[t->nr++] = i;
+                if (type == INDEX_ATOM)
+                {
+                    id = -1;
+                }
             }
         }
     }
@@ -1035,9 +1012,9 @@ bool gmx_ana_index_has_full_ablocks(gmx_ana_index_t* g, t_blocka* b)
  * \param[in,out] molb  The molecule block of atom a
  * \returns       true if atoms \p a and \p a + 1 are in different residues, false otherwise.
  */
-static bool is_at_residue_boundary(const gmx_mtop_t* top, int a, int* molb)
+static bool is_at_residue_boundary(const gmx_mtop_t& top, int a, int* molb)
 {
-    if (a == -1 || a + 1 == top->natoms)
+    if (a == -1 || a + 1 == top.natoms)
     {
         return true;
     }
@@ -1086,11 +1063,11 @@ bool gmx_ana_index_has_complete_elems(gmx_ana_index_t* g, e_index_t type, const 
                 // Check if a is consecutive or on a residue boundary
                 if (a != aPrev + 1)
                 {
-                    if (!is_at_residue_boundary(top, aPrev, &molb))
+                    if (!is_at_residue_boundary(*top, aPrev, &molb))
                     {
                         return false;
                     }
-                    if (!is_at_residue_boundary(top, a - 1, &molb))
+                    if (!is_at_residue_boundary(*top, a - 1, &molb))
                     {
                         return false;
                     }
@@ -1099,7 +1076,7 @@ bool gmx_ana_index_has_complete_elems(gmx_ana_index_t* g, e_index_t type, const 
             }
             GMX_ASSERT(g->isize > 0, "We return above when isize=0");
             const int a = g->index[g->isize - 1];
-            if (!is_at_residue_boundary(top, a, &molb))
+            if (!is_at_residue_boundary(*top, a, &molb))
             {
                 return false;
             }

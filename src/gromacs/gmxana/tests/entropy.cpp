@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2017,2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2017- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \internal \file
  * \brief
@@ -40,15 +39,26 @@
  */
 #include "gmxpre.h"
 
+#include <algorithm>
+#include <iterator>
+#include <string>
+#include <vector>
+
+#include <gtest/gtest.h>
+
 #include "gromacs/gmxana/thermochemistry.h"
 #include "gromacs/utility/arrayref.h"
+#include "gromacs/utility/basedefinitions.h"
+#include "gromacs/utility/real.h"
 
 #include "testutils/refdata.h"
 #include "testutils/testasserts.h"
 
+
 namespace gmx
 {
-
+namespace test
+{
 namespace
 {
 
@@ -60,7 +70,7 @@ protected:
     Entropy() : checker_(refData_.rootChecker()) {}
 
 public:
-    void runSchlitter(real temperature, gmx_bool bLinear)
+    void runSchlitter(real temperature, bool bLinear)
     {
         std::vector<double> ev = { 0.00197861,  0.000389439, 0.000316043,  0.000150392, 0.000110254,
                                    8.99659e-05, 8.06572e-05, 5.14339e-05,  4.34268e-05, 2.16063e-05,
@@ -75,7 +85,7 @@ public:
         checker_.checkReal(S, "entropy");
     }
 
-    void runQuasiHarmonic(real temperature, gmx_bool bLinear)
+    void runQuasiHarmonic(real temperature, bool bLinear)
     {
         std::vector<double> ev = { -31.403, -7.73169, -3.80315, -2.15659e-06, -1.70991e-07, 236,
                                    4609.83, 6718.07,  6966.27,  8587.85,      10736.3,      13543.7,
@@ -88,6 +98,43 @@ public:
 
         checker_.setDefaultTolerance(test::relativeToleranceAsFloatingPoint(1, 1e-7));
         checker_.checkReal(S, "entropy");
+    }
+
+
+    void runEntropyCompare(real temperature, bool bLinear)
+    {
+        std::vector<double> ev = { -31.403, -7.73169, -3.80315, -2.15659e-06, -1.70991e-07, 236,
+                                   4609.83, 6718.07,  6966.27,  8587.85,      10736.3,      13543.7,
+                                   17721.3, 22868,    35517.8,  44118.1,      75827.9,      106277,
+                                   115132,  120782,   445118,   451149,       481058,       484576 };
+        std::vector<real>   eigenvalue;
+        std::vector<real>   invEigenvalue(ev.size());
+
+        std::copy(ev.begin(), ev.end(), std::back_inserter(eigenvalue));
+
+        for (unsigned long int i = 0; i < ev.size(); i++)
+        {
+            invEigenvalue[i] = (gmx::c_boltz * temperature) / ev[i];
+        }
+
+        real S_schlitter     = calcSchlitterEntropy(eigenvalue, temperature, bLinear);
+        real S_quasiharmonic = calcQuasiHarmonicEntropy(invEigenvalue, temperature, bLinear, 1.0);
+
+        real S_diff = S_schlitter - S_quasiharmonic;
+
+        /*
+         * This test is designed to compare the results from two different entropy calculation
+         * methods, and confirm that the results from these methods are reasonably close.
+         *
+         * The ideal result would be that the values match precisely, and that the difference is zero.
+         * For the small test case used here, we can set the relative tolerance to be fairly strict.
+         *
+         * Note that for entropy calculations on an actual molecular simulation, the relative difference
+         * in the entropy calculation results may be significantly larger.
+         * */
+
+        checker_.setDefaultTolerance(test::relativeToleranceAsFloatingPoint(1, 1e-5));
+        checker_.checkReal(S_diff, "entropyDifferenceBetweenMethods");
     }
 };
 
@@ -116,6 +163,16 @@ TEST_F(Entropy, QuasiHarmonic_200_Linear)
     runQuasiHarmonic(200.0, TRUE);
 }
 
-} // namespace
+TEST_F(Entropy, EntropyCompare_200_Linear)
+{
+    runEntropyCompare(200.0, TRUE);
+}
 
+TEST_F(Entropy, EntropyCompare_300_Linear)
+{
+    runEntropyCompare(300.0, TRUE);
+}
+
+} // namespace
+} // namespace test
 } // namespace gmx

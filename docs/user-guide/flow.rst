@@ -3,7 +3,6 @@ Flow Chart
 
 This is a flow chart of a typical |Gromacs| MD run of a protein
 in a box of water.
-A more detailed example is available in :doc:`getting-started`.
 Several steps of energy minimization may be necessary,
 these consist of cycles: :ref:`gmx grompp` -> :ref:`gmx mdrun`.
 
@@ -108,7 +107,7 @@ these consist of cycles: :ref:`gmx grompp` -> :ref:`gmx mdrun`.
    ]
 
    analysis [
-     label="Analysis\ngmx ...\ngmx view"
+     label="Analysis\ngmx ..."
      tooltip="Your favourite GROMACS analysis tool"
      URL="cmdline.html#commands-by-topic"
    ]

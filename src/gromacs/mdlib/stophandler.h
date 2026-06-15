@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2018,2019, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2018- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \libinternal \file
  * \brief Declares StopHandler, a helper class and two stop conditions.
@@ -65,6 +64,9 @@
 #ifndef GMX_MDLIB_STOPHANDLER_H
 #define GMX_MDLIB_STOPHANDLER_H
 
+#include <cstdint>
+#include <cstdio>
+
 #include <functional>
 #include <memory>
 #include <vector>
@@ -72,6 +74,8 @@
 #include "gromacs/compat/pointers.h"
 #include "gromacs/mdlib/sighandler.h"
 #include "gromacs/mdlib/simulationsignal.h"
+#include "gromacs/utility/basedefinitions.h"
+#include "gromacs/utility/real.h"
 
 struct gmx_walltime_accounting;
 
@@ -84,7 +88,7 @@ namespace gmx
  *   * stop at the next neighbor-searching step
  *   * stop as soon as signal is received
  */
-enum class StopSignal
+enum class StopSignal : int
 {
     noSignal         = 0,
     stopAtNextNSStep = 1,
@@ -118,7 +122,7 @@ static inline StopSignal convertToStopSignal(signed char sig)
  * \brief Class handling the stop signal
  *
  * Loops over the registered stop conditions and sets a signal if
- * requested (currently only done by master rank).
+ * requested (currently only done by main rank).
  * All ranks receive the stop signal and set the respective flag.
  * The functions are implemented within this header file to avoid leaving
  * the translation unit unnecessarily.
@@ -131,7 +135,7 @@ public:
      * @param signal Non-null pointer to a signal used for reading and writing of signals
      * @param simulationShareState Whether this signal needs to be shared across multiple simulations
      * @param stopConditions Vector of callback functions setting the signal
-     * @param neverUpdateNeighborList Whether simulation keeps same neighbor list forever
+     * @param nstList        The pairlist update interval in steps, 0 is never update
      *
      * Note: As the StopHandler does not work without this signal, it keeps a non-const reference
      * to it as a member variable.
@@ -139,7 +143,7 @@ public:
     StopHandler(compat::not_null<SimulationSignal*>      signal,
                 bool                                     simulationShareState,
                 std::vector<std::function<StopSignal()>> stopConditions,
-                bool                                     neverUpdateNeighborList);
+                int                                      nstList);
 
     /*! \brief Decides whether a stop signal shall be sent
      *
@@ -151,7 +155,7 @@ public:
      */
     void setSignal() const
     {
-        for (auto& condition : stopConditions_)
+        for (const auto& condition : stopConditions_)
         {
             const StopSignal sig = condition();
             if (sig != StopSignal::noSignal)
@@ -166,6 +170,12 @@ public:
         }
     }
 
+    //! Return whether the step is a multiple of \p nstList or \p nstList==0
+    static bool isSuitableStopStep(const int64_t step, const int nstList)
+    {
+        return nstList == 0 || step % nstList == 0;
+    }
+
     /*! \brief Decides whether the simulation shall be stopped after the current step
      *
      * The simulation is stopped after the current step if
@@ -173,23 +183,23 @@ public:
      *   * the signal for stop at the next neighbor-searching step was received, and
      *     the current step is a neighbor-searching step.
      */
-    bool stoppingAfterCurrentStep(bool bNS) const
+    bool stoppingAfterCurrentStep(const int64_t step) const
     {
         return convertToStopSignal(signal_.set) == StopSignal::stopImmediately
                || (convertToStopSignal(signal_.set) == StopSignal::stopAtNextNSStep
-                   && (bNS || neverUpdateNeighborlist_));
+                   && isSuitableStopStep(step, nstList_));
     }
 
 private:
     SimulationSignal&                              signal_;
     const std::vector<std::function<StopSignal()>> stopConditions_;
-    const bool                                     neverUpdateNeighborlist_;
+    const int                                      nstList_;
 };
 
 /*! \libinternal
  * \brief Class setting the stop signal based on gmx_get_stop_condition()
  *
- * Master rank sets the stop signal if required (generally due to SIGINT).
+ * Main rank sets the stop signal if required (generally due to SIGINT).
  */
 class StopConditionSignal final
 {
@@ -207,16 +217,16 @@ public:
     StopSignal getSignal(FILE* fplog);
 
 private:
-    int        handledStopCondition_;
-    const bool makeBinaryReproducibleSimulation_;
-    const int  nstSignalComm_;
-    const int  nstList_;
+    StopCondition handledStopCondition_;
+    const bool    makeBinaryReproducibleSimulation_;
+    const int     nstSignalComm_;
+    const int     nstList_;
 };
 
 /*! \libinternal
  * \brief Class setting the stop signal based on maximal run time
  *
- * Master rank sets the stop signal if run time exceeds maximal run time.
+ * Main rank sets the stop signal if run time exceeds maximal run time.
  */
 class StopConditionTime final
 {
@@ -230,7 +240,7 @@ public:
      * Stop signal is set if run time is greater than 99% of maximal run time. Signal will
      * trigger stopping of the simulation at the next neighbor-searching step.
      */
-    StopSignal getSignal(bool bNS, int64_t step, FILE* fplog, gmx_walltime_accounting* walltime_accounting);
+    StopSignal getSignal(int64_t step, FILE* fplog, gmx_walltime_accounting* walltime_accounting);
 
 private:
     bool signalSent_;
@@ -238,7 +248,6 @@ private:
     const real maximumHoursToRun_;
     const int  nstList_;
     const int  nstSignalComm_;
-    const bool neverUpdateNeighborlist_;
 };
 
 /*! \libinternal
@@ -286,16 +295,14 @@ public:
      * pointer or reference remain valid for the lifetime of the returned StopHandler.
      */
     std::unique_ptr<StopHandler> getStopHandlerMD(compat::not_null<SimulationSignal*> signal,
-                                                  bool            simulationShareState,
-                                                  bool            isMaster,
-                                                  int             nstList,
-                                                  bool            makeBinaryReproducibleSimulation,
-                                                  int             nstSignalComm,
-                                                  real            maximumHoursToRun,
-                                                  bool            neverUpdateNeighborList,
-                                                  FILE*           fplog,
-                                                  const int64_t&  step,
-                                                  const gmx_bool& bNS,
+                                                  bool           simulationShareState,
+                                                  bool           isMain,
+                                                  int            nstList,
+                                                  bool           makeBinaryReproducibleSimulation,
+                                                  int            nstSignalComm,
+                                                  real           maximumHoursToRun,
+                                                  FILE*          fplog,
+                                                  const int64_t& step,
                                                   gmx_walltime_accounting* walltime_accounting);
 
 private:

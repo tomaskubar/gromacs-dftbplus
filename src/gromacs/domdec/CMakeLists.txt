@@ -1,10 +1,9 @@
 #
 # This file is part of the GROMACS molecular simulation package.
 #
-# Copyright (c) 2014,2018,2019,2020, by the GROMACS development team, led by
-# Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
-# and including many others, as listed in the AUTHORS file in the
-# top-level source directory and at http://www.gromacs.org.
+# Copyright 2014- The GROMACS Authors
+# and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+# Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
 #
 # GROMACS is free software; you can redistribute it and/or
 # modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
 #
 # You should have received a copy of the GNU Lesser General Public
 # License along with GROMACS; if not, see
-# http://www.gnu.org/licenses, or write to the Free Software Foundation,
+# https://www.gnu.org/licenses, or write to the Free Software Foundation,
 # Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
 #
 # If you want to redistribute modifications to GROMACS, please
@@ -27,20 +26,39 @@
 # consider code for inclusion in the official distribution, but
 # derived work must not be called official GROMACS. Details are found
 # in the README & COPYING files - if they are missing, get the
-# official version at http://www.gromacs.org.
+# official version at https://www.gromacs.org.
 #
 # To help us fund GROMACS development, we humbly ask that you cite
-# the research papers on the package. Check out http://www.gromacs.org.
+# the research papers on the package. Check out https://www.gromacs.org.
 
 # Set up the module library
 add_library(domdec INTERFACE)
 file(GLOB DOMDEC_SOURCES *.cpp)
+list(FILTER DOMDEC_SOURCES EXCLUDE REGEX ".*/gpuhaloexchange_impl_gpu[a-z_]*\.cpp$")
+list(FILTER DOMDEC_SOURCES EXCLUDE REGEX ".*/gpuhaloexchange_impl.cpp$")
+list(FILTER DOMDEC_SOURCES EXCLUDE REGEX ".*/fused_gpuhaloexchange.cpp$")
 
-if(GMX_GPU_CUDA)
-  file(GLOB DOMDEC_CUDA_SOURCES gpuhaloexchange_impl.cu)
+if(GMX_GPU_SYCL)
+    file(GLOB DOMDEC_GPU_SOURCES gpuhaloexchange_impl_gpu.cpp gpuhaloexchange_impl_gpu_sycl.cpp)
+    _gmx_add_files_to_property(SYCL_SOURCES gpuhaloexchange_impl_gpu.cpp gpuhaloexchange_impl_gpu_sycl.cpp)
+elseif(GMX_GPU_CUDA)
+    if(GMX_NVSHMEM)
+        # For NVSHMEM builds, exclude the .cu file from normal compilation
+        set(DOMDEC_GPU_SOURCES gpuhaloexchange_impl_gpu.cpp fused_gpuhaloexchange.cpp)
+        _gmx_add_files_to_property(CUDA_SOURCES fused_gpuhaloexchange.cpp)
+    else()
+        set(DOMDEC_GPU_SOURCES gpuhaloexchange_impl_gpu.cpp gpuhaloexchange_impl_gpu.cu)
+    endif()
+    file(GLOB DOMDEC_GPU_SOURCES ${DOMDEC_GPU_SOURCES})
+    _gmx_add_files_to_property(CUDA_SOURCES gpuhaloexchange_impl_gpu.cpp)
+elseif(GMX_GPU_HIP)
+  file(GLOB DOMDEC_GPU_SOURCES gpuhaloexchange_impl_gpu.cpp gpuhaloexchange_impl_gpu_hip.cpp)
+  _gmx_add_files_to_property(HIP_SOURCES gpuhaloexchange_impl_gpu.cpp gpuhaloexchange_impl_gpu_hip.cpp)
+else()
+  file(GLOB DOMDEC_GPU_SOURCES gpuhaloexchange_impl.cpp)
 endif()
 
-set(LIBGROMACS_SOURCES ${LIBGROMACS_SOURCES} ${DOMDEC_SOURCES} ${DOMDEC_CUDA_SOURCES} PARENT_SCOPE)
+set(LIBGROMACS_SOURCES ${LIBGROMACS_SOURCES} ${DOMDEC_SOURCES} ${DOMDEC_GPU_SOURCES} PARENT_SCOPE)
 
 # Source files have the following dependencies on library infrastructure.
 #target_link_libraries(domdec PRIVATE
@@ -50,27 +68,43 @@ set(LIBGROMACS_SOURCES ${LIBGROMACS_SOURCES} ${DOMDEC_SOURCES} ${DOMDEC_CUDA_SOU
 
 # Public interface for modules, including dependencies and interfaces
 #target_include_directories(domdec PUBLIC
-target_include_directories(domdec INTERFACE
-                           $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>)
+#                           $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>)
 #target_link_libraries(domdec PUBLIC
 target_link_libraries(domdec INTERFACE
                       legacy_api
+                      gpu_utils
+                      mdlib
+                      timing
+                      topology
+                      utility
                       )
 
 # TODO: when domdec is an OBJECT target
 #target_link_libraries(domdec PUBLIC legacy_api)
 #target_link_libraries(domdec PRIVATE common)
 
-# Module dependencies
-# domdec interfaces convey transitive dependence on these modules.
-#target_link_libraries(domdec PUBLIC
-target_link_libraries(domdec INTERFACE
-                      utility
-                      )
 # Source files have the following private module dependencies.
 #target_link_libraries(domdec PRIVATE NOTHING)
 # TODO: Explicitly link specific modules.
 #target_link_libraries(domdec PRIVATE legacy_modules)
+
+# NVSHMEM-specific static library for separable compilation
+if(GMX_NVSHMEM AND GMX_GPU_CUDA)
+    gmx_add_library_for_nvshmem(
+        TARGET_NAME domdec_halo_gpu
+        STATIC
+        SOURCES gpuhaloexchange_impl_gpu.cu
+        PRIVATE_TARGET_DEPENDENCIES
+            legacy_api
+            gpu_utils
+            mdlib
+            timing
+            topology
+            utility
+    )
+    # Link the separable library into domdec
+    target_link_libraries(domdec INTERFACE domdec_halo_gpu)
+endif()
 
 if (BUILD_TESTING)
     add_subdirectory(tests)

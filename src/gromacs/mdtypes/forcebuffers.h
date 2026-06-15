@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2020- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 
 /*! \libinternal \file
@@ -47,14 +46,22 @@
 #ifndef GMX_MDTYPES_FORCEBUFFERS_H
 #define GMX_MDTYPES_FORCEBUFFERS_H
 
+#include <memory>
+#include <utility>
+
 #include "gromacs/gpu_utils/hostallocator.h"
 #include "gromacs/math/arrayrefwithpadding.h"
-#include "gromacs/math/vectypes.h"
 #include "gromacs/utility/arrayref.h"
-#include "gromacs/utility/classhelpers.h"
+#include "gromacs/utility/basedefinitions.h"
+#include "gromacs/utility/gmxassert.h"
+#include "gromacs/utility/vectypes.h"
 
 namespace gmx
 {
+template<typename T>
+class ArrayRef;
+template<typename T>
+class ArrayRefWithPadding;
 
 enum class PinningPolicy : int;
 
@@ -69,9 +76,7 @@ public:
     ForceBuffersView(const ArrayRefWithPadding<RVec>& force,
                      const ArrayRefWithPadding<RVec>& forceMtsCombined,
                      const bool                       useForceMtsCombined) :
-        force_(force),
-        forceMtsCombined_(forceMtsCombined),
-        useForceMtsCombined_(useForceMtsCombined)
+        force_(force), forceMtsCombined_(forceMtsCombined), useForceMtsCombined_(useForceMtsCombined)
     {
     }
 
@@ -101,6 +106,7 @@ public:
     //! Returns a const arrayref to the MTS force buffer without padding
     ArrayRef<const RVec> forceMtsCombined() const
     {
+        GMX_UNUSED_VALUE(useForceMtsCombined_);
         GMX_ASSERT(useForceMtsCombined_, "Need the MTS buffer");
         return forceMtsCombined_.unpaddedConstArrayRef();
     }
@@ -108,6 +114,7 @@ public:
     //! Returns an arrayref to the MTS force buffer without padding
     ArrayRef<RVec> forceMtsCombined()
     {
+        GMX_UNUSED_VALUE(useForceMtsCombined_);
         GMX_ASSERT(useForceMtsCombined_, "Need the MTS buffer");
         return forceMtsCombined_.unpaddedArrayRef();
     }
@@ -115,6 +122,7 @@ public:
     //! Returns an ArrayRefWithPadding to the MTS force buffer
     ArrayRefWithPadding<RVec> forceMtsCombinedWithPadding()
     {
+        GMX_UNUSED_VALUE(useForceMtsCombined_);
         GMX_ASSERT(useForceMtsCombined_, "Need the MTS buffer");
         return forceMtsCombined_;
     }
@@ -124,13 +132,8 @@ private:
     ArrayRefWithPadding<RVec> force_;
     //! The force buffer for combined fast and slow forces with MTS
     ArrayRefWithPadding<RVec> forceMtsCombined_;
-    // GCC 9 complains about unused attribute "unused" as it never warns about unused members,
-    // while clang requires it to avoid -Wunused
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wattributes"
-    //! Wether we use forceMtsCombined_
-    gmx_used_in_debug bool useForceMtsCombined_;
-#pragma GCC diagnostic pop
+    //! Whether we use forceMtsCombined_
+    bool useForceMtsCombined_;
 };
 
 /*! \libinternal \brief Object that holds the force buffers
@@ -191,7 +194,7 @@ private:
     PaddedHostVector<RVec> forceMtsCombined_;
     //! The view to the force buffer
     ForceBuffersView view_;
-    //! Wether we use forceMtsCombined_
+    //! Whether we use forceMtsCombined_
     bool useForceMtsCombined_;
 };
 

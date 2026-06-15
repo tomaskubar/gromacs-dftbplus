@@ -1,11 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2013,2014,2015,2016,2017 by the GROMACS development team.
- * Copyright (c) 2018,2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2013- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -19,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -28,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 
 /*! \internal \file
@@ -45,11 +43,27 @@
 
 #include "config.h"
 
+#include <cstdio>
+
+#include <filesystem>
+#include <string>
+#include <tuple>
+#include <vector>
+
+#include <gtest/gtest.h>
+
 #include "gromacs/topology/ifunc.h"
+#include "gromacs/utility/strconvert.h"
 #include "gromacs/utility/stringutil.h"
 
 #include "testutils/mpitest.h"
 #include "testutils/simulationdatabase.h"
+#include "testutils/testasserts.h"
+#include "testutils/testfilemanager.h"
+
+#include "programs/mdrun/tests/comparison_helpers.h"
+#include "programs/mdrun/tests/energycomparison.h"
+#include "programs/mdrun/tests/trajectorycomparison.h"
 
 #include "moduletest.h"
 #include "simulatorcomparison.h"
@@ -124,7 +138,8 @@ void executeRerunTest(TestFileManager*            fileManager,
         fprintf(stdout,
                 "Test system '%s' cannot run with %d ranks.\n"
                 "The supported numbers are: %s\n",
-                simulationName.c_str(), numRanksAvailable,
+                simulationName.c_str(),
+                numRanksAvailable,
                 reportNumbersOfPpRanksSupported(simulationName).c_str());
         return;
     }
@@ -136,29 +151,31 @@ void executeRerunTest(TestFileManager*            fileManager,
     auto simulator2EdrFileName        = fileManager->getTemporaryFilePath("sim2.edr");
 
     // Run grompp
-    runner->tprFileName_ = fileManager->getTemporaryFilePath("sim.tpr");
+    runner->tprFileName_ = fileManager->getTemporaryFilePath("sim.tpr").string();
     runner->useTopGroAndNdxFromDatabase(simulationName);
     runner->useStringAsMdpFile(prepareMdpFileContents(mdpFieldValues));
     auto options = std::vector<SimulationOptionTuple>();
     if (numWarningsToTolerate > 0)
     {
-        options.emplace_back(SimulationOptionTuple("-maxwarn", std::to_string(numWarningsToTolerate)));
+        options.emplace_back("-maxwarn", std::to_string(numWarningsToTolerate));
     }
     runGrompp(runner, options);
 
     // Do first mdrun
-    runner->fullPrecisionTrajectoryFileName_ = simulator1TrajectoryFileName;
-    runner->edrFileName_                     = simulator1EdrFileName;
+    runner->fullPrecisionTrajectoryFileName_ = simulator1TrajectoryFileName.string();
+    runner->edrFileName_                     = simulator1EdrFileName.string();
     runMdrun(runner);
 
     // Do second mdrun
-    runner->fullPrecisionTrajectoryFileName_ = simulator2TrajectoryFileName;
-    runner->edrFileName_                     = simulator2EdrFileName;
-    runMdrun(runner, { SimulationOptionTuple("-rerun", simulator1TrajectoryFileName) });
+    runner->fullPrecisionTrajectoryFileName_ = simulator2TrajectoryFileName.string();
+    runner->edrFileName_                     = simulator2EdrFileName.string();
+    runMdrun(runner, { SimulationOptionTuple("-rerun", simulator1TrajectoryFileName.string()) });
 
     // Compare simulation results
-    compareEnergies(simulator1EdrFileName, simulator2EdrFileName, energyTermsToCompare);
-    compareTrajectories(simulator1TrajectoryFileName, simulator2TrajectoryFileName, trajectoryComparison);
+    compareEnergies(simulator1EdrFileName.string(), simulator2EdrFileName.string(), energyTermsToCompare);
+    compareTrajectories(simulator1TrajectoryFileName.string(),
+                        simulator2TrajectoryFileName.string(),
+                        trajectoryComparison);
 }
 
 TEST_P(MdrunRerunTest, WithinTolerances)
@@ -169,7 +186,8 @@ TEST_P(MdrunRerunTest, WithinTolerances)
     SCOPED_TRACE(
             formatString("Comparing normal and rerun of simulation '%s' "
                          "with integrator '%s'",
-                         simulationName.c_str(), integrator.c_str()));
+                         simulationName.c_str(),
+                         integrator.c_str()));
 
     auto mdpFieldValues =
             prepareMdpFieldValues(simulationName.c_str(), integrator.c_str(), "no", "no");
@@ -177,9 +195,9 @@ TEST_P(MdrunRerunTest, WithinTolerances)
     // bd is much less reproducible in a rerun than the other integrators
     const int            toleranceScaleFactor = (integrator == "bd") ? 2 : 1;
     EnergyTermsToCompare energyTermsToCompare{ {
-            { interaction_function[F_EPOT].longname,
-              relativeToleranceAsPrecisionDependentUlp(10.0, 24 * toleranceScaleFactor,
-                                                       40 * toleranceScaleFactor) },
+            { interaction_function[InteractionFunction::PotentialEnergy].longname,
+              relativeToleranceAsPrecisionDependentUlp(
+                      10.0, 24 * toleranceScaleFactor, 40 * toleranceScaleFactor) },
     } };
 
     // Specify how trajectory frame matching must work
@@ -187,21 +205,26 @@ TEST_P(MdrunRerunTest, WithinTolerances)
                                                TrajectoryComparison::s_defaultTrajectoryTolerances };
 
     int numWarningsToTolerate = 0;
-    executeRerunTest(&fileManager_, &runner_, simulationName, numWarningsToTolerate, mdpFieldValues,
-                     energyTermsToCompare, trajectoryComparison);
+    executeRerunTest(&fileManager_,
+                     &runner_,
+                     simulationName,
+                     numWarningsToTolerate,
+                     mdpFieldValues,
+                     energyTermsToCompare,
+                     trajectoryComparison);
 }
 
 // TODO The time for OpenCL kernel compilation means these tests time
 // out. Once that compilation is cached for the whole process, these
 // tests can run in such configurations.
 #if !GMX_GPU_OPENCL
-INSTANTIATE_TEST_CASE_P(
+INSTANTIATE_TEST_SUITE_P(
         NormalMdrunIsReproduced,
         MdrunRerunTest,
         ::testing::Combine(::testing::Values("argon12", "tip3p5", "alanine_vsite_vacuo"),
                            ::testing::Values("md", "md-vv", "bd", "sd")));
 #else
-INSTANTIATE_TEST_CASE_P(
+INSTANTIATE_TEST_SUITE_P(
         DISABLED_NormalMdrunIsReproduced,
         MdrunRerunTest,
         ::testing::Combine(::testing::Values("argon12", "tip3p5", "alanine_vsite_vacuo"),
@@ -223,19 +246,24 @@ TEST_P(MdrunRerunFreeEnergyTest, WithinTolerances)
     SCOPED_TRACE(
             formatString("Comparing normal and rerun of simulation '%s' "
                          "with integrator '%s' for initial lambda state %d",
-                         simulationName.c_str(), integrator.c_str(), initLambdaState));
+                         simulationName.c_str(),
+                         integrator.c_str(),
+                         initLambdaState));
 
     auto mdpFieldValues =
             prepareMdpFieldValues(simulationName.c_str(), integrator.c_str(), "no", "no");
-    mdpFieldValues["other"] += formatString("\ninit-lambda-state = %d", initLambdaState);
+    mdpFieldValues["init-lambda-state"] = toString(initLambdaState);
 
     EnergyTermsToCompare energyTermsToCompare{
-        { { interaction_function[F_EPOT].longname, relativeToleranceAsPrecisionDependentUlp(10.0, 24, 32) },
-          { interaction_function[F_DVDL_COUL].longname, relativeToleranceAsPrecisionDependentUlp(1.0, 8, 8) },
-          { interaction_function[F_DVDL_VDW].longname, relativeToleranceAsPrecisionDependentUlp(1.0, 8, 8) },
-          { interaction_function[F_DVDL_BONDED].longname,
+        { { interaction_function[InteractionFunction::PotentialEnergy].longname,
+            relativeToleranceAsPrecisionDependentUlp(10.0, 24, 32) },
+          { interaction_function[InteractionFunction::dVCoulombdLambda].longname,
             relativeToleranceAsPrecisionDependentUlp(1.0, 8, 8) },
-          { interaction_function[F_DVDL_RESTRAINT].longname,
+          { interaction_function[InteractionFunction::dVvanderWaalsdLambda].longname,
+            relativeToleranceAsPrecisionDependentUlp(1.0, 8, 8) },
+          { interaction_function[InteractionFunction::dVbondeddLambda].longname,
+            relativeToleranceAsPrecisionDependentUlp(1.0, 8, 8) },
+          { interaction_function[InteractionFunction::dVrestraintdLambda].longname,
             relativeToleranceAsPrecisionDependentUlp(1.0, 8, 8) } }
     };
 
@@ -246,25 +274,30 @@ TEST_P(MdrunRerunFreeEnergyTest, WithinTolerances)
     // The md integrator triggers a warning for nearly decoupled
     // states, which we need to suppress. TODO sometimes?
     int numWarningsToTolerate = (integrator == "md") ? 1 : 0;
-    executeRerunTest(&fileManager_, &runner_, simulationName, numWarningsToTolerate, mdpFieldValues,
-                     energyTermsToCompare, trajectoryComparison);
+    executeRerunTest(&fileManager_,
+                     &runner_,
+                     simulationName,
+                     numWarningsToTolerate,
+                     mdpFieldValues,
+                     energyTermsToCompare,
+                     trajectoryComparison);
 }
 
 // TODO The time for OpenCL kernel compilation means these tests time
 // out. Once that compilation is cached for the whole process, these
 // tests can run in such configurations.
 #if !GMX_GPU_OPENCL
-INSTANTIATE_TEST_CASE_P(MdrunIsReproduced,
-                        MdrunRerunFreeEnergyTest,
-                        ::testing::Combine(::testing::Values("nonanol_vacuo"),
-                                           ::testing::Values("md", "md-vv", "sd"),
-                                           ::testing::Range(0, 11)));
+INSTANTIATE_TEST_SUITE_P(MdrunIsReproduced,
+                         MdrunRerunFreeEnergyTest,
+                         ::testing::Combine(::testing::Values("nonanol_vacuo"),
+                                            ::testing::Values("md", "md-vv", "sd"),
+                                            ::testing::Range(0, 11)));
 #else
-INSTANTIATE_TEST_CASE_P(DISABLED_MdrunIsReproduced,
-                        MdrunRerunFreeEnergyTest,
-                        ::testing::Combine(::testing::Values("nonanol_vacuo"),
-                                           ::testing::Values("md", "md-vv", "sd"),
-                                           ::testing::Range(0, 11)));
+INSTANTIATE_TEST_SUITE_P(DISABLED_MdrunIsReproduced,
+                         MdrunRerunFreeEnergyTest,
+                         ::testing::Combine(::testing::Values("nonanol_vacuo"),
+                                            ::testing::Values("md", "md-vv", "sd"),
+                                            ::testing::Range(0, 11)));
 #endif
 
 } // namespace

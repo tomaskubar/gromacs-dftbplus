@@ -1,10 +1,9 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2019,2020, by the GROMACS development team, led by
- * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
- * and including many others, as listed in the AUTHORS file in the
- * top-level source directory and at http://www.gromacs.org.
+ * Copyright 2019- The GROMACS Authors
+ * and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
+ * Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
  *
  * GROMACS is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +17,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with GROMACS; if not, see
- * http://www.gnu.org/licenses, or write to the Free Software Foundation,
+ * https://www.gnu.org/licenses, or write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
  *
  * If you want to redistribute modifications to GROMACS, please
@@ -27,10 +26,10 @@
  * consider code for inclusion in the official distribution, but
  * derived work must not be called official GROMACS. Details are found
  * in the README & COPYING files - if they are missing, get the
- * official version at http://www.gromacs.org.
+ * official version at https://www.gromacs.org.
  *
  * To help us fund GROMACS development, we humbly ask that you cite
- * the research papers on the package. Check out http://www.gromacs.org.
+ * the research papers on the package. Check out https://www.gromacs.org.
  */
 /*! \internal \file
  * \brief
@@ -43,25 +42,31 @@
 
 #include "gromacs/applied_forces/densityfitting/densityfitting.h"
 
+#include <filesystem>
+#include <memory>
+#include <string>
+
 #include <gtest/gtest.h>
 
 #include "gromacs/gmxlib/network.h"
 #include "gromacs/math/paddedvector.h"
-#include "gromacs/math/vec.h"
+#include "gromacs/mdrunutility/mdmodulesnotifiers.h"
 #include "gromacs/mdtypes/enerdata.h"
 #include "gromacs/mdtypes/forceoutput.h"
 #include "gromacs/mdtypes/iforceprovider.h"
 #include "gromacs/mdtypes/imdmodule.h"
 #include "gromacs/mdtypes/imdpoptionprovider.h"
+#include "gromacs/mdtypes/imdpoptionprovider_test_helper.h"
 #include "gromacs/mdtypes/mdatom.h"
 #include "gromacs/options/options.h"
 #include "gromacs/options/treesupport.h"
+#include "gromacs/utility/keyvaluetree.h"
 #include "gromacs/utility/keyvaluetreebuilder.h"
 #include "gromacs/utility/keyvaluetreetransform.h"
-#include "gromacs/utility/mdmodulenotification.h"
 #include "gromacs/utility/real.h"
 #include "gromacs/utility/smalloc.h"
 #include "gromacs/utility/stringcompare.h"
+#include "gromacs/utility/vec.h"
 
 #include "testutils/testasserts.h"
 #include "testutils/testfilemanager.h"
@@ -78,15 +83,14 @@ class DensityFittingTest : public ::testing::Test
 public:
     void addMdpOptionDensityFittingActive()
     {
-        mdpValueBuilder_.rootObject().addValue("density-guided-simulation-active",
-                                               std::string("yes"));
+        mdpValueBuilder_.rootObject().addValue("density-guided-simulation-active", std::string("yes"));
     }
 
     void addMdpOptionReferenceDensity()
     {
         mdpValueBuilder_.rootObject().addValue(
                 "density-guided-simulation-reference-density-filename",
-                std::string(test::TestFileManager::getInputFilePath("ellipsoid-density.mrc")));
+                std::string(test::TestFileManager::getInputFilePath("ellipsoid-density.mrc").string()));
     }
 
     //! build an mdp options tree that sets the options for the density fitting module
@@ -96,21 +100,10 @@ public:
 
         densityFittingModule_ = DensityFittingModuleInfo::create();
 
-        // set up options
-        Options densityFittingModuleOptions;
-        densityFittingModule_->mdpOptionProvider()->initMdpOptions(&densityFittingModuleOptions);
-
-        // Add rules to transform mdp inputs to densityFittingModule data
-        KeyValueTreeTransformer transform;
-        transform.rules()->addRule().keyMatchType("/", StringCompareType::CaseAndDashInsensitive);
-        densityFittingModule_->mdpOptionProvider()->initMdpTransform(transform.rules());
-
-        // Execute the transform on the mdpValues
-        auto transformedMdpValues = transform.transform(mdpOptionsTree, nullptr);
-        assignOptionsFromKeyValueTree(&densityFittingModuleOptions, transformedMdpValues.object(), nullptr);
+        test::fillOptionsFromMdpValues(mdpOptionsTree, densityFittingModule_->mdpOptionProvider());
     }
 
-    void intializeForceProviders()
+    void initializeForceProviders()
     {
         densityFittingModule_->initForceProviders(&densityFittingForces_);
     }
@@ -129,7 +122,7 @@ TEST_F(DensityFittingTest, ForceProviderLackingInputThrows)
     makeDensityFittingModuleWithSetOptions();
 
     // Build the force provider, once all input data is gathered
-    EXPECT_ANY_THROW(intializeForceProviders());
+    EXPECT_ANY_THROW(initializeForceProviders());
 }
 
 TEST_F(DensityFittingTest, SingleAtom)
@@ -140,7 +133,7 @@ TEST_F(DensityFittingTest, SingleAtom)
 
     makeDensityFittingModuleWithSetOptions();
 
-    EXPECT_ANY_THROW(intializeForceProviders());
+    EXPECT_ANY_THROW(initializeForceProviders());
 }
 
 } // namespace
