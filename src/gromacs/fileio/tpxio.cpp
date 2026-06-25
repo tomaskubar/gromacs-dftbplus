@@ -1834,8 +1834,8 @@ static void do_inputrec(gmx::ISerializer* serializer, t_inputrec* ir, int file_v
         }
         if (ir->opts.ngQM > 0 && ir->bQMMM)
         {
-            serializer->doIntArray(ir->opts.QMmethod, ir->opts.ngQM);
-            serializer->doIntArray(ir->opts.QMbasis, ir->opts.ngQM);
+            serializer->doEnumArrayAsInt(ir->opts.QMmethod, ir->opts.ngQM);
+            serializer->doEnumArrayAsInt(ir->opts.QMbasis, ir->opts.ngQM);
             serializer->doIntArray(ir->opts.QMcharge, ir->opts.ngQM);
             serializer->doIntArray(ir->opts.QMmult, ir->opts.ngQM);
             serializer->doIntArray(ir->opts.CASorbitals, ir->opts.ngQM);

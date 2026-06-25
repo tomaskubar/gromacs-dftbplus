@@ -2417,14 +2417,13 @@ int gmx_grompp(int argc, char* argv[])
 
     /* If we are doing QM/MM, check that we got the atom numbers */
     have_atomnumber = TRUE;
-    for (gmx::index i = 0; i < gmx::ssize(atypes); i++)
+    for (gmx::Index i = 0; i < gmx::ssize(atypes); i++)
     {
         have_atomnumber = have_atomnumber && (atypes.atomNumberFromAtomType(i) >= 0);
     }
     if (!have_atomnumber && ir->bQMMM)
     {
-        warning_error(
-                wi,
+        wi.addError(
                 "\n"
                 "It appears as if you are trying to run a QM/MM calculation, but the force\n"
                 "field you are using does not contain atom numbers fields. This is an\n"
@@ -2738,14 +2737,14 @@ int gmx_grompp(int argc, char* argv[])
     /* make exclusions between QM atoms and remove charges if needed */
     if (ir->bQMMM)
     {
-        generate_qmexcl(&sys, ir, wi, QmmmModeType::Original, logger);
+        generate_qmexcl(&sys, ir, &wi, QmmmModeType::Original, logger);
         std::vector<int> qmmmAtoms = qmmmAtomIndices(*ir, sys);
         removeQmmmAtomCharges(&sys, qmmmAtoms);
     }
 
     if (ir->eI == IntegrationAlgorithm::Mimic)
     {
-        generate_qmexcl(&sys, ir, wi, QmmmModeType::MiMiC, logger);
+        generate_qmexcl(&sys, ir, &wi, QmmmModeType::MiMiC, logger);
     }
 
     if (ftp2bSet(efTRN, NFILE, fnm))

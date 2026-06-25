@@ -182,7 +182,9 @@ public:
                    gmx::ArrayRef<const real>      lambda,
                    gmx::ArrayRef<const gmx::RVec> mu_tot,
                    const gmx::StepWorkload&       stepWork,
-                   const DDBalanceRegionHandler&  ddBalanceRegionHandler);
+                   const DDBalanceRegionHandler&  ddBalanceRegionHandler,
+                   // TODO -- remove as soon as the QMMM contribution is moved out of this function
+                   const t_forcerec&              fr);
 
 private:
     //! Number of particles for test particle insertion

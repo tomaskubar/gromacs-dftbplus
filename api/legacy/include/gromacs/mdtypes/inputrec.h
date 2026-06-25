@@ -98,9 +98,9 @@ struct t_grpopts
     //! Number of QM groups
     int ngQM = 0;
     //! Level of theory in the QM calculation
-    int* QMmethod;
+    QMmethodType* QMmethod;
     //! Basisset in the QM calculation
-    int* QMbasis;
+    QMbasisType* QMbasis;
     //! Total charge in the QM region
     int* QMcharge;
     //! Spin multiplicity in the QM region

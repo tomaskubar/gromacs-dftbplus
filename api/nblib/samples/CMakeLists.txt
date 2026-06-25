@@ -39,18 +39,8 @@
 set(argon "argon-forces-integration")
 add_executable(${argon} argon-forces-integration.cpp)
 
-target_link_libraries(${argon} PRIVATE nblib)
-
 set(methane "methane-water-integration")
 add_executable(${methane} methane-water-integration.cpp)
-
-target_link_libraries(${methane} PRIVATE nblib)
-
-if(BUILD_TESTING)
-    add_test(NAME NbLibSamplesTestArgon COMMAND ${argon})
-    add_test(NAME NbLibSamplesTestMethaneWater COMMAND ${methane})
-    add_dependencies(nblib-tests ${argon} ${methane})
-endif()
 
 if (GMX_QMMM_DFTBPLUS)
     LINK_DIRECTORIES(GMX_QMMM_DFTBPLUS_LIB)
@@ -82,6 +72,21 @@ if (GMX_QMMM_DFTBPLUS)
     add_library(gomp SHARED IMPORTED)
     set_target_properties(gomp PROPERTIES IMPORTED_LOCATION ${GOMP})
 
-    target_link_libraries(argon-forces-integration PRIVATE libdftbplus gfortran gomp)
-   #target_link_libraries(argon-forces-integration PRIVATE libdftbplus libdftd3 libmudpack gfortran gomp)
+    set_target_properties(${argon} PROPERTIES LINK_FLAGS
+      "-Wl,--whole-archive ${GMX_QMMM_DFTBPLUS_LIB}/libdftbplus.a -Wl,--no-whole-archive")
+    target_link_libraries(${argon} PRIVATE nblib libdftbplus ${LINEAR_ALGEBRA_LIBRARIES} gfortran gomp)
+   #target_link_libraries(${argon} PRIVATE nblib libdftbplus libdftd3 libmudpack gfortran gomp)
+
+    set_target_properties(${methane} PROPERTIES LINK_FLAGS
+      "-Wl,--whole-archive ${GMX_QMMM_DFTBPLUS_LIB}/libdftbplus.a -Wl,--no-whole-archive")
+    target_link_libraries(${methane} PRIVATE nblib libdftbplus ${LINEAR_ALGEBRA_LIBRARIES} gfortran gomp)
+else()
+    target_link_libraries(${argon} PRIVATE nblib)
+    target_link_libraries(${methane} PRIVATE nblib)
+endif()
+
+if(BUILD_TESTING)
+    add_test(NAME NbLibSamplesTestArgon COMMAND ${argon})
+    add_test(NAME NbLibSamplesTestMethaneWater COMMAND ${methane})
+    add_dependencies(nblib-tests ${argon} ${methane})
 endif()

@@ -1437,7 +1437,7 @@ int gmx_pme_do(struct gmx_pme_t*              pme,
             {
                 try
                 {
-                    gather_energy_bsplines(pme, grid, &atc, nrQMatoms, pot);
+                    gather_energy_bsplines(*pme, grid, atc, nrQMatoms, pot);
                 }
                 GMX_CATCH_ALL_AND_EXIT_WITH_FATAL_ERROR;
             }

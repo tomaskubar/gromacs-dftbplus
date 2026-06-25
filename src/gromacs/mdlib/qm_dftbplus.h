@@ -45,17 +45,17 @@ init_dftbplus(QMMM_QMrec*       qm,
            // const t_forcerec* fr,
               const t_inputrec* ir,
               const t_commrec*  cr);
-           // gmx_wallcycle_t   wcycle);
+           // gmx_wallcycle*    wcycle);
 
 real
 call_dftbplus(QMMM_rec*         qr,
-              const t_commrec*  cr,
+          //  const t_commrec*  cr,
               QMMM_QMrec*       qm,
               const QMMM_MMrec& mm,
               rvec              f[],
               rvec              fshift[],
               t_nrnb*           nrnb,
-              gmx_wallcycle_t   wcycle);
+              gmx_wallcycle*    wcycle);
 
 struct Context;
 
@@ -66,7 +66,7 @@ void initialize_context(Context*          cont,
                      // const t_forcerec* fr_in,
                         const t_inputrec* ir_in,
                         const t_commrec*  cr_in);
-                     // gmx_wallcycle_t   wcycle_in);
+                     // gmx_wallcycle*    wcycle_in);
 
 void calcQMextPotPME(Context *cont, double *q, double *extpot);
 

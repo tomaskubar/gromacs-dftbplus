@@ -50,11 +50,11 @@
 #include "gromacs/gmxlib/network.h"
 #include "gromacs/gmxlib/nrnb.h"
 #include "gromacs/math/units.h"
-#include "gromacs/math/vec.h"
 #include "gromacs/mdlib/qmmm.h"
 #include "gromacs/mdtypes/md_enums.h"
 #include "gromacs/utility/fatalerror.h"
 #include "gromacs/utility/smalloc.h"
+#include "gromacs/utility/vec.h"
 
 // When not built in a configuration with QMMM support, much of this
 // code is unreachable by design. Tell clang not to warn about it.
@@ -344,19 +344,19 @@ real call_orca(const QMMM_QMrec& qm, const QMMM_MMrec& mm, rvec f[], rvec fshift
     {
         for (j = 0; j < DIM; j++)
         {
-            f[i][j]      = HARTREE_BOHR2MD * QMgrad[i][j];
-            fshift[i][j] = HARTREE_BOHR2MD * QMgrad[i][j];
+            f[i][j]      = gmx::c_hartreeBohr2Md * QMgrad[i][j];
+            fshift[i][j] = gmx::c_hartreeBohr2Md * QMgrad[i][j];
         }
     }
     for (i = 0; i < mm.nrMMatoms; i++)
     {
         for (j = 0; j < DIM; j++)
         {
-            f[i + qm.nrQMatoms_get()][j]      = HARTREE_BOHR2MD * MMgrad[i][j];
-            fshift[i + qm.nrQMatoms_get()][j] = HARTREE_BOHR2MD * MMgrad[i][j];
+            f[i + qm.nrQMatoms_get()][j]      = gmx::c_hartreeBohr2Md * MMgrad[i][j];
+            fshift[i + qm.nrQMatoms_get()][j] = gmx::c_hartreeBohr2Md * MMgrad[i][j];
         }
     }
-    QMener = QMener * HARTREE2KJ * AVOGADRO;
+    QMener = QMener * gmx::c_hartree2Kj * gmx::c_avogadro;
     step++;
     free(exe);
     return (QMener);

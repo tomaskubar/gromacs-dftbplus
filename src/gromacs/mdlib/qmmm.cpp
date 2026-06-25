@@ -50,13 +50,13 @@
 
 #include "gromacs/domdec/domdec_struct.h"
 #include "gromacs/ewald/pme.h"
+#include "gromacs/ewald/pme_internal.h"
 #include "gromacs/ewald/ewald_utils.h"
 #include "gromacs/fileio/confio.h"
 #include "gromacs/gmxlib/network.h"
 #include "gromacs/gmxlib/nrnb.h"
 #include "gromacs/math/functions.h"
 #include "gromacs/math/units.h"
-#include "gromacs/math/vec.h"
 #include "gromacs/mdlib/force.h"
 #include "gromacs/mdlib/qm_dftbplus.h"
 #include "gromacs/mdlib/qm_gamess.h"
@@ -69,7 +69,7 @@
 #include "gromacs/mdtypes/inputrec.h"
 #include "gromacs/mdtypes/md_enums.h"
 #include "gromacs/mdtypes/mdatom.h"
-#include "gromacs/mdtypes/nblist.h"
+//#include "gromacs/mdtypes/nblist.h"
 #include "gromacs/nbnxm/grid.h"
 #include "gromacs/nbnxm/gridset.h"
 #include "gromacs/nbnxm/nbnxm.h"
@@ -79,11 +79,13 @@
 #include "gromacs/nbnxm/pairsearch.h"
 #include "gromacs/pbcutil/ishift.h"
 #include "gromacs/pbcutil/pbc.h"
+#include "gromacs/topology/mtop_atomloops.h"
 #include "gromacs/topology/mtop_lookup.h"
 #include "gromacs/topology/mtop_util.h"
 #include "gromacs/topology/topology.h"
 #include "gromacs/utility/fatalerror.h"
 #include "gromacs/utility/smalloc.h"
+#include "gromacs/utility/vec.h"
 
 // When not built in a configuration with QMMM support, much of this
 // code is unreachable by design. Tell clang not to warn about it.
@@ -113,14 +115,14 @@ void init_QMMM_rec(const t_commrec  *cr,
 }
 */
 
-static real call_QMroutine(const t_commrec*  cr,
+static real call_QMroutine(//const t_commrec*  cr,
                            QMMM_rec*         qr,
                            QMMM_QMrec*       qm,
                            QMMM_MMrec*       mm,
                            rvec              f[],
                            rvec              fshift[],
                            t_nrnb*           nrnb,
-                           gmx_wallcycle_t   wcycle)
+                           gmx_wallcycle*    wcycle)
 {
     // Makes a call to the requested QM routine (qm->QMmethod).
     // Note that f is actually the gradient, i.e. -f
@@ -143,7 +145,7 @@ static real call_QMroutine(const t_commrec*  cr,
     }
     else if (GMX_QMMM_DFTBPLUS)
     {
-        return call_dftbplus(qr, cr, qm, *mm, f, fshift, nrnb, wcycle);
+        return call_dftbplus(qr, qm, *mm, f, fshift, nrnb, wcycle); // cr
     }
     else
     {
@@ -158,6 +160,7 @@ static real call_QMroutine(const t_commrec*  cr,
 void QMMM_rec::update_QMMM_coord(const t_commrec*  cr,
                                  rvec*             shift_vec,
                                  const rvec        x[],
+                                 // gmx::ArrayRef<const gmx::RVec> x,
                                  const t_mdatoms*  md,
                                  const matrix      box)
 {
@@ -176,10 +179,22 @@ void QMMM_rec::update_QMMM_coord(const t_commrec*  cr,
     std::vector<bool> isCurrentMMatom;
     isCurrentMMatom.resize(mm_.nrMMatoms_nbl);
 
+    printf("Original Gromacs coordinates");
+    for (int i = 0; i < qm_.nrQMatoms; i++)
+    {
+        printf("QM atom %d: %8.5f %8.5f %8.5f\n", qm_.indexQM[i]+1, x[i][XX], x[i][YY], x[i][ZZ]);
+    }
+
     // shift the QM atoms into the central box
     for (int i = 0; i < qm_.nrQMatoms; i++)
     {
         rvec_sub(x[qm_.indexQM[i]], shift_vec[qm_.shiftQM[i]], qm_.xQM[i]);
+    }
+
+    printf("QM coordinates updated");
+    for (int i = 0; i < qm_.nrQMatoms; i++)
+    {
+        printf("QM atom %d: %8.5f %8.5f %8.5f\n", qm_.indexQM[i]+1, qm_.xQM[i][XX], qm_.xQM[i][YY], qm_.xQM[i][ZZ]);
     }
 
     // copy box size
@@ -187,9 +202,9 @@ void QMMM_rec::update_QMMM_coord(const t_commrec*  cr,
 
     // initialize PBC for MM coordinate manipulation
     t_pbc pbc;
-    ivec null_ivec;
+    gmx::IVec null_ivec;
     clear_ivec(null_ivec);
-    set_pbc_dd(&pbc, pbcType, DOMAINDECOMP(cr) ? cr->dd->numCells : null_ivec, false, box);
+    set_pbc_dd(&pbc, pbcType, haveDDAtomOrdering(*cr) ? &cr->dd->numCells : &null_ivec, false, box);
 
  // for (int s = 0; s < pbc.ntric_vec; s++)
  // {
@@ -301,9 +316,9 @@ void QMMM_QMrec::init_QMrec(int               grpnr,
     int molb = 0;
     for (int i = 0; i < nrQMatoms; i++)
     {
-        const t_atom &atom = mtopGetAtomParameters(mtop, indexQM[i], &molb);
-        nelectrons        += mtop->atomtypes.atomnumber[atom.type];
-        atomicnumberQM[i]  = mtop->atomtypes.atomnumber[atom.type];
+        const t_atom &atom = mtopGetAtomParameters(*mtop, indexQM[i], &molb);
+        nelectrons        += atom.atomnumber; // mtop->atomtypes.atomnumber[atom.type];
+        atomicnumberQM[i]  = atom.atomnumber; // mtop->atomtypes.atomnumber[atom.type];
     }
 
     QMcharge      = ir->opts.QMcharge[grpnr];
@@ -464,7 +479,7 @@ QMMM_rec::QMMM_rec(const t_commrec*                 cr,
                    const gmx_mtop_t*                mtop,
                    const t_inputrec*                ir,
                    const t_forcerec*                fr)
- //                const gmx_wallcycle_t gmx_unused wcycle)
+ //                const gmx_wallcycle*  gmx_unused wcycle)
 {
 #if GMX_QMMM
     // Put the atom numbers of atoms that belong to the QMMM group
@@ -478,7 +493,7 @@ QMMM_rec::QMMM_rec(const t_commrec*                 cr,
     }
 
     // issue a fatal if the user wants to run with more than one node
-    if (PAR(cr))
+    if (cr->commMyGroup.isParallel())
     {
         gmx_fatal(FARGS, "QM/MM may not work in parallel due to neighborsearching issues, \
               use a single processor instead!\n");
@@ -601,19 +616,19 @@ QMMM_rec::QMMM_rec(const t_commrec*                 cr,
 		               fprintf(stdout, "Electrostatic QM/MM interaction calculated with full PME treatment.\n");
 
                        pme.resize(2);
-                       pmedata              = &(fr->pmedata);
+                       pmedata = nullptr; // This will be initialized later in the PME routines
                        QMMM_PME& pme_full   = pme[0];
                        QMMM_PME& pme_qmonly = pme[1];
 
                        // PME data structure for the entire system
                        pme_full.x.resizeWithPadding(qm[0].nrQMatoms + mm_.nrMMatoms_full);
-                       pme_full.q.resize(qm[0].nrQMatoms + mm_.nrMMatoms_full);
+                       pme_full.q.resizeWithPadding(qm[0].nrQMatoms + mm_.nrMMatoms_full);
                        pme_full.f.resizeWithPadding(qm[0].nrQMatoms + mm_.nrMMatoms_full);
                        snew(pme_full.pot, qm[0].nrQMatoms);
                        
                        // PME data structure for the QM-only system
                        pme_qmonly.x.resizeWithPadding(qm[0].nrQMatoms);
-                       pme_qmonly.q.resize(qm[0].nrQMatoms);
+                       pme_qmonly.q.resizeWithPadding(qm[0].nrQMatoms);
                        pme_qmonly.f.resizeWithPadding(qm[0].nrQMatoms);
                        snew(pme_qmonly.pot, qm[0].nrQMatoms);
                        
@@ -668,6 +683,8 @@ QMMM_rec::QMMM_rec(const t_commrec*                 cr,
 #endif
 } // init_QMMMrec
 
+QMMM_rec::~QMMM_rec() = default;
+
 std::vector<int> qmmmAtomIndices(const t_inputrec& ir, const gmx_mtop_t& mtop)
 {
     const int               numQmmmGroups = ir.opts.ngQM;
@@ -690,10 +707,10 @@ std::vector<int> qmmmAtomIndices(const t_inputrec& ir, const gmx_mtop_t& mtop)
 void removeQmmmAtomCharges(gmx_mtop_t* mtop, gmx::ArrayRef<const int> qmmmAtoms)
 {
     int molb = 0;
-    for (gmx::index i = 0; i < qmmmAtoms.ssize(); i++)
+    for (gmx::Index i = 0; i < qmmmAtoms.ssize(); i++)
     {
         int indexInMolecule;
-        mtopGetMolblockIndex(mtop, qmmmAtoms[i], &molb, nullptr, &indexInMolecule);
+        mtopGetMolblockIndex(*mtop, qmmmAtoms[i], &molb, nullptr, &indexInMolecule);
         t_atom* atom = &mtop->moltype[mtop->molblock[molb].type].atoms.atom[indexInMolecule];
         atom->q      = 0.0;
         atom->qB     = 0.0;
@@ -718,10 +735,11 @@ void QMMM_rec::update_QMMMrec_dftb(const t_commrec*  cr,
     QMMM_MMrec& mm_ = mm[0];
 
     // init_pbc(box); needs to be called first, see pbc.h
-    ivec null_ivec;
+    gmx::IVec null_ivec;
     clear_ivec(null_ivec);
     t_pbc pbc;
-    set_pbc_dd(&pbc, pbcType, DOMAINDECOMP(cr) ? cr->dd->numCells : null_ivec, false, box);
+//  set_pbc_dd(&pbc, pbcType, DOMAINDECOMP(cr) ? cr->dd->numCells : null_ivec, false, box);
+    set_pbc_dd(&pbc, pbcType, haveDDAtomOrdering(*cr) ? &cr->dd->numCells : &null_ivec, false, box);
 
  // printf("There are %d QM atoms, namely:", qm_.nrQMatoms);
  // for (int i=0; i<qm_.nrQMatoms; i++)
@@ -820,7 +838,7 @@ void put_cluster_in_MMlist_verlet(int                            ck, // cluster 
 
 // create the SR MM list using the Verlet neighborlist
 void QMMM_rec::update_QMMMrec_verlet_ns(const t_commrec*    cr,
-                                        nonbonded_verlet_t* nbv,
+                                        const gmx::nonbonded_verlet_t* nbv,
                                         const rvec          x[],
                                         const t_mdatoms*    md,
                                         const matrix        box)
@@ -845,22 +863,24 @@ void QMMM_rec::update_QMMMrec_verlet_ns(const t_commrec*    cr,
     std::vector<int> shiftMMatom(md->nr, -1); // ALL ATOMS IN SIMULATION - IS THAT NECESSARY???
 
     // init PBC
-    ivec null_ivec;
+    gmx::IVec null_ivec;
     clear_ivec(null_ivec);
     t_pbc pbc;
-    set_pbc_dd(&pbc, pbcType, DOMAINDECOMP(cr) ? cr->dd->numCells : null_ivec, false, box);
+//  set_pbc_dd(&pbc, pbcType, DOMAINDECOMP(cr) ? cr->dd->numCells : null_ivec, false, box);
+    set_pbc_dd(&pbc, pbcType, haveDDAtomOrdering(*cr) ? &cr->dd->numCells : &null_ivec, false, box);
 
     // copy pointers
     QMMM_QMrec&                           qm_  = qm[0];
     QMMM_MMrec&                           mm_  = mm[0];
-    gmx::ArrayRef<const NbnxnPairlistCpu> nbl = nbv->pairlistSets().pairlistSet(gmx::InteractionLocality::Local).cpuLists();
+    gmx::ArrayRef<const gmx::NbnxnPairlistCpu> nbl = nbv->pairlistSets().pairlistSet(gmx::InteractionLocality::Local).cpuLists();
     int                                   nnbl = nbl.ssize();
-    const gmx::ArrayRef<const int>        atomIndices = nbv->pairSearch_->gridSet().atomIndices();
+//  const gmx::ArrayRef<const int>        atomIndices = nbv->pairSearch_->gridSet().atomIndices();
+    const gmx::ArrayRef<const int>        atomIndices = nbv->getLocalAtomOrder();
 
     // QM shift array
     // !!! CHECK THIS !!!
     rvec dx;
-    qm_.shiftQM[0] = XYZ2IS(0, 0, 0);
+    qm_.shiftQM[0] = gmx::xyzToShiftIndex(0, 0, 0);
     for (int i = 1; i < qm_.nrQMatoms; i++)
     {
         qm_.shiftQM[i] = pbc_dx_aiuc(&pbc, x[qm_.indexQM[0]], x[qm_.indexQM[i]], dx);
@@ -909,7 +929,7 @@ void QMMM_rec::update_QMMMrec_verlet_ns(const t_commrec*    cr,
 	                // compare to indices of QM atoms
 	                for (int jq=0; jq<qm_.nrQMatoms && !qm_atom_in_cj; jq++)
 		            {
-                        const int iIndex = nbl[inbl].na_cj * nbl[inbl].cj[cj].cj + jj;
+                        const int iIndex = nbl[inbl].na_cj * nbl[inbl].cj.cj(cj) + jj; // nbl[inbl].cj[cj].cj + jj;
                         const int iAtom  = atomIndices[iIndex];
                         //  FORMERLY:
 		                // if (qm->indexQM[jq] == nbs->a[nbl[inbl].na_cj * nbl[inbl].cj[cj].cj + jj])
@@ -924,7 +944,7 @@ void QMMM_rec::update_QMMMrec_verlet_ns(const t_commrec*    cr,
 		        //   then put the non-QM atoms in cluster CJ into the MM list
 	            if (qm_atom_in_ci)
 		        {
-	                put_cluster_in_MMlist_verlet(nbl[inbl].cj[cj].cj, nbl[inbl].na_cj,
+	                put_cluster_in_MMlist_verlet(nbl[inbl].cj.cj(cj), nbl[inbl].na_cj, // (nbl[inbl].cj[cj].cj ...
 		                                        qm_.nrQMatoms, qm_.indexQM, atomIndices, shiftMMatom.data(), &pbc, x);
 	            }
 
@@ -975,10 +995,10 @@ void QMMM_rec::update_QMMMrec_verlet_ns(const t_commrec*    cr,
     }
 } // update_QMMMrec_verlet_ns
 
-real QMMM_rec::calculate_QMMM(const t_commrec*      cr,
+real QMMM_rec::calculate_QMMM(// const t_commrec*      cr,
                               gmx::ForceWithVirial* forceWithVirial,
                               t_nrnb*               nrnb,
-                              gmx_wallcycle_t       wcycle)
+                              gmx_wallcycle*        wcycle)
 {
     if (!GMX_QMMM)
     {
@@ -1012,7 +1032,7 @@ real QMMM_rec::calculate_QMMM(const t_commrec*      cr,
      // snew(fshift, (qm_.nrQMatoms + mm_.nrMMatoms));
     }
 
-    QMener = call_QMroutine(cr, this, qm_, mm_, forces, fshift, nrnb, wcycle);
+    QMener = call_QMroutine(this, qm_, mm_, forces, fshift, nrnb, wcycle); // (cr,)
 
     if (GMX_QMMM_DFTBPLUS)
     {

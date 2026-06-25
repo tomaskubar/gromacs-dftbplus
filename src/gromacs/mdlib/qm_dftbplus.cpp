@@ -57,19 +57,20 @@
 #include "gromacs/gmxlib/network.h"
 #include "gromacs/gmxlib/nrnb.h"
 #include "gromacs/math/units.h"
-#include "gromacs/math/vec.h"
 #include "gromacs/mdlib/qmmm.h"
 #include "gromacs/mdtypes/forcerec.h"
 #include "gromacs/mdtypes/md_enums.h"
+#include "gromacs/pbcutil/pbc.h"
 #include "gromacs/timing/cyclecounter.h"
 #include "gromacs/timing/walltime_accounting.h"
 #include "gromacs/utility/fatalerror.h"
 #include "gromacs/utility/smalloc.h"
-#include "gromacs/pbcutil/pbc.h"
+#include "gromacs/utility/vec.h"
 
 //#include "dftbplus_gromacs.h"
 #include "gromacs/mdlib/qm_dftbplus.h"
 
+// TODO -- remove t_commrec* cr from all functions, since it is not needed in gmx_pme_do, any longer
 typedef struct Context {
   bool              pme;
   int               n;
@@ -77,7 +78,7 @@ typedef struct Context {
   QMMM_rec*         qr;
 //const t_forcerec* fr;
   t_nrnb*           nrnb;
-  gmx_wallcycle_t   wcycle;
+  gmx_wallcycle*    wcycle;
   real              rcoul;
   real              ewaldcoeff_q;
 } Context;
@@ -94,7 +95,7 @@ void initialize_context(Context*          cont,
                      // const t_forcerec* fr_in,
                         const t_inputrec* ir_in,
                         const t_commrec*  cr_in)
-                     // gmx_wallcycle_t   wcycle_in)
+                     // gmx_wallcycle*    wcycle_in)
 //                      const real        rcoul_in,
 //                      const real        ewaldcoeff_q_in)
 {
@@ -125,10 +126,11 @@ void initialize_context(Context*          cont,
    // cont->wcycle       = wcycle_in;
       cont->rcoul        = ir_in->rcoulomb;
       cont->ewaldcoeff_q = calc_ewaldcoeff_q(ir_in->rcoulomb, ir_in->ewald_rtol);
-      printf("cont->cr = %p\n", cont->cr);
-      printf("cont->qr = %p\n", cont->qr);
-      printf("cont->qr->pmedata = %p\n", cont->qr->pmedata);
-      printf("cont->qr->pmedata* = %p\n", *cont->qr->pmedata);
+      printf("cont->cr = %p\n", static_cast<const void*>(cont->cr));
+      printf("cont->qr = %p\n", static_cast<const void*>(cont->qr));
+   // printf("&(cont->qr->pmedata) = %p\n", static_cast<void*>(&(cont->qr->pmedata)));
+   // printf("cont->qr->pmedata = %p\n", static_cast<void*>(cont->qr->pmedata));
+   // printf("cont->qr->pmedata = %p\n", static_cast<void*>(cont->qr->pmedata.get())); UNCOMMENT!
       printf("cont->rcoul = %f\n", cont->rcoul);
       printf("cont->ewaldcoeff_q = %f\n", cont->ewaldcoeff_q);
   }
@@ -154,7 +156,7 @@ void calcQMextPotPME(Context *cont, double *q, double *extpot)
       {
           cont->qr->qm[0].QMcharges_set(i, (real) -q[i]); // check sign TODO
       }
-      cont->qr->calculate_complete_QM_QM(cont->cr, cont->nrnb, cont->wcycle, *cont->qr->pmedata, extpot_real);
+      cont->qr->calculate_complete_QM_QM(cont->nrnb, cont->wcycle, extpot_real); // cont->cr ... *cont->qr->pmedata, extpot_real);
       for (int i=0; i<n; i++)
       {
           extpot[i] = (double) - extpot_real[i]; // sign OK
@@ -202,7 +204,7 @@ void init_dftbplus(QMMM_QMrec*       qm,
                 // const t_forcerec* fr,
                    const t_inputrec* ir,
                    const t_commrec*  cr)
-                // gmx_wallcycle_t   wcycle)
+                // gmx_wallcycle*    wcycle)
 //void init_dftbplus(t_forcerec *fr)
 {
     /* perhaps check the geometry first, to see which elements we have? */
@@ -324,13 +326,13 @@ void init_dftbplus(QMMM_QMrec*       qm,
 } /* init_dftbplus */
 
 real call_dftbplus(QMMM_rec*         qr,
-                   const t_commrec*  cr,
+                // const t_commrec*  cr,
                    QMMM_QMrec*       qm,
                    const QMMM_MMrec& mm,
                    rvec              f[],
                    rvec              fshift[],
 		           t_nrnb*           nrnb,
-                   gmx_wallcycle_t   wcycle)
+                   gmx_wallcycle*    wcycle)
 {
     static int step = 0;
     static FILE *f_q = nullptr;
@@ -414,7 +416,7 @@ real call_dftbplus(QMMM_rec*         qr,
     {
         for (int j=0; j<DIM; j++)
         {
-            x[3*i+j] = qm->xQM_get(i,j) / BOHR2NM; // to bohr units for DFTB+
+            x[3*i+j] = qm->xQM_get(i,j) / gmx::c_bohr2Nm; // to bohr units for DFTB+
         }
     }
 
@@ -427,7 +429,7 @@ real call_dftbplus(QMMM_rec*         qr,
     if (qm->qmmm_variant_get() == eqmmmPME)
     {
      // gmx_pme_init_qmmm(&(qr->pme->pmedata), true, fr->pmedata);
-        qr->calculate_LR_QM_MM(cr, nrnb, wcycle, *qr->pmedata, pot_lr);
+        qr->calculate_LR_QM_MM(nrnb, wcycle, pot_lr); // cr ... *qr->pmedata, pot_lr);
         for (int i=0; i<n; i++)
         {
             pot[i] = (double) - (pot_sr[i] + pot_lr[i]);
@@ -464,7 +466,7 @@ real call_dftbplus(QMMM_rec*         qr,
     }
 
     /* DFTB+ calculation itself */
-    wallcycle_start(wcycle, ewcQM);
+    wallcycle_start(wcycle, WallCycleCounter::QM);
     dftbp_set_coords(qm->dpcalc, x); // unit OK
     dftbp_set_external_potential(qm->dpcalc, pot, potgrad); // unit and sign OK
     dftbp_get_energy(qm->dpcalc, &QMener); // unit OK
@@ -472,7 +474,7 @@ real call_dftbplus(QMMM_rec*         qr,
  // for (int i=0; i<n; i++)
  //     printf("%d %6.3f\n", i+1, q[i]);
     dftbp_get_gradients(qm->dpcalc, grad);
-    wallcycle_stop(wcycle, ewcQM);
+    wallcycle_stop(wcycle, WallCycleCounter::QM);
 
     /* Save the gradient on the QM atoms */
     for (int i=0; i<n; i++)
@@ -510,7 +512,7 @@ real call_dftbplus(QMMM_rec*         qr,
 
     rvec *partgrad;
     snew(partgrad, qm->nrQMatoms_get());
-    qr->gradient_QM_MM(cr, nrnb, wcycle, (qm->qmmm_variant_get() == eqmmmPME ? *qr->pmedata : nullptr),
+    qr->gradient_QM_MM(nrnb, wcycle, // cr ... (qm->qmmm_variant_get() == eqmmmPME ? *qr->pmedata : nullptr),
                    qm->qmmm_variant_get(), partgrad, MMgrad, MMgrad_full);
     for (int i=0; i<n; i++)
     {
@@ -527,16 +529,16 @@ real call_dftbplus(QMMM_rec*         qr,
     {
         for (int j = 0; j < DIM; j++)
         {
-            f[i][j]      = HARTREE_BOHR2MD*QMgrad[i][j];
-         // fshift[i][j] = HARTREE_BOHR2MD*QMgrad[i][j];
+            f[i][j]      = gmx::c_hartreeBohr2Md*QMgrad[i][j];
+         // fshift[i][j] = gmx::c_hartreeBohr2Md*QMgrad[i][j];
         }
     }
     for (int i = 0; i < mm.nrMMatoms; i++)
     {
         for (int j = 0; j < DIM; j++)
         {
-            f[i+qm->nrQMatoms_get()][j]      = HARTREE_BOHR2MD*MMgrad[i][j];
-         // fshift[i+qm.nrQMatoms_get()][j] = HARTREE_BOHR2MD*MMgrad[i][j];
+            f[i+qm->nrQMatoms_get()][j]      = gmx::c_hartreeBohr2Md*MMgrad[i][j];
+         // fshift[i+qm->nrQMatoms_get()][j] = gmx::c_hartreeBohr2Md*MMgrad[i][j];
         }
     }
     if (qm->qmmm_variant_get() == eqmmmPME)
@@ -545,8 +547,8 @@ real call_dftbplus(QMMM_rec*         qr,
         {
             for (int j = 0; j < DIM; j++)
             {
-                f[i+qm->nrQMatoms_get()+mm.nrMMatoms][j]      = HARTREE_BOHR2MD*MMgrad_full[i][j];
-             // fshift[i+qm.nrQMatoms_get()+mm.nrMMatoms][j] = HARTREE_BOHR2MD*MMgrad_full[i][j];
+                f[i+qm->nrQMatoms_get()+mm.nrMMatoms][j]      = gmx::c_hartreeBohr2Md*MMgrad_full[i][j];
+             // fshift[i+qm->nrQMatoms_get()+mm.nrMMatoms][j] = gmx::c_hartreeBohr2Md*MMgrad_full[i][j];
             }
         }
     }
@@ -634,7 +636,7 @@ real call_dftbplus(QMMM_rec*         qr,
 
     step++;
 
-    return (real) QMener * HARTREE2KJ * AVOGADRO;
+    return (real) QMener * gmx::c_hartree2Kj * gmx::c_avogadro;
 } /* call_dftbplus */
 
 /* end of dftbplus sub routines */

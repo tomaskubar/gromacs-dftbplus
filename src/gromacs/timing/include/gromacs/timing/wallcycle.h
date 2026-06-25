@@ -259,7 +259,8 @@ static const char* enumValuetoString(WallCycleCounter enumValue)
         "Position swapping",
         "IMD",
         "MD Graph",
-        "Test"
+        "Test",
+        "QM"
     };
     static_assert(checkStringsLengths<22>(wallCycleCounterNames));
     return wallCycleCounterNames[enumValue];

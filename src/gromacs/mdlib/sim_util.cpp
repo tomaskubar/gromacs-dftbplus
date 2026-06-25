@@ -55,6 +55,7 @@
 #include "gromacs/domdec/dlbtiming.h"
 #include "gromacs/domdec/domdec.h"
 #include "gromacs/domdec/domdec_struct.h"
+#include "gromacs/domdec/ga2la.h"
 #include "gromacs/domdec/gpuhaloexchange.h"
 #include "gromacs/domdec/haloexchange.h"
 #include "gromacs/domdec/partition.h"
@@ -2159,11 +2160,11 @@ void do_force(FILE*                         fplog,
 	        fr->qr->update_QMMMrec_verlet_ns(cr, nbv, as_rvec_array(x.unpaddedArrayRef().data()), mdatoms, box);
             if (GMX_QMMM_DFTBPLUS)
             {
-	            fr->qr->update_QMMMrec_dftb(cr, fr->shift_vec, as_rvec_array(x.unpaddedArrayRef().data()), mdatoms, box);
+	            fr->qr->update_QMMMrec_dftb(cr, as_rvec_array(fr->shift_vec.data()), as_rvec_array(x.unpaddedArrayRef().data()), mdatoms, box);
             }
 	    }
         /* Update the coordinates in any case. */
-	    fr->qr->update_QMMM_coord(cr, fr->shift_vec, as_rvec_array(x.unpaddedArrayRef().data()), mdatoms, box);
+        fr->qr->update_QMMM_coord(cr, as_rvec_array(fr->shift_vec.data()), as_rvec_array(x.unpaddedArrayRef().data()), mdatoms, box);
     }
 
     // Compute wall interactions, when present.
@@ -2247,7 +2248,8 @@ void do_force(FILE*                         fplog,
                                        lambda,
                                        dipoleData.muStateAB,
                                        stepWork,
-                                       ddBalanceRegionHandler);
+                                       ddBalanceRegionHandler,
+                                       *fr);
     }
 
     wallcycle_stop(wcycle, WallCycleCounter::Force);

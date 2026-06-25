@@ -51,7 +51,6 @@
 #include "gromacs/gmxlib/network.h"
 #include "gromacs/gmxlib/nrnb.h"
 #include "gromacs/math/units.h"
-#include "gromacs/math/vec.h"
 #include "gromacs/mdlib/force.h"
 #include "gromacs/mdlib/qmmm.h"
 #include "gromacs/mdtypes/md_enums.h"
@@ -172,7 +171,7 @@ void QMMM_QMgaussian::init_gaussian()
         //  if (fr->bRF)
         //  {
         //    rffile = fopen("rf.dat","w");
-        //    fprintf(rffile,"%f %f\n",fr->epsilon_r,fr->rcoulomb/BOHR2NM);
+        //    fprintf(rffile,"%f %f\n",fr->epsilon_r,fr->rcoulomb/gmx::c_bohr2Nm);
         //    fclose(rffile);
         //  }
     }
@@ -245,7 +244,7 @@ static void write_gaussian_input(int step, const QMMM_QMrec& qm, const QMMM_MMre
     for (int i = 0; i < qm.nrQMatoms_get(); i++)
     {
         fprintf(out, "%3d %10.7f  %10.7f  %10.7f\n", qm.atomicnumberQM_get(i),
-                qm.xQM_get(i, XX) / BOHR2NM, qm.xQM_get(i, YY) / BOHR2NM, qm.xQM_get(i, ZZ) / BOHR2NM);
+                qm.xQM_get(i, XX) / gmx::c_bohr2Nm, qm.xQM_get(i, YY) / gmx::c_bohr2Nm, qm.xQM_get(i, ZZ) / gmx::c_bohr2Nm);
     }
 
     // Pseudo Potential and ECP are included here if selected (MEthod suffix LAN)
@@ -288,7 +287,7 @@ static void write_gaussian_input(int step, const QMMM_QMrec& qm, const QMMM_MMre
         for (int i = 0; i < mm.nrMMatoms; i++)
         {
             fprintf(out, "%10.7f  %10.7f  %10.7f %8.4f\n",
-                    mm.xMM[i][XX]/BOHR2NM, mm.xMM[i][YY]/BOHR2NM, mm.xMM[i][ZZ]/BOHR2NM, mm.MMcharges[i]);
+                    mm.xMM[i][XX]/gmx::c_bohr2Nm, mm.xMM[i][YY]/gmx::c_bohr2Nm, mm.xMM[i][ZZ]/gmx::c_bohr2Nm, mm.MMcharges[i]);
         }
     }
     fprintf(out, "\n");
@@ -395,19 +394,19 @@ real QMMM_QMgaussian::call_gaussian(const QMMM_QMrec& qm, const QMMM_MMrec& mm, 
     {
         for (int j = 0; j < DIM; j++)
         {
-            f[i][j]      = HARTREE_BOHR2MD * QMgrad[i][j];
-            fshift[i][j] = HARTREE_BOHR2MD * QMgrad[i][j];
+            f[i][j]      = gmx::c_hartreeBohr2Md * QMgrad[i][j];
+            fshift[i][j] = gmx::c_hartreeBohr2Md * QMgrad[i][j];
         }
     }
     for (int i = 0; i < mm.nrMMatoms; i++)
     {
         for (int j = 0; j < DIM; j++)
         {
-            f[i + qm.nrQMatoms_get()][j]      = HARTREE_BOHR2MD * MMgrad[i][j];
-            fshift[i + qm.nrQMatoms_get()][j] = HARTREE_BOHR2MD * MMgrad[i][j];
+            f[i + qm.nrQMatoms_get()][j]      = gmx::c_hartreeBohr2Md * MMgrad[i][j];
+            fshift[i + qm.nrQMatoms_get()][j] = gmx::c_hartreeBohr2Md * MMgrad[i][j];
         }
     }
-    QMener = QMener * HARTREE2KJ * AVOGADRO;
+    QMener = QMener * gmx::c_hartree2Kj * gmx::c_avogadro;
     step++;
     free(exe);
     return (QMener);

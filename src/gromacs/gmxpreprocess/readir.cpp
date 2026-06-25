@@ -3215,7 +3215,7 @@ void get_ir(const char*     mdparin,
  */
 static QMmethodType search_QMmethod(const char* searchString)
 {
-    for (int item = 0; item < QMmethodType::Count; item++)
+    for (int item = 0; item < static_cast<int>(QMmethodType::Count); item++)
     {
         auto itemQMmethod = static_cast<QMmethodType>(item);
         if (gmx::equalCaseInsensitive(enumValueToString(itemQMmethod), searchString))
@@ -3228,7 +3228,7 @@ static QMmethodType search_QMmethod(const char* searchString)
 
 static QMbasisType search_QMbasis(const char* searchString)
 {
-    for (int item = 0; item < QMbasisType::Count; item++)
+    for (int item = 0; item < static_cast<int>(QMbasisType::Count); item++)
     {
         auto itemQMbasis = static_cast<QMbasisType>(item);
         if (gmx::equalCaseInsensitive(enumValueToString(itemQMbasis), searchString))
@@ -4561,7 +4561,7 @@ void do_index(const char*                                 mdparin,
     auto qmGroupNames = gmx::splitString(inputrecStrings->QMMM);
     auto qmMethods    = gmx::splitString(inputrecStrings->QMmethod);
     auto qmBasisSets  = gmx::splitString(inputrecStrings->QMbasis);
-    if (ir->eI != eiMimic)
+    if (ir->eI != IntegrationAlgorithm::Mimic)
     {
         if (qmMethods.size() != qmGroupNames.size() || qmBasisSets.size() != qmGroupNames.size())
         {

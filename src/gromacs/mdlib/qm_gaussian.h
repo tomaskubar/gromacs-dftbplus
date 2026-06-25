@@ -35,8 +35,8 @@
 #ifndef GMX_MDLIB_QMGAUSSIAN_H
 #define GMX_MDLIB_QMGAUSSIAN_H
 
-#include "gromacs/math/vectypes.h"
 #include "gromacs/mdlib/qmmm.h"
+#include "gromacs/utility/vectypes.h"
 
 struct t_forcerec;
 

@@ -216,6 +216,7 @@ struct t_forcerec
 
     /* Data for PPPM/PME/Ewald */
     gmx_pme_t*   pmedata                = nullptr;
+    gmx_pme_t*   pmedataQMonly          = nullptr;
     LongRangeVdW ljpme_combination_rule = LongRangeVdW::Geom;
 
     /* Non bonded Parameter lists */

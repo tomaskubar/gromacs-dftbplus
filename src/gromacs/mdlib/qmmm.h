@@ -40,12 +40,14 @@
 
 #include "config.h"
 
+#include <memory>
 #include <vector>
 
 #include "gromacs/math/paddedvector.h"
-#include "gromacs/math/vectypes.h"
 #include "gromacs/mdlib/tgroup.h"
+#include "gromacs/mdtypes/md_enums.h"
 #include "gromacs/utility/arrayref.h"
+#include "gromacs/utility/vectypes.h"
 #include "gromacs/timing/wallcycle.h"
 
 //#include "gromacs/mdlib/qm_dftbplus.h"
@@ -57,8 +59,9 @@
 #define GMX_QMMM (GMX_QMMM_MOPAC || GMX_QMMM_GAMESS || GMX_QMMM_GAUSSIAN || GMX_QMMM_ORCA || GMX_QMMM_DFTBPLUS)
 
 struct t_nrnb;
+namespace gmx {
 struct nonbonded_verlet_t;
-
+}
 struct gmx_pme_t;
 enum class PbcType : int;
 
@@ -75,7 +78,7 @@ private:
 public:
   PaddedVector<gmx::RVec> x;
   PaddedVector<gmx::RVec> f;
-  std::vector<real>       q;
+  PaddedVector<real>      q; // std::vector<real>       q;
   matrix                  vir;
   real*                   pot; // electrostatic potential from PME ("external shift" in DFTB),
   gmx_bool                surf_corr_pme; // whether the surface correction shall be considered or not (if not = tin-foil boundary cond.)
@@ -184,7 +187,7 @@ private:
                               const t_forcerec* fr,
                               const t_inputrec* ir,
                               const t_commrec*  cr,
-                              gmx_wallcycle_t   wcycle);
+                              gmx_wallcycle*    wcycle);
     friend real call_dftbplus(const t_forcerec* fr,
                               const t_commrec*  cr,
                               QMMM_QMrec*       qm,
@@ -192,7 +195,7 @@ private:
                               rvec              f[],
                               rvec              fshift[],
                               t_nrnb*           nrnb,
-                              gmx_wallcycle_t   wcycle);
+                              gmx_wallcycle*   wcycle);
 
 public:
     DftbPlus        *dpcalc;        // DFTB+ calculator
@@ -276,17 +279,20 @@ public:
     std::vector<QMMM_MMrec>  mm;         // there can only be one MM subsystem !
     std::vector<QMMM_PME>    pme;        // [0] == pme_full, [1] == pme_qmonly
     PbcType                  pbcType;
-    struct gmx_pme_t* const* pmedata;
+    //std::unique_ptr<gmx_pme_t> pmedata;
+    struct gmx_pme_t*        pmedata;
 
     QMMM_rec(const t_commrec*                 cr,
              const gmx_mtop_t*                mtop,
              const t_inputrec*                ir,
              const t_forcerec*                fr);
-          // const gmx_wallcycle_t gmx_unused wcycle);
+          // const gmx_wallcycle* gmx_unused wcycle);
     // From topology->atoms.atomname and topology->atoms.atomtype
     //   the atom names and types are read;
     // From inputrec->QMcharge resp. inputrec->QMmult the nelecs and multiplicity are determined
     //   and md->cQMMM gives numbers of the MM and QM atoms
+
+    ~QMMM_rec();
 
     /*
     void update_QMMMrec(const t_commrec*  cr,
@@ -304,7 +310,7 @@ public:
     // to process the newly created neighborlists!
 
     void update_QMMMrec_verlet_ns(const t_commrec*    cr,
-                                  nonbonded_verlet_t* nbv,
+                                  const gmx::nonbonded_verlet_t* nbv,
                                   const rvec          x[],
                                   const t_mdatoms*    md,
                                   const matrix        box);
@@ -318,6 +324,7 @@ public:
     void update_QMMM_coord(const t_commrec*  cr,
                            rvec*             shift_vec,
                            const rvec        x[],
+                           //const gmx::ArrayRef<const gmx::RVec> x,
                            const t_mdatoms*  md,
                            const matrix      box);
     
@@ -326,31 +333,38 @@ public:
     void calculate_SR_QM_MM(int   variant,
                             real* pot);
     
-    void calculate_LR_QM_MM(const t_commrec*  cr,
+    void calculate_LR_QM_MM(//const t_commrec*  cr,
                             t_nrnb*           nrnb,
-                            gmx_wallcycle_t   wcycle,
-                            struct gmx_pme_t* pmedata,
+                            gmx_wallcycle*    wcycle,
+                        //  struct gmx_pme_t* pmedata,
                             real*             pot);
     
-    void calculate_complete_QM_QM(const t_commrec*  cr,
+    void calculate_complete_QM_QM(//const t_commrec*  cr,
                                   t_nrnb*           nrnb,
-                                  gmx_wallcycle_t   wcycle,
-                                  struct gmx_pme_t* pmedata,
+                                  gmx_wallcycle*    wcycle,
+                              //  struct gmx_pme_t* pmedata,
                                   real*             pot);
-    
-    void gradient_QM_MM(const t_commrec*  cr,
+
+/*
+    void calculate_complete_QM_QM_ewald(//const t_commrec *cr,
+                              gmx_wallcycle* wcycle,
+                        //    struct gmx_pme_t *pmedata,
+                              real *pot);
+*/
+
+    void gradient_QM_MM(//const t_commrec*  cr,
                         t_nrnb*           nrnb,
-                        gmx_wallcycle_t   wcycle,
-                        struct gmx_pme_t* pmedata,
+                        gmx_wallcycle*    wcycle,
+                    //  struct gmx_pme_t* pmedata,
                         int               variant,
                         rvec*             partgrad,
                         rvec*             MMgrad,
                         rvec*             MMgrad_full);
 
-    real calculate_QMMM(const t_commrec*           cr,
+    real calculate_QMMM(// const t_commrec*           cr,
                         gmx::ForceWithVirial*      forceWithVirial,
                               t_nrnb*              nrnb,
-                              gmx_wallcycle_t      wcycle);
+                              gmx_wallcycle*    wcycle);
 
     // QMMM computes the QM forces.
     // This routine makes either function calls to gmx QM routines

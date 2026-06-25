@@ -89,9 +89,9 @@ if (GMX_QMMM_DFTBPLUS)
 
 #   add_library(gfortran-7.2 SHARED IMPORTED)
 #   set_target_properties(gfortran-7.2 PROPERTIES IMPORTED_LOCATION /usr/local/src/gcc-7.2.0-release/lib64/libgfortran.so.4)
-    target_link_libraries(template libdftbplus gfortran gomp)
-   #target_link_libraries(template libdftbplus libdftd3 libmudpack gfortran gomp)
-   #target_link_libraries(template libdftbplus libxmlf90 libdftd3 gfortran gomp)
+    target_link_libraries(template PRIVATE libdftbplus ${LINEAR_ALGEBRA_LIBRARIES} gfortran gomp)
+   #target_link_libraries(template PRIVATE libdftbplus libdftd3 libmudpack gfortran gomp)
+   #target_link_libraries(template PRIVATE libdftbplus libxmlf90 libdftd3 gfortran gomp)
 endif()
 
 set(DOCUMENTATION_HTTP_URL_BASE

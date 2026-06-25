@@ -51,12 +51,12 @@
 #include "gromacs/gmxlib/network.h"
 #include "gromacs/gmxlib/nrnb.h"
 #include "gromacs/math/units.h"
-#include "gromacs/math/vec.h"
 #include "gromacs/mdlib/qmmm.h"
 #include "gromacs/mdtypes/commrec.h"
 #include "gromacs/mdtypes/md_enums.h"
 #include "gromacs/utility/fatalerror.h"
 #include "gromacs/utility/smalloc.h"
+#include "gromacs/utility/vec.h"
 
 // When not built in a configuration with QMMM support, much of this
 // code is unreachable by design. Tell clang not to warn about it.
@@ -114,10 +114,10 @@ void init_gamess(const t_commrec* cr, const QMMM_QMrec& qm, const QMMM_MMrec& mm
                   "-DGMX_QMMM_PROGRAM=GAMESS, and ensure that linking will work correctly.");
     }
 
-    if (PAR(cr))
+    if (cr->commMyGroup.isParallel())
     {
 
-        if (MASTER(cr))
+        if (cr->commMySim.isMainRank())
         {
             out = fopen("FOR009", "w");
             /* of these options I am not completely sure....  the overall
@@ -153,7 +153,7 @@ void init_gamess(const t_commrec* cr, const QMMM_QMrec& qm, const QMMM_MMrec& mm
                     enumValueToString(qm.QMbasis_get()), enumValueToString(qm.QMmethod_get())); /* see enum.h */
             fclose(out);
         }
-        gmx_barrier(cr->mpi_comm_mygroup);
+        gmx_barrier(cr->commMyGroup.comm());
         F77_FUNC(inigms, IMIGMS)();
     }
     else /* normal serial run */
@@ -221,14 +221,14 @@ real call_gamess(const QMMM_QMrec& qm, const QMMM_MMrec& mm, rvec f[], rvec fshi
     {
         for (j = 0; j < DIM; j++)
         {
-            qmcrd[DIM * i + j] = 1 / BOHR2NM * qm.xQM_get(i, j);
+            qmcrd[DIM * i + j] = 1 / gmx::c_bohr2Nm * qm.xQM_get(i, j);
         }
     }
     for (i = 0; i < nrMMatoms; i++)
     {
         for (j = 0; j < DIM; j++)
         {
-            mmcrd[DIM * i + j] = 1 / BOHR2NM * mm.xMM[i][j];
+            mmcrd[DIM * i + j] = 1 / gmx::c_bohr2Nm * mm.xMM[i][j];
         }
     }
     for (i = 0; i < 3 * nrQMatoms; i += 3)
@@ -243,20 +243,20 @@ real call_gamess(const QMMM_QMrec& qm, const QMMM_MMrec& mm, rvec f[], rvec fshi
     {
         for (j = 0; j < DIM; j++)
         {
-            f[i][j]      = HARTREE_BOHR2MD * qmgrad[3 * i + j];
-            fshift[i][j] = HARTREE_BOHR2MD * qmgrad[3 * i + j];
+            f[i][j]      = gmx::c_hartreeBohr2Md * qmgrad[3 * i + j];
+            fshift[i][j] = gmx::c_hartreeBohr2Md * qmgrad[3 * i + j];
         }
     }
     for (i = 0; i < nrMMatoms; i++)
     {
         for (j = 0; j < DIM; j++)
         {
-            f[i][j]      = HARTREE_BOHR2MD * mmgrad[3 * i + j];
-            fshift[i][j] = HARTREE_BOHR2MD * mmgrad[3 * i + j];
+            f[i][j]      = gmx::c_hartreeBohr2Md * mmgrad[3 * i + j];
+            fshift[i][j] = gmx::c_hartreeBohr2Md * mmgrad[3 * i + j];
         }
     }
     /* convert a.u to kJ/mol */
-    QMener = energy * HARTREE2KJ * AVOGADRO;
+    QMener = energy * gmx::c_hartree2Kj * gmx::c_avogadro;
     return (QMener);
 }
 

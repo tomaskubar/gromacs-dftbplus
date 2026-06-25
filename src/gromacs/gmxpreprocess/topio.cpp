@@ -1493,18 +1493,22 @@ static void generate_qmexcl_moltype(gmx_moltype_t*       molt,
      * reason for this is that this interaction is accounted for in the
      * linkatoms interaction with the QMatoms and would be counted
      * twice.  */
-
+    snew(blink, molt->atoms.nr);
+    for (int i = 0; i < molt->atoms.nr; i++)
+    {
+        blink[i] = FALSE;
+    }
     if (qmmmMode != QmmmModeType::MiMiC)
     {
-        for (int i = 0; i < F_NRE; i++)
+        for (const auto ftype : gmx::EnumerationWrapper<InteractionFunction>{})
         {
-            if (IS_CHEMBOND(i))
+            if (IS_CHEMBOND(ftype))
             {
                 int j = 0;
-                while (j < molt->ilist[i].size())
+                while (j < molt->ilist[ftype].size())
                 {
-                    int a1 = molt->ilist[i].iatoms[j + 1];
-                    int a2 = molt->ilist[i].iatoms[j + 2];
+                    int a1 = molt->ilist[ftype].iatoms[j + 1];
+                    int a2 = molt->ilist[ftype].iatoms[j + 2];
                     if ((bQMMM[a1] && !bQMMM[a2]) || (!bQMMM[a1] && bQMMM[a2]))
                     {
                         if (link_nr >= link_max)
@@ -1525,15 +1529,6 @@ static void generate_qmexcl_moltype(gmx_moltype_t*       molt,
                 }
             }
         }
-    }
-    snew(blink, molt->atoms.nr);
-    for (int i = 0; i < molt->atoms.nr; i++)
-    {
-        blink[i] = FALSE;
-    }
-
-    if (qmmmMode != QmmmModeType::MiMiC)
-    {
         for (int i = 0; i < link_nr; i++)
         {
             blink[link_arr[i]] = TRUE;
@@ -1567,9 +1562,9 @@ static void generate_qmexcl_moltype(gmx_moltype_t*       molt,
         {
             for (int k = 0; k < qm_nr; k++)
             {
-                qmexcl.a[k + j] = qm_arr[k];
+                qmexcl.a[k + l] = qm_arr[k];
             }
-            j += qm_nr;
+            l += qm_nr;
         }
     }
     qmexcl.index[qmexcl.nr] = l;
@@ -1621,13 +1616,13 @@ static void generate_qmexcl_moltype(gmx_moltype_t*       molt,
     std::free(blink);
 } /* generate_qmexcl_moltype */
 
-void generate_qmexcl(gmx_mtop_t* sys, t_inputrec* ir, warninp* wi, QmmmModeType qmmmMode, const gmx::MDLogger& logger)
+void generate_qmexcl(gmx_mtop_t* sys, t_inputrec* ir, WarningHandler* wi, QmmmModeType qmmmMode, const gmx::MDLogger& logger)
 {
     /* This routine expects molt->molt[m].ilist to be of size InteractionFunction::Count and ordered.
      */
 
     unsigned char*  grpnr;
-    int             mol, nat_mol;
+    int             mol, nat_mol, nr_mol_with_qm_atoms = 0;
     gmx_molblock_t* molb;
     bool            bQMMM;
 
@@ -1650,6 +1645,7 @@ void generate_qmexcl(gmx_mtop_t* sys, t_inputrec* ir, warninp* wi, QmmmModeType 
 
             if (bQMMM)
             {
+                nr_mol_with_qm_atoms++;
                 if (molb->nmol > 1)
                 {
                     /* We need to split this molblock */
@@ -1709,8 +1705,7 @@ void generate_qmexcl(gmx_mtop_t* sys, t_inputrec* ir, warninp* wi, QmmmModeType 
          * the non-bonded interactions via the exclusions (AFAIK). Instead,
          * the user is advised to use the energy group exclusions in the mdp file
          */
-        warning_note(wi,
-                     "\nThe QM subsystem is divided over multiple topologies. "
+        wi->addNote( "\nThe QM subsystem is divided over multiple topologies. "
                      "The mutual non-bonded interactions cannot be excluded. "
                      "There are two ways to achieve this:\n\n"
                      "1) merge the topologies, such that the atoms of the QM "

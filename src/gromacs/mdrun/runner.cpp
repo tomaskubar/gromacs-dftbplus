@@ -2126,6 +2126,29 @@ int Mdrunner::mdrunner()
                                        pmeGpuProgram.get(),
                                        mdlog,
                                        nullptr);
+                if (fr->qr != nullptr)
+                {
+                    fr->qr->pmedata = fr->pmedata;
+                    fr->pmedataQMonly = gmx_pme_init(cr->dd,
+                                       getNumPmeDomains(cr->dd),
+                                       ir,
+                                       box,
+                                       haloExtentForAtomDisplacement,
+                                       nChargePerturbed != 0,
+                                       nTypePerturbed != 0,
+                                       mdrunOptions.reproducible,
+                                       ewaldcoeff_q,
+                                       ewaldcoeff_lj,
+                                       gmx_omp_nthreads_get(ModuleMultiThread::Pme),
+                                       pmeRunMode,
+                                       nullptr,
+                                       deviceContext,
+                                       pmeStream,
+                                       pmeGpuProgram.get(),
+                                       mdlog,
+                                       nullptr);
+                    gmx_pme_reinit_atoms(fr->pmedataQMonly, fr->qr->qm[0].nrQMatoms_get(), {}, {});
+                }
             }
             GMX_CATCH_ALL_AND_EXIT_WITH_FATAL_ERROR
         }

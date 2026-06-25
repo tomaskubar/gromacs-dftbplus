@@ -51,11 +51,11 @@
 #include "gromacs/gmxlib/network.h"
 #include "gromacs/gmxlib/nrnb.h"
 #include "gromacs/math/units.h"
-#include "gromacs/math/vec.h"
 #include "gromacs/mdlib/qmmm.h"
 #include "gromacs/mdtypes/md_enums.h"
 #include "gromacs/utility/fatalerror.h"
 #include "gromacs/utility/smalloc.h"
+#include "gromacs/utility/vec.h"
 
 // When not built in a configuration with QMMM support, much of this
 // code is unreachable by design. Tell clang not to warn about it.
@@ -196,11 +196,11 @@ real call_mopac(const QMMM_QMrec& qm, const QMMM_MMrec& mm, rvec f[], rvec fshif
         {
             for (int j = 0; j < DIM; j++)
             {
-                f[i][j]      = static_cast<real>(10) * CAL2JOULE * qmgrad[3 * i + j];
-                fshift[i][j] = static_cast<real>(10) * CAL2JOULE * qmgrad[3 * i + j];
+                f[i][j]      = static_cast<real>(10) * gmx::c_cal2Joule * qmgrad[3 * i + j];
+                fshift[i][j] = static_cast<real>(10) * gmx::c_cal2Joule * qmgrad[3 * i + j];
             }
         }
-        QMener = static_cast<real> CAL2JOULE * energy;
+        QMener = static_cast<real>(gmx::c_cal2Joule) * energy;
         // do we do something with the mulliken charges??
 
         free(qmchrg);

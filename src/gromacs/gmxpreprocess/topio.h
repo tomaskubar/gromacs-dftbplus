@@ -100,6 +100,6 @@ char** do_top(bool                                                            bV
               const gmx::MDLogger&                  logger);
 
 /* This routine expects sys->molt[m].ilist to be of size InteractionFunction::Count and ordered. */
-void generate_qmexcl(gmx_mtop_t* sys, t_inputrec* ir, warninp_t wi, QmmmModeType qmmmMode, const gmx::MDLogger& logger);
+void generate_qmexcl(gmx_mtop_t* sys, t_inputrec* ir, WarningHandler* wi, QmmmModeType qmmmMode, const gmx::MDLogger& logger);
 
 #endif

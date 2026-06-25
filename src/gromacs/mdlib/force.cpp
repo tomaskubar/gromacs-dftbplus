@@ -161,14 +161,18 @@ void CpuPpLongRangeNonbondeds::calculate(gmx_pme_t*                     pmedata,
                                          gmx::ArrayRef<const real>      lambda,
                                          gmx::ArrayRef<const gmx::RVec> mu_tot,
                                          const gmx::StepWorkload&       stepWork,
-                                         const DDBalanceRegionHandler&  ddBalanceRegionHandler)
+                                         const DDBalanceRegionHandler&  ddBalanceRegionHandler,
+                                         // TODO: This argument is only needed for the QMMM contribution,
+                                         // so it should be moved to a separate function that is only called
+                                         // when bQMMM is true.
+                                         const t_forcerec&              fr)
 {
     /* do QMMM first if requested */
  // auto& forceWithVirial = forceOutputs->forceWithVirial();
-    if (fr->bQMMM)
+    if (fr.bQMMM)
     {
  //     enerd->term[F_EQM] = fr->qr->calculate_QMMM(cr, &forceOutputs->forceWithShiftForces(), nrnb, wcycle);
-        enerd->term[F_EQM] = fr->qr->calculate_QMMM(cr, forceWithVirial, nrnb, wcycle);
+        enerd->term[InteractionFunction::QuantumMechanicalRegionEnergy] = fr.qr->calculate_QMMM(forceWithVirial, nrnb_, wcycle_);
     }
 
     const bool computePmeOnCpu = (usingPme(coulombInteractionType_) || usingLJPme(vanDerWaalsType_))

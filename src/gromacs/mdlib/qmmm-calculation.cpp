@@ -22,13 +22,12 @@
 #include "gromacs/gmxlib/nrnb.h"
 #include "gromacs/math/functions.h"
 #include "gromacs/math/units.h"
-#include "gromacs/math/vec.h"
 #include "gromacs/mdlib/force.h"
 #include "gromacs/mdtypes/commrec.h"
 #include "gromacs/mdtypes/inputrec.h"
 #include "gromacs/mdtypes/md_enums.h"
 #include "gromacs/mdtypes/mdatom.h"
-#include "gromacs/mdtypes/nblist.h"
+//#include "gromacs/mdtypes/nblist.h"
 #include "gromacs/mdtypes/simulation_workload.h"
 #include "gromacs/pbcutil/ishift.h"
 #include "gromacs/pbcutil/pbc.h"
@@ -37,13 +36,14 @@
 #include "gromacs/topology/topology.h"
 #include "gromacs/utility/fatalerror.h"
 #include "gromacs/utility/smalloc.h"
+#include "gromacs/utility/vec.h"
 
-#define NM2BOHR           (1 / BOHR2NM)
+#define NM2BOHR           (1 / gmx::c_bohr2Nm)
 #define NM_TO_BOHR        (18.897259886)
 #define BOHR_TO_NM        (1 / NM_TO_BOHR)
 #define HARTREE_TO_EV     (27.211396132)
 // #define AU_OF_ESP_TO_VOLT (14.400) -- this is off by an angstrom/bohr factor! use HARTREE_TO_EV instead!
-#define HARTREE2KJMOL     (HARTREE2KJ * AVOGADRO)
+#define HARTREE2KJMOL     (gmx::c_hartree2Kj * gmx::c_avogadro)
 #define KJMOL2HARTREE     (1 / HARTREE2KJMOL)
 
 #define QMMM_SWITCH       (0.05) // length of the additional switching region beyond cutoff
@@ -259,10 +259,10 @@ void QMMM_rec::calculate_SR_QM_MM(int variant,
  * EXCLUDING the periodic images of QM charges at this stage!
  * That contribution will be added within the SCC cycle.
  */
-void QMMM_rec::calculate_LR_QM_MM(const t_commrec *cr,
+void QMMM_rec::calculate_LR_QM_MM(//const t_commrec *cr,
                                   t_nrnb *nrnb,
-                                  gmx_wallcycle_t wcycle,
-                                  struct gmx_pme_t *pmedata,
+                                  gmx_wallcycle* wcycle,
+                              //  struct gmx_pme_t *pmedata,
                                   real *pot)
 {
   QMMM_QMrec& qm_      = qm[0];
@@ -306,8 +306,9 @@ void QMMM_rec::calculate_LR_QM_MM(const t_commrec *cr,
   gmx::StepWorkload stepWork;
   stepWork.computePotentials = true;
   PaddedVector<gmx::RVec> emptyVec;
-  gmx_pme_do(pmedata, gmx::makeArrayRef(pme_full.x), gmx::makeArrayRef(emptyVec), pme_full.q.data(), pme_full.q.data(),
-             nullptr, nullptr, nullptr, nullptr, qm_.box, cr, 0, 0, //pme_full.nrnb->get(),
+  gmx::ArrayRef<real> emptyArray;
+  gmx_pme_do(pmedata, gmx::makeArrayRef(pme_full.x), gmx::makeArrayRef(emptyVec), pme_full.q, pme_full.q,
+             emptyArray, emptyArray, emptyArray, emptyArray, qm_.box, 0, 0, //pme_full.nrnb->get(),
              nrnb, wcycle, pme_full.vir, pme_full.vir, nullptr, nullptr, 0., 0., nullptr, nullptr,
              stepWork, TRUE, FALSE, n, pme_full.pot);
 //clock_gettime(CLOCK_MONOTONIC, &time2);
@@ -371,47 +372,52 @@ void QMMM_rec::calculate_LR_QM_MM(const t_commrec *cr,
  * This needs to be performed in every SCC iteration.
  */
 /*
-void calculate_complete_QM_QM_ewald(t_QMMMrec *qr,
-                              const t_commrec *cr,
-                              gmx_wallcycle_t wcycle,
-                              struct gmx_pme_t *pmedata,
+void QMMM_rec::calculate_complete_QM_QM_ewald(
+                        //    const t_commrec *cr,
+                              gmx_wallcycle* wcycle,
+                        //    struct gmx_pme_t *pmedata,
                               real *pot)
 {
   // as the last arguments are expected: fr->ewaldcoeff_q and fr->pmedata
-  t_QMrec    *qm           = qr->qm[0];
-  t_QMMM_PME *pme          = qr->pme;
-  int         n            = qm->nrQMatoms;
-//real        rcoul        = qm->rcoulomb;
-  real        ewaldcoeff_q = qm->ewaldcoeff_q;
+  QMMM_QMrec& qm_          = qm[0];
+  QMMM_MMrec& mm_          = mm[0];
+  //QMMM_PME& pme_full       = pme[0];
+  QMMM_PME& pme_qmonly     = pme[1];
+//t_QMMM_PME *pme          = qr->pme_qmonly;
+  int         n            = qm_.nrQMatoms;
+//real        rcoul        = qm_.rcoulomb;
+  real        ewaldcoeff_q = qm_.ewaldcoeff_q;
 
   // copy the data into PME structures
   for (int j=0; j<n; j++)
   {
       // QM atoms with charges
-      pme->x[j][XX] = qm->xQM[j][XX];
-      pme->x[j][YY] = qm->xQM[j][YY];
-      pme->x[j][ZZ] = qm->xQM[j][ZZ];
+      pme_qmonly.x[j][XX] = qm_.xQM[j][XX];
+      pme_qmonly.x[j][YY] = qm_.xQM[j][YY];
+      pme_qmonly.x[j][ZZ] = qm_.xQM[j][ZZ];
       // Attenuate the periodic images of the QM zone
       // with the same scaling factor
       // that is applied for the MM atoms.
-      pme->q[j]     = qm->QMcharges[j] * qr->mm->scalefactor;
+      pme_qmonly.q[j]     = qm_.QMcharges[j] * mm_.scalefactor;
   }
-  
-  static struct timespec time1, time2;
-  clock_gettime(CLOCK_MONOTONIC, &time1);
-  init_nrnb(pme->nrnb);
+//static struct timespec time1, time2;
+//clock_gettime(CLOCK_MONOTONIC, &time1);
+//init_nrnb(pme_qmonly.nrnb); // TODO change to something?
 
+  gmx::StepWorkload stepWork;
+  stepWork.computePotentials = true;
+  
   for (int j=0; j<n; j++) {
-    pme->pot[j] = 0.;
+    pme_qmonly.pot[j] = 0.;
   }
 
   rvec kvec;
   for (int kxi=-pmedata->nkx; kxi<=pmedata->nkx; kxi++) {
-    kvec[XX] = (real) kxi * 2. * M_PI / qm->box[XX][XX];
+    kvec[XX] = (real) kxi * 2. * M_PI / qm_.box[XX][XX];
     for (int kyi=-pmedata->nky; kyi<=pmedata->nky; kyi++) {
-      kvec[YY] = (real) kyi * 2. * M_PI / qm->box[YY][YY];
+      kvec[YY] = (real) kyi * 2. * M_PI / qm_.box[YY][YY];
       for (int kzi=-pmedata->nkz; kzi<=pmedata->nkz; kzi++) {
-        kvec[ZZ] = (real) kzi * 2. * M_PI / qm->box[ZZ][ZZ];
+        kvec[ZZ] = (real) kzi * 2. * M_PI / qm_.box[ZZ][ZZ];
 
         if (kxi != 0 || kyi != 0 || kzi != 0) {
           real factor = exp(-norm2(kvec) / 4. / SQR(pmedata->ewaldcoeff_q)) / norm2(kvec);
@@ -419,9 +425,9 @@ void calculate_complete_QM_QM_ewald(t_QMMMrec *qr,
           for (int j=0; j<n; j++) {
             for (int k=0; k<n; k++) {
               rvec bond;
-              rvec_sub(pme->x[k], pme->x[j], bond);
-              real addend = factor * pme->q[k] * cos((double) iprod(kvec, bond));
-              pme->pot[j] += addend;
+              rvec_sub(pme_qmonly.x[k], pme_qmonly.x[j], bond);
+              real addend = factor * pme_qmonly.q[k] * cos((double) iprod(kvec, bond));
+              pme_qmonly.pot[j] += addend;
             //printf("J %2d K %2d X %8.5f Y %8.5f Z %8.5f ADDEND %12.7f\n",
             //  j, k, bond[XX], bond[YY], bond[ZZ], addend);
             }
@@ -433,53 +439,53 @@ void calculate_complete_QM_QM_ewald(t_QMMMrec *qr,
   }
 
   for (int j=0; j<n; j++) {
-    real factor = 4. * M_PI / (qm->box[XX][XX] * qm->box[YY][YY] * qm->box[ZZ][ZZ])
-                * ONE_4PI_EPS0 / pmedata->epsilon_r;
+    real factor = 4. * M_PI / (qm_.box[XX][XX] * qm_.box[YY][YY] * qm_.box[ZZ][ZZ])
+                * gmx::c_one4PiEps0 / pmedata->epsilon_r;
   //printf("final factor = %12.7f\n", factor);
-    pme->pot[j] *= factor;
+    pme_qmonly.pot[j] *= factor;
   }
 
   printf("NKX %d NKY %d NKZ %d\n", pmedata->nkx, pmedata->nky, pmedata->nkz);
   for (int j=0; j<n; j++) {
-    printf("POT QM QM [%3d] = %12.7f\n", j, pme->pot[j]);
+    printf("POT QM QM [%3d] = %12.7f\n", j, pme_qmonly.pot[j]);
   }
 
-  clock_gettime(CLOCK_MONOTONIC, &time2);
-  print_time_difference("EWATIME 2 ", time1, time2);
+//clock_gettime(CLOCK_MONOTONIC, &time2);
+//print_time_difference("EWATIME 2 ", time1, time2);
   
   // short-range corrections
   std::vector<real> pot_corr(n);
   for (int j=0; j<n; j++)
   {
       // exclude the interaction of atom j with its own charge density
-      pot_corr[j] = - 2. * ewaldcoeff_q * pme->q[j] / sqrt(M_PI);
+      pot_corr[j] = - 2. * ewaldcoeff_q * pme_qmonly.q[j] / sqrt(M_PI);
       // exclude the interactions with the other QM atoms
       for (int k=0; k<n; k++)
       {
           if (j != k)
           {
-              real r = pbc_dist_qmmm(nullptr, pme->x[j], pme->x[k]);
-              pot_corr[j] -= pme->q[k] * gmx_erf(ewaldcoeff_q * r) / r;
+              real r = pbc_dist_qmmm(nullptr, pme_qmonly.x[j], pme_qmonly.x[k]);
+              pot_corr[j] -= pme_qmonly.q[k] * gmx_erf(ewaldcoeff_q * r) / r;
           }
       }
   }
       
   std::vector<real> pot_surf(n);
-  if (pme->surf_corr_pme)
+  if (pme_qmonly.surf_corr_pme)
   {
       // optionally evaluate the PME surface correction term.
       // ATTENTION: modified update_QMMM_coord() (qmmm.c) is needed here!
        // sum_j q_j vec(x_j)
        rvec qx, sum_qx;
        clear_rvec(sum_qx);
-	   for (int j=0; j<qm->nrQMatoms; j++) {
-           svmul(pme->q[j], pme->x[j], qx);
+	   for (int j=0; j<qm_.nrQMatoms; j++) {
+           svmul(pme_qmonly.q[j], pme_qmonly.x[j], qx);
            rvec_inc(sum_qx, qx);
 	   }
 	   // contribution to the potential
-	   real vol = qm->box[XX][XX] * qm->box[YY][YY] * qm->box[ZZ][ZZ];
+	   real vol = qm_.box[XX][XX] * qm_.box[YY][YY] * qm_.box[ZZ][ZZ];
 	   for (int j=0; j<n; j++) {
-	       pot_surf[j] = 4. * M_PI / 3. / vol / pme->epsilon_r * iprod(qm->xQM[j], sum_qx);
+	       pot_surf[j] = 4. * M_PI / 3. / vol / pme_qmonly.epsilon_r * iprod(qm_.xQM[j], sum_qx);
        }
   }
   else
@@ -492,20 +498,20 @@ void calculate_complete_QM_QM_ewald(t_QMMMrec *qr,
   // return the potential on QM atoms
   for (int j=0; j<n; j++)
   {
-      pot[j] = pme->pot[j] * KJMOL2HARTREE + pot_corr[j] * BOHR2NM + pot_surf[j] * BOHR2NM;
+      pot[j] = pme_qmonly.pot[j] * KJMOL2HARTREE + pot_corr[j] * gmx::c_bohr2Nm + pot_surf[j] * gmx::c_bohr2Nm;
    // printf("pot_qm_in_scc[%d] = %12.8f\n", j+1, pot[j]);
    // printf("Ewald atom %d charge %6.3f potential %8.5f (correction %8.5f surfterm %8.5f)\n",
-   //         j+1, pme->q[j],      pot[j],                 pot_corr[j] * BOHR2NM, pot_surf[j] * BOHR2NM);
+   //         j+1, pme_qmonly.q[j],      pot[j],                 pot_corr[j] * gmx::c_bohr2Nm, pot_surf[j] * gmx::c_bohr2Nm);
   }
 
   return;
 } // calculate_complete_QM_QM_ewald
 */
 
-void QMMM_rec::calculate_complete_QM_QM(const t_commrec*  cr,
+void QMMM_rec::calculate_complete_QM_QM(//const t_commrec*  cr,
                                         t_nrnb*           nrnb,
-                                        gmx_wallcycle_t   wcycle,
-                                        struct gmx_pme_t* pmedata,
+                                        gmx_wallcycle*   wcycle,
+                                    //  struct gmx_pme_t* pmedata,
                                         real*             pot)
 {
   /* as the last arguments are expected: fr->ewaldcoeff_q and fr->pmedata */
@@ -544,8 +550,9 @@ void QMMM_rec::calculate_complete_QM_QM(const t_commrec*  cr,
   PaddedVector<gmx::RVec> emptyVec;
   int oldNumAtoms = pmedata->atc[0].numAtoms(); // need to resize PME arrays to the number of QM atoms
   pmedata->atc[0].setNumAtoms(n);
-  gmx_pme_do(pmedata, pme_qmonly.x, gmx::makeArrayRef(emptyVec), pme_qmonly.q.data(), pme_qmonly.q.data(),
-             nullptr, nullptr, nullptr, nullptr, qm_.box, cr, 0, 0, // pme_qmonly.nrnb->get(),
+  gmx::ArrayRef<real> emptyArray;
+  gmx_pme_do(pmedata, pme_qmonly.x, gmx::makeArrayRef(emptyVec), pme_qmonly.q, pme_qmonly.q,
+             emptyArray, emptyArray, emptyArray, emptyArray, qm_.box, 0, 0, // pme_qmonly.nrnb->get(),
              nrnb, wcycle, pme_qmonly.vir, pme_qmonly.vir, nullptr, nullptr, 0., 0., nullptr, nullptr,
              stepWork, TRUE, FALSE, n, pme_qmonly.pot);
   pmedata->atc[0].setNumAtoms(oldNumAtoms); // resize back
@@ -602,10 +609,10 @@ void QMMM_rec::calculate_complete_QM_QM(const t_commrec*  cr,
   /* return the potential on QM atoms */
   for (int j=0; j<n; j++)
   {
-      pot[j] = pme_qmonly.pot[j] * KJMOL2HARTREE + pot_corr[j] * BOHR2NM + pot_surf[j] * BOHR2NM;
+      pot[j] = pme_qmonly.pot[j] * KJMOL2HARTREE + pot_corr[j] * gmx::c_bohr2Nm + pot_surf[j] * gmx::c_bohr2Nm;
    // printf("pot_qm_in_scc[%d] = %12.8f\n", j+1, pot[j]);
    // printf("Ewald atom %d charge %6.3f potential %8.5f (correction %8.5f surfterm %8.5f)\n",
-   //         j+1, pme_qmonly.q[j],      pot[j],                 pot_corr[j] * BOHR2NM, pot_surf[j] * BOHR2NM);
+   //         j+1, pme_qmonly.q[j],      pot[j],                 pot_corr[j] * gmx::c_bohr2Nm, pot_surf[j] * gmx::c_bohr2Nm);
   }
 
   // also, save the potential in the QMMM_QMrec structure
@@ -619,10 +626,10 @@ void QMMM_rec::calculate_complete_QM_QM(const t_commrec*  cr,
  ***  GRADIENTS       *************
  **********************************/
 
-void QMMM_rec::gradient_QM_MM(const t_commrec*  cr,
+void QMMM_rec::gradient_QM_MM(//const t_commrec*  cr,
                               t_nrnb*           nrnb,
-                              gmx_wallcycle_t   wcycle,
-                              struct gmx_pme_t* pmedata,
+                              gmx_wallcycle*    wcycle,
+                          //  struct gmx_pme_t* pmedata,
                               int               variant,
                               rvec*             partgrad,
                               rvec*             MMgrad,
@@ -678,7 +685,7 @@ void QMMM_rec::gradient_QM_MM(const t_commrec*  cr,
           }
           if (r < r_1)
           {
-              real fscal = - qm_.QMcharges[j] * mm_.MMcharges[k] / CUB(r) * SQR(BOHR2NM);
+              real fscal = - qm_.QMcharges[j] * mm_.MMcharges[k] / CUB(r) * SQR(gmx::c_bohr2Nm);
               svmul(fscal, bond, dgr);
               //printf("SR: QM %1d -- MM %1d:%12.7f%12.7f%12.7f\n", j+1, k+1, dgr[XX], dgr[YY], dgr[ZZ]);
               rvec_inc(partgrad[j], dgr);
@@ -688,7 +695,7 @@ void QMMM_rec::gradient_QM_MM(const t_commrec*  cr,
           if (r < r_c)
           {
               real fscal = - qm_.QMcharges[j] * mm_.MMcharges[k] / r * (1. / SQR(r)
-                           - big_a * SQR(r - r_1) - big_b * CUB(r - r_1)) * SQR(BOHR2NM);
+                           - big_a * SQR(r - r_1) - big_b * CUB(r - r_1)) * SQR(gmx::c_bohr2Nm);
               svmul(fscal, bond, dgr);
               rvec_inc(partgrad[j], dgr);
               rvec_dec(MMgrad[k], dgr);
@@ -716,7 +723,7 @@ void QMMM_rec::gradient_QM_MM(const t_commrec*  cr,
           }
           if (r < r_c)
           {
-              real fscal = - qm_.QMcharges[j] * mm_.MMcharges[k] / r * (1. / SQR(r) - r / CUB(r_c)) * SQR(BOHR2NM);
+              real fscal = - qm_.QMcharges[j] * mm_.MMcharges[k] / r * (1. / SQR(r) - r / CUB(r_c)) * SQR(gmx::c_bohr2Nm);
               svmul(fscal, bond, dgr);
               rvec_inc(partgrad[j], dgr);
               rvec_dec(MMgrad[k], dgr);
@@ -745,7 +752,7 @@ void QMMM_rec::gradient_QM_MM(const t_commrec*  cr,
           }
           if (r < r_c)
           {
-              real fscal = - qm_.QMcharges[j] * mm_.MMcharges[k] / r * (1. / SQR(r) + 2. * r / CUB(r_c) - big_c) * SQR(BOHR2NM);
+              real fscal = - qm_.QMcharges[j] * mm_.MMcharges[k] / r * (1. / SQR(r) + 2. * r / CUB(r_c) - big_c) * SQR(gmx::c_bohr2Nm);
               svmul(fscal, bond, dgr);
               rvec_inc(partgrad[j], dgr);
               rvec_dec(MMgrad[k], dgr);
@@ -792,8 +799,9 @@ void QMMM_rec::gradient_QM_MM(const t_commrec*  cr,
       gmx::StepWorkload stepWork;
       stepWork.computeForces = true;
       std::vector<real> emptyVec;
-      gmx_pme_do(pmedata, pme_full.x, pme_full.f, pme_full.q.data(), pme_full.q.data(),
-                 nullptr, nullptr, nullptr, nullptr, qm_.box, cr, 0, 0, nrnb, // pme_full.nrnb->get(),
+      gmx::ArrayRef<real> emptyArray;
+      gmx_pme_do(pmedata, pme_full.x, pme_full.f, pme_full.q, pme_full.q,
+                 emptyArray, emptyArray, emptyArray, emptyArray, qm_.box, 0, 0, nrnb, // pme_full.nrnb->get(),
                  wcycle, pme_full.vir, pme_full.vir, nullptr, nullptr, 0., 0., nullptr, nullptr,
                  stepWork, TRUE, FALSE, n, nullptr); // emptyVec);
     //clock_gettime(CLOCK_MONOTONIC, &time2);
@@ -802,7 +810,7 @@ void QMMM_rec::gradient_QM_MM(const t_commrec*  cr,
       {
         for (int m=0; m<DIM; m++)
         {
-          grad_add[j][m] = - pme_full.f[j][m] / HARTREE_BOHR2MD; // partgrad is gradient, i.e. the negative of force
+          grad_add[j][m] = - pme_full.f[j][m] / gmx::c_hartreeBohr2Md; // HARTREE_BOHR2MD; // partgrad is gradient, i.e. the negative of force
         }
       }
    // printf("================================\n");
@@ -827,7 +835,7 @@ void QMMM_rec::gradient_QM_MM(const t_commrec*  cr,
           // negative of gradient -- we want to subtract it from partgrad
           real fscal = qm_.QMcharges[j] * qm_.QMcharges[k] / SQR(r) *
                         (gmx_erf(ewaldcoeff_q * r) / r
-                       - M_2_SQRTPI * ewaldcoeff_q * exp(-SQR(ewaldcoeff_q * r))) * SQR(BOHR2NM);
+                       - M_2_SQRTPI * ewaldcoeff_q * exp(-SQR(ewaldcoeff_q * r))) * SQR(gmx::c_bohr2Nm);
           svmul(fscal, bond, dgr); // vec(dgr) = fscal * vec(bond)
           rvec_inc(grad_add[j], dgr);
           rvec_dec(grad_add[k], dgr);
@@ -862,8 +870,8 @@ void QMMM_rec::gradient_QM_MM(const t_commrec*  cr,
       // init_nrnb(pme_qmonly.nrnb); // TODO change to something?
       int oldNumAtoms = pmedata->atc[0].numAtoms(); // need to resize PME arrays to the number of QM atoms
       pmedata->atc[0].setNumAtoms(n);
-      gmx_pme_do(pmedata, pme_qmonly.x, pme_qmonly.f, pme_qmonly.q.data(), pme_qmonly.q.data(),
-                 nullptr, nullptr, nullptr, nullptr, qm_.box, cr, 0, 0, // pme_full.nrnb->get(),
+      gmx_pme_do(pmedata, pme_qmonly.x, pme_qmonly.f, pme_qmonly.q, pme_qmonly.q,
+                 emptyArray, emptyArray, emptyArray, emptyArray, qm_.box, 0, 0, // pme_full.nrnb->get(),
                  nrnb, wcycle, pme_qmonly.vir, pme_qmonly.vir, nullptr, nullptr, 0., 0., nullptr, nullptr,
                  stepWork, TRUE, FALSE, n, nullptr); // emptyVec);
       pmedata->atc[0].setNumAtoms(oldNumAtoms); // resize back
@@ -873,7 +881,7 @@ void QMMM_rec::gradient_QM_MM(const t_commrec*  cr,
       {
         for (int m=0; m<DIM; m++)
         {
-          grad_add[j][m] = - pme_qmonly.f[j][m] / HARTREE_BOHR2MD * (mm_.scalefactor - 1.);
+          grad_add[j][m] = - pme_qmonly.f[j][m] / gmx::c_hartreeBohr2Md * (mm_.scalefactor - 1.);
         }
       }
    // printf("================================\n");
@@ -895,7 +903,7 @@ void QMMM_rec::gradient_QM_MM(const t_commrec*  cr,
           // negative of gradient -- we want to subtract it from partgrad
           real fscal = qm_.QMcharges[j] * qm_.QMcharges[k] / SQR(r) *
                         (gmx_erf(ewaldcoeff_q * r) / r
-                       - M_2_SQRTPI * ewaldcoeff_q * exp(-SQR(ewaldcoeff_q * r))) * SQR(BOHR2NM);
+                       - M_2_SQRTPI * ewaldcoeff_q * exp(-SQR(ewaldcoeff_q * r))) * SQR(gmx::c_bohr2Nm);
           svmul(fscal, bond, dgr); // vec(dgr) = fscal * vec(bond)
           rvec_inc(grad_add[j], dgr);
           rvec_dec(grad_add[k], dgr);
@@ -937,18 +945,18 @@ void QMMM_rec::gradient_QM_MM(const t_commrec*  cr,
       // PME -- long-range component
     //clock_gettime(CLOCK_MONOTONIC, &time1);
       // init_nrnb(pme_full.nrnb); // TODO change to something?
-      gmx_pme_do(pmedata, pme_full.x, pme_full.f, pme_full.q.data(), pme_full.q.data(),
-                 nullptr, nullptr, nullptr, nullptr, qm_.box, cr, 0, 0, // pme_full.nrnb->get(),
+      gmx_pme_do(pmedata, pme_full.x, pme_full.f, pme_full.q, pme_full.q,
+                 emptyArray, emptyArray, emptyArray, emptyArray, qm_.box, 0, 0, // pme_full.nrnb->get(),
                  nrnb, wcycle, pme_full.vir, pme_full.vir, nullptr, nullptr, 0., 0., nullptr, nullptr,
                  stepWork, TRUE, TRUE, n, nullptr); // emptyVec);
     //clock_gettime(CLOCK_MONOTONIC, &time2);
     //print_time_difference("PMETIME 5 ", time1, time2);
       for (int j=0; j<ne_full; j++)
       {
-          MMgrad_full[j][XX] = - mm_.MMcharges_full[j] * pme_full.f[n + j][XX] / HARTREE_BOHR2MD;
-          MMgrad_full[j][YY] = - mm_.MMcharges_full[j] * pme_full.f[n + j][YY] / HARTREE_BOHR2MD;
-          MMgrad_full[j][ZZ] = - mm_.MMcharges_full[j] * pme_full.f[n + j][ZZ] / HARTREE_BOHR2MD;
-      } // svmul(- mm_.MMcharges_full[j] / HARTREE_BOHR2MD, pme->f[n + j], mm_.grad_full[j]);
+          MMgrad_full[j][XX] = - mm_.MMcharges_full[j] * pme_full.f[n + j][XX] / gmx::c_hartreeBohr2Md;
+          MMgrad_full[j][YY] = - mm_.MMcharges_full[j] * pme_full.f[n + j][YY] / gmx::c_hartreeBohr2Md;
+          MMgrad_full[j][ZZ] = - mm_.MMcharges_full[j] * pme_full.f[n + j][ZZ] / gmx::c_hartreeBohr2Md;
+      } // svmul(- mm_.MMcharges_full[j] / gmx::c_hartreeBohr2Md, pme->f[n + j], mm_.grad_full[j]);
    // printf("================================\n");
    // for (int i=0; i<ne_full; i++)
    // {
@@ -1018,7 +1026,7 @@ void QMMM_rec::gradient_QM_MM(const t_commrec*  cr,
           {
               real fscal = qm_.QMcharges[j] * mm_.MMcharges[k] / SQR(r) *
                            (- gmx_erfc(ewaldcoeff_q * r) / r
-                            - M_2_SQRTPI * ewaldcoeff_q * exp(-SQR(ewaldcoeff_q * r))) * SQR(BOHR2NM);
+                            - M_2_SQRTPI * ewaldcoeff_q * exp(-SQR(ewaldcoeff_q * r))) * SQR(gmx::c_bohr2Nm);
               svmul(fscal, bond, dgr);
               rvec_inc(grad_add[j], dgr);
               rvec_dec(MMgrad[k], dgr);

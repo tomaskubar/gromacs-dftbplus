@@ -343,8 +343,19 @@ static void pr_qm_opts(FILE* fp, int indent, const char* title, const t_grpopts*
     pr_int(fp, indent, "ngQM", opts->ngQM);
     if (opts->ngQM > 0)
     {
-        pr_ivec(fp, indent, "QMmethod", opts->QMmethod, opts->ngQM, FALSE);
-        pr_ivec(fp, indent, "QMbasis", opts->QMbasis, opts->ngQM, FALSE);
+        // write out the QM methods
+        for (int i = 0; (i < opts->ngQM); i++)
+        {
+            fprintf(fp, "  %10s", enumValueToString(opts->QMmethod[i]));
+        }
+        fprintf(fp, "\n");
+        // write out the QM basis sets
+        for (int i = 0; (i < opts->ngQM); i++)
+        {
+            fprintf(fp, "  %10s", enumValueToString(opts->QMbasis[i]));
+        }
+        fprintf(fp, "\n");
+        // write out the QM charges, multiplicities and active space info
         pr_ivec(fp, indent, "QMcharge", opts->QMcharge, opts->ngQM, FALSE);
         pr_ivec(fp, indent, "QMmult", opts->QMmult, opts->ngQM, FALSE);
         pr_ivec(fp, indent, "CASorbitals", opts->CASorbitals, opts->ngQM, FALSE);

@@ -1110,7 +1110,7 @@ void init_forcerec(FILE*                            fplog,
             GMX_LOG(mdlog.info)
                     .asParagraph()
                     .appendText("QM/MM is being continued in GROMACS on experimental basis!");
-            forcerec->qr = std::make_unique<QMMM_rec>(cr, mtop, inputrec, forcerec); //, wcycle);
+            forcerec->qr = std::make_unique<QMMM_rec>(commrec, &mtop, &inputrec, forcerec); //, wcycle);
         }
         else
         {

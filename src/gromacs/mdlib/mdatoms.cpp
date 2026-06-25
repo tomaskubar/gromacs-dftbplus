@@ -273,9 +273,9 @@ void atoms2md(const gmx_mtop_t&        mtop,
             md->cU2.resize(md->nr);
         }
 
-        if (ir->bQMMM)
+        if (inputrec.bQMMM)
         {
-            srenew(md->bQM, md->nalloc);
+            md->bQM.resize(md->nr);
         }
     }
     int molb = 0;
@@ -507,7 +507,7 @@ void atoms2md(const gmx_mtop_t&        mtop,
                 }
             }
 
-            if (ir->bQMMM)
+            if (inputrec.bQMMM)
             {
                 if (groups.groupNumbers[SimulationAtomGroupType::QuantumMechanics].empty()
                     || groups.groupNumbers[SimulationAtomGroupType::QuantumMechanics][ag]
