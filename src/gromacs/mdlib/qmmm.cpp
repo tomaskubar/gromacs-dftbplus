@@ -49,6 +49,7 @@
 #include <algorithm>
 
 #include "gromacs/domdec/domdec_struct.h"
+#include "gromacs/domdec/ga2la.h"
 #include "gromacs/ewald/pme.h"
 #include "gromacs/ewald/pme_internal.h"
 #include "gromacs/ewald/ewald_utils.h"
@@ -97,12 +98,13 @@ void put_cluster_in_MMlist_verlet(int                            ck, // cluster 
                                   int                            na_ck, // # of atoms in cluster
                                   int                            nrQMatoms,
                                   const int*                     indexQM,
-                                        gmx::ArrayRef<const int> atomIndices,
+                                  const gmx::ArrayRef<const int> atomIndices,
 			                      int*                           shiftMMatom,
                                   // ^ also has a role of "bool* isMMatom"
 				                  t_pbc*                         pbc,
-				                  const rvec*                    x);
-
+				                  const rvec*                    x,
+                                  const gmx::ArrayRef<const int> globalToLocalAtomMap,
+                                  const gmx::ArrayRef<const int> localToGlobalAtomMap);
 /*
 std::unique_ptr<QMMM_rec>
 void init_QMMM_rec(const t_commrec  *cr,
@@ -179,19 +181,22 @@ void QMMM_rec::update_QMMM_coord(const t_commrec*  cr,
     std::vector<bool> isCurrentMMatom;
     isCurrentMMatom.resize(mm_.nrMMatoms_nbl);
 
-    printf("Original Gromacs coordinates");
+    printf("Original Gromacs coordinates\n");
     for (int i = 0; i < qm_.nrQMatoms; i++)
     {
-        printf("QM atom %d: %8.5f %8.5f %8.5f\n", qm_.indexQM[i]+1, x[i][XX], x[i][YY], x[i][ZZ]);
+        printf("QM atom %d: %8.5f %8.5f %8.5f\n", qm_.indexQM[i]+1,
+                                                  x[globalToLocalAtomMap[qm_.indexQM[i]]][XX],
+                                                  x[globalToLocalAtomMap[qm_.indexQM[i]]][YY],
+                                                  x[globalToLocalAtomMap[qm_.indexQM[i]]][ZZ]);
     }
 
     // shift the QM atoms into the central box
     for (int i = 0; i < qm_.nrQMatoms; i++)
     {
-        rvec_sub(x[qm_.indexQM[i]], shift_vec[qm_.shiftQM[i]], qm_.xQM[i]);
+        rvec_sub(x[globalToLocalAtomMap[qm_.indexQM[i]]], shift_vec[qm_.shiftQM[i]], qm_.xQM[i]);
     }
 
-    printf("QM coordinates updated");
+    printf("QM coordinates updated\n");
     for (int i = 0; i < qm_.nrQMatoms; i++)
     {
         printf("QM atom %d: %8.5f %8.5f %8.5f\n", qm_.indexQM[i]+1, qm_.xQM[i][XX], qm_.xQM[i][YY], qm_.xQM[i][ZZ]);
@@ -231,7 +236,7 @@ void QMMM_rec::update_QMMM_coord(const t_commrec*  cr,
 	    for (int q=0; q<qm_.nrQMatoms; q++)
 	    {
             rvec bond;
-            pbc_dx_aiuc(&pbc, x[qm_.indexQM[q]], x[mm_.indexMM_nbl[i]], bond);
+            pbc_dx_aiuc(&pbc, x[globalToLocalAtomMap[qm_.indexQM[q]]], x[globalToLocalAtomMap[mm_.indexMM_nbl[i]]], bond);
 	     // printf(" %8.5f\n", norm(bond));
 	        if (norm(bond) < rcut)
             {
@@ -261,7 +266,7 @@ void QMMM_rec::update_QMMM_coord(const t_commrec*  cr,
 	        mm_.indexMM[index] = mm_.indexMM_nbl[i];
 
 	        // Also add charge
-	        mm_.MMcharges[index] = md->chargeA[mm_.indexMM[index]] * mm_.scalefactor;
+	        mm_.MMcharges[index] = md->chargeA[globalToLocalAtomMap[mm_.indexMM[index]]] * mm_.scalefactor;
 
             // Having obtained the shift at NS time (update_qmmmrec),
             //   merely copy it here to shiftMM[]
@@ -280,7 +285,7 @@ void QMMM_rec::update_QMMM_coord(const t_commrec*  cr,
 
     for (int ind = 0; ind < mm_.nrMMatoms; ind++)
     {
-        rvec_sub(x[mm_.indexMM[ind]], shift_vec[mm_.shiftMM[ind]], mm_.xMM[ind]);
+        rvec_sub(x[globalToLocalAtomMap[mm_.indexMM[ind]]], shift_vec[mm_.shiftMM[ind]], mm_.xMM[ind]);
  //     printf("COORD MM %4d %2d\n", mm_.indexMM[ind], mm_.shiftMM[ind]);
     }
 
@@ -292,7 +297,7 @@ void QMMM_rec::update_QMMM_coord(const t_commrec*  cr,
     {
         for (int i = 0; i < mm_.nrMMatoms_full; i++)
         {
-            copy_rvec(x[mm_.indexMM_full[i]], mm_.xMM_full[i]);
+            copy_rvec(x[globalToLocalAtomMap[mm_.indexMM_full[i]]], mm_.xMM_full[i]);
         }
     }
 } // update_QMMM_coord
@@ -480,6 +485,7 @@ QMMM_rec::QMMM_rec(const t_commrec*                 cr,
                    const t_inputrec*                ir,
                    const t_forcerec*                fr)
  //                const gmx_wallcycle*  gmx_unused wcycle)
+    : nAtoms(mtop->natoms)
 {
 #if GMX_QMMM
     // Put the atom numbers of atoms that belong to the QMMM group
@@ -751,16 +757,16 @@ void QMMM_rec::update_QMMMrec_dftb(const t_commrec*  cr,
     // Related to the problem of contributions to virial pressure
     //   in a system treated with particle--mesh Ewald.
     rvec crd;
-    rvec_sub(x[qm_.indexQM[0]], shift_vec[qm_.shiftQM[0]], crd);
+    rvec_sub(x[globalToLocalAtomMap[qm_.indexQM[0]]], shift_vec[qm_.shiftQM[0]], crd);
     for (int i=0; i<mm_.nrMMatoms_full; i++) {
         rvec dx;
-        mm_.shiftMM_full[i] = pbc_dx_aiuc(&pbc, crd, x[mm_.indexMM_full[i]], dx);
+        mm_.shiftMM_full[i] = pbc_dx_aiuc(&pbc, crd, x[globalToLocalAtomMap[mm_.indexMM_full[i]]], dx);
     }
 
  // // previous version of the loop
  // for (i=0; i<mm_.nrMMatoms; i++) {
  //     ivec dx;
- //     current_shift = pbc_dx_aiuc(&pbc, x[qm_.indexQM[0]], x[mm_.indexMM[i]], dx);
+ //     current_shift = pbc_dx_aiuc(&pbc, x[globalToLocalAtomMap[qm_.indexQM[0]]], x[globalToLocalAtomMap[mm_.indexMM[i]]], dx);
  //     crd[0] = IS2X(QMMMlist->shift[i]) + IS2X(qm_i_particles[i].shift);
  //     crd[1] = IS2Y(QMMMlist->shift[i]) + IS2Y(qm_i_particles[i].shift);
  //     crd[2] = IS2Z(QMMMlist->shift[i]) + IS2Z(qm_i_particles[i].shift);
@@ -770,7 +776,7 @@ void QMMM_rec::update_QMMMrec_dftb(const t_commrec*  cr,
 
     for (int i = 0; i < mm_.nrMMatoms_full; i++) // no free energy yet
     {
-        mm_.MMcharges_full[i] = md->chargeA[mm_.indexMM_full[i]] * mm_.scalefactor;
+        mm_.MMcharges_full[i] = md->chargeA[globalToLocalAtomMap[mm_.indexMM_full[i]]] * mm_.scalefactor;
     }
 } // update_QMMMrec_dftb
 
@@ -783,7 +789,9 @@ void put_cluster_in_MMlist_verlet(int                            ck, // cluster 
 			                      int*                           shiftMMatom,
                                   // ^ also has a role of "bool* isMMatom"
 				                  t_pbc*                         pbc,
-				                  const rvec*                    x)
+				                  const rvec*                    x,
+                                  const gmx::ArrayRef<const int> globalToLocalAtomMap,
+                                  const gmx::ArrayRef<const int> localToGlobalAtomMap)
 {
  //  * This calculation of shift would be desirable,
  //  * but it does not seem to work properly!
@@ -796,12 +804,17 @@ void put_cluster_in_MMlist_verlet(int                            ck, // cluster 
     // Loop over the atoms in the cluster ck.
     for (int k=0; k<na_ck; k++)  // NA_CK IS USUALLY 4 (SIMD RELATED)
     {
-	    int ck_atom = atomIndices[na_ck * ck + k];
-	    if (ck_atom < 0)
+	    const int localAtom = atomIndices[na_ck * ck + k];
+	    if (localAtom < 0)
 	    {
 	        // The value of -1 in the Verlet list is for padding purpose only.
 	        // It does not correspond to any atom.
 	        // Therefore, ignore!
+	        continue;
+	    }
+	    const int globalAtom = localToGlobalAtomMap[localAtom];
+	    if (globalAtom < 0)
+	    {
 	        continue;
 	    }
 	    // In the following loop, determine 2 things:
@@ -815,24 +828,60 @@ void put_cluster_in_MMlist_verlet(int                            ck, // cluster 
 	    {
 	        // 1: the shift -- this calculation looks OK!
 	        rvec bond;
-	        int sh_t = pbc_dx_aiuc(pbc, x[indexQM[q]], x[ck_atom], bond);
+	        int sh_t = pbc_dx_aiuc(pbc,
+                                   x[globalToLocalAtomMap[indexQM[q]]],
+                                   x[globalToLocalAtomMap[globalAtom]],
+                                   bond);
 	        if (norm(bond) < dist)
 	        {
 	            dist = norm(bond);
 		        sh = sh_t;
 	        }
 	        // 2: a QM atom?
-	        if (ck_atom == indexQM[q])
+	        if (globalAtom == indexQM[q])
 	        {
 	            is_qmatom = true;
-	        }
+            }
 	    }
 	    // If it is not a QM atom, then put it in the list and store the shift.
 	    if (!is_qmatom)
 	    {
-	        // printf("FOUND_MM_ATOM %5d in cluster %4d\n", ck_atom, ck);
-	        shiftMMatom[ck_atom] = sh; // true;
+	        // printf("FOUND_MM_ATOM %5d in cluster %4d\n", globalAtom, ck);
+	        shiftMMatom[globalAtom] = sh; // true;
 	    }
+    }
+}
+
+// Construct the maps for finding the local atom index of a global atom index and vice versa.
+void QMMM_rec::update_QMMMrec_map(const t_commrec* cr) //, int nAtoms)
+{
+    globalToLocalAtomMap.resize(nAtoms, -1);
+    localToGlobalAtomMap.resize(nAtoms, -1);
+
+    if (haveDDAtomOrdering(*cr))
+    {
+        for (int globalAtom = 0; globalAtom < nAtoms; ++globalAtom)
+        {
+            if (const int* home = cr->dd->ga2la->findHome(globalAtom))
+            {
+                globalToLocalAtomMap[globalAtom] = *home;
+                localToGlobalAtomMap[*home] = globalAtom;
+            }
+            else
+            {
+                gmx_fatal(FARGS, "Global atom %d has no home in domain decomposition",
+                    globalAtom);
+            }
+        }
+    }
+    else
+    {
+        // no DD, identity mapping
+        for (int iAtom = 0; iAtom < nAtoms; ++iAtom)
+        {
+            globalToLocalAtomMap[iAtom] = iAtom;
+            localToGlobalAtomMap[iAtom] = iAtom;
+        }
     }
 }
 
@@ -860,7 +909,7 @@ void QMMM_rec::update_QMMMrec_verlet_ns(const t_commrec*    cr,
  //  * and change 'bool' to 'int':
  //  *   shiftMMatom[i] = the value of shift
 
-    std::vector<int> shiftMMatom(md->nr, -1); // ALL ATOMS IN SIMULATION - IS THAT NECESSARY???
+    std::vector<int> shiftMMatom(nAtoms, -1); // ALL ATOMS IN SIMULATION - IS THAT NECESSARY???
 
     // init PBC
     gmx::IVec null_ivec;
@@ -883,7 +932,10 @@ void QMMM_rec::update_QMMMrec_verlet_ns(const t_commrec*    cr,
     qm_.shiftQM[0] = gmx::xyzToShiftIndex(0, 0, 0);
     for (int i = 1; i < qm_.nrQMatoms; i++)
     {
-        qm_.shiftQM[i] = pbc_dx_aiuc(&pbc, x[qm_.indexQM[0]], x[qm_.indexQM[i]], dx);
+        qm_.shiftQM[i] = pbc_dx_aiuc(&pbc,
+                                     x[globalToLocalAtomMap[qm_.indexQM[0]]],
+                                     x[globalToLocalAtomMap[qm_.indexQM[i]]],
+                                     dx);
     }
  // for (int i = 0; i < qm->nrQMatoms; i++)
  // {
@@ -900,23 +952,27 @@ void QMMM_rec::update_QMMMrec_verlet_ns(const t_commrec*    cr,
             // is there a QM atom in this CI cluster?
 	        bool qm_atom_in_ci = false;
 	        // break the loop if a QM atom has already been found
-	        for (int ii=0; ii<nbl[inbl].na_ci && !qm_atom_in_ci; ii++)
-	        {
-	            // compare to indices of QM atoms
-	            for (int iq=0; iq<qm_.nrQMatoms && !qm_atom_in_ci; iq++)
-		        {
-                    const int iIndex = nbl[inbl].na_ci * nbl[inbl].ci[ci].ci + ii;
-                    const int iAtom  = atomIndices[iIndex];
+            for (int ii=0; ii<nbl[inbl].na_ci && !qm_atom_in_ci; ii++)
+            {
+                // compare to indices of QM atoms
+                for (int iq=0; iq<qm_.nrQMatoms && !qm_atom_in_ci; iq++)
+                {
+                    const int localAtom = atomIndices[nbl[inbl].na_ci * nbl[inbl].ci[ci].ci + ii];
+                    if (localAtom < 0)
+                    {
+                        continue;
+                    }
                     //  FORMERLY:
-		            // const int iAtom  = nbs->a[nbl[inbl].na_ci * nbl[inbl].ci[ci].ci + ii];
-		            if (qm_.indexQM[iq] == iAtom)
-		            {
-		                qm_atom_in_ci = true;
-		            }
-		        }
-	        }
+                    // const int iAtom  = nbs->a[nbl[inbl].na_ci * nbl[inbl].ci[ci].ci + ii];
+                    const int iAtom = localToGlobalAtomMap[localAtom];
+                    if (qm_.indexQM[iq] == iAtom)
+                    {
+                        qm_atom_in_ci = true;
+                    }
+                }
+            }
 	        // get the shift of this CI cluster */
-	     // shift = nbl[inbl]->ci[ci].shift & NBNXN_CI_SHIFT;
+	        // shift = nbl[inbl]->ci[ci].shift & NBNXN_CI_SHIFT;
 
             // loop over the corresponding CJ clusters
 	        for (int cj = nbl[inbl].ci[ci].cj_ind_start; cj < nbl[inbl].ci[ci].cj_ind_end; cj++)
@@ -924,36 +980,55 @@ void QMMM_rec::update_QMMMrec_verlet_ns(const t_commrec*    cr,
 	            // is there a QM atom in this CJ cluster?
 	            bool qm_atom_in_cj = false;
 	            // break the loop if a QM atom has already been found
-	            for (int jj=0; jj<nbl[inbl].na_cj && !qm_atom_in_cj; jj++)
-		        {
-	                // compare to indices of QM atoms
-	                for (int jq=0; jq<qm_.nrQMatoms && !qm_atom_in_cj; jq++)
-		            {
-                        const int iIndex = nbl[inbl].na_cj * nbl[inbl].cj.cj(cj) + jj; // nbl[inbl].cj[cj].cj + jj;
-                        const int iAtom  = atomIndices[iIndex];
-                        //  FORMERLY:
-		                // if (qm->indexQM[jq] == nbs->a[nbl[inbl].na_cj * nbl[inbl].cj[cj].cj + jj])
-		                if (qm_.indexQM[jq] == iAtom)
-			            {
-			                qm_atom_in_cj = true;
-		                }
-		            }
-		        }
+                for (int jj=0; jj<nbl[inbl].na_cj && !qm_atom_in_cj; jj++)
+                {
+                    // compare to indices of QM atoms
+                    for (int jq=0; jq<qm_.nrQMatoms && !qm_atom_in_cj; jq++)
+                    {
+                        const int localAtom = atomIndices[nbl[inbl].na_cj * nbl[inbl].cj.cj(cj) + jj];
+                        if (localAtom < 0)
+                        {
+                            continue;
+                        }
+                        const int iAtom = localToGlobalAtomMap[localAtom];
+                        if (qm_.indexQM[jq] == iAtom)
+                        {
+                            qm_atom_in_cj = true;
+                        }
+                    }
+                }
 
                 // if there is a QM atom in cluster CI,
 		        //   then put the non-QM atoms in cluster CJ into the MM list
 	            if (qm_atom_in_ci)
 		        {
-	                put_cluster_in_MMlist_verlet(nbl[inbl].cj.cj(cj), nbl[inbl].na_cj, // (nbl[inbl].cj[cj].cj ...
-		                                        qm_.nrQMatoms, qm_.indexQM, atomIndices, shiftMMatom.data(), &pbc, x);
+	                put_cluster_in_MMlist_verlet(nbl[inbl].cj.cj(cj),
+                                                 nbl[inbl].na_cj,
+                                             // (nbl[inbl].cj[cj].cj ...
+                                                 qm_.nrQMatoms,
+                                                 qm_.indexQM,
+                                                 atomIndices,
+                                                 shiftMMatom.data(),
+                                                 &pbc,
+                                                 x,
+                                                 globalToLocalAtomMap,
+                                                 localToGlobalAtomMap);
 	            }
 
                 // if there is a QM atom in cluster CJ,
 		        //   then put the non-QM atoms in cluster CI into the MM list
 	            if (qm_atom_in_cj)
 		        {
-	                put_cluster_in_MMlist_verlet(nbl[inbl].ci[ci].ci, nbl[inbl].na_ci,
-		                                        qm_.nrQMatoms, qm_.indexQM, atomIndices, shiftMMatom.data(), &pbc, x);
+	                put_cluster_in_MMlist_verlet(nbl[inbl].ci[ci].ci,
+                                                 nbl[inbl].na_ci,
+                                                 qm_.nrQMatoms,
+                                                 qm_.indexQM,
+                                                 atomIndices,
+                                                 shiftMMatom.data(),
+                                                 &pbc,
+                                                 x,
+                                                 globalToLocalAtomMap,
+                                                 localToGlobalAtomMap);
 	            }
 	        }
 	    }
@@ -961,10 +1036,11 @@ void QMMM_rec::update_QMMMrec_verlet_ns(const t_commrec*    cr,
 
     // count the MM atoms found in the above search
     int nrMMatoms = 0;
-    for (int i=0; i<md->nr; i++) {
+    for (int i=0; i<nAtoms; i++) {
         // criterium for MM atom found
         if (shiftMMatom[i] != -1)
 	    {
+            printf("VERLET MM ATOM %5d with shift %d\n", i, shiftMMatom[i]);
 	        nrMMatoms++;
 	    }
     }
@@ -979,7 +1055,7 @@ void QMMM_rec::update_QMMMrec_verlet_ns(const t_commrec*    cr,
     //       j runs along the new indexMM_nbl array
 
     int count=0;
-    for (int atom=0; atom<md->nr; atom++) {
+    for (int atom=0; atom<nAtoms; atom++) {
         // criterium for MM atom found
         if (shiftMMatom[atom] != -1)
 	    {
@@ -1040,8 +1116,8 @@ real QMMM_rec::calculate_QMMM(// const t_commrec*      cr,
         {
             for (int j = 0; j < DIM; j++)
             {
-                fMM[qm_->indexQM[i]][j]        -= forces[i][j];
-             // fshiftMM[qm_->shiftQM[i]][j]   += fshift[i][j];
+                fMM[globalToLocalAtomMap[qm_->indexQM[i]]][j]        -= forces[i][j];
+             // fshiftMM[globalToLocalAtomMap[qm_->shiftQM[i]]][j]   += fshift[i][j];
             }
          // printf("F[%5d] = %8.2f %8.2f %8.2f\n", qm_->indexQM[i], forces[i][0], forces[i][1], forces[i][2]);
         }
@@ -1049,8 +1125,8 @@ real QMMM_rec::calculate_QMMM(// const t_commrec*      cr,
         {
             for (int j = 0; j < DIM; j++)
             {
-                fMM[mm_->indexMM[i]][j]        -= forces[qm_->nrQMatoms+i][j];
-             // fshiftMM[mm_->shiftMM[i]][j]   += fshift[qm_->nrQMatoms+i][j];
+                fMM[globalToLocalAtomMap[mm_->indexMM[i]]][j]        -= forces[qm_->nrQMatoms+i][j];
+             // fshiftMM[globalToLocalAtomMap[mm_->shiftMM[i]]][j]   += fshift[qm_->nrQMatoms+i][j];
             }
          // if (i<30) if (norm(forces[qm_->nrQMatoms+i]) > 10.)
          //   printf("F_MM[%5d] = %8.2f %8.2f %8.2f\n", mm_->indexMM[i],
@@ -1060,8 +1136,8 @@ real QMMM_rec::calculate_QMMM(// const t_commrec*      cr,
         {
             for (int j = 0; j < DIM; j++)
             {
-                fMM[mm_->indexMM_full[i]][j]        -= forces[qm_->nrQMatoms+mm_->nrMMatoms+i][j];
-             // fshiftMM[mm_->shiftMM_full[i]][j]   += fshift[qm_->nrQMatoms+mm_->nrMMatoms+i][j];
+                fMM[globalToLocalAtomMap[mm_->indexMM_full[i]]][j]        -= forces[qm_->nrQMatoms+mm_->nrMMatoms+i][j];
+             // fshiftMM[globalToLocalAtomMap[mm_->shiftMM_full[i]]][j]   += fshift[qm_->nrQMatoms+mm_->nrMMatoms+i][j];
             }
          // if (i<100) if (norm(forces[qm_->nrQMatoms+mm_->nrMMatoms+i]) > 10.)
          //   printf("F_MM_F[%5d] = %8.2f %8.2f %8.2f\n", mm_->indexMM_full[i],
@@ -1074,16 +1150,16 @@ real QMMM_rec::calculate_QMMM(// const t_commrec*      cr,
         {
             for (int j = 0; j < DIM; j++)
             {
-                fMM[qm_->indexQM[i]][j]          -= forces[i][j];
-             // fshiftMM[qm_->shiftQM[i]][j]     += fshift[i][j];
+                fMM[globalToLocalAtomMap[qm_->indexQM[i]]][j]          -= forces[i][j];
+             // fshiftMM[globalToLocalAtomMap[qm_->shiftQM[i]]][j]     += fshift[i][j];
             }
         }
         for (int i = 0; i < mm_->nrMMatoms; i++)
         {
             for (int j = 0; j < DIM; j++)
             {
-                fMM[mm_->indexMM[i]][j]      -= forces[qm_->nrQMatoms+i][j];
-             // fshiftMM[mm_->shiftMM[i]][j] += fshift[qm_->nrQMatoms+i][j];
+                fMM[globalToLocalAtomMap[mm_->indexMM[i]]][j]      -= forces[qm_->nrQMatoms+i][j];
+             // fshiftMM[globalToLocalAtomMap[mm_->shiftMM[i]]][j] += fshift[qm_->nrQMatoms+i][j];
             }
         }
     }

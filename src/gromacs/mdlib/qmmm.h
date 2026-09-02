@@ -281,6 +281,13 @@ public:
     PbcType                  pbcType;
     //std::unique_ptr<gmx_pme_t> pmedata;
     struct gmx_pme_t*        pmedata;
+    std::vector<int>         globalToLocalAtomMap; // maps global atom index to local atom index
+                                                   // globalToLocalAtomMap[1] == 2 means that
+                                                   //   global atom 1 is local atom 2
+    std::vector<int>         localToGlobalAtomMap; // maps local atom index to global atom index
+                                                   // localToGlobalAtomMap[1] == 2 means that
+                                                   //   global atom 2 is local atom 1
+    int                      nAtoms; // total number of atoms in the simulation (QM + MM)
 
     QMMM_rec(const t_commrec*                 cr,
              const gmx_mtop_t*                mtop,
@@ -320,6 +327,9 @@ public:
                              const rvec        x[],
                              const t_mdatoms*  md,
                              const matrix      box);
+
+    void update_QMMMrec_map(const t_commrec* cr);
+                         // int              nAtoms);
     
     void update_QMMM_coord(const t_commrec*  cr,
                            rvec*             shift_vec,

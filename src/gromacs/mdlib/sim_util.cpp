@@ -2157,6 +2157,9 @@ void do_force(FILE*                         fplog,
          */
         if (stepWork.doNeighborSearch)
 	    {
+            /* First, create or update the map of global-to-local atom indices */
+            fr->qr->update_QMMMrec_map(cr); // , x.unpaddedArrayRef().ssize());
+
 	        fr->qr->update_QMMMrec_verlet_ns(cr, nbv, as_rvec_array(x.unpaddedArrayRef().data()), mdatoms, box);
             if (GMX_QMMM_DFTBPLUS)
             {
@@ -2165,6 +2168,8 @@ void do_force(FILE*                         fplog,
 	    }
         /* Update the coordinates in any case. */
         fr->qr->update_QMMM_coord(cr, as_rvec_array(fr->shift_vec.data()), as_rvec_array(x.unpaddedArrayRef().data()), mdatoms, box);
+    //  fr->qr->update_QMMM_coord(cr, as_rvec_array(fr->shift_vec.data()), x.unpaddedArrayRef(), mdatoms, box);
+
     }
 
     // Compute wall interactions, when present.
