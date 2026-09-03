@@ -181,14 +181,14 @@ void QMMM_rec::update_QMMM_coord(const t_commrec*  cr,
     std::vector<bool> isCurrentMMatom;
     isCurrentMMatom.resize(mm_.nrMMatoms_nbl);
 
-    printf("Original Gromacs coordinates\n");
-    for (int i = 0; i < qm_.nrQMatoms; i++)
-    {
-        printf("QM atom %d: %8.5f %8.5f %8.5f\n", qm_.indexQM[i]+1,
-                                                  x[globalToLocalAtomMap[qm_.indexQM[i]]][XX],
-                                                  x[globalToLocalAtomMap[qm_.indexQM[i]]][YY],
-                                                  x[globalToLocalAtomMap[qm_.indexQM[i]]][ZZ]);
-    }
+ // printf("Original Gromacs coordinates\n");
+ // for (int i = 0; i < qm_.nrQMatoms; i++)
+ // {
+ //     printf("QM atom %d: %8.5f %8.5f %8.5f\n", qm_.indexQM[i]+1,
+ //                                                 x[globalToLocalAtomMap[qm_.indexQM[i]]][XX],
+ //                                                 x[globalToLocalAtomMap[qm_.indexQM[i]]][YY],
+ //                                                 x[globalToLocalAtomMap[qm_.indexQM[i]]][ZZ]);
+ // }
 
     // shift the QM atoms into the central box
     for (int i = 0; i < qm_.nrQMatoms; i++)
@@ -196,11 +196,11 @@ void QMMM_rec::update_QMMM_coord(const t_commrec*  cr,
         rvec_sub(x[globalToLocalAtomMap[qm_.indexQM[i]]], shift_vec[qm_.shiftQM[i]], qm_.xQM[i]);
     }
 
-    printf("QM coordinates updated\n");
-    for (int i = 0; i < qm_.nrQMatoms; i++)
-    {
-        printf("QM atom %d: %8.5f %8.5f %8.5f\n", qm_.indexQM[i]+1, qm_.xQM[i][XX], qm_.xQM[i][YY], qm_.xQM[i][ZZ]);
-    }
+ // printf("QM coordinates updated\n");
+ // for (int i = 0; i < qm_.nrQMatoms; i++)
+ // {
+ //     printf("QM atom %d: %8.5f %8.5f %8.5f\n", qm_.indexQM[i]+1, qm_.xQM[i][XX], qm_.xQM[i][YY], qm_.xQM[i][ZZ]);
+ // }
 
     // copy box size
     copy_mat(box, qm_.box);
@@ -1040,7 +1040,7 @@ void QMMM_rec::update_QMMMrec_verlet_ns(const t_commrec*    cr,
         // criterium for MM atom found
         if (shiftMMatom[i] != -1)
 	    {
-            printf("VERLET MM ATOM %5d with shift %d\n", i, shiftMMatom[i]);
+         // printf("VERLET MM ATOM %5d with shift %d\n", i, shiftMMatom[i]);
 	        nrMMatoms++;
 	    }
     }
