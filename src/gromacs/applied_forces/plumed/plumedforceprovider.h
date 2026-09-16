@@ -88,6 +88,8 @@ private:
     int                           plumedAPIversion_;
 
     std::optional<ArrayRef<const int>> globalAtomIndices_;
+
+    bool                          replex_;
 };
 
 } // namespace gmx

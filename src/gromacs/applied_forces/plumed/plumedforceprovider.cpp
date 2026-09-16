@@ -45,6 +45,7 @@
 #include "gromacs/domdec/domdec_struct.h"
 #include "gromacs/math/units.h"
 #include "gromacs/mdrunutility/handlerestart.h"
+#include "gromacs/mdrunutility/multisim.h"
 #include "gromacs/mdtypes/enerdata.h"
 #include "gromacs/mdtypes/forceoutput.h"
 #include "gromacs/utility/exceptions.h"
@@ -70,7 +71,7 @@ namespace gmx
 
 PlumedForceProvider::~PlumedForceProvider() = default;
 PlumedForceProvider::PlumedForceProvider(const PlumedOptions& options)
-try : plumed_(std::make_unique<PLMD::Plumed>())
+try : plumed_(std::make_unique<PLMD::Plumed>()),replex_(options.replex_)
 {
     // I prefer to pass a struct with data because it stops the coupling
     // at the implementation and not at the function signature:
@@ -112,6 +113,17 @@ try : plumed_(std::make_unique<PLMD::Plumed>())
             int res = 1;
             plumed_->cmd("setRestart", &res);
         }
+    }
+
+    if (isMultiSim(options.ms_))
+    {
+        if (options.mpiComm_->isMainRank())
+        {
+            plumed_->cmd("GREX setMPIIntercomm", &options.ms_->mainRanksComm_);
+        }
+        MPI_Comm mpiCommMygroup = options.mpiComm_->comm(); // cr_->mpi_comm_mygroup);
+        plumed_->cmd("GREX setMPIIntracomm", &mpiCommMygroup);
+        plumed_->cmd("GREX init", nullptr);
     }
 
     if (options.mpiComm_->isParallel())
@@ -189,6 +201,17 @@ try
 
     // Do the work
     plumed_->cmd("performCalc", nullptr);
+
+    if (replex_)
+    {
+        double bias = 0.0;
+        plumed_->cmd("getBias", &bias);
+        if (bias != 0.0)
+        {
+            GMX_THROW(NotImplementedError(std::string(
+                "The PLUMED patch is still not compatible with the replica exchange if PLUMED computes biases")));
+        }
+    }
 
     msmul(plumed_vir, 0.5, plumed_vir);
     forceProviderOutput->forceWithVirial_.addVirialContribution(plumed_vir);

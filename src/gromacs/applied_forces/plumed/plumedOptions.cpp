@@ -71,6 +71,12 @@ void PlumedOptionProvider::setPlumedFile(const std::optional<std::string>& fname
         opts_.plumedFile_ = fname.value();
     }
 }
+
+void PlumedOptionProvider::setReplex(bool replex)
+{
+    opts_.replex_     = replex;
+}
+
 const PlumedOptions& PlumedOptionProvider::options() const
 {
     return opts_;
@@ -94,6 +100,11 @@ void PlumedOptionProvider::setComm(const MpiComm& mpiComm)
 bool PlumedOptionProvider::active() const
 {
     return opts_.active_;
+}
+
+void PlumedOptionProvider::setMultisim(const gmx_multisim_t* ms)
+{
+    opts_.ms_ = ms;
 }
 
 } // namespace gmx

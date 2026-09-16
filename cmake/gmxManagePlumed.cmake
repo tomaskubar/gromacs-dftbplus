@@ -41,8 +41,8 @@
 
 gmx_option_multichoice(GMX_USE_PLUMED
     "Build the PLUMED wrapper with GROMACS"
-    AUTO
-    AUTO ON OFF)
+    ON
+    ON)
 mark_as_advanced(GMX_USE_PLUMED)
 
 function(gmx_manage_plumed)

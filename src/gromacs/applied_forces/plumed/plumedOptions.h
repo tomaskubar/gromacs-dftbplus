@@ -49,6 +49,7 @@
 
 struct gmx_domdec_t;
 struct gmx_mtop_t;
+struct gmx_multisim_t;
 
 namespace gmx
 {
@@ -61,10 +62,12 @@ struct PlumedOptions
     std::string         plumedFile_;
     int                 natoms_;
     const MpiComm*      mpiComm_;
+    const gmx_multisim_t* ms_;
     real                simulationTimeStep_;
     std::optional<real> ensembleTemperature_{};
     StartingBehavior    startingBehavior_{};
     bool                active_{ false };
+    bool                replex_{ false };
 };
 
 class PlumedOptionProvider
@@ -87,6 +90,8 @@ public:
      *  @param  fname the (optional) name of the file
      */
     void setPlumedFile(const std::optional<std::string>& fname);
+    //PATCH: set the replex flag
+    void setReplex(bool replex);
     /*! @brief Sets the timestep
      * @param timeStep the timestep value
      */
@@ -99,6 +104,10 @@ public:
      * @param mpiComm  the Communication object
      */
     void setComm(const MpiComm& mpiComm);
+    /*! @brief Sets the address to the multisimulation object
+     * @param ms  the address to the multisimulation object
+     */
+    void setMultisim(const gmx_multisim_t* ms);
     //! @brief returns the active status of the module
     bool active() const;
 

@@ -53,6 +53,8 @@
 #include "plumedOptions.h"
 #include "plumedforceprovider.h"
 
+class gmx_multisim_t;
+
 namespace gmx
 {
 
@@ -88,7 +90,13 @@ public:
         // Access the plumed filename this is used to activate the plumed module
         notifier->simulationSetupNotifier_.subscribe(
                 [this](const PlumedInputFilename& plumedFilename)
-                { this->options_.setPlumedFile(plumedFilename.plumedFilename_); });
+                { this->options_.setPlumedFile(plumedFilename.plumedFilename_);
+                  this->options_.setReplex(plumedFilename.replex_);
+                 });
+        // Retrieve the Multisim options
+        notifier->simulationSetupNotifier_.subscribe(
+                [this](const gmx_multisim_t* ms)
+                { this->options_.setMultisim(ms); });
         // Access the temperature if it is constant during the simulation
         notifier->simulationSetupNotifier_.subscribe(
                 [this](const EnsembleTemperature& ensembleT)

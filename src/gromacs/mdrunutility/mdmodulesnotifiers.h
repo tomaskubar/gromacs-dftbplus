@@ -306,6 +306,7 @@ struct PlumedInputFilename
 {
     //! The name of plumed input file, empty by default
     std::optional<std::string> plumedFilename_{};
+    bool replex_{};
 };
 
 /*! \libinternal \brief Provides the constant ensemble temperature
