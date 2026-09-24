@@ -41,15 +41,19 @@
 
 #include "plumedforceprovider.h"
 
+#include <cstdlib>
+
 #include "gromacs/domdec/domdec.h"
 #include "gromacs/domdec/domdec_struct.h"
 #include "gromacs/math/units.h"
+#include "gromacs/mdlib/gmx_omp_nthreads.h"
 #include "gromacs/mdrunutility/handlerestart.h"
 #include "gromacs/mdrunutility/multisim.h"
 #include "gromacs/mdtypes/enerdata.h"
 #include "gromacs/mdtypes/forceoutput.h"
 #include "gromacs/utility/exceptions.h"
 #include "gromacs/utility/mpicomm.h"
+#include "gromacs/utility/vec.h"
 
 #include "plumedOptions.h"
 
@@ -71,7 +75,7 @@ namespace gmx
 
 PlumedForceProvider::~PlumedForceProvider() = default;
 PlumedForceProvider::PlumedForceProvider(const PlumedOptions& options)
-try : plumed_(std::make_unique<PLMD::Plumed>()),replex_(options.replex_)
+try : plumed_(std::make_unique<PLMD::Plumed>()), replex_(options.replex_)
 {
     // I prefer to pass a struct with data because it stops the coupling
     // at the implementation and not at the function signature:
@@ -115,25 +119,45 @@ try : plumed_(std::make_unique<PLMD::Plumed>()),replex_(options.replex_)
         }
     }
 
+    if (plumedAPIversion_ > 5)
+    {
+        /* Tell PLUMED how many OpenMP threads GROMACS is using, so that it can
+           parallelise its own work. Without this PLMD::OpenMP::getNumThreads()
+           always reports 1 unless PLUMED_NUM_THREADS is set by hand. */
+        int numOmpThreads = gmx_omp_nthreads_get(ModuleMultiThread::Default);
+        plumed_->cmd("setNumOMPthreads", &numOmpThreads);
+    }
+
     if (isMultiSim(options.ms_))
     {
+        /* Hand PLUMED the multi-replica communicators. This is what populates
+           PLMD::PlumedMain::multi_sim_comm, without which every multi-replica
+           action silently degrades to a single replica. */
         if (options.mpiComm_->isMainRank())
         {
             plumed_->cmd("GREX setMPIIntercomm", &options.ms_->mainRanksComm_);
         }
-        MPI_Comm mpiCommMygroup = options.mpiComm_->comm(); // cr_->mpi_comm_mygroup);
-        plumed_->cmd("GREX setMPIIntracomm", &mpiCommMygroup);
+        MPI_Comm intracomm = options.mpiComm_->comm();
+        plumed_->cmd("GREX setMPIIntracomm", &intracomm);
         plumed_->cmd("GREX init", nullptr);
     }
 
     if (options.mpiComm_->isParallel())
     {
-        plumed_->cmd("setMPIComm", options.mpiComm_->comm());
+        /* PLUMED dereferences this argument as an MPI_Comm*, so it must be given
+           the address of a communicator, not the communicator itself. */
+        MPI_Comm intracomm = options.mpiComm_->comm();
+        plumed_->cmd("setMPIComm", &intracomm);
     }
 
     plumed_->cmd("setNatoms", options.natoms_);
     plumed_->cmd("setMDEngine", "gromacs");
-    plumed_->cmd("setLogFile", "PLUMED.OUT");
+    {
+        const char*       logFileEnv = std::getenv("PLUMED_LOG_FILE");
+        const std::string logFile =
+                (logFileEnv && logFileEnv[0] != '\0') ? logFileEnv : "PLUMED.OUT";
+        plumed_->cmd("setLogFile", logFile.c_str());
+    }
 
     plumed_->cmd("setTimestep", &options.simulationTimeStep_);
     plumed_->cmd("init", nullptr);
@@ -184,17 +208,34 @@ try
     plumed_->cmd("setCharges", forceProviderInput.chargeA_.data());
     plumed_->cmd("setBox", &forceProviderInput.box_[0][0]);
 
-    plumed_->cmd("prepareCalc", nullptr);
+    if (preparedStep_ == lstep)
+    {
+        // requestsPotentialEnergy() already ran the first half of prepareCalc
+        plumed_->cmd("shareData", nullptr);
+    }
+    else
+    {
+        plumed_->cmd("prepareCalc", nullptr);
+        plumedNeedsEnergy_ = 0;
+        plumed_->cmd("isEnergyNeeded", &plumedNeedsEnergy_);
+    }
+    preparedStep_.reset();
 
-    int plumedWantsToStop = 0;
-    plumed_->cmd("setStopFlag", &plumedWantsToStop);
+    plumedWantsToStop_ = 0;
+    plumed_->cmd("setStopFlag", &plumedWantsToStop_);
+
+    // Biasing the energy rescales the total MD force, which is only complete once the
+    // potential energy has been accumulated: finish in applyAfterPotentialEnergy()
+    if (plumedNeedsEnergy_)
+    {
+        return;
+    }
 
     real* fOut = &(forceProviderOutput->forceWithVirial_.force_.data()->as_vec()[0]);
     plumed_->cmd("setForces", fOut);
 
-    matrix plumed_vir;
-    clear_mat(plumed_vir);
-    plumed_->cmd("setVirial", &plumed_vir[0][0]);
+    clear_mat(plumedVir_);
+    plumed_->cmd("setVirial", &plumedVir_[0][0]);
 
     // end setup: these instructions in the original patch are BEFORE do_force()
     // in the original patch do_force() was called HERE
@@ -202,19 +243,85 @@ try
     // Do the work
     plumed_->cmd("performCalc", nullptr);
 
+    checkReplicaExchangeBias();
+
+    msmul(plumedVir_, 0.5, plumedVir_);
+    forceProviderOutput->forceWithVirial_.addVirialContribution(plumedVir_);
+}
+catch (const std::exception& ex)
+{
+    GMX_THROW(InternalError(
+            std::string("An error occurred while PLUMED was calculating the forces\n:") + ex.what()));
+}
+
+void PlumedForceProvider::checkReplicaExchangeBias()
+{
     if (replex_)
     {
         double bias = 0.0;
         plumed_->cmd("getBias", &bias);
         if (bias != 0.0)
         {
-            GMX_THROW(NotImplementedError(std::string(
-                "The PLUMED patch is still not compatible with the replica exchange if PLUMED computes biases")));
+            GMX_THROW(NotImplementedError("The PLUMED patch is still not compatible"
+                                          " with the replica exchange if PLUMED computes biases"));
         }
     }
+}
 
-    msmul(plumed_vir, 0.5, plumed_vir);
-    forceProviderOutput->forceWithVirial_.addVirialContribution(plumed_vir);
+bool PlumedForceProvider::requestsPotentialEnergy(int64_t step)
+try
+{
+    /* Whether PLUMED needs the energy depends on which actions are active on this step,
+       which is only known after prepareDependencies(). That is the first half of
+       prepareCalc(); calculateForces() runs the second half (shareData()) once the
+       positions are available. */
+    long int lstep = step;
+    plumed_->cmd("setStepLong", &lstep);
+    plumed_->cmd("prepareDependencies", nullptr);
+    plumedNeedsEnergy_ = 0;
+    plumed_->cmd("isEnergyNeeded", &plumedNeedsEnergy_);
+    preparedStep_ = step;
+    return plumedNeedsEnergy_ != 0;
+}
+catch (const std::exception& ex)
+{
+    GMX_THROW(InternalError(
+            std::string("An error occurred while PLUMED was preparing the step\n:") + ex.what()));
+}
+
+void PlumedForceProvider::applyAfterPotentialEnergy(bool           energyWasComputed,
+                                                    real*          potentialEnergy,
+                                                    ArrayRef<RVec> force,
+                                                    tensor         virial)
+try
+{
+    if (!plumedNeedsEnergy_)
+    {
+        return;
+    }
+    if (!energyWasComputed || potentialEnergy == nullptr)
+    {
+        GMX_THROW(NotImplementedError(
+                "The PLUMED input needs the potential energy, but this run uses the GROMACS "
+                "modular simulator, which cannot be asked for it before the step is scheduled. "
+                "The modular simulator is the default for the md-vv integrator. Set the "
+                "environment variable GMX_DISABLE_MODULAR_SIMULATOR=1 to use the legacy "
+                "simulator, which supports energy-dependent PLUMED input."));
+    }
+
+    plumed_->cmd("setEnergy", potentialEnergy);
+    if (!force.empty())
+    {
+        plumed_->cmd("setForces", &(force.data()->as_vec()[0]));
+    }
+    // Same virial convention as the legacy patch: hand PLUMED 2*virial, then replace it
+    msmul(virial, 2.0, plumedVir_);
+    plumed_->cmd("setVirial", &plumedVir_[0][0]);
+    plumed_->cmd("performCalc", nullptr);
+
+    checkReplicaExchangeBias();
+
+    msmul(plumedVir_, 0.5, virial);
 }
 catch (const std::exception& ex)
 {

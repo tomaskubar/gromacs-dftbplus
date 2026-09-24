@@ -2736,6 +2736,19 @@ void do_force(FILE*                         fplog,
         }
     }
 
+    /* PLUMED */
+    if (fr->forceProviders != nullptr)
+    {
+        ArrayRef<RVec> forceForPlumed = force.unpaddedArrayRef();
+        if (simulationWork.useMts && stepWork.computeSlowForces)
+        {
+            forceForPlumed = forceView->forceMtsCombined();
+        }
+        fr->forceProviders->applyAfterPotentialEnergy(
+                stepWork.computeEnergy, &enerd->term[InteractionFunction::PotentialEnergy], forceForPlumed, vir_force);
+    }
+    /* END PLUMED */
+
     /* In case we don't have constraints and are using GPUs, the next balancing
      * region starts here.
      * Some "special" work at the end of do_force_cuts?, such as vsite spread,

@@ -183,6 +183,37 @@ public:
     virtual void calculateForces(const ForceProviderInput& forceProviderInput,
                                  ForceProviderOutput*      forceProviderOutput) = 0;
 
+    /*! \brief
+     * Whether this provider needs the MD potential energy on \p step.
+     *
+     * Called from the MD loop before setupStepWorkload(), which is the last
+     * point at which the workload can still be changed. A true return value
+     * requests GMX_FORCE_ENERGY | GMX_FORCE_VIRIAL so that the potential
+     * energy is valid in applyAfterPotentialEnergy().
+     *
+     * \param[in] step  The step that is about to be computed
+     */
+    virtual bool requestsPotentialEnergy(int64_t /*step*/) { return false; }
+
+    /*! \brief
+     * Optional callback after the potential energy has been accumulated
+     * and the total force buffer is complete.
+     *
+     * Used by PLUMED to pass ENERGY to the CV and to rescale the MD forces
+     * when biasing the potential energy.
+     *
+     * \param[in]     energyWasComputed  Whether term[F_EPOT] is valid this step
+     * \param[in,out] potentialEnergy    Pointer to the potential energy (F_EPOT)
+     * \param[in,out] force              Complete force array (home atoms)
+     * \param[in,out] virial             Force virial tensor
+     */
+    virtual void applyAfterPotentialEnergy(bool /*energyWasComputed*/,
+                                           real* /*potentialEnergy*/,
+                                           ArrayRef<RVec> /*force*/,
+                                           tensor /*virial*/)
+    {
+    }
+
 protected:
     ~IForceProvider() {}
 };
@@ -219,6 +250,15 @@ public:
     //! Computes forces.
     void calculateForces(const gmx::ForceProviderInput& forceProviderInput,
                          gmx::ForceProviderOutput*      forceProviderOutput) const;
+
+    //! Whether any provider needs the potential energy on \p step.
+    bool requestsPotentialEnergy(int64_t step) const;
+
+    //! Forwards applyAfterPotentialEnergy() to all providers.
+    void applyAfterPotentialEnergy(bool energyWasComputed,
+                                   real* potentialEnergy,
+                                   ArrayRef<RVec> force,
+                                   tensor virial) const;
 
 private:
     class Impl;

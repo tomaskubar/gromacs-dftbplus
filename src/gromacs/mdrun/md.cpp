@@ -1121,6 +1121,14 @@ void gmx::LegacySimulator::do_md()
         unsigned int force_flags =
                 (GMX_FORCE_STATECHANGED | GMX_FORCE_ALLFORCES | (bCalcVir ? GMX_FORCE_VIRIAL : 0)
                  | (bCalcEner ? GMX_FORCE_ENERGY : 0) | (computeDHDL ? GMX_FORCE_DHDL : 0));
+        /* PLUMED */
+        if (fr_->forceProviders != nullptr && fr_->forceProviders->requestsPotentialEnergy(step))
+        {
+            /* setupStepWorkload() snapshots force_flags below, so PLUMED has to be
+               asked for the potential energy before that, not from within do_force(). */
+            force_flags |= GMX_FORCE_ENERGY | GMX_FORCE_VIRIAL;
+        }
+        /* END PLUMED */
         if (simulationWork.useMts && !do_per_step(step, ir->nstfout))
         {
             // TODO: merge this with stepWork.useOnlyMtsCombinedForceBuffer

@@ -97,3 +97,25 @@ void ForceProviders::calculateForces(const ForceProviderInput& forceProviderInpu
         }
     }
 }
+
+bool ForceProviders::requestsPotentialEnergy(int64_t step) const
+{
+    bool needed = false;
+    for (auto& provider : impl_->providers_)
+    {
+        // Every provider is asked, they may need the call to prepare for the step.
+        needed = provider.first->requestsPotentialEnergy(step) || needed;
+    }
+    return needed;
+}
+
+void ForceProviders::applyAfterPotentialEnergy(bool          energyWasComputed,
+                                               real*         potentialEnergy,
+                                               ArrayRef<RVec> force,
+                                               tensor        virial) const
+{
+    for (auto& provider : impl_->providers_)
+    {
+        provider.first->applyAfterPotentialEnergy(energyWasComputed, potentialEnergy, force, virial);
+    }
+}

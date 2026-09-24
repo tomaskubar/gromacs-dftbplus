@@ -306,6 +306,7 @@ struct PlumedInputFilename
 {
     //! The name of plumed input file, empty by default
     std::optional<std::string> plumedFilename_{};
+    //! Whether replica exchange is active (-replex), needed by PLUMED's GREX setup
     bool replex_{};
 };
 
