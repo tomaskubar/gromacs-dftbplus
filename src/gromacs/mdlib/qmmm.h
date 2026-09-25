@@ -159,6 +159,7 @@ private:
     int*    indexQM;        // atom i = atom indexQM[i] in mdrun
     int*    atomicnumberQM; // atomic numbers of QM atoms
     real*   QMcharges;      // atomic charges of QM atoms(ONIOM)
+    real*   QMatomicShifts;  // atomic shifts of QM atoms (only relevant with DFTB+)
     int*    shiftQM;
     int     QMcharge;       // charge of the QM system
     int     multiplicity;   // multipicity (no of unpaired eln)
@@ -211,6 +212,7 @@ public:
     int              qmmm_variant_get()const;
     double           xQM_get(int atom, int coordinate)const;
     real             QMcharges_get(int atom)const;
+    real             QMatomicShifts_get(int atom)const;
     double           pot_qmmm_get(int atom)const;
     double           pot_qmqm_get(int atom)const;
     int              atomicnumberQM_get(int atom)const;
@@ -226,6 +228,7 @@ public:
     real             box_zz_get()const;
     // input
     void             QMcharges_set(int atom, real value);
+    void             QMatomicShifts_set(int atom, real value);
     void             pot_qmmm_set(int atom, double value);
     void             pot_qmqm_set(int atom, double value);
 } ;

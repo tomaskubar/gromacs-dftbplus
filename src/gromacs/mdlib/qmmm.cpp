@@ -371,6 +371,16 @@ void QMMM_QMrec::QMcharges_set(const int atom, const real value)
     QMcharges[atom] = value;
 }
 
+real QMMM_QMrec::QMatomicShifts_get(const int atom) const
+{
+    return QMatomicShifts[atom];
+}
+
+void QMMM_QMrec::QMatomicShifts_set(const int atom, const real value)
+{
+    QMatomicShifts[atom] = value;
+}
+
 double QMMM_QMrec::pot_qmmm_get(const int atom) const
 {
     return pot_qmmm[atom];
@@ -673,6 +683,7 @@ QMMM_rec::QMMM_rec(const t_commrec*                 cr,
 		    }
         }
         snew(qm[0].QMcharges, qm[0].nrQMatoms);
+        snew(qm[0].QMatomicShifts, qm[0].nrQMatoms);
 
         init_dftbplus(&(qm[0]), this, ir, cr); //, wcycle);
     }
