@@ -2537,7 +2537,9 @@ void get_ir(const char*     mdparin,
     setStringEntry(&inp, "CASorbitals", inputrecStrings->CASorbitals, nullptr);
     setStringEntry(&inp, "CASelectrons", inputrecStrings->CASelectrons, nullptr);
     printStringNoNewline(&inp, "Scale factor for MM charges");
-    ir->scalefactor = get_ereal(&inp, "MMChargeScaleFactor", 1.0, wi);
+    ir->MMscalefactor = get_ereal(&inp, "MMChargeScaleFactor", 1.0, wi);
+    printStringNoNewline(&inp, "Scale factor for QM energy");
+    ir->QMscalefactor = get_ereal(&inp, "QMEnergyScaleFactor", 1.0, wi);
 
     /* Simulated annealing */
     printStringNewline(&inp, "SIMULATED ANNEALING");

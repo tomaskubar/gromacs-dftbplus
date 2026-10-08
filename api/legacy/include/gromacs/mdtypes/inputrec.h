@@ -648,7 +648,9 @@ struct t_inputrec // NOLINT (clang-analyzer-optin.performance.Padding)
     //! QM/MM calculation
     bool bQMMM = false;
     //! Factor for scaling the MM charges in QM calc.
-    real scalefactor;
+    real MMscalefactor;
+    //! Factor for scaling the QM energy in QM/MM calc.
+    real QMscalefactor;
 
     /* Fields for removed features go here (better caching) */
     //! Whether AdResS is enabled - always false if a valid .tpr was read

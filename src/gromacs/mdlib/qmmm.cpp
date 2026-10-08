@@ -531,6 +531,8 @@ QMMM_rec::QMMM_rec(const t_commrec*                 cr,
         exit(-1);
     }
 
+    this->QMenergyScaleFactor = ir->QMscalefactor;
+
     // There are numQmmmGroups groups of QM atoms.
     // Previously, multiple QM groups typically meant
     // that the user wanted to do ONIOM.
@@ -563,7 +565,7 @@ QMMM_rec::QMMM_rec(const t_commrec*                 cr,
     int found_mm_atoms = 0;
     mm.resize(1);
     QMMM_MMrec& mm_ = mm[0];
-    mm_.init_MMrec(ir->scalefactor, nrMMatoms_full_in, mtop->natoms, qm[0].nrQMatoms, qm[0].indexQM, &found_mm_atoms); 
+    mm_.init_MMrec(ir->MMscalefactor, nrMMatoms_full_in, mtop->natoms, qm[0].nrQMatoms, qm[0].indexQM, &found_mm_atoms);
 
     printf ("(mtop->natoms) = %d\n(qr->qm[0]->nrQMatoms) = %d\nmm->nrMMatoms_full = %d\n",
             (mtop->natoms), (qm[0].nrQMatoms), mm_.nrMMatoms_full);
@@ -1116,8 +1118,8 @@ real QMMM_rec::calculate_QMMM(// const t_commrec*      cr,
         {
             for (int j = 0; j < DIM; j++)
             {
-                fMM[globalToLocalAtomMap[qm_->indexQM[i]]][j]        -= forces[i][j];
-             // fshiftMM[globalToLocalAtomMap[qm_->shiftQM[i]]][j]   += fshift[i][j];
+                fMM[globalToLocalAtomMap[qm_->indexQM[i]]][j]        -= this->QMenergyScaleFactor * forces[i][j];
+             // fshiftMM[globalToLocalAtomMap[qm_->shiftQM[i]]][j]   += this->QMenergyScaleFactor * fshift[i][j];
             }
          // printf("F[%5d] = %8.2f %8.2f %8.2f\n", qm_->indexQM[i], forces[i][0], forces[i][1], forces[i][2]);
         }
@@ -1150,8 +1152,8 @@ real QMMM_rec::calculate_QMMM(// const t_commrec*      cr,
         {
             for (int j = 0; j < DIM; j++)
             {
-                fMM[globalToLocalAtomMap[qm_->indexQM[i]]][j]          -= forces[i][j];
-             // fshiftMM[globalToLocalAtomMap[qm_->shiftQM[i]]][j]     += fshift[i][j];
+                fMM[globalToLocalAtomMap[qm_->indexQM[i]]][j]          -= this->QMenergyScaleFactor * forces[i][j];
+             // fshiftMM[globalToLocalAtomMap[qm_->shiftQM[i]]][j]     += this->QMenergyScaleFactor * fshift[i][j];
             }
         }
         for (int i = 0; i < mm_->nrMMatoms; i++)
@@ -1167,7 +1169,7 @@ real QMMM_rec::calculate_QMMM(// const t_commrec*      cr,
     sfree(forces);
  // sfree(fshift);
 
-    return QMener;
+    return this->QMenergyScaleFactor * QMener;
 } // calculate_QMMM
 
 #pragma GCC diagnostic pop

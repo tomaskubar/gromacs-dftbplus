@@ -1819,7 +1819,8 @@ static void do_inputrec(gmx::ISerializer* serializer, t_inputrec* ir, int file_v
         serializer->doBool(&ir->bQMMM);
         int qmmmScheme;
         serializer->doInt(&qmmmScheme);
-        serializer->doReal(&ir->scalefactor);
+        serializer->doReal(&ir->MMscalefactor);
+        serializer->doReal(&ir->QMscalefactor);
 
         // this is still used in Mimic, anyways
         serializer->doInt(&ir->opts.ngQM);

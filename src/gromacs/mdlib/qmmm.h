@@ -288,6 +288,7 @@ public:
                                                    // localToGlobalAtomMap[1] == 2 means that
                                                    //   global atom 2 is local atom 1
     int                      nAtoms; // total number of atoms in the simulation (QM + MM)
+    real                     QMenergyScaleFactor;  // QM energy/forces will be multiplied by this
 
     QMMM_rec(const t_commrec*                 cr,
              const gmx_mtop_t*                mtop,

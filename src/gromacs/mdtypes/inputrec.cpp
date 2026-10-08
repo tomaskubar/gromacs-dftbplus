@@ -1001,7 +1001,8 @@ void pr_inputrec(FILE* fp, int indent, const char* title, const t_inputrec* ir, 
         PS("QMMM", EBOOL(ir->bQMMM));
         fprintf(fp, "%s:\n", "qm-opts");
         pr_int(fp, indent, "ngQM", ir->opts.ngQM);
-        PR("MMChargeScaleFactor", ir->scalefactor);
+        PR("MMChargeScaleFactor", ir->MMscalefactor);
+        PR("QMEnergyScaleFactor", ir->QMscalefactor);
         pr_qm_opts(fp, indent, "qm-opts", &(ir->opts));
 
         /* CONSTRAINT OPTIONS */
