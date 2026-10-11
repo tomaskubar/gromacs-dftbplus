@@ -247,6 +247,8 @@ struct gmx_enerdata_t
 
     //! Foreign lambda energies and dH/dl
     ForeignLambdaTerms foreignLambdaTerms;
+    //! Potential energies calculated for the current configuration using all the different Hamiltonians
+    std::vector<real> potentialEnergiesForAllHamiltonians;
 };
 
 #endif

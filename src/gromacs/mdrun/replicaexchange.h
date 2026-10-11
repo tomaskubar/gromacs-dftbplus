@@ -70,6 +70,8 @@ struct ReplicaExchangeParameters
 //! Abstract type for replica exchange
 typedef struct gmx_repl_ex* gmx_repl_ex_t;
 
+struct gmx_repl_ex_setup;
+
 /*! \brief Setup function.
  *
  * Should only be called on the main ranks */
@@ -78,6 +80,14 @@ gmx_repl_ex_t init_replica_exchange(FILE*                            fplog,
                                     int                              numAtomsInSystem,
                                     const t_inputrec*                ir,
                                     const ReplicaExchangeParameters& replExParams);
+
+/*! \brief Function to copy some of replica exchange setup data that need to be passed
+           to the force calculation routines (for Hamiltonian replica exchange).
+ *
+ * Should only be called on the main ranks */
+void init_replica_exchange_setup(gmx_repl_ex_setup& repl_ex_setup,
+                                 gmx_repl_ex_t      repl_ex);
+
 
 /*! \brief Attempts replica exchange.
  *

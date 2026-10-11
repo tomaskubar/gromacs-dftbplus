@@ -288,6 +288,8 @@ void ForceElement::run(Step step, Time time, unsigned int flags)
                  mdAtoms_->mdatoms(),
                  energyData_->enerdata(),
                  lambda,
+                 FALSE,
+                 nullptr,
                  fr_,
                  *runScheduleWork_,
                  vsite_,

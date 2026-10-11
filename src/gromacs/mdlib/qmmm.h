@@ -63,6 +63,7 @@ namespace gmx {
 struct nonbonded_verlet_t;
 }
 struct gmx_pme_t;
+struct gmx_repl_ex_setup;
 enum class PbcType : int;
 
 struct DftbPlus;
@@ -383,6 +384,15 @@ public:
     // or generates input files for an external QM package
     //   (listed in QMMMrec.QMpackage).
     // The binary of the QM package is called by system().
+
+    // For QM/MM hrex -- do not return any forces as they are not needed.
+    // Only return the QM+QM/MM energy for the Hamiltonian specified
+    //   by the scaling factors.
+    real calculate_QMMM_energy_only(
+                              t_nrnb*               nrnb,
+                              gmx_wallcycle*        wcycle,
+                              const real            MMchargeScaleFactor,
+                              const real            QMenergyScaleFactor);
 } ;
 
 // for qmmm_variant

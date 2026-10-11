@@ -159,6 +159,8 @@ void CpuPpLongRangeNonbondeds::calculate(gmx_pme_t*                     pmedata,
                                          gmx_enerdata_t*                enerd,
                                          const matrix                   box,
                                          gmx::ArrayRef<const real>      lambda,
+                                         const bool                     bDoReplEx,
+                                         const gmx_repl_ex_setup*       repl_ex,
                                          gmx::ArrayRef<const gmx::RVec> mu_tot,
                                          const gmx::StepWorkload&       stepWork,
                                          const DDBalanceRegionHandler&  ddBalanceRegionHandler,
@@ -173,6 +175,40 @@ void CpuPpLongRangeNonbondeds::calculate(gmx_pme_t*                     pmedata,
     {
  //     enerd->term[F_EQM] = fr->qr->calculate_QMMM(cr, &forceOutputs->forceWithShiftForces(), nrnb, wcycle);
         enerd->term[InteractionFunction::QuantumMechanicalRegionEnergy] = fr.qr->calculate_QMMM(forceWithVirial, nrnb_, wcycle_);
+
+        // Determine whether replica exchange with Hamiltonian is attempted in this step or not
+        if (bDoReplEx &&
+            (repl_ex->type == ReplicaExchangeTypeCopy::TemperatureHamiltonian ||
+             repl_ex->type == ReplicaExchangeTypeCopy::Hamiltonian))
+        {
+            // This vector will keep the energies obtained with the other Hamiltonians
+            //   (scaling factors for MM-charges and QM-energy)
+            enerd->potentialEnergiesForAllHamiltonians.resize(repl_ex->nrepl);
+
+            // Calculate the QM/MM energy for all Hamiltonians (scaling factors for MM-charges and QM-energy)
+            for (int i = 0; i < repl_ex->nrepl; i++)
+            {
+                enerd->potentialEnergiesForAllHamiltonians[i] = fr.qr->calculate_QMMM_energy_only(
+                        nrnb_,
+                        wcycle_,
+                        repl_ex->mmChargeScalingFactors[i],
+                        repl_ex->qmEnergyScalingFactors[i]);
+                // printf("Replica %d: QM/MM energy of Hamiltonian %d= %.6f\n",
+                //        repl_ex->repl, i, enerd->potentialEnergiesForAllHamiltonians[i]);
+            }
+
+            // Check if the energy obtained with the scaling factors
+            //   corresponding to the current replica (i.e. the current Hamiltonian)
+            //   is equal to the energy obtained with the current Hamiltonian above
+            if (std::abs(enerd->term[InteractionFunction::QuantumMechanicalRegionEnergy] -
+                         enerd->potentialEnergiesForAllHamiltonians[repl_ex->repl]) > 1e-3)
+            {
+                gmx_fatal(FARGS,
+                          "Energy obtained with the scaling factors for the current Hamiltonian (%.6f) does not equal the energy obtained with the current Hamiltonian (%.6f).",
+                          enerd->potentialEnergiesForAllHamiltonians[repl_ex->repl],
+                          enerd->term[InteractionFunction::QuantumMechanicalRegionEnergy]);
+            }
+        }
     }
 
     const bool computePmeOnCpu = (usingPme(coulombInteractionType_) || usingLJPme(vanDerWaalsType_))

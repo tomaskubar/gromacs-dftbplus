@@ -48,6 +48,7 @@
 
 #include <cinttypes>
 #include <cmath>
+#include <cstdlib>
 
 #include <array>
 #include <filesystem>
@@ -77,6 +78,8 @@
 #include "gromacs/utility/gmxassert.h"
 #include "gromacs/utility/pleasecite.h"
 #include "gromacs/utility/smalloc.h"
+#include "gromacs/utility/strconvert.h"
+#include "gromacs/utility/stringutil.h"
 #include "gromacs/utility/vec.h"
 #include "gromacs/utility/vectypes.h"
 
@@ -95,6 +98,8 @@ enum class ReplicaExchangeType : int
     Lambda,
     EndSingle,
     TemperatureLambda,
+    Hamiltonian,
+    TemperatureHamiltonian,
     Count
 };
 /*! \brief Strings describing replica exchange flavours.
@@ -110,7 +115,8 @@ enum class ReplicaExchangeType : int
 static const char* enumValueToString(ReplicaExchangeType enumValue)
 {
     constexpr gmx::EnumerationArray<ReplicaExchangeType, const char*> replicateExchangeTypeNames = {
-        "temperature", "lambda", "end_single_marker", "temperature and lambda"
+        "temperature", "lambda", "end_single_marker", "temperature and lambda",
+        "Hamiltonian", "temperature and Hamiltonian"
     };
     return replicateExchangeTypeNames[enumValue];
 }
@@ -169,7 +175,37 @@ struct gmx_repl_ex
     real*  beta;
     real*  Vol;
     real** de;
+    real** Eqmmm;
     //! \}
+
+    //! Data for Hamiltonian replica exchange
+    //! \{
+    std::vector<real> mmChargeScalingFactors;
+    std::vector<real> qmEnergyScalingFactors;
+    //! \}
+};
+
+// TODO -- ReplicaExchangeTypeCopy and gmx_repl_ex_setup are incomplete copies
+//         of ReplicaExchangeType and gmx_repl_ex_setup, respectively,
+//         for use with Hamiltonian replica exchange.
+//         We should refactor the code to avoid duplication and improve maintainability.
+enum class ReplicaExchangeTypeCopy : int
+{
+    Temperature,
+    Lambda,
+    EndSingle,
+    TemperatureLambda,
+    Hamiltonian,
+    TemperatureHamiltonian,
+    Count
+};
+struct gmx_repl_ex_setup
+{
+    int repl;
+    int nrepl;
+    ReplicaExchangeTypeCopy type;
+    std::vector<real> mmChargeScalingFactors;
+    std::vector<real> qmEnergyScalingFactors;
 };
 
 // TODO We should add Doxygen here some time.
@@ -209,6 +245,56 @@ static gmx_bool repl_quantity(const gmx_multisim_t* ms, struct gmx_repl_ex* re, 
     return bDiff;
 }
 
+std::vector<real> getHamiltonianReplicaExchangeScalingFactors(
+                                                const char *envVar,
+                                                const int repl,
+                                                const int nrepl,
+                                                const real currentScalingFactor)
+{
+    // This will be read from some more environment variables
+    // TODO: read from the other replicas directly!
+
+    char *env = std::getenv(envVar);
+    if (env == nullptr)
+    {
+        gmx_fatal(FARGS, "Environment variable %s is not set", envVar);
+    }
+    const auto scalingFactorStrings = gmx::splitString(env);
+    if (scalingFactorStrings.empty())
+    {
+        gmx_fatal(FARGS, "Environment variable %s is empty", envVar);
+    }
+    std::vector<real> scalingFactors;
+    for (const auto& factorString : scalingFactorStrings)
+    {
+        try
+        {
+            scalingFactors.push_back(gmx::fromString<real>(factorString));
+        }
+        catch (const gmx::GromacsException&)
+        {
+            gmx_fatal(FARGS, "Invalid scaling factor '%s' in %s", factorString.c_str(), envVar);
+        }
+    }
+    if (scalingFactors.size() < static_cast<size_t>(nrepl))
+    {
+        gmx_fatal(FARGS, "Not enough scaling factors in %s (expected %d, got %zu).",
+                  envVar, nrepl, scalingFactors.size());
+    }
+    if (scalingFactors.size() > static_cast<size_t>(nrepl))
+    {
+        gmx_warning("Too many scaling factors in %s (expected %d, got %zu). Only the first %d will be used.",
+                    envVar, nrepl, scalingFactors.size(), nrepl);
+        }
+        // Check if the MM scaling factor of the current replica equals the corresponding value in the environment variable
+        if (std::fabs(scalingFactors[repl] - currentScalingFactor) > 1e-5)
+        {
+            gmx_fatal(FARGS, "The MM charge scaling factor of the current replica (%f) does not match the corresponding value in the environment variable %s (%f).",
+                      currentScalingFactor, envVar, scalingFactors[repl]);
+        }
+    return scalingFactors;
+}
+
 gmx_repl_ex_t init_replica_exchange(FILE*                            fplog,
                                     const gmx_multisim_t*            ms,
                                     int                              numAtomsInSystem,
@@ -220,6 +306,7 @@ gmx_repl_ex_t init_replica_exchange(FILE*                            fplog,
     struct gmx_repl_ex* re;
     gmx_bool            bTemp;
     gmx_bool            bLambda = FALSE;
+    gmx_bool            bHamiltonian = FALSE;
 
     fprintf(fplog, "\nInitializing Replica Exchange\n");
 
@@ -303,15 +390,61 @@ gmx_repl_ex_t init_replica_exchange(FILE*                            fplog,
         bLambda = repl_quantity(
                 ms, re, ReplicaExchangeType::Lambda, static_cast<real>(ir->fepvals->init_fep_state));
     }
+    if (bLambda && bTemp)
+    {
+        re->type = ReplicaExchangeType::TemperatureLambda;
+    }
+
+    char* env = std::getenv("GMX_QMMM_HREX");
+    if (env != nullptr)
+    {
+        // Hamiltonian replica exchange will be carried out
+        bHamiltonian = TRUE;
+
+        // We will need the whole set of scaling parameters for MM-charges and QM-energy:
+        // MM charge scaling factors are read from env var GMX_QMMM_HREX_MM_CHARGES_SCALING_FACTORS
+        re->mmChargeScalingFactors = getHamiltonianReplicaExchangeScalingFactors(
+            "GMX_QMMM_HREX_MM_CHARGE_SCALING_FACTORS",
+            re->repl, re->nrepl, ir->MMscalefactor);
+        // QM energy scaling factors are read from env var GMX_QMMM_HREX_QM_ENERGY_SCALING_FACTORS
+        re->qmEnergyScalingFactors = getHamiltonianReplicaExchangeScalingFactors(
+            "GMX_QMMM_HREX_QM_ENERGY_SCALING_FACTORS",
+            re->repl, re->nrepl, ir->QMscalefactor);
+
+        // Print the scaling factors for all replicas to the log file
+        fprintf(fplog, "\nReplica exchange in Hamiltonian (MM charge and QM energy scaling factors)\n");
+        fprintf(fplog, "Replica exchange in MM charge scaling factors:\n");
+        for (i = 0; i < re->nrepl; i++)
+        {
+            fprintf(fplog, " %5.3f", re->mmChargeScalingFactors[i]);
+        }
+        fprintf(fplog, " own value: %5.3f", ir->MMscalefactor);
+        fprintf(fplog, "\nReplica exchange in QM energy scaling factors:\n");
+        for (i = 0; i < re->nrepl; i++)
+        {
+            fprintf(fplog, " %5.3f", re->qmEnergyScalingFactors[i]);
+        }
+        fprintf(fplog, " own value: %5.3f", ir->QMscalefactor);
+        fprintf(fplog, "\n");
+    }
+
+    if (bHamiltonian)
+    {
+        if (bTemp)
+        {
+            re->type = ReplicaExchangeType::TemperatureHamiltonian;
+        }
+        else
+        {
+            re->type = ReplicaExchangeType::Hamiltonian;
+        }
+    }
+
     if (re->type == ReplicaExchangeType::Count) /* nothing was assigned */
     {
         gmx_fatal(FARGS,
                   "The properties of the %d systems are all the same, there is nothing to exchange",
                   re->nrepl);
-    }
-    if (bLambda && bTemp)
-    {
-        re->type = ReplicaExchangeType::TemperatureLambda;
     }
 
     if (bTemp)
@@ -442,6 +575,17 @@ gmx_repl_ex_t init_replica_exchange(FILE*                            fplog,
             }
             fprintf(fplog, "\n");
             break;
+        case ReplicaExchangeType::Hamiltonian:
+            fprintf(fplog, "\nReplica exchange in Hamiltonian\n");
+            break;
+        case ReplicaExchangeType::TemperatureHamiltonian:
+            fprintf(fplog, "\nReplica exchange in temperature and Hamiltonian\n");
+            for (i = 0; i < re->nrepl; i++)
+            {
+                fprintf(fplog, " %5.1f", re->q[ReplicaExchangeType::Temperature][re->ind[i]]);
+            }
+            fprintf(fplog, "\n");
+            break;
         default: gmx_incons("Unknown replica exchange quantity");
     }
     if (re->bNPT)
@@ -522,8 +666,23 @@ gmx_repl_ex_t init_replica_exchange(FILE*                            fplog,
     {
         snew(re->de[i], re->nrepl);
     }
+    snew(re->Eqmmm, re->nrepl);
+    for (i = 0; i < re->nrepl; i++)
+    {
+        snew(re->Eqmmm[i], re->nrepl);
+    }
     re->nex = replExParams.numExchanges;
     return re;
+}
+
+void init_replica_exchange_setup(gmx_repl_ex_setup& repl_ex_setup,
+                                 gmx_repl_ex_t      repl_ex)
+{
+    repl_ex_setup.repl = repl_ex->repl;
+    repl_ex_setup.nrepl = repl_ex->nrepl;
+    repl_ex_setup.type = static_cast<ReplicaExchangeTypeCopy>(repl_ex->type);
+    repl_ex_setup.mmChargeScalingFactors = repl_ex->mmChargeScalingFactors;
+    repl_ex_setup.qmEnergyScalingFactors = repl_ex->qmEnergyScalingFactors;
 }
 
 static void exchange_reals(const gmx_multisim_t gmx_unused* ms, int gmx_unused b, real* v, int n)
@@ -789,6 +948,7 @@ static real calc_delta(FILE* fplog, gmx_bool bPrint, struct gmx_repl_ex* re, int
     real*  Epot = re->Epot;
     real*  Vol  = re->Vol;
     real** de   = re->de;
+    real** Eqmmm = re->Eqmmm;
     real*  beta = re->beta;
 
     /* Two cases; we are permuted and not.  In all cases, setting ap = a and bp = b will reduce
@@ -860,6 +1020,25 @@ static real calc_delta(FILE* fplog, gmx_bool bPrint, struct gmx_repl_ex* re, int
             delta = beta[bp] * (de[bp][a] - de[bp][b]) + beta[ap] * (de[ap][b] - de[ap][a])
                     - (beta[bp] - beta[ap]) * (Epot[b] - Epot[a]);
             break;
+        case ReplicaExchangeType::Hamiltonian:
+            // The expression for delta will be the same as for the Lambda case,
+            //   but using the potential energies calculated with the alternative
+            //   scaling factors for MM-charges and QM-energies.
+            // Eqmmm[i][j] is the QM+QM/MM energy of the jth simulation in the ith Hamiltonian
+            ediff = (Eqmmm[bp][a] - Eqmmm[bp][b]) + (Eqmmm[ap][b] - Eqmmm[ap][a]); // TODO
+            delta = ediff * beta[a]; /* assume all same temperature in this case */
+            fprintf(fplog, "Replica exchange in Hamiltonian being attempted\n");
+            fprintf(fplog, "(Eqmmm[%d][%d] - Eqmmm[%d][%d]) + (Eqmmm[%d][%d] - Eqmmm[%d][%d])\n",
+                           bp, a, bp, b, ap, b, ap, a);
+            fprintf(fplog, "   is (%f - %f) + (%f - %f)\n",
+                    Eqmmm[bp][a],
+                    Eqmmm[bp][b],
+                    Eqmmm[ap][b],
+                    Eqmmm[ap][a]);
+            break;
+        case ReplicaExchangeType::TemperatureHamiltonian:
+            gmx_fatal(FARGS, "Replica exchange in temperature and Hamiltonian is not yet implemented");
+            break;
         default: gmx_incons("Unknown replica exchange quantity");
     }
     if (bPrint)
@@ -895,6 +1074,7 @@ static void test_for_replica_exchange(FILE*                 fplog,
     int*                               pind     = re->destinations; /* permuted index */
     gmx_bool                           bEpot    = FALSE;
     gmx_bool                           bDLambda = FALSE;
+    gmx_bool                           bEqmmm   = FALSE;
     gmx_bool                           bVol     = FALSE;
     gmx::ThreeFry2x64<64>              rng(re->seed, gmx::RandomDomain::ReplicaExchange);
     gmx::UniformRealDistribution<real> uniformRealDist;
@@ -912,7 +1092,9 @@ static void test_for_replica_exchange(FILE*                 fplog,
         bVol              = TRUE;
         re->Vol[re->repl] = vol;
     }
-    if ((re->type == ReplicaExchangeType::Temperature || re->type == ReplicaExchangeType::TemperatureLambda))
+    if ((re->type == ReplicaExchangeType::Temperature ||
+         re->type == ReplicaExchangeType::TemperatureLambda ||
+         re->type == ReplicaExchangeType::TemperatureHamiltonian))
     {
         for (i = 0; i < re->nrepl; i++)
         {
@@ -952,6 +1134,28 @@ static void test_for_replica_exchange(FILE*                 fplog,
                     enerd->foreignLambdaTerms.deltaH(re->q[ReplicaExchangeType::Lambda][i]);
         }
     }
+    if (re->type == ReplicaExchangeType::Hamiltonian || re->type == ReplicaExchangeType::TemperatureHamiltonian)
+    {
+        // The QM+QM/MM energies of all (including current) Hamiltonians for the current configuration
+        //   are available in enerd->potentialEnergiesForAllHamiltonians
+        // First, we need to obtain the QM+QM/MM energies of the current Hamiltonian for all configurations,
+        //   which can be obtained from communication with other replicas,
+        //   similarly to how we obtain the potential energies of all configurations, as stored in re->Epot[re->repl].
+
+        bEqmmm = TRUE;
+        // Eqmmm[i][j] is the QM+QM/MM energy of the jth simulation in the ith Hamiltonian
+        for (i = 0; i < re->nrepl; i++)
+        {
+            for (j = 0; j < re->nrepl; j++)
+            {
+                re->Eqmmm[i][j] = 0;
+            }
+        }
+        for (i = 0; i < re->nrepl; i++)
+        {
+            re->Eqmmm[i][re->repl] = enerd->potentialEnergiesForAllHamiltonians[i];
+        }
+    }
 
     /* now actually do the communication */
     if (bVol)
@@ -967,6 +1171,13 @@ static void test_for_replica_exchange(FILE*                 fplog,
         for (i = 0; i < re->nrepl; i++)
         {
             gmx_sum_sim(re->nrepl, re->de[i], ms);
+        }
+    }
+    if (bEqmmm)
+    {
+        for (i = 0; i < re->nrepl; i++)
+        {
+            gmx_sum_sim(re->nrepl, re->Eqmmm[i], ms);
         }
     }
 
@@ -1353,7 +1564,9 @@ gmx_bool replica_exchange(FILE*                 fplog,
             }
             /* For temperature-type replica exchange, we need to scale
              * the velocities. */
-            if (re->type == ReplicaExchangeType::Temperature || re->type == ReplicaExchangeType::TemperatureLambda)
+            if (re->type == ReplicaExchangeType::Temperature ||
+                re->type == ReplicaExchangeType::TemperatureLambda ||
+                re->type == ReplicaExchangeType::TemperatureHamiltonian)
             {
                 scale_velocities(
                         state->v,

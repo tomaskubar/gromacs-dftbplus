@@ -1172,4 +1172,40 @@ real QMMM_rec::calculate_QMMM(// const t_commrec*      cr,
     return this->QMenergyScaleFactor * QMener;
 } // calculate_QMMM
 
+real QMMM_rec::calculate_QMMM_energy_only(
+                              t_nrnb*               nrnb,
+                              gmx_wallcycle*        wcycle,
+                              const real            MMchargeScaleFactorIn,
+                              const real            QMenergyScaleFactorIn)
+{
+    if (!GMX_QMMM)
+    {
+        gmx_incons("Compiled without QMMM");
+    }
+
+    QMMM_QMrec* qm_ = &(qm[0]);
+    QMMM_MMrec* mm_ = &(mm[0]);
+
+    rvec *forces = nullptr,
+         *fshift = nullptr;
+
+    if (GMX_QMMM_DFTBPLUS)
+    {
+        snew(forces, (qm_->nrQMatoms + mm_->nrMMatoms + mm_->nrMMatoms_full));
+    }
+    else
+    {
+        snew(forces, (qm_->nrQMatoms + mm_->nrMMatoms));
+    }
+
+    real scalefactorBak = mm_->scalefactor;
+    mm_->scalefactor = MMchargeScaleFactorIn;
+    real QMener = call_QMroutine(this, qm_, mm_, forces, fshift, nrnb, wcycle);
+    mm_->scalefactor = scalefactorBak;
+
+    sfree(forces);
+
+    return QMenergyScaleFactorIn * QMener;
+} // calculate_QMMM
+
 #pragma GCC diagnostic pop

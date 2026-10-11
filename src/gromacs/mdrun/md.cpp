@@ -201,6 +201,7 @@ void gmx::LegacySimulator::do_md()
     rvec      mu_tot;
     Matrix3x3 pressureCouplingMu{ 0. }, parrinelloRahmanM{ 0. };
     gmx_repl_ex_t     repl_ex = nullptr;
+    gmx_repl_ex_setup repl_ex_setup;
     gmx_bool          bSumEkinhOld, bDoReplEx, bExchanged, bNeedRepartition;
     real              dvdl_constr;
     std::vector<RVec> cbuf;
@@ -549,6 +550,7 @@ void gmx::LegacySimulator::do_md()
     if (useReplicaExchange && isMainRank)
     {
         repl_ex = init_replica_exchange(fpLog_, ms_, topGlobal_.natoms, ir, replExParams_);
+        init_replica_exchange_setup(repl_ex_setup, repl_ex);
     }
 
     // PME tuning is only supported with PME for Coulomb. It is not supported with only LJ PME
@@ -1277,6 +1279,8 @@ void gmx::LegacySimulator::do_md()
                          md,
                          enerd_,
                          state_->lambda,
+                         bDoReplEx,
+                         &repl_ex_setup,
                          fr_,
                          *runScheduleWork_,
                          virtualSites_,

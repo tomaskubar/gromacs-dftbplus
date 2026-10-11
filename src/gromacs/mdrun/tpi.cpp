@@ -596,6 +596,8 @@ std::pair<double, double> TestParticleInsertion::performSingleInsertion(const do
              &mdatoms_,
              &enerd_,
              stateGlobal->lambda,
+             FALSE,
+             nullptr,
              &fr_,
              *runScheduleWork,
              nullptr,

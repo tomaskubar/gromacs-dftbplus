@@ -42,6 +42,7 @@
 
 #include "gromacs/mdtypes/md_enums.h"
 #include "gromacs/utility/arrayref.h"
+#include "gromacs/utility/basedefinitions.h"
 #include "gromacs/utility/enumerationhelpers.h"
 #include "gromacs/utility/real.h"
 #include "gromacs/utility/vectypes.h"
@@ -90,6 +91,26 @@ struct ewald_corr_thread_t
     tensor                                                          vir_lj;
 };
 
+// TODO -- include the replica exchange data structure type in some better way
+enum class ReplicaExchangeTypeCopy : int
+{
+    Temperature,
+    Lambda,
+    EndSingle,
+    TemperatureLambda,
+    Hamiltonian,
+    TemperatureHamiltonian,
+    Count
+};
+struct gmx_repl_ex_setup
+{
+    int repl;
+    int nrepl;
+    ReplicaExchangeTypeCopy type;
+    std::vector<real> mmChargeScalingFactors;
+    std::vector<real> qmEnergyScalingFactors;
+};
+
 namespace gmx
 {
 
@@ -127,6 +148,8 @@ void do_force(FILE*                         log,
               const t_mdatoms*              mdatoms,
               gmx_enerdata_t*               enerd,
               ArrayRef<const real>          lambda,
+              const bool                    bDoReplEx,
+              const gmx_repl_ex_setup*      repl_ex,
               t_forcerec*                   fr,
               const MdrunScheduleWorkload&  runScheduleWork,
               VirtualSitesHandler*          vsite,
@@ -180,6 +203,8 @@ public:
                    gmx_enerdata_t*                enerd,
                    const matrix                   box,
                    gmx::ArrayRef<const real>      lambda,
+                   const bool                     bDoReplEx,
+                   const gmx_repl_ex_setup*       repl_ex,
                    gmx::ArrayRef<const gmx::RVec> mu_tot,
                    const gmx::StepWorkload&       stepWork,
                    const DDBalanceRegionHandler&  ddBalanceRegionHandler,

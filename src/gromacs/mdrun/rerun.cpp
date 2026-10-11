@@ -714,6 +714,8 @@ void gmx::LegacySimulator::do_rerun()
                          mdatoms,
                          enerd_,
                          state_->lambda,
+                         FALSE,
+                         nullptr,
                          fr_,
                          *runScheduleWork_,
                          virtualSites_,
