@@ -1037,7 +1037,23 @@ static real calc_delta(FILE* fplog, gmx_bool bPrint, struct gmx_repl_ex* re, int
                     Eqmmm[ap][a]);
             break;
         case ReplicaExchangeType::TemperatureHamiltonian:
-            gmx_fatal(FARGS, "Replica exchange in temperature and Hamiltonian is not yet implemented");
+            // Analogous to the TemperatureLambda case, but using re->Eqmmm instead of re->de
+            //   Unclear: Where does the second part of the delta expression in TemperatureLambda come from?
+            //   It is not present in any sources I can find...
+            // This expression below comes from the paper: Sugita et al., J. Chem. Phys. 113, 6042 (2000):
+            //   Multidimensional replica-exchange method for free-energy calculations
+            //   DOI 10.1063/1.1308516
+            delta = beta[b] * (Eqmmm[bp][a] - Eqmmm[bp][b]) + beta[a] * (Eqmmm[ap][b] - Eqmmm[ap][a]); // TODO
+            fprintf(fplog, "Replica exchange in Hamiltonian and temperature being attempted\n");
+            fprintf(fplog, "beta[%d] * (Eqmmm[%d][%d] - Eqmmm[%d][%d]) + beta[%d] * (Eqmmm[%d][%d] - Eqmmm[%d][%d])\n",
+                           b, bp, a, bp, b, a, ap, b, ap, a);
+            fprintf(fplog, "   is %f * (%f - %f) + %f * (%f - %f)\n",
+                    beta[b],
+                    Eqmmm[bp][a],
+                    Eqmmm[bp][b],
+                    beta[a],
+                    Eqmmm[ap][b],
+                    Eqmmm[ap][a]);
             break;
         default: gmx_incons("Unknown replica exchange quantity");
     }
