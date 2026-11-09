@@ -1127,8 +1127,8 @@ real QMMM_rec::calculate_QMMM(// const t_commrec*      cr,
         {
             for (int j = 0; j < DIM; j++)
             {
-                fMM[globalToLocalAtomMap[mm_->indexMM[i]]][j]        -= forces[qm_->nrQMatoms+i][j];
-             // fshiftMM[globalToLocalAtomMap[mm_->shiftMM[i]]][j]   += fshift[qm_->nrQMatoms+i][j];
+                fMM[globalToLocalAtomMap[mm_->indexMM[i]]][j]        -= this->QMenergyScaleFactor * forces[qm_->nrQMatoms+i][j];
+             // fshiftMM[globalToLocalAtomMap[mm_->shiftMM[i]]][j]   += this->QMenergyScaleFactor * fshift[qm_->nrQMatoms+i][j];
             }
          // if (i<30) if (norm(forces[qm_->nrQMatoms+i]) > 10.)
          //   printf("F_MM[%5d] = %8.2f %8.2f %8.2f\n", mm_->indexMM[i],
@@ -1138,8 +1138,8 @@ real QMMM_rec::calculate_QMMM(// const t_commrec*      cr,
         {
             for (int j = 0; j < DIM; j++)
             {
-                fMM[globalToLocalAtomMap[mm_->indexMM_full[i]]][j]        -= forces[qm_->nrQMatoms+mm_->nrMMatoms+i][j];
-             // fshiftMM[globalToLocalAtomMap[mm_->shiftMM_full[i]]][j]   += fshift[qm_->nrQMatoms+mm_->nrMMatoms+i][j];
+                fMM[globalToLocalAtomMap[mm_->indexMM_full[i]]][j]        -= this->QMenergyScaleFactor * forces[qm_->nrQMatoms+mm_->nrMMatoms+i][j];
+             // fshiftMM[globalToLocalAtomMap[mm_->shiftMM_full[i]]][j]   += this->QMenergyScaleFactor * fshift[qm_->nrQMatoms+mm_->nrMMatoms+i][j];
             }
          // if (i<100) if (norm(forces[qm_->nrQMatoms+mm_->nrMMatoms+i]) > 10.)
          //   printf("F_MM_F[%5d] = %8.2f %8.2f %8.2f\n", mm_->indexMM_full[i],
@@ -1160,8 +1160,8 @@ real QMMM_rec::calculate_QMMM(// const t_commrec*      cr,
         {
             for (int j = 0; j < DIM; j++)
             {
-                fMM[globalToLocalAtomMap[mm_->indexMM[i]]][j]      -= forces[qm_->nrQMatoms+i][j];
-             // fshiftMM[globalToLocalAtomMap[mm_->shiftMM[i]]][j] += fshift[qm_->nrQMatoms+i][j];
+                fMM[globalToLocalAtomMap[mm_->indexMM[i]]][j]      -= this->QMenergyScaleFactor * forces[qm_->nrQMatoms+i][j];
+             // fshiftMM[globalToLocalAtomMap[mm_->shiftMM[i]]][j] += this->QMenergyScaleFactor * fshift[qm_->nrQMatoms+i][j];
             }
         }
     }
