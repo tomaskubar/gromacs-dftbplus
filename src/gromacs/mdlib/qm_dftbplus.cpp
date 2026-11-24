@@ -336,11 +336,13 @@ real call_dftbplus(QMMM_rec*         qr,
 {
     static int step = 0;
     static FILE *f_q = nullptr;
+    static FILE *f_sh = nullptr;
     static FILE *f_p = nullptr;
     static FILE *f_x_qm = nullptr;
     static FILE *f_x_mm = nullptr;
     static FILE *f_x_mm_full = nullptr;
     static int output_freq_q;
+    static int output_freq_sh;
     static int output_freq_p;
     static int output_freq_x_qm;
     static int output_freq_x_mm;
@@ -353,7 +355,7 @@ real call_dftbplus(QMMM_rec*         qr,
     qm->dftbContext->nrnb = nrnb;
     int n = qm->nrQMatoms_get();
 
-    double *x, *grad, *pot, *potgrad, *q; // real instead of rvec, to help pass data to fortran
+    double *x, *grad, *pot, *potgrad, *q, *atomicShifts; // real instead of rvec, to help pass data to fortran
     real *pot_sr = nullptr, *pot_lr = nullptr;
     rvec *QMgrad = nullptr, *MMgrad = nullptr, *MMgrad_full = nullptr;
 
@@ -368,6 +370,9 @@ real call_dftbplus(QMMM_rec*         qr,
     snew(q, n);
     for (int i=0; i<n; i++)
         q[i] = 0.;
+    snew(atomicShifts, n);
+    for (int i=0; i<n; i++)
+        atomicShifts[i] = 0.;
     snew(pot_sr, n);
     snew(pot_lr, n);
 
@@ -381,6 +386,13 @@ real call_dftbplus(QMMM_rec*         qr,
             output_freq_q = atoi(env);
             f_q = fopen("qm_dftb_charges.xvg", "a");
             printf("The QM charges will be saved in file qm_dftb_charges.xvg every %d steps.\n", output_freq_q);
+        }
+
+        if ((env = getenv("GMX_DFTB_ATOMIC_SHIFTS")) != nullptr)
+        {
+            output_freq_sh = atoi(env);
+            f_sh = fopen("qm_dftb_atomic_shifts.xvg", "a");
+            printf("The QM atomic shifts will be saved in file qm_dftb_atomic_shifts.xvg every %d steps.\n", output_freq_sh);
         }
 
         if (qm->qmmm_variant_get() != eqmmmVACUO && (env = getenv("GMX_DFTB_ESP")) != nullptr)
@@ -473,6 +485,7 @@ real call_dftbplus(QMMM_rec*         qr,
     dftbp_get_gross_charges(qm->dpcalc, q);
  // for (int i=0; i<n; i++)
  //     printf("%d %6.3f\n", i+1, q[i]);
+    dftbp_get_atomic_shifts(qm->dpcalc, atomicShifts);
     dftbp_get_gradients(qm->dpcalc, grad);
     wallcycle_stop(wcycle, WallCycleCounter::QM);
 
@@ -497,6 +510,7 @@ real call_dftbplus(QMMM_rec*         qr,
     {
         qm->QMcharges_set(i, (real) q[i]); // sign OK
      // printf("CHECK CHARGE QM[%d] = %6.3f\n", i+1, qm->QMcharges[i]);
+        qm->QMatomicShifts_set(i, (real) atomicShifts[i] * HARTREE_TO_EV); // in volt units
     }
 
     /* Calculate the QM/MM forces
@@ -561,6 +575,16 @@ real call_dftbplus(QMMM_rec*         qr,
             fprintf(f_q, " %8.5f", qm->QMcharges_get(i));
         }
         fprintf(f_q, "\n");
+    }
+
+    if (f_sh && step % output_freq_sh == 0)
+    {
+        fprintf(f_sh, "%8d", step);
+        for (int i=0; i<n; i++)
+        {
+            fprintf(f_sh, " %8.5f", qm->QMatomicShifts_get(i));
+        }
+        fprintf(f_sh, "\n");
     }
 
     if (f_p && step % output_freq_p == 0)

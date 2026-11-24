@@ -346,6 +346,17 @@ void dftbp_get_stress_tensor(DftbPlus *instance, double *stresstensor);
  */
 void dftbp_get_gross_charges(DftbPlus *instance, double *charges);
 
+
+/**
+ * Queries the atomic shifts of DFTB.
+ *
+ * \param[inout] instance Handler of the DFTB+ instance.
+ *
+ * \param[out] atomicShifts Atomic shifts on each atom.  Shape [natom]. Sign convention: Electron
+       has negative charge, so negative values indicate electron excess in the surroundings.
+ */
+void dftbp_get_atomic_shifts(DftbPlus *instance, double *atomShifts);
+
 }
 
 #endif
