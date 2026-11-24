@@ -883,6 +883,7 @@ void QMMM_rec::gradient_QM_MM(//const t_commrec*  cr,
         {
           grad_add[j][m] = - pme_qmonly.f[j][m] / gmx::c_hartreeBohr2Md * (mm_.scalefactor - 1.);
         }
+        rvec_inc(partgrad[j], grad_add[j]);
       }
    // printf("================================\n");
    // for (int i=0; i<n; i++)
@@ -920,7 +921,12 @@ void QMMM_rec::gradient_QM_MM(//const t_commrec*  cr,
    // {
    //     printf("GRAD CORR2 %d: %8.5f %8.5f %8.5f\n", i+1, grad_add[i][XX], grad_add[i][YY], grad_add[i][ZZ]);
    // }
-      // TODO: RE-TEST THIS CONTRIBUTION WITH SCALEFACTOR != 1 !!!
+
+      // The contributions under (2) with scalefactor < 1 have been tested
+      //   on a system with QM = NaClH2O and MM = water solvent
+      //   against numerical gradients of the total energy (QM + MM + QM/MM),
+      //   and the total gradient agrees within 0.3%.
+      // TODO: Is this a sufficient agreement? Should we try to improve it further?
 
       /* (3) gradient on MM atoms due to QM atoms.
        *     ASK GERRIT IF THIS IS REALLY NOT INCLUDED IN GROMACS MM CALCULATIONS!
