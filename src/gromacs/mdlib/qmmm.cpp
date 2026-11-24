@@ -1198,10 +1198,28 @@ real QMMM_rec::calculate_QMMM_energy_only(
         snew(forces, (qm_->nrQMatoms + mm_->nrMMatoms));
     }
 
-    real scalefactorBak = mm_->scalefactor;
-    mm_->scalefactor = MMchargeScaleFactorIn;
-    real QMener = call_QMroutine(this, qm_, mm_, forces, fshift, nrnb, wcycle);
-    mm_->scalefactor = scalefactorBak;
+    // The MM charges can only be scaled if the current (original) MM charge scale factor is not too close to zero.
+    if (mm_->scalefactor > -0.0001 && mm_->scalefactor < 0.0001)
+    {
+        gmx_fatal(FARGS, "MM charge scale factor is too close to zero. MM charges cannot be reliably scaled up!");
+    }
+    // TODO: Find a way for this to work even if mm_->scalefactor == 0.
+
+    // Create a copy of the MMrec that will contain charges scaled with the target MM charge scale factor.
+    QMMM_MMrec mmCopy = *mm_;
+    const real chargeScaleRatio = MMchargeScaleFactorIn / mm_->scalefactor;
+    for (real& charge : mmCopy.MMcharges)
+    {
+        charge *= chargeScaleRatio;
+    }
+    for (real& charge : mmCopy.MMcharges_full)
+    {
+        charge *= chargeScaleRatio;
+    }
+    mmCopy.scalefactor = MMchargeScaleFactorIn;
+
+    // Call the QM routine with the modified MMrec containing the scaled charges.
+    real QMener = call_QMroutine(this, qm_, &mmCopy, forces, fshift, nrnb, wcycle);
 
     sfree(forces);
 
